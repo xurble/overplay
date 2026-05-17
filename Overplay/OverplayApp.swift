@@ -25,7 +25,12 @@ struct OverplayApp: App {
         let schema = Schema([
             OverplaySettings.self,
             TrackedTrack.self,
-            PlaybackEvent.self
+            PlaybackEvent.self,
+            PlaylistRecord.self,
+            TrackRecord.self,
+            PlaylistItemRecord.self,
+            HistoryEvent.self,
+            SettingsRecord.self
         ])
         let configuration = ModelConfiguration(
             schema: schema,

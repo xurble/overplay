@@ -20,7 +20,7 @@ Verification:
 - Complete: Test target builds.
 - Complete: Initial tests pass.
 
-## Step 1 - Commit Documentation Baseline
+## Step 1 - Commit Documentation Baseline - Complete
 
 - Commit `README.md`.
 - Commit `OVERPLAY_DESIGN_SPEC.md`.
@@ -29,10 +29,10 @@ Verification:
 
 Verification:
 
-- Repo has no remaining proof-of-concept wording.
-- App target still builds.
+- Complete: Repo has no remaining proof-of-concept wording.
+- Complete: App target still builds.
 
-## Step 2 - Add Domain Vocabulary
+## Step 2 - Add Domain Vocabulary - Complete
 
 - Add typed enums for playlist role, history event type, history event source,
   eviction reason, eviction source, and remote mutation status.
@@ -41,11 +41,11 @@ Verification:
 
 Verification:
 
-- App target builds.
-- Unit tests pass.
-- No behavior changes.
+- Complete: App target builds.
+- Complete: Unit tests pass.
+- Complete: No behavior changes.
 
-## Step 3 - Add New SwiftData Models Alongside Existing Models
+## Step 3 - Add New SwiftData Models Alongside Existing Models - Complete
 
 - Add `PlaylistRecord`.
 - Add `TrackRecord`.
@@ -57,9 +57,9 @@ Verification:
 
 Verification:
 
-- App launches with the expanded schema.
-- Previews compile.
-- Unit tests pass with in-memory model containers.
+- Complete: App launches with the expanded schema.
+- Complete: Previews compile.
+- Complete: Unit tests pass with in-memory model containers.
 
 ## Step 4 - Add Repositories for the New Model
 

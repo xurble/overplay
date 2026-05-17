@@ -1,0 +1,49 @@
+enum PlaylistRole: String, CaseIterable, Codable, Hashable, Sendable {
+    case oneTruePlaylist
+    case triage
+}
+
+enum HistoryEventType: String, CaseIterable, Codable, Hashable, Sendable {
+    case playlistLinked
+    case playlistUpdated
+    case playlistRemoved
+    case trackAdded
+    case trackRemoved
+    case skipIgnored
+    case skipCounted
+    case playthrough
+    case evicted
+    case restored
+    case promoted
+    case remoteMutation
+}
+
+enum HistoryEventSource: String, CaseIterable, Codable, Hashable, Sendable {
+    case user
+    case playback
+    case sync
+    case appleMusic
+    case overplay
+    case migration
+}
+
+enum EvictionReason: String, CaseIterable, Codable, Hashable, Sendable {
+    case skipCount
+    case manual
+    case remoteRemoval
+}
+
+enum EvictionSource: String, CaseIterable, Codable, Hashable, Sendable {
+    case user
+    case playbackRule
+    case appleMusicSync
+    case migration
+}
+
+enum RemoteMutationStatus: String, CaseIterable, Codable, Hashable, Sendable {
+    case notAttempted
+    case pending
+    case succeeded
+    case failed
+    case unsupported
+}
