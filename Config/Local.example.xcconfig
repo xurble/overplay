@@ -1,0 +1,6 @@
+// Copy this file to Local.xcconfig and replace the values with your
+// Apple Developer account settings. Local.xcconfig is ignored by git.
+
+DEVELOPMENT_TEAM =
+PRODUCT_BUNDLE_IDENTIFIER = com.example.Overplay
+ICLOUD_CONTAINER_IDENTIFIER = iCloud.com.example.Overplay

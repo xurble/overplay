@@ -1,0 +1,13 @@
+// Shared build settings safe to commit.
+
+PRODUCT_NAME = Overplay
+PRODUCT_BUNDLE_IDENTIFIER = com.example.Overplay
+DEVELOPMENT_TEAM =
+
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_ENTITLEMENTS = Overplay/Overplay.entitlements
+INFOPLIST_FILE = Config/Info.plist
+
+ICLOUD_CONTAINER_IDENTIFIER = iCloud.com.example.Overplay
+
+#include? "Local.xcconfig"
