@@ -102,7 +102,7 @@ Verification:
 - Complete: Unit tests cover count calculations.
 - Complete: App target builds.
 
-## Step 7 - Sync a PlaylistRecord
+## Step 7 - Sync a PlaylistRecord - Complete
 
 - Change `PlaylistSyncService` to sync a `PlaylistRecord`.
 - Upsert `TrackRecord` and `PlaylistItemRecord` instead of `TrackedTrack`.
@@ -111,11 +111,11 @@ Verification:
 
 Verification:
 
-- Syncing the One True Playlist works.
-- Repeated sync does not duplicate tracks.
-- Unit tests cover reconciliation helpers.
+- Complete: Syncing the One True Playlist works.
+- Complete: Repeated sync does not duplicate tracks.
+- Complete: Unit tests cover reconciliation helpers.
 
-## Step 8 - Reconcile Remote Removals
+## Step 8 - Reconcile Remote Removals - Complete
 
 - During sync, mark missing Apple Music tracks as removed from that linked
   playlist.
@@ -125,24 +125,24 @@ Verification:
 
 Verification:
 
-- Removing a track in Apple Music then syncing removes it from active Overplay
+- Complete: Removing a track in Apple Music then syncing removes it from active Overplay
   views.
-- History still shows the removed item.
-- Reconciliation tests pass.
+- Complete: History still shows the removed item.
+- Complete: Reconciliation tests pass.
 
-## Step 9 - Add Linked Playlist Management UI
+## Step 9 - Add Linked Playlist Management UI - Complete
 
-- Replace simple playlist selection with linked playlist management.
-- Allow choosing the One True Playlist.
-- Allow adding triage playlists.
-- Show playlist role, track count, and sync status.
-- Support syncing one playlist or all playlists.
+- Complete: Replace simple playlist selection with linked playlist management.
+- Complete: Allow choosing the One True Playlist.
+- Complete: Allow adding triage playlists.
+- Complete: Show playlist role, track count, and sync status.
+- Complete: Support syncing one playlist or all playlists.
 
 Verification:
 
-- One True Playlist is still required for the main flow.
-- Triage playlists can be added without affecting existing playback.
-- App target builds.
+- Complete: One True Playlist is still required for the main flow.
+- Complete: Triage playlists can be added without affecting existing playback.
+- Complete: App target builds.
 
 ## Step 10 - Restrict Automatic Eviction to the One True Playlist
 

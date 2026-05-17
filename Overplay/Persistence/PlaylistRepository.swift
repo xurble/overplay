@@ -51,4 +51,37 @@ enum PlaylistRepository {
         playlist.updatedAt = .now
         return playlist
     }
+
+    @discardableResult
+    static func setOneTruePlaylist(_ appleMusicPlaylist: AppleMusicPlaylist, in context: ModelContext) throws -> PlaylistRecord {
+        for existingPlaylist in try activePlaylists(in: context) where existingPlaylist.role == .oneTruePlaylist && existingPlaylist.musicPlaylistID != appleMusicPlaylist.id {
+            existingPlaylist.role = .triage
+            existingPlaylist.updatedAt = .now
+        }
+
+        return try upsert(
+            musicPlaylistID: appleMusicPlaylist.id,
+            name: appleMusicPlaylist.name,
+            role: .oneTruePlaylist,
+            in: context
+        )
+    }
+
+    @discardableResult
+    static func addTriagePlaylist(_ appleMusicPlaylist: AppleMusicPlaylist, in context: ModelContext) throws -> PlaylistRecord {
+        if let existingPlaylist = try playlist(musicPlaylistID: appleMusicPlaylist.id, in: context),
+           existingPlaylist.role == .oneTruePlaylist {
+            existingPlaylist.name = appleMusicPlaylist.name
+            existingPlaylist.isActive = true
+            existingPlaylist.updatedAt = .now
+            return existingPlaylist
+        }
+
+        return try upsert(
+            musicPlaylistID: appleMusicPlaylist.id,
+            name: appleMusicPlaylist.name,
+            role: .triage,
+            in: context
+        )
+    }
 }

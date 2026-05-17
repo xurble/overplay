@@ -31,6 +31,51 @@ struct NewModelRepositoryTests {
         #expect(updated.role == .oneTruePlaylist)
     }
 
+    @Test("setting one true playlist demotes previous one true playlist")
+    func settingOneTruePlaylistDemotesPreviousOneTruePlaylist() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+
+        try PlaylistRepository.setOneTruePlaylist(
+            AppleMusicPlaylist(id: "playlist-1", name: "First", trackCount: 10),
+            in: context
+        )
+        let selected = try PlaylistRepository.setOneTruePlaylist(
+            AppleMusicPlaylist(id: "playlist-2", name: "Second", trackCount: 12),
+            in: context
+        )
+        let playlists = try PlaylistRepository.allPlaylists(in: context)
+
+        #expect(selected.musicPlaylistID == "playlist-2")
+        #expect(playlists.count == 2)
+        #expect(playlists.filter { $0.role == .oneTruePlaylist }.count == 1)
+        let firstPlaylist = try PlaylistRepository.playlist(musicPlaylistID: "playlist-1", in: context)
+        #expect(firstPlaylist?.role == .triage)
+    }
+
+    @Test("adding triage playlist does not change existing one true playlist")
+    func addingTriagePlaylistDoesNotChangeExistingOneTruePlaylist() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+
+        try SettingsRepository.selectPlaylist(
+            AppleMusicPlaylist(id: "playlist-1", name: "Main", trackCount: 10),
+            in: context
+        )
+        try PlaylistRepository.addTriagePlaylist(
+            AppleMusicPlaylist(id: "playlist-2", name: "Triage", trackCount: 12),
+            in: context
+        )
+        let settings = try SettingsRepository.settings(in: context)
+        let fetchedOneTruePlaylist = try PlaylistRepository.oneTruePlaylist(in: context)
+        let oneTruePlaylist = try #require(fetchedOneTruePlaylist)
+
+        #expect(settings.selectedPlaylistID == "playlist-1")
+        #expect(oneTruePlaylist.musicPlaylistID == "playlist-1")
+        let triagePlaylist = try PlaylistRepository.playlist(musicPlaylistID: "playlist-2", in: context)
+        #expect(triagePlaylist?.role == .triage)
+    }
+
     @Test("track record upsert creates then updates without changing identity")
     func trackRecordUpsertCreatesThenUpdatesWithoutChangingIdentity() throws {
         let container = try OverplayTestSupport.makeModelContainer()

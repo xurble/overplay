@@ -21,6 +21,7 @@ enum SettingsRepository {
 
     static func selectPlaylist(_ playlist: AppleMusicPlaylist, in context: ModelContext) throws {
         let settings = try settings(in: context)
+        try PlaylistRepository.setOneTruePlaylist(playlist, in: context)
         settings.selectedPlaylistID = playlist.id
         settings.selectedPlaylistName = playlist.name
         settings.updatedAt = .now

@@ -24,6 +24,10 @@
 	<string>Overplay needs access to your Apple Music library so it can play and manage your selected playlist.</string>
 	<key>OverplayCloudKitContainerIdentifier</key>
 	<string>$(ICLOUD_CONTAINER_IDENTIFIER)</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

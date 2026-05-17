@@ -25,6 +25,10 @@ enum PlaylistItemRepository {
         try items(forPlaylistID: playlistID, in: context).filter(\.isPlayable)
     }
 
+    static func activeItems(forPlaylistID playlistID: UUID, in context: ModelContext) throws -> [PlaylistItemRecord] {
+        try items(forPlaylistID: playlistID, in: context).filter { $0.removedFromRemoteAt == nil }
+    }
+
     @discardableResult
     static func upsert(
         playlistID: UUID,

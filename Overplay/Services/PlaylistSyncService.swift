@@ -45,22 +45,121 @@ struct PlaylistSyncService {
 
     func syncPlaylist(id playlistID: String, in context: ModelContext) async throws -> Int {
         let playlist = try await loadPlaylist(id: playlistID)
+        let record = try PlaylistRepository.upsert(
+            musicPlaylistID: playlistID,
+            name: playlist.name,
+            role: try PlaylistRepository.playlist(musicPlaylistID: playlistID, in: context)?.role ?? .oneTruePlaylist,
+            in: context
+        )
+        return try await syncPlaylist(record, in: context)
+    }
+
+    func syncPlaylist(_ playlistRecord: PlaylistRecord, in context: ModelContext) async throws -> Int {
+        let playlist = try await loadPlaylist(id: playlistRecord.musicPlaylistID)
         let tracks = try await loadTracks(for: playlist)
+        let snapshots = tracks.map { snapshot(from: $0, playlistID: playlistRecord.musicPlaylistID) }
 
-        for snapshot in tracks.map({ snapshot(from: $0, playlistID: playlistID) }) {
-            try TrackRepository.upsert(snapshot, in: context)
-        }
-
+        try reconcile(
+            snapshots: snapshots,
+            playlistRecord: playlistRecord,
+            syncedAt: .now,
+            in: context
+        )
         try context.save()
         return tracks.count
+    }
+
+    func syncAllLinkedPlaylists(in context: ModelContext) async throws -> Int {
+        let playlists = try PlaylistRepository.activePlaylists(in: context)
+        var syncedCount = 0
+
+        for playlist in playlists {
+            syncedCount += try await syncPlaylist(playlist, in: context)
+        }
+
+        return syncedCount
+    }
+
+    @discardableResult
+    func reconcile(
+        snapshots: [TrackSnapshot],
+        playlistRecord: PlaylistRecord,
+        syncedAt: Date,
+        in context: ModelContext
+    ) throws -> Int {
+        var seenTrackIDs = Set<UUID>()
+
+        for snapshot in snapshots {
+            let track = try TrackRecordRepository.upsert(snapshot, in: context)
+            let item = try PlaylistItemRepository.upsert(
+                playlistID: playlistRecord.id,
+                trackID: track.id,
+                musicPlaylistEntryID: snapshot.playlistEntryID,
+                in: context
+            )
+            item.lastSeenInPlaylistAt = syncedAt
+            item.removedFromRemoteAt = nil
+            seenTrackIDs.insert(track.id)
+        }
+
+        try reconcileRemoteRemovals(
+            playlistRecord: playlistRecord,
+            seenTrackIDs: seenTrackIDs,
+            removedAt: syncedAt,
+            in: context
+        )
+
+        playlistRecord.lastSyncedAt = syncedAt
+        playlistRecord.lastSyncError = nil
+        playlistRecord.updatedAt = syncedAt
+        return snapshots.count
+    }
+
+    func reconcileRemoteRemovals(
+        playlistRecord: PlaylistRecord,
+        seenTrackIDs: Set<UUID>,
+        removedAt: Date,
+        in context: ModelContext
+    ) throws {
+        let existingItems = try PlaylistItemRepository.items(forPlaylistID: playlistRecord.id, in: context)
+
+        for item in existingItems where !seenTrackIDs.contains(item.trackID) && item.removedFromRemoteAt == nil {
+            item.removedFromRemoteAt = removedAt
+            item.updatedAt = removedAt
+
+            if item.evictedAt == nil {
+                item.evictedAt = removedAt
+                item.evictionReason = .manual
+                item.evictionSource = .appleMusicSync
+            }
+
+            EventRepository.logHistory(
+                playlistID: playlistRecord.id,
+                trackID: item.trackID,
+                eventType: .trackRemoved,
+                source: .appleMusic,
+                skipCountAtEvent: item.skipCount,
+                message: "Removed from Apple Music playlist",
+                in: context
+            )
+        }
     }
 
     func playableMusicTracks(for playlistID: String, in context: ModelContext) async throws -> [Track] {
         let playlist = try await loadPlaylist(id: playlistID)
         let tracks = try await loadTracks(for: playlist)
-        let localTracks = try TrackRepository.tracks(forPlaylistID: playlistID, in: context)
-        let evictedIDs = Set(localTracks.filter(\.isEvicted).map(\.id))
-        return tracks.filter { !evictedIDs.contains($0.id.rawValue) }
+        let playlistRecord = try PlaylistRepository.playlist(musicPlaylistID: playlistID, in: context)
+        let removedOrEvictedIDs = try playlistRecord.map { record in
+            Set(try PlaylistItemRepository.items(forPlaylistID: record.id, in: context)
+                .filter { !$0.isPlayable }
+                .compactMap { item in
+                    try TrackRecordRepository.track(id: item.trackID, in: context)?.catalogID
+                })
+        } ?? []
+        let legacyTracks = try TrackRepository.tracks(forPlaylistID: playlistID, in: context)
+        let legacyEvictedIDs = Set(legacyTracks.filter(\.isEvicted).map(\.id))
+        let excludedIDs = removedOrEvictedIDs.union(legacyEvictedIDs)
+        return tracks.filter { !excludedIDs.contains($0.id.rawValue) }
     }
 
     func removeTrackFromPlaylist(trackID: String, playlistID: String) async throws {
