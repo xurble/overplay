@@ -190,6 +190,24 @@ instructed.
 
 ------------------------------------------------------------------------
 
+## Unit Tests for Code Changes
+
+Code changes should be accompanied by unit tests that exercise the
+changed behaviour.
+
+Agents should:
+
+-   Add or update Swift Testing unit tests for new logic, bug fixes, and
+    behavioural changes
+-   Use in-memory SwiftData containers or lightweight mocks where practical
+-   Keep tests focused on the changed behaviour
+-   Run the relevant test target when possible and report the result
+
+If a change cannot reasonably be unit tested, agents should explain why
+and describe what verification was performed instead.
+
+------------------------------------------------------------------------
+
 # SwiftUI Stability Rules
 
 ## Keep Previews Working

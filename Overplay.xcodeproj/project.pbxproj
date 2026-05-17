@@ -10,12 +10,23 @@
 		06E38A9A2FB5E0E200F0D393 /* AGENTS.md in Resources */ = {isa = PBXBuildFile; fileRef = 06E38A992FB5E0E200F0D393 /* AGENTS.md */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		06E38AB92FB7000000F0D393 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 06E38A832FB5E0C800F0D393 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 06E38A8A2FB5E0C800F0D393;
+			remoteInfo = Overplay;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		06E38A8B2FB5E0C800F0D393 /* Overplay.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Overplay.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		06E38A992FB5E0E200F0D393 /* AGENTS.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = AGENTS.md; sourceTree = "<group>"; };
 		06E38A9E2FB5E0F000F0D393 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
 		06E38A9F2FB5E0F000F0D393 /* Local.example.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Local.example.xcconfig; sourceTree = "<group>"; };
 		06E38AA02FB65E8700F0D393 /* OVERPLAY_DESIGN_SPEC.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = OVERPLAY_DESIGN_SPEC.md; sourceTree = "<group>"; };
+		06E38AB12FB7000000F0D393 /* OverplayTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OverplayTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -24,10 +35,22 @@
 			path = Overplay;
 			sourceTree = "<group>";
 		};
+		06E38AB02FB7000000F0D393 /* OverplayTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = OverplayTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		06E38A882FB5E0C800F0D393 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		06E38AB32FB7000000F0D393 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -44,6 +67,7 @@
 				06E38AA02FB65E8700F0D393 /* OVERPLAY_DESIGN_SPEC.md */,
 				06E38A9D2FB5E0F000F0D393 /* Config */,
 				06E38A8D2FB5E0C800F0D393 /* Overplay */,
+				06E38AB02FB7000000F0D393 /* OverplayTests */,
 				06E38A8C2FB5E0C800F0D393 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -52,6 +76,7 @@
 			isa = PBXGroup;
 			children = (
 				06E38A8B2FB5E0C800F0D393 /* Overplay.app */,
+				06E38AB12FB7000000F0D393 /* OverplayTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -90,6 +115,29 @@
 			productReference = 06E38A8B2FB5E0C800F0D393 /* Overplay.app */;
 			productType = "com.apple.product-type.application";
 		};
+		06E38AB52FB7000000F0D393 /* OverplayTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 06E38AB82FB7000000F0D393 /* Build configuration list for PBXNativeTarget "OverplayTests" */;
+			buildPhases = (
+				06E38AB22FB7000000F0D393 /* Sources */,
+				06E38AB32FB7000000F0D393 /* Frameworks */,
+				06E38AB42FB7000000F0D393 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				06E38ABA2FB7000000F0D393 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				06E38AB02FB7000000F0D393 /* OverplayTests */,
+			);
+			name = OverplayTests;
+			packageProductDependencies = (
+			);
+			productName = OverplayTests;
+			productReference = 06E38AB12FB7000000F0D393 /* OverplayTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -108,6 +156,10 @@
 							};
 						};
 					};
+					06E38AB52FB7000000F0D393 = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = 06E38A8A2FB5E0C800F0D393;
+					};
 				};
 			};
 			buildConfigurationList = 06E38A862FB5E0C800F0D393 /* Build configuration list for PBXProject "Overplay" */;
@@ -125,6 +177,7 @@
 			projectRoot = "";
 			targets = (
 				06E38A8A2FB5E0C800F0D393 /* Overplay */,
+				06E38AB52FB7000000F0D393 /* OverplayTests */,
 			);
 		};
 /* End PBXProject section */
@@ -138,6 +191,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		06E38AB42FB7000000F0D393 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -148,7 +208,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		06E38AB22FB7000000F0D393 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		06E38ABA2FB7000000F0D393 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 06E38A8A2FB5E0C800F0D393 /* Overplay */;
+			targetProxy = 06E38AB92FB7000000F0D393 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		06E38A942FB5E0CA00F0D393 /* Debug */ = {
@@ -325,6 +400,64 @@
 			};
 			name = Release;
 		};
+		06E38AB62FB7000000F0D393 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.OverplayTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Overplay.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Overplay";
+			};
+			name = Debug;
+		};
+		06E38AB72FB7000000F0D393 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.OverplayTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Overplay.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Overplay";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -342,6 +475,15 @@
 			buildConfigurations = (
 				06E38A972FB5E0CA00F0D393 /* Debug */,
 				06E38A982FB5E0CA00F0D393 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		06E38AB82FB7000000F0D393 /* Build configuration list for PBXNativeTarget "OverplayTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				06E38AB62FB7000000F0D393 /* Debug */,
+				06E38AB72FB7000000F0D393 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
