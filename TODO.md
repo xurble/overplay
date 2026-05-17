@@ -61,7 +61,7 @@ Verification:
 - Complete: Previews compile.
 - Complete: Unit tests pass with in-memory model containers.
 
-## Step 4 - Add Repositories for the New Model
+## Step 4 - Add Repositories for the New Model - Complete
 
 - Add `PlaylistRepository`.
 - Add `TrackRecordRepository`.
@@ -71,11 +71,11 @@ Verification:
 
 Verification:
 
-- Repository tests cover create, fetch, update, and idempotent upsert.
-- App target builds.
-- Unit tests pass.
+- Complete: Repository tests cover create, fetch, update, and idempotent upsert.
+- Complete: App target builds.
+- Complete: Unit tests pass.
 
-## Step 5 - Add One-Way Local Migration
+## Step 5 - Add One-Way Local Migration - Complete
 
 - Convert `OverplaySettings.selectedPlaylistID/name` into a
   `PlaylistRecord(role: oneTruePlaylist)`.
@@ -85,9 +85,9 @@ Verification:
 
 Verification:
 
-- Existing selected playlist and stats survive after launch.
-- Migration tests pass for empty data and populated legacy data.
-- App target builds.
+- Complete: Existing selected playlist and stats survive after launch.
+- Complete: Migration tests pass for empty data and populated legacy data.
+- Complete: App target builds.
 
 ## Step 6 - Move Dashboard Reads to the New Model
 

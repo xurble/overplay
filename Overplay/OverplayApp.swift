@@ -37,6 +37,7 @@ struct OverplayApp: App {
             cloudKitDatabase: .private(Self.cloudKitContainerIdentifier)
         )
         modelContainer = try! ModelContainer(for: schema, configurations: [configuration])
+        try? LegacyModelMigration.migrate(in: modelContainer.mainContext)
     }
 
     var body: some Scene {
