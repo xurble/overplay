@@ -45,6 +45,7 @@ enum PreviewContainer {
             evictedAt: .now,
             evictionReason: "3 skips before 50%"
         ))
+        try? LegacyModelMigration.migrate(in: context)
         try? context.save()
         return container
     }

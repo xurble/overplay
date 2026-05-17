@@ -5,7 +5,8 @@ struct DashboardView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackController.self) private var playbackController
 
-    @Query(sort: \TrackedTrack.title) private var tracks: [TrackedTrack]
+    @Query(sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
+    @Query(sort: \PlaylistItemRecord.createdAt) private var playlistItems: [PlaylistItemRecord]
 
     var settings: OverplaySettings
     @State private var isSyncing = false
@@ -27,10 +28,10 @@ struct DashboardView: View {
 
             Section {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    StatCardView(title: "Known", value: "\(playlistTracks.count)", systemImage: "music.note.list", tint: .pink)
-                    StatCardView(title: "Playable", value: "\(playableTracks.count)", systemImage: "play.circle.fill", tint: .green)
-                    StatCardView(title: "Evicted", value: "\(evictedTracks.count)", systemImage: "trash.fill", tint: .red)
-                    StatCardView(title: "At risk", value: "\(atRiskTracks.count)", systemImage: "exclamationmark.triangle.fill", tint: .orange)
+                    StatCardView(title: "Known", value: "\(dashboardSummary.knownCount)", systemImage: "music.note.list", tint: .pink)
+                    StatCardView(title: "Playable", value: "\(dashboardSummary.playableCount)", systemImage: "play.circle.fill", tint: .green)
+                    StatCardView(title: "Evicted", value: "\(dashboardSummary.evictedCount)", systemImage: "trash.fill", tint: .red)
+                    StatCardView(title: "At risk", value: "\(dashboardSummary.atRiskCount)", systemImage: "exclamationmark.triangle.fill", tint: .orange)
                 }
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
@@ -95,23 +96,18 @@ struct DashboardView: View {
         }
     }
 
-    private var playlistTracks: [TrackedTrack] {
-        guard let playlistID = settings.selectedPlaylistID else { return [] }
-        return tracks.filter { $0.playlistID == playlistID }
+    private var selectedPlaylist: PlaylistRecord? {
+        guard let playlistID = settings.selectedPlaylistID else { return nil }
+        return playlists.first { $0.musicPlaylistID == playlistID && $0.role == .oneTruePlaylist }
     }
 
-    private var playableTracks: [TrackedTrack] {
-        playlistTracks.filter { !$0.isEvicted }
+    private var selectedPlaylistItems: [PlaylistItemRecord] {
+        guard let selectedPlaylist else { return [] }
+        return playlistItems.filter { $0.playlistID == selectedPlaylist.id }
     }
 
-    private var evictedTracks: [TrackedTrack] {
-        playlistTracks.filter(\.isEvicted)
-    }
-
-    private var atRiskTracks: [TrackedTrack] {
-        playlistTracks.filter {
-            !$0.isEvicted && $0.skipCount >= max(settings.evictAfterSkips - 1, 0)
-        }
+    private var dashboardSummary: DashboardSummary {
+        DashboardSummary(items: selectedPlaylistItems, evictAfterSkips: settings.evictAfterSkips)
     }
 
     private func syncPlaylist() async {
@@ -121,6 +117,7 @@ struct DashboardView: View {
 
         do {
             let count = try await PlaylistSyncService().syncPlaylist(id: playlistID, in: modelContext)
+            try? LegacyModelMigration.migrate(in: modelContext)
             message = "Synced \(count) tracks."
         } catch {
             message = error.localizedDescription

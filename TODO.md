@@ -89,7 +89,7 @@ Verification:
 - Complete: Migration tests pass for empty data and populated legacy data.
 - Complete: App target builds.
 
-## Step 6 - Move Dashboard Reads to the New Model
+## Step 6 - Move Dashboard Reads to the New Model - Complete
 
 - Compute known, playable, evicted, and at-risk counts from `PlaylistRecord`
   and `PlaylistItemRecord`.
@@ -98,9 +98,9 @@ Verification:
 
 Verification:
 
-- Dashboard counts match the old One True Playlist behavior.
-- Unit tests cover count calculations.
-- App target builds.
+- Complete: Dashboard counts match the old One True Playlist behavior.
+- Complete: Unit tests cover count calculations.
+- Complete: App target builds.
 
 ## Step 7 - Sync a PlaylistRecord
 
