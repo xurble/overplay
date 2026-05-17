@@ -26,7 +26,7 @@ enum PreviewContainer {
             playlistID: "preview-playlist",
             title: "Glasshouse",
             artistName: "The Sample Set",
-            albumTitle: "POC Sessions",
+            albumTitle: "Overplay Sessions",
             durationSeconds: 214,
             skipCount: 2
         ))

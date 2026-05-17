@@ -1,0 +1,719 @@
+# Overplay Design Specification
+
+## Purpose
+
+Overplay is an Apple Music companion app for iPhone, iPad, and Mac. It keeps a
+user's main music playlist fresh while using other playlists as intake and
+triage sources.
+
+The core playlist is the user's **One True Playlist**. Overplay plays it,
+tracks the user's own skip and playthrough behaviour, and evicts tracks that
+cross the configured skip threshold. Additional linked playlists are tracked
+as triage playlists. They can represent sources such as TikTok saves, Shazam
+discoveries, a friend's playlist, or any other Apple Music playlist the user
+wants to review before promoting songs into the One True Playlist.
+
+Overplay maintains its own history and state. It does not rely on Apple
+Music's global play count or skip count.
+
+## Platform
+
+- Target platforms:
+  - iPhone on iOS 26 and later.
+  - iPad on iPadOS 26 and later.
+  - Mac on macOS 26 and later.
+- Language: Swift 6.
+- UI framework: SwiftUI.
+- Persistence: SwiftData backed by iCloud/CloudKit for shared playlist,
+  track, statistics, and eviction data.
+- Device-local state: `AppStorage` for playback and navigation state that
+  should not sync between devices.
+- Apple Music integration: MusicKit first; Apple Music API only where MusicKit
+  cannot support the required operation.
+- Playback: `ApplicationMusicPlayer` unless a technical limitation requires a
+  different Apple framework.
+- Design language: native Liquid Glass on each platform, using system
+  materials, translucency, depth, adaptive layout, and modern SwiftUI
+  animation.
+
+## Platform Strategy
+
+Overplay should use one shared SwiftUI app architecture across iPhone, iPad,
+and Mac. Product rules, sync, persistence, search, playlist mutation, playback
+tracking, and eviction logic should live in shared services and models.
+Platform-specific code should be limited to presentation shell, scene
+configuration, keyboard/menu commands, entitlement differences, and media
+integration differences.
+
+### iPhone
+
+iPhone is the focused playback and quick-triage experience.
+
+- Use compact navigation with a dashboard-first flow.
+- Keep Now Playing as the strongest visual surface.
+- Prioritize fast actions: play, skip, keep, evict, promote, sync.
+- Support lock-screen metadata, remote commands, and CarPlay readiness.
+
+### iPad
+
+iPad is the review and management experience as well as a playback device.
+
+- Prefer `NavigationSplitView` or equivalent adaptive split navigation.
+- Use a sidebar for Dashboard, One True Playlist, triage playlists, Search,
+  History, and Settings.
+- Let playlist detail and Now Playing coexist comfortably on wide screens.
+- Support Stage Manager, Split View, Slide Over, hardware keyboard shortcuts,
+  pointer hover states, and drag-friendly large touch targets.
+- Avoid phone-sized layouts stretched across the full display.
+
+### Mac
+
+Mac is the power-user library management and background playback experience.
+
+- Prefer a native SwiftUI Mac target rather than treating Mac as only a
+  scaled iPad surface.
+- Use sidebar navigation, resizable windows, toolbars, menu commands, keyboard
+  shortcuts, context menus, and table/list layouts where they improve scanning.
+- Support multiple windows for playlist management, history, and Now Playing
+  where practical.
+- Keep playback state local to the Mac and resilient when windows are closed.
+- Support media keys and Now Playing metadata where available.
+- Use Mac-appropriate spacing, hover affordances, focus rings, and selection
+  behaviour.
+
+### Shared target expectations
+
+- All three targets must read and write the same iCloud-backed Overplay data.
+- All three targets must keep transient playback and selection state local to
+  the device.
+- A sync, promotion, eviction, or settings change made on one device should
+  eventually appear on the others.
+- A play, pause, queue, currently selected screen, or current playback position
+  change on one device must not control another device.
+- Platform conditionals should be small and isolated.
+
+## Product Model
+
+### Linked playlists
+
+Overplay tracks multiple Apple Music playlists:
+
+- **One True Playlist**: the main playlist Overplay manages and plays by
+  default. Count-based eviction rules apply here.
+- **Triage playlists**: additional playlists used as intake sources. Overplay
+  tracks skips and playthroughs for these playlists, but does not automatically
+  evict from them by skip count.
+
+Each linked playlist stores:
+
+- Apple Music playlist identifier.
+- Display name.
+- Role: `oneTruePlaylist` or `triage`.
+- Last successful sync date.
+- Last sync error, if any.
+- Local sort/order preferences.
+- Whether the playlist is active.
+
+Exactly one active playlist should have the `oneTruePlaylist` role. The user
+may add, remove, deactivate, or rename linked triage playlists.
+
+### Track state
+
+Overplay tracks each song it sees in a linked playlist. Stats must be stored
+per playlist membership so the same song can have different context in the One
+True Playlist and in a triage playlist.
+
+For every tracked playlist item, store:
+
+- Stable Apple Music identifiers where available.
+- Playlist identifier and playlist role.
+- Playlist entry identifier where available.
+- Title, artist, album, artwork, and duration snapshot.
+- Skip count.
+- Playthrough count.
+- Last played date.
+- Last skipped date.
+- Last seen in Apple Music sync date.
+- Eviction/removal state.
+- Created and updated dates.
+
+When a single catalogue song appears in multiple linked playlists, Overplay may
+share metadata, but playlist membership, skip count, playthrough count, and
+eviction state must remain playlist-specific.
+
+## Sync Behaviour
+
+All linked playlists should be periodically synced against Apple Music. The
+user can also trigger sync manually.
+
+### Additions from Apple Music
+
+When Apple Music contains a track that Overplay has not seen in a linked
+playlist:
+
+- Add or reactivate the local playlist item.
+- Preserve any prior history if the same playlist item can be matched.
+- Set `lastSeenInPlaylistAt`.
+- Do not reset historical skip, playthrough, or eviction records.
+
+### Removals from Apple Music
+
+When a track that Overplay previously tracked is no longer present in the
+linked Apple Music playlist:
+
+- Mark the local playlist item as removed from that playlist.
+- Record a historic manual eviction/removal event.
+- Preserve skip, playthrough, and eviction history.
+- Exclude the item from playback and visible active playlist counts.
+
+This treats an external Apple Music deletion as a manual removal from
+Overplay's copy of that playlist.
+
+### Local evictions
+
+When Overplay evicts a track locally:
+
+- Always record a historic eviction event.
+- Store whether the eviction was count-based or manual.
+- Store the triggering count or manual source where applicable.
+- Exclude the track from future Overplay playback for that playlist.
+
+If Apple Music playlist mutation is available and reliable, Overplay should
+also attempt to remove the item from the linked Apple Music playlist. If the
+remote deletion fails or is unsupported, local eviction remains authoritative
+inside Overplay and the track is filtered out of Overplay playback.
+
+### Periodic sync
+
+The app should sync:
+
+- On first launch after Apple Music authorization.
+- When the user adds or changes a linked playlist.
+- When the user manually taps sync.
+- Opportunistically on app foreground if the last sync is stale.
+- After a successful manual add or promotion.
+
+Sync must be idempotent. Running sync multiple times should not duplicate
+tracks or erase history.
+
+## Promotion and Manual Add
+
+### Promotion from triage playlists
+
+Tracks in triage playlists can be manually promoted to the One True Playlist.
+Promotion should:
+
+- Attempt to add the track to the linked Apple Music One True Playlist.
+- Create or reactivate the local One True Playlist item on success.
+- Preserve source triage stats and history.
+- Record a promotion event linking source playlist and destination playlist.
+- Leave the source triage playlist unchanged unless a future setting says
+  otherwise.
+
+If Apple Music add-to-playlist fails, show a clear non-fatal error and do not
+pretend the promotion succeeded.
+
+### Search and manual add
+
+Users can search Apple Music and manually add tracks to any linked playlist.
+
+Add behaviour:
+
+- User selects the destination playlist.
+- Overplay attempts to add the track to the Apple Music playlist.
+- On success, Overplay syncs that playlist or inserts the local item using the
+  returned identifiers.
+- On failure, Overplay displays a clear error.
+
+Manual add should support both the One True Playlist and triage playlists.
+
+## Eviction Rules
+
+Count-based eviction applies only to the One True Playlist.
+
+### Defaults
+
+```swift
+skipThresholdPercentage = 50
+minimumSkipListeningSeconds = 10
+evictAfterSkips = 3
+playthroughThresholdPercentage = 90
+playthroughResetsSkipCount = true
+protectKeptTracks = false
+```
+
+### Skip decision
+
+A skip is counted when all are true:
+
+- The current play session has not already been evaluated.
+- The playlist item is active and not locally evicted.
+- The track is not protected.
+- The user listened for at least `minimumSkipListeningSeconds`.
+- Playback progress is less than `skipThresholdPercentage`.
+- The transition was not natural completion.
+
+Manual Next should evaluate the outgoing track. Previous should generally not
+count as a skip.
+
+### Playthrough decision
+
+A playthrough is counted when the track reaches
+`playthroughThresholdPercentage` or natural completion is detected.
+
+If `playthroughResetsSkipCount` is enabled, a playthrough resets that playlist
+item's skip count.
+
+### Eviction decision
+
+For One True Playlist items:
+
+```swift
+if skipCount >= evictAfterSkips && !protected {
+    evict(track, reason: .skipCount)
+}
+```
+
+For triage playlist items, skip and playthrough counts are recorded but no
+automatic eviction occurs.
+
+### Manual eviction
+
+The user can manually evict a track from any linked playlist. Manual eviction:
+
+- Marks the local playlist item evicted.
+- Records a manual eviction event.
+- Attempts Apple Music removal if supported.
+- Falls back to local filtering if remote removal fails.
+
+## Shared vs Device-Local State
+
+The SwiftData store is backed by iCloud so devices on the same account can
+share:
+
+- Linked playlist definitions.
+- Track metadata snapshots.
+- Playlist membership state.
+- Skip and playthrough counts.
+- Eviction history.
+- Promotion history.
+- User-configurable eviction settings.
+
+The following must remain device-local in `AppStorage` or equivalent local
+storage:
+
+- Currently playing track/session.
+- Current playback queue.
+- Current playback position.
+- Current selected screen or playlist view.
+- Shuffle/repeat playback state.
+- Now Playing UI state.
+- Any transient sync or playback progress state.
+
+Window-specific navigation and presentation state should use `SceneStorage` or
+other scene-local storage when a platform supports multiple windows. This is
+especially important on iPad and Mac, where two windows may legitimately show
+different playlists or views at the same time.
+
+Two devices should be able to share playlist and eviction data without
+interfering with each other's playback.
+
+## Required Screens
+
+Screens should be adaptive rather than separate products. iPhone can present
+these as stacked screens. iPad and Mac should use persistent sidebars,
+toolbars, inspector-style detail areas, and split layouts when those patterns
+make the workflow clearer.
+
+### Permission screen
+
+Purpose: handle Apple Music permission and subscription readiness.
+
+Show:
+
+- Apple Music authorization state.
+- Subscription/capability state when available.
+- Connect Apple Music action.
+- Settings guidance when permission is denied.
+
+Platform notes:
+
+- iPhone and iPad should use a friendly full-screen onboarding surface.
+- Mac should use a compact window-friendly state view with clear system
+  settings guidance.
+
+### Playlist management screen
+
+Purpose: manage linked Apple Music playlists.
+
+Required capabilities:
+
+- Choose the One True Playlist.
+- Add triage playlists.
+- Search/filter Apple Music library playlists.
+- Show playlist role, track count, and sync status.
+- Manually sync one playlist or all playlists.
+- Deactivate or remove a linked triage playlist.
+
+Platform notes:
+
+- iPad and Mac should make playlist management a sidebar/table workflow.
+- Mac should expose common actions through toolbar items, context menus, and
+  menu commands.
+
+### Dashboard
+
+Purpose: summarize the One True Playlist and triage activity.
+
+Show:
+
+- One True Playlist name.
+- Active playable count.
+- At-risk count.
+- Evicted count.
+- Recently promoted count.
+- Triage playlists with unreviewed or high-skip items.
+- Actions for play, sync, search, settings, and history.
+
+Platform notes:
+
+- iPhone dashboard should be compact and action-oriented.
+- iPad dashboard can show summary sections beside triage queues.
+- Mac dashboard should favor dense, sortable, scan-friendly summaries.
+
+### Playlist detail
+
+Purpose: inspect any linked playlist.
+
+Show:
+
+- Active tracks.
+- Skip and playthrough counts.
+- Eviction/removal state.
+- Last seen in Apple Music.
+- Promote action for triage playlist tracks.
+- Manual evict/remove action.
+- Search/add action scoped to that playlist.
+
+Platform notes:
+
+- iPad and Mac should support table-like scanning and selection.
+- Mac should support context menu actions for promote, evict, restore, and
+  reveal in Apple Music where possible.
+
+### Now Playing
+
+Purpose: playback UI and skip/playthrough tracking.
+
+Show:
+
+- Artwork.
+- Title, artist, album.
+- Playlist context.
+- Progress.
+- Skip count and eviction threshold.
+- Playthrough count.
+- Playback controls.
+- Keep/reset action.
+- Manual evict action.
+- Promote action when playing from a triage playlist.
+
+The standard media controls should call into a shared playback controller.
+
+Platform notes:
+
+- iPhone should keep Now Playing immersive and touch-first.
+- iPad should support Now Playing as a detail pane or separate window.
+- Mac should support a compact mini-player style window in addition to the
+  full Now Playing view where practical.
+
+### Search
+
+Purpose: search Apple Music and add tracks to any linked playlist.
+
+Show:
+
+- Search field.
+- Results with artwork, title, artist, and album.
+- Destination playlist selector.
+- Add action.
+
+Platform notes:
+
+- iPad and Mac should support faster triage with keyboard focus, return-to-add
+  where appropriate, and persistent destination selection.
+
+### Eviction and history
+
+Purpose: show historic evictions, removals, and promotions.
+
+Show:
+
+- Track.
+- Playlist.
+- Event type.
+- Count-based or manual flag.
+- Triggering skip count or manual source.
+- Date.
+- Remote Apple Music mutation status.
+- Restore/reactivate action where appropriate.
+
+History must survive sync, relaunch, and iCloud sync.
+
+Platform notes:
+
+- Mac should use a sortable, filterable table for history when practical.
+- iPad should support filters without hiding the event list.
+
+### Settings
+
+Purpose: configure behaviour.
+
+Settings:
+
+- One True Playlist.
+- Linked triage playlists.
+- Evict after X skips.
+- Skip threshold percentage.
+- Minimum listening time before skip can count.
+- Playthrough threshold percentage.
+- Playthrough resets skip count.
+- Protect kept tracks.
+- Periodic sync preference.
+- Reset local playback state.
+- Reset shared stats and history with destructive confirmation.
+
+Settings should be available on every target. Mac should expose the settings
+window through the standard app settings command as well as in-app navigation.
+
+## Services
+
+### MusicAuthorizationService
+
+- Request Apple Music authorization.
+- Expose permission and subscription capability state.
+- Provide clear failure states for UI.
+
+### PlaylistSyncService
+
+- Fetch Apple Music library playlists.
+- Fetch tracks for each linked playlist.
+- Reconcile additions and removals.
+- Preserve history.
+- Mark external removals as manual eviction/removal events.
+- Publish sync status.
+
+### PlaybackController
+
+- Own Apple Music playback.
+- Build queues from active, non-evicted playlist items.
+- Track play sessions.
+- Publish current playback state.
+- Forward transitions to the eviction engine.
+- Keep playback/session state device-local.
+- Isolate platform-specific playback or media-session differences behind a
+  small adapter if iPhone, iPad, and Mac APIs diverge.
+
+### EvictionEngine
+
+- Apply skip and playthrough rules.
+- Increment/reset counts.
+- Evict One True Playlist items by count.
+- Manually evict items from any linked playlist.
+- Record eviction events.
+- Request remote playlist deletion through a playlist mutation service.
+
+### PlaylistMutationService
+
+- Add tracks to linked Apple Music playlists.
+- Promote tracks from triage playlists to the One True Playlist.
+- Attempt remote playlist deletion for local evictions.
+- Return explicit success/failure results.
+
+### SearchService
+
+- Search Apple Music catalogue.
+- Return lightweight result models.
+- Support manual add to any linked playlist.
+
+### NowPlayingMetadataService
+
+- Publish current metadata to `MPNowPlayingInfoCenter`.
+- Keep lock-screen and remote metadata in sync with playback state.
+
+### RemoteCommandService
+
+- Register remote command handlers.
+- Forward play, pause, next, previous, shuffle, and repeat to the playback
+  controller.
+- Avoid retain cycles and clean up handlers when appropriate.
+- Support lock-screen, Control Center, headset, keyboard, and Mac media-key
+  commands where each platform exposes them.
+
+### PlatformShell
+
+- Provide the root navigation appropriate to each target.
+- Share the same view models and services.
+- Own platform-specific menu commands, keyboard shortcuts, toolbar placement,
+  window commands, and scene setup.
+- Keep platform branching out of business logic.
+
+## Suggested Data Model
+
+Exact SwiftData syntax may evolve, but the model should retain these concepts.
+
+### PlaylistRecord
+
+- `id: UUID`
+- `musicPlaylistID: String`
+- `name: String`
+- `role: PlaylistRole`
+- `isActive: Bool`
+- `lastSyncedAt: Date?`
+- `lastSyncError: String?`
+- `createdAt: Date`
+- `updatedAt: Date`
+
+### TrackRecord
+
+- `id: UUID`
+- `catalogID: String?`
+- `libraryID: String?`
+- `title: String`
+- `artistName: String`
+- `albumTitle: String?`
+- `artworkURLTemplate: String?`
+- `durationSeconds: Double?`
+- `createdAt: Date`
+- `updatedAt: Date`
+
+### PlaylistItemRecord
+
+- `id: UUID`
+- `playlistID: UUID`
+- `trackID: UUID`
+- `musicPlaylistEntryID: String?`
+- `skipCount: Int`
+- `playthroughCount: Int`
+- `lastPlayedAt: Date?`
+- `lastSkippedAt: Date?`
+- `lastSeenInPlaylistAt: Date?`
+- `removedFromRemoteAt: Date?`
+- `evictedAt: Date?`
+- `evictionReason: EvictionReason?`
+- `evictionSource: EvictionSource?`
+- `protected: Bool`
+- `createdAt: Date`
+- `updatedAt: Date`
+
+### HistoryEvent
+
+- `id: UUID`
+- `playlistID: UUID?`
+- `trackID: UUID?`
+- `eventType: HistoryEventType`
+- `source: HistoryEventSource`
+- `skipCountAtEvent: Int?`
+- `positionSeconds: Double?`
+- `durationSeconds: Double?`
+- `progressPercentage: Double?`
+- `remoteMutationStatus: RemoteMutationStatus?`
+- `message: String?`
+- `createdAt: Date`
+
+### SettingsRecord
+
+- `id: UUID`
+- `evictAfterSkips: Int`
+- `skipThresholdPercentage: Double`
+- `minimumSkipListeningSeconds: Double`
+- `playthroughThresholdPercentage: Double`
+- `playthroughResetsSkipCount: Bool`
+- `protectKeptTracks: Bool`
+- `periodicSyncEnabled: Bool`
+- `createdAt: Date`
+- `updatedAt: Date`
+
+## Edge Cases
+
+- Apple Music permission denied or restricted.
+- Authorized user without Apple Music playback capability.
+- No library playlists.
+- One True Playlist deleted or renamed in Apple Music.
+- Triage playlist deleted or renamed in Apple Music.
+- Playlist contains unavailable, cloud-only, or local-only tracks.
+- Same song appears in multiple playlists.
+- Same song appears more than once in one playlist.
+- Track has no artwork or duration.
+- User skips immediately after playback starts.
+- User skips after the skip threshold.
+- Natural completion must not count as skip.
+- Network failure during sync, search, add, promotion, or deletion.
+- Remote playlist mutation succeeds but later sync returns stale data.
+- Remote playlist mutation fails after local eviction.
+- iCloud data arrives while a device is actively playing.
+- The same iCloud account uses Overplay on iPhone, iPad, and Mac at the same
+  time.
+- Two iPad or Mac windows show different playlists simultaneously.
+- A Mac window is closed while playback continues.
+- A hardware keyboard or media key command arrives while a modal sheet is open.
+- Platform-specific MusicKit capability differs or is temporarily unavailable.
+
+## CarPlay Direction
+
+CarPlay remains an iPhone-supported direction once entitlement requirements
+are met.
+The app architecture should keep playback, now-playing metadata, and remote
+commands independent of SwiftUI views so CarPlay templates can use the same
+services.
+
+When enabled, CarPlay should support:
+
+- Play One True Playlist.
+- Browse triage playlists.
+- View at-risk tracks.
+- View recently evicted tracks.
+- Now Playing controls.
+
+The iPhone and shared app code must continue to compile and run without
+CarPlay entitlement. iPad and Mac targets should not depend on CarPlay-specific
+types or entitlements.
+
+## Development Guidelines
+
+- Keep MusicKit calls out of SwiftUI view bodies.
+- Use async/await for MusicKit and network work.
+- Use `@MainActor` for UI-facing observable objects.
+- Prefer small SwiftUI views and focused services.
+- Preserve history during sync.
+- Make all playlist mutation failures explicit and non-fatal.
+- Prefer local filtering over blocking the user when Apple Music mutation is
+  unavailable.
+- Keep device-local playback state out of iCloud-backed records.
+- Avoid adding compatibility paths for pre-iOS 26, pre-iPadOS 26, or
+  pre-macOS 26 systems.
+- Prefer shared SwiftUI views that adapt by size class and platform idiom, but
+  create platform-specific shells when a native iPad or Mac pattern is clearer.
+- Add keyboard shortcuts and menu commands for common iPad and Mac workflows
+  once the underlying action exists.
+
+## Current Product Definition
+
+The product is healthy when a user can:
+
+1. Install and run Overplay on iPhone, iPad, and Mac.
+2. Connect Apple Music on each target.
+3. Choose a One True Playlist.
+4. Link additional triage playlists.
+5. Sync all linked playlists.
+6. Play any linked playlist in Overplay.
+7. Track skips and playthroughs for all linked playlists.
+8. Automatically evict over-skipped tracks from the One True Playlist.
+9. Manually evict tracks from any linked playlist.
+10. Promote triage tracks into the One True Playlist.
+11. Search Apple Music and add tracks to any linked playlist.
+12. Share playlist, stats, and eviction data across devices through iCloud.
+13. Keep each device's current playback state independent.
+14. Use native iPad layouts for triage and management.
+15. Use native Mac windows, menus, keyboard shortcuts, and media controls for
+    management and playback.

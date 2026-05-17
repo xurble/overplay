@@ -67,15 +67,15 @@ Avoid:
 
 ------------------------------------------------------------------------
 
-## Deployment Target
+## Deployment Targets
 
-This project targets **iOS 26 and later only**.
+This project targets **iOS 26, iPadOS 26, and macOS 26 and later only**.
 
 Agents should:
 
--   Assume **iOS 26 APIs are available**
+-   Assume **iOS 26, iPadOS 26, and macOS 26 APIs are available**
 -   Prefer **modern frameworks and APIs**
--   Avoid compatibility code for older iOS versions
+-   Avoid compatibility code for older OS versions
 
 Do **not** add availability checks unless explicitly requested.
 
@@ -83,8 +83,8 @@ Do **not** add availability checks unless explicitly requested.
 
 ## Liquid Glass UI
 
-The interface is designed specifically for **iOS 26 Liquid Glass design
-language**.
+The interface is designed specifically for the **Liquid Glass design
+language** across iPhone, iPad, and Mac.
 
 Agents should prefer:
 
@@ -92,14 +92,16 @@ Agents should prefer:
 -   glass‑style surfaces
 -   layered translucency and depth
 -   modern SwiftUI animations and interactions
+-   platform-native navigation, windowing, menus, and controls
 
 Avoid:
 
 -   skeuomorphic styling
--   legacy flat iOS design patterns
--   UIKit styling approaches
+-   legacy flat Apple platform design patterns
+-   UIKit or AppKit styling approaches unless required for a specific
+    platform capability
 
-UI should feel **native to modern iOS 26**.
+UI should feel **native to modern iOS 26, iPadOS 26, and macOS 26**.
 
 ------------------------------------------------------------------------
 
@@ -117,7 +119,14 @@ Prefer:
 -   @Observable
 -   @Environment
 
-Avoid introducing UIKit wrappers unless explicitly required.
+Avoid introducing UIKit or AppKit wrappers unless explicitly required.
+
+Prefer adaptive SwiftUI structure across targets:
+
+-   compact navigation for iPhone
+-   split views and sidebars for iPad where appropriate
+-   native Mac windows, toolbars, menus, keyboard shortcuts, and tables where
+    appropriate
 
 ------------------------------------------------------------------------
 
@@ -255,7 +264,7 @@ Prefer:
 -   TapGesture
 -   GestureState
 
-Avoid UIKit gesture recognizers unless necessary.
+Avoid UIKit or AppKit gesture recognizers unless necessary.
 
 ------------------------------------------------------------------------
 
@@ -324,5 +333,5 @@ Forbidden:
 Platform assumptions:
 
 -   **Swift 6**
--   **iOS 26+**
+-   **iOS 26+, iPadOS 26+, macOS 26+**
 -   **Liquid Glass UI**

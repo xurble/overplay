@@ -15,6 +15,7 @@
 		06E38A992FB5E0E200F0D393 /* AGENTS.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = AGENTS.md; sourceTree = "<group>"; };
 		06E38A9E2FB5E0F000F0D393 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
 		06E38A9F2FB5E0F000F0D393 /* Local.example.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Local.example.xcconfig; sourceTree = "<group>"; };
+		06E38AA02FB65E8700F0D393 /* OVERPLAY_DESIGN_SPEC.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = OVERPLAY_DESIGN_SPEC.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -40,6 +41,7 @@
 			isa = PBXGroup;
 			children = (
 				06E38A992FB5E0E200F0D393 /* AGENTS.md */,
+				06E38AA02FB65E8700F0D393 /* OVERPLAY_DESIGN_SPEC.md */,
 				06E38A9D2FB5E0F000F0D393 /* Config */,
 				06E38A8D2FB5E0C800F0D393 /* Overplay */,
 				06E38A8C2FB5E0C800F0D393 /* Products */,
