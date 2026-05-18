@@ -190,4 +190,27 @@ struct NewModelRepositoryTests {
         #expect(events.first?.source == .user)
         #expect(events.first?.remoteMutationStatus == .succeeded)
     }
+
+    @Test("triage playlist playback does not replace the one true playlist flow")
+    func triagePlaylistPlaybackDoesNotReplaceOneTruePlaylistFlow() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let controller = PlaybackController()
+        let settings = OverplaySettings(
+            selectedPlaylistID: "playlist-1",
+            selectedPlaylistName: "Main"
+        )
+        let triagePlaylist = PlaylistRecord(
+            musicPlaylistID: "playlist-2",
+            name: "Triage",
+            role: .triage
+        )
+        context.insert(settings)
+        context.insert(triagePlaylist)
+
+        await controller.playPlaylist(triagePlaylist, settings: settings, context: context)
+
+        #expect(controller.currentPlaylistID == nil)
+        #expect(controller.statusMessage == "Choose the One True Playlist to start playback.")
+    }
 }

@@ -69,6 +69,11 @@ struct SearchMusicView: View {
             return
         }
 
+        guard (try? PlaylistRepository.playlist(musicPlaylistID: playlistID, in: modelContext)?.role) != .triage else {
+            searchService.message = "Add songs to the One True Playlist from search."
+            return
+        }
+
         await searchService.addSong(id: result.id, toPlaylistID: playlistID)
         await syncPlaylistIfPossible(playlistID: playlistID)
     }

@@ -61,10 +61,20 @@ final class PlaybackController {
     }
 
     func playPlaylist(_ playlist: PlaylistRecord, settings: OverplaySettings, context: ModelContext) async {
+        guard playlist.role == .oneTruePlaylist else {
+            statusMessage = "Choose the One True Playlist to start playback."
+            return
+        }
+
         await playPlaylist(id: playlist.musicPlaylistID, context: context)
     }
 
     func playPlaylist(_ playlist: PlaylistRecord, startingAt track: TrackRecord, settings: OverplaySettings, context: ModelContext) async {
+        guard playlist.role == .oneTruePlaylist else {
+            statusMessage = "Choose the One True Playlist to start playback."
+            return
+        }
+
         await playPlaylist(id: playlist.musicPlaylistID, startingAt: track, context: context)
     }
 
