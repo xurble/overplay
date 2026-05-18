@@ -144,17 +144,17 @@ Verification:
 - Complete: Triage playlists can be added without affecting existing playback.
 - Complete: App target builds.
 
-## Step 10 - Restrict Automatic Eviction to the One True Playlist
+## Step 10 - Restrict Automatic Eviction to the One True Playlist - Complete
 
-- Update `EvictionEngine` to check playlist role before count-based eviction.
-- Continue tracking skips and playthroughs for triage playlists.
-- Allow manual eviction from any linked playlist.
+- Complete: Update `EvictionEngine` to check playlist role before count-based eviction.
+- Complete: Continue tracking skips and playthroughs for triage playlists.
+- Complete: Allow manual eviction from any linked playlist.
 
 Verification:
 
-- One True Playlist items can auto-evict.
-- Triage items do not auto-evict from skip count.
-- Eviction engine tests cover both roles.
+- Complete: One True Playlist items can auto-evict.
+- Complete: Triage items do not auto-evict from skip count.
+- Complete: Eviction engine tests cover both roles.
 
 ## Step 11 - Update Playback to Use Playlist Context
 
