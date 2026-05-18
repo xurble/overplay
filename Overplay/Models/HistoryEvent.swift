@@ -6,15 +6,30 @@ final class HistoryEvent {
     var id: UUID = UUID()
     var playlistID: UUID?
     var trackID: UUID?
-    var eventType: HistoryEventType = HistoryEventType.remoteMutation
-    var source: HistoryEventSource = HistoryEventSource.overplay
+    var eventTypeRawValue: String = HistoryEventType.remoteMutation.rawValue
+    var sourceRawValue: String = HistoryEventSource.overplay.rawValue
     var skipCountAtEvent: Int?
     var positionSeconds: Double?
     var durationSeconds: Double?
     var progressPercentage: Double?
-    var remoteMutationStatus: RemoteMutationStatus?
+    var remoteMutationStatusRawValue: String?
     var message: String?
     var createdAt: Date = Date()
+
+    var eventType: HistoryEventType {
+        get { HistoryEventType(rawValue: eventTypeRawValue) ?? .remoteMutation }
+        set { eventTypeRawValue = newValue.rawValue }
+    }
+
+    var source: HistoryEventSource {
+        get { HistoryEventSource(rawValue: sourceRawValue) ?? .overplay }
+        set { sourceRawValue = newValue.rawValue }
+    }
+
+    var remoteMutationStatus: RemoteMutationStatus? {
+        get { remoteMutationStatusRawValue.flatMap(RemoteMutationStatus.init(rawValue:)) }
+        set { remoteMutationStatusRawValue = newValue?.rawValue }
+    }
 
     init(
         id: UUID = UUID(),
@@ -33,13 +48,13 @@ final class HistoryEvent {
         self.id = id
         self.playlistID = playlistID
         self.trackID = trackID
-        self.eventType = eventType
-        self.source = source
+        self.eventTypeRawValue = eventType.rawValue
+        self.sourceRawValue = source.rawValue
         self.skipCountAtEvent = skipCountAtEvent
         self.positionSeconds = positionSeconds
         self.durationSeconds = durationSeconds
         self.progressPercentage = progressPercentage
-        self.remoteMutationStatus = remoteMutationStatus
+        self.remoteMutationStatusRawValue = remoteMutationStatus?.rawValue
         self.message = message
         self.createdAt = createdAt
     }

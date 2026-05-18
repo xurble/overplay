@@ -3,75 +3,188 @@ import SwiftUI
 
 struct DashboardView: View {
     @Environment(\.modelContext) private var modelContext
-    @Environment(PlaybackController.self) private var playbackController
 
     @Query(sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
     @Query(sort: \PlaylistItemRecord.createdAt) private var playlistItems: [PlaylistItemRecord]
 
     var settings: OverplaySettings
+
+    var body: some View {
+        List {
+            Section {
+                if let oneTruePlaylist {
+                    NavigationLink {
+                        PlaylistManagementView(settings: settings, playlist: oneTruePlaylist)
+                    } label: {
+                        PlaylistHomeRowView(
+                            title: oneTruePlaylist.name,
+                            detail: detailText(for: oneTruePlaylist),
+                            systemImage: "star.fill",
+                            tint: .pink
+                        )
+                    }
+                } else {
+                    NavigationLink {
+                        PlaylistSelectionView()
+                    } label: {
+                        PlaylistHomeRowView(
+                            title: "Link One True Playlist",
+                            detail: "Choose the main playlist Overplay manages.",
+                            systemImage: "star",
+                            tint: .pink
+                        )
+                    }
+                }
+            }
+
+            Section("Triage Playlists") {
+                ForEach(triagePlaylists) { playlist in
+                    NavigationLink {
+                        PlaylistManagementView(settings: settings, playlist: playlist)
+                    } label: {
+                        PlaylistHomeRowView(
+                            title: playlist.name,
+                            detail: detailText(for: playlist),
+                            systemImage: "tray.fill",
+                            tint: .teal
+                        )
+                    }
+                }
+                .onDelete(perform: deleteTriagePlaylists)
+
+                NavigationLink {
+                    PlaylistSelectionView()
+                } label: {
+                    Label(
+                        triagePlaylists.isEmpty ? "Link Triage Playlist" : "Link Another Triage Playlist",
+                        systemImage: "plus.circle"
+                    )
+                }
+            }
+        }
+        .navigationTitle("Overplay")
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                NavigationLink {
+                    SettingsView(settings: settings)
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+                .accessibilityLabel("Settings")
+            }
+        }
+    }
+
+    private var oneTruePlaylist: PlaylistRecord? {
+        if let playlistID = settings.selectedPlaylistID,
+           let playlist = playlists.first(where: { $0.musicPlaylistID == playlistID && $0.role == .oneTruePlaylist && $0.isActive }) {
+            return playlist
+        }
+
+        return playlists.first { $0.role == .oneTruePlaylist && $0.isActive }
+    }
+
+    private var triagePlaylists: [PlaylistRecord] {
+        playlists.filter { $0.role == .triage && $0.isActive }
+    }
+
+    private func detailText(for playlist: PlaylistRecord) -> String {
+        let activeCount = playlistItems.filter { $0.playlistID == playlist.id && $0.removedFromRemoteAt == nil }.count
+        let syncStatus = playlist.lastSyncedAt.map { "Synced \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Not synced"
+        return "\(activeCount) tracks - \(syncStatus)"
+    }
+
+    private func deleteTriagePlaylists(at offsets: IndexSet) {
+        for index in offsets {
+            let playlist = triagePlaylists[index]
+            try? PlaylistRepository.deactivateTriagePlaylist(playlist, in: modelContext)
+        }
+    }
+}
+
+private struct PlaylistHomeRowView: View {
+    var title: String
+    var detail: String
+    var systemImage: String
+    var tint: Color
+
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } icon: {
+            Image(systemName: systemImage)
+                .foregroundStyle(tint)
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+private struct PlaylistManagementView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(PlaybackController.self) private var playbackController
+
+    @Query(sort: \PlaylistItemRecord.createdAt) private var playlistItems: [PlaylistItemRecord]
+    @Query(sort: \TrackRecord.title) private var tracks: [TrackRecord]
+
+    var settings: OverplaySettings
+    var playlist: PlaylistRecord
+
     @State private var isSyncing = false
     @State private var message: String?
-    @State private var showNowPlaying = false
 
     var body: some View {
         List {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(settings.selectedPlaylistName ?? "No playlist selected")
+                    Label(roleTitle, systemImage: roleImage)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(roleTint)
+                    Text(playlist.name)
                         .font(.title2.bold())
-                    Text("Overplay tracks skips locally and keeps Apple Music playlist removal as a safe follow-up spike.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 4)
             }
 
             Section {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    StatCardView(title: "Known", value: "\(dashboardSummary.knownCount)", systemImage: "music.note.list", tint: .pink)
-                    StatCardView(title: "Playable", value: "\(dashboardSummary.playableCount)", systemImage: "play.circle.fill", tint: .green)
-                    StatCardView(title: "Evicted", value: "\(dashboardSummary.evictedCount)", systemImage: "trash.fill", tint: .red)
-                    StatCardView(title: "At risk", value: "\(dashboardSummary.atRiskCount)", systemImage: "exclamationmark.triangle.fill", tint: .orange)
+                    StatCardView(title: "Known", value: "\(summary.knownCount)", systemImage: "music.note.list", tint: .pink)
+                    StatCardView(title: "Playable", value: "\(summary.playableCount)", systemImage: "play.circle.fill", tint: .green)
+                    StatCardView(title: "Evicted", value: "\(summary.evictedCount)", systemImage: "trash.fill", tint: .red)
+                    StatCardView(title: "At risk", value: "\(summary.atRiskCount)", systemImage: "exclamationmark.triangle.fill", tint: .orange)
                 }
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
             }
 
-            Section {
-                Button {
-                    Task {
-                        await playbackController.playPlaylist(settings: settings, context: modelContext)
-                        showNowPlaying = true
+            Section("Tracks") {
+                if orderedItems.isEmpty {
+                    ContentUnavailableView(
+                        "No Tracks",
+                        systemImage: "music.note.list",
+                        description: Text("Sync this playlist to load its tracks.")
+                    )
+                }
+
+                ForEach(orderedItems) { item in
+                    if let track = track(for: item) {
+                        Button {
+                            Task { await play(item, track: track) }
+                        } label: {
+                            PlaylistTrackRowView(
+                                track: track,
+                                item: item,
+                                isCurrent: isCurrentTrack(track)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!item.isPlayable)
                     }
-                } label: {
-                    Label("Play Overplay", systemImage: "play.fill")
-                }
-                .disabled(settings.selectedPlaylistID == nil)
-
-                Button {
-                    Task { await syncPlaylist() }
-                } label: {
-                    Label(isSyncing ? "Syncing Playlist" : "Sync Playlist", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .disabled(settings.selectedPlaylistID == nil || isSyncing)
-
-                NavigationLink {
-                    SearchMusicView(settings: settings)
-                } label: {
-                    Label("Search Apple Music", systemImage: "magnifyingglass")
-                }
-                .disabled(settings.selectedPlaylistID == nil)
-
-                NavigationLink {
-                    SettingsView(settings: settings)
-                } label: {
-                    Label("Settings", systemImage: "gearshape.fill")
-                }
-
-                NavigationLink {
-                    EvictionHistoryView()
-                } label: {
-                    Label("Eviction History", systemImage: "clock.arrow.circlepath")
                 }
             }
 
@@ -82,46 +195,195 @@ struct DashboardView: View {
                 }
             }
         }
-        .navigationTitle("Overplay")
+        .navigationTitle("Playlist")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            NavigationLink {
-                PlaylistSelectionView()
-            } label: {
-                Image(systemName: "music.note.list")
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button {
+                        Task { await playPlaylist() }
+                    } label: {
+                        Label(playButtonTitle, systemImage: "play.fill")
+                    }
+
+                    Button {
+                        Task { await syncPlaylist() }
+                    } label: {
+                        Label(isSyncing ? "Syncing" : "Sync", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(isSyncing)
+
+                    Divider()
+
+                    NavigationLink {
+                        SearchMusicView(settings: settings, playlistID: playlist.musicPlaylistID)
+                    } label: {
+                        Label("Search Apple Music", systemImage: "magnifyingglass")
+                    }
+
+                    NavigationLink {
+                        EvictionHistoryView()
+                    } label: {
+                        Label("Eviction History", systemImage: "clock.arrow.circlepath")
+                    }
+
+                    NavigationLink {
+                        PlaylistSelectionView()
+                    } label: {
+                        Label("Manage Links", systemImage: "music.note.list")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .accessibilityLabel("Playlist Controls")
             }
-            .accessibilityLabel("Change playlist")
-        }
-        .navigationDestination(isPresented: $showNowPlaying) {
-            NowPlayingView(settings: settings)
         }
     }
 
-    private var selectedPlaylist: PlaylistRecord? {
-        guard let playlistID = settings.selectedPlaylistID else { return nil }
-        return playlists.first { $0.musicPlaylistID == playlistID && $0.role == .oneTruePlaylist }
+    private var visibleItems: [PlaylistItemRecord] {
+        playlistItems.filter { $0.playlistID == playlist.id }
     }
 
-    private var selectedPlaylistItems: [PlaylistItemRecord] {
-        guard let selectedPlaylist else { return [] }
-        return playlistItems.filter { $0.playlistID == selectedPlaylist.id }
+    private var orderedItems: [PlaylistItemRecord] {
+        visibleItems.sorted { $0.createdAt < $1.createdAt }
     }
 
-    private var dashboardSummary: DashboardSummary {
-        DashboardSummary(items: selectedPlaylistItems, evictAfterSkips: settings.evictAfterSkips)
+    private var tracksByID: [UUID: TrackRecord] {
+        Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
+    }
+
+    private func track(for item: PlaylistItemRecord) -> TrackRecord? {
+        tracksByID[item.trackID]
+    }
+
+    private var summary: DashboardSummary {
+        DashboardSummary(items: visibleItems, evictAfterSkips: settings.evictAfterSkips)
+    }
+
+    private var roleTitle: String {
+        switch playlist.role {
+        case .oneTruePlaylist:
+            "One True Playlist"
+        case .triage:
+            "Triage Playlist"
+        }
+    }
+
+    private var roleImage: String {
+        switch playlist.role {
+        case .oneTruePlaylist:
+            "star.fill"
+        case .triage:
+            "tray.fill"
+        }
+    }
+
+    private var roleTint: Color {
+        switch playlist.role {
+        case .oneTruePlaylist:
+            .pink
+        case .triage:
+            .teal
+        }
+    }
+
+    private var playButtonTitle: String {
+        playbackController.isCurrentPlaylist(playlist) ? "Playing" : "Play"
+    }
+
+    private func isCurrentTrack(_ track: TrackRecord) -> Bool {
+        playbackController.currentTrack?.id == track.catalogID || playbackController.currentTrack?.id == track.libraryID
+    }
+
+    private func play(_ item: PlaylistItemRecord, track: TrackRecord) async {
+        guard item.isPlayable else { return }
+        await playbackController.playPlaylist(playlist, startingAt: track, settings: settings, context: modelContext)
+    }
+
+    private func playPlaylist() async {
+        if playbackController.isCurrentPlaylist(playlist) {
+            return
+        }
+
+        await playbackController.playPlaylist(playlist, settings: settings, context: modelContext)
     }
 
     private func syncPlaylist() async {
-        guard let playlistID = settings.selectedPlaylistID else { return }
         isSyncing = true
         defer { isSyncing = false }
 
         do {
-            let count = try await PlaylistSyncService().syncPlaylist(id: playlistID, in: modelContext)
+            let count = try await PlaylistSyncService().syncPlaylist(playlist, in: modelContext)
             try? LegacyModelMigration.migrate(in: modelContext)
-            message = "Synced \(count) tracks."
+            message = "Synced \(count) tracks from \(playlist.name)."
         } catch {
             message = error.localizedDescription
         }
+    }
+}
+
+private struct PlaylistTrackRowView: View {
+    var track: TrackRecord
+    var item: PlaylistItemRecord
+    var isCurrent: Bool
+
+    var body: some View {
+        Label {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(track.title)
+                        .font(.headline)
+                        .foregroundStyle(item.isPlayable ? .primary : .secondary)
+                    Text(trackSubtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                if item.skipCount > 0 {
+                    Text("\(item.skipCount) skips")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        } icon: {
+            Image(systemName: rowImage)
+                .foregroundStyle(rowTint)
+        }
+        .contentShape(Rectangle())
+        .padding(.vertical, 4)
+    }
+
+    private var trackSubtitle: String {
+        if let albumTitle = track.albumTitle, !albumTitle.isEmpty {
+            return "\(track.artistName) - \(albumTitle)"
+        }
+
+        return track.artistName
+    }
+
+    private var rowImage: String {
+        if isCurrent {
+            return "play.fill"
+        }
+        if item.evictedAt != nil {
+            return "trash.fill"
+        }
+        if item.removedFromRemoteAt != nil {
+            return "xmark.circle.fill"
+        }
+        return "music.note"
+    }
+
+    private var rowTint: Color {
+        if isCurrent {
+            return .green
+        }
+        if item.isPlayable {
+            return .pink
+        }
+        return .secondary
     }
 }
 

@@ -67,6 +67,9 @@ final class MusicAuthorizationService {
     var isLoading = false
 
     func refresh() async {
+#if targetEnvironment(simulator)
+        readiness = .authorized(canPlayCatalogContent: true, hasCloudLibraryEnabled: true)
+#else
         isLoading = true
         defer { isLoading = false }
 
@@ -83,9 +86,13 @@ final class MusicAuthorizationService {
         @unknown default:
             readiness = .failed("Overplay received an unknown Apple Music authorization state.")
         }
+#endif
     }
 
     func requestAccess() async {
+#if targetEnvironment(simulator)
+        readiness = .authorized(canPlayCatalogContent: true, hasCloudLibraryEnabled: true)
+#else
         isLoading = true
         let status = await MusicAuthorization.request()
         isLoading = false
@@ -102,6 +109,7 @@ final class MusicAuthorizationService {
         @unknown default:
             readiness = .failed("Overplay received an unknown Apple Music authorization state.")
         }
+#endif
     }
 
     private func refreshSubscription() async {

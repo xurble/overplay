@@ -14,11 +14,21 @@ final class PlaylistItemRecord {
     var lastSeenInPlaylistAt: Date?
     var removedFromRemoteAt: Date?
     var evictedAt: Date?
-    var evictionReason: EvictionReason?
-    var evictionSource: EvictionSource?
+    var evictionReasonRawValue: String?
+    var evictionSourceRawValue: String?
     var protected: Bool = false
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
+
+    var evictionReason: EvictionReason? {
+        get { evictionReasonRawValue.flatMap(EvictionReason.init(rawValue:)) }
+        set { evictionReasonRawValue = newValue?.rawValue }
+    }
+
+    var evictionSource: EvictionSource? {
+        get { evictionSourceRawValue.flatMap(EvictionSource.init(rawValue:)) }
+        set { evictionSourceRawValue = newValue?.rawValue }
+    }
 
     init(
         id: UUID = UUID(),
@@ -49,8 +59,8 @@ final class PlaylistItemRecord {
         self.lastSeenInPlaylistAt = lastSeenInPlaylistAt
         self.removedFromRemoteAt = removedFromRemoteAt
         self.evictedAt = evictedAt
-        self.evictionReason = evictionReason
-        self.evictionSource = evictionSource
+        self.evictionReasonRawValue = evictionReason?.rawValue
+        self.evictionSourceRawValue = evictionSource?.rawValue
         self.protected = protected
         self.createdAt = createdAt
         self.updatedAt = updatedAt

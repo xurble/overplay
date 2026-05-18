@@ -10,6 +10,7 @@ final class PlaybackController {
     var elapsedSeconds: Double = 0
     var durationSeconds: Double?
     var isPlaying = false
+    var currentPlaylistID: String?
     var statusMessage: String?
 
     @ObservationIgnored private let player = ApplicationMusicPlayer.shared
@@ -19,6 +20,10 @@ final class PlaybackController {
     var progress: Double {
         guard let durationSeconds, durationSeconds > 0 else { return 0 }
         return min(elapsedSeconds / durationSeconds, 1)
+    }
+
+    var canControlPlayback: Bool {
+        currentPlaylistID != nil && currentTrack != nil
     }
 
     var shuffleEnabled: Bool {
@@ -52,6 +57,26 @@ final class PlaybackController {
             return
         }
 
+        await playPlaylist(id: playlistID, context: context)
+    }
+
+    func playPlaylist(_ playlist: PlaylistRecord, settings: OverplaySettings, context: ModelContext) async {
+        await playPlaylist(id: playlist.musicPlaylistID, context: context)
+    }
+
+    func playPlaylist(_ playlist: PlaylistRecord, startingAt track: TrackRecord, settings: OverplaySettings, context: ModelContext) async {
+        await playPlaylist(id: playlist.musicPlaylistID, startingAt: track, context: context)
+    }
+
+    func isCurrentPlaylist(_ playlist: PlaylistRecord) -> Bool {
+        currentPlaylistID == playlist.musicPlaylistID && currentTrack != nil
+    }
+
+    private func playPlaylist(id playlistID: String, context: ModelContext) async {
+        await playPlaylist(id: playlistID, startingAt: nil, context: context)
+    }
+
+    private func playPlaylist(id playlistID: String, startingAt trackRecord: TrackRecord?, context: ModelContext) async {
         do {
             let tracks = try await PlaylistSyncService().playableMusicTracks(for: playlistID, in: context)
             guard !tracks.isEmpty else {
@@ -64,8 +89,20 @@ final class PlaybackController {
             }
             try context.save()
 
-            player.queue = ApplicationMusicPlayer.Queue(for: tracks)
+            let startingTrack = trackRecord.flatMap { record in
+                tracks.first { track in
+                    track.id.rawValue == record.catalogID || track.id.rawValue == record.libraryID
+                }
+            }
+
+            if trackRecord != nil && startingTrack == nil {
+                statusMessage = "That track is not playable in this playlist."
+                return
+            }
+
+            player.queue = ApplicationMusicPlayer.Queue(for: tracks, startingAt: startingTrack)
             try await player.play()
+            currentPlaylistID = playlistID
             statusMessage = nil
             await refresh(context: context)
         } catch {
@@ -225,6 +262,7 @@ final class PlaybackController {
             currentTrack = nil
             durationSeconds = nil
             activeSession = nil
+            currentPlaylistID = nil
         }
 
         NowPlayingMetadataService.update(track: currentTrack, elapsed: elapsedSeconds, isPlaying: isPlaying)

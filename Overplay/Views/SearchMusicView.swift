@@ -5,6 +5,7 @@ struct SearchMusicView: View {
     @Environment(\.modelContext) private var modelContext
 
     var settings: OverplaySettings
+    var playlistID: String?
     @State private var searchText = ""
     @State private var searchService = SearchService()
     @State private var isSyncing = false
@@ -63,7 +64,7 @@ struct SearchMusicView: View {
     }
 
     private func add(_ result: SearchSongResult) async {
-        guard let playlistID = settings.selectedPlaylistID else {
+        guard let playlistID = playlistID ?? settings.selectedPlaylistID else {
             searchService.message = "Choose a monitored playlist before adding songs."
             return
         }

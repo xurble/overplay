@@ -84,4 +84,11 @@ enum PlaylistRepository {
             in: context
         )
     }
+
+    static func deactivateTriagePlaylist(_ playlist: PlaylistRecord, in context: ModelContext) throws {
+        guard playlist.role == .triage else { return }
+        playlist.isActive = false
+        playlist.updatedAt = .now
+        try context.save()
+    }
 }

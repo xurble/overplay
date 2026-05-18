@@ -76,6 +76,23 @@ struct NewModelRepositoryTests {
         #expect(triagePlaylist?.role == .triage)
     }
 
+    @Test("deactivating triage playlist hides it from active playlists")
+    func deactivatingTriagePlaylistHidesItFromActivePlaylists() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+
+        let playlist = try PlaylistRepository.addTriagePlaylist(
+            AppleMusicPlaylist(id: "playlist-2", name: "Triage", trackCount: 12),
+            in: context
+        )
+        try PlaylistRepository.deactivateTriagePlaylist(playlist, in: context)
+        let activePlaylists = try PlaylistRepository.activePlaylists(in: context)
+        let fetchedPlaylist = try PlaylistRepository.playlist(musicPlaylistID: "playlist-2", in: context)
+
+        #expect(activePlaylists.isEmpty)
+        #expect(fetchedPlaylist?.isActive == false)
+    }
+
     @Test("track record upsert creates then updates without changing identity")
     func trackRecordUpsertCreatesThenUpdatesWithoutChangingIdentity() throws {
         let container = try OverplayTestSupport.makeModelContainer()

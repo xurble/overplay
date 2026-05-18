@@ -4,6 +4,7 @@ import SwiftUI
 struct PlaylistSelectionView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(PlaybackController.self) private var playbackController
 
     @Query(sort: \PlaylistRecord.name) private var linkedPlaylists: [PlaylistRecord]
     @Query(sort: \PlaylistItemRecord.createdAt) private var playlistItems: [PlaylistItemRecord]
@@ -88,7 +89,7 @@ struct PlaylistSelectionView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Label(roleTitle(for: playlist.role), systemImage: roleImage(for: playlist.role))
+                Label(roleTitle(for: playlist.role), systemImage: roleImage(for: playlist))
                     .font(.caption)
                     .foregroundStyle(playlist.role == .oneTruePlaylist ? .pink : .secondary)
             }
@@ -169,8 +170,12 @@ struct PlaylistSelectionView: View {
         }
     }
 
-    private func roleImage(for role: PlaylistRole) -> String {
-        switch role {
+    private func roleImage(for playlist: PlaylistRecord) -> String {
+        if playbackController.isCurrentPlaylist(playlist) {
+            return "play.fill"
+        }
+
+        return switch playlist.role {
         case .oneTruePlaylist:
             "star.fill"
         case .triage:
@@ -251,4 +256,5 @@ struct PlaylistSelectionView: View {
         PlaylistSelectionView()
     }
     .modelContainer(PreviewContainer.make())
+    .environment(PlaybackController())
 }

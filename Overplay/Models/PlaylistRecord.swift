@@ -6,13 +6,18 @@ final class PlaylistRecord {
     var id: UUID = UUID()
     var musicPlaylistID: String = ""
     var name: String = ""
-    var role: PlaylistRole = PlaylistRole.triage
+    var roleRawValue: String = PlaylistRole.triage.rawValue
     var isActive: Bool = true
     var lastSyncedAt: Date?
     var lastSyncError: String?
     var sortOrder: Int = 0
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
+
+    var role: PlaylistRole {
+        get { PlaylistRole(rawValue: roleRawValue) ?? .triage }
+        set { roleRawValue = newValue.rawValue }
+    }
 
     init(
         id: UUID = UUID(),
@@ -29,7 +34,7 @@ final class PlaylistRecord {
         self.id = id
         self.musicPlaylistID = musicPlaylistID
         self.name = name
-        self.role = role
+        self.roleRawValue = role.rawValue
         self.isActive = isActive
         self.lastSyncedAt = lastSyncedAt
         self.lastSyncError = lastSyncError
