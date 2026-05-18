@@ -136,6 +136,7 @@ private struct PlaylistManagementView: View {
     var playlist: PlaylistRecord
 
     @State private var isSyncing = false
+    @State private var promotingItemIDs = Set<UUID>()
     @State private var message: String?
 
     var body: some View {
@@ -184,6 +185,17 @@ private struct PlaylistManagementView: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(!item.isPlayable)
+                        .swipeActions(edge: .trailing) {
+                            if playlist.role == .triage, item.isPlayable {
+                                Button {
+                                    Task { await promote(item, track: track) }
+                                } label: {
+                                    Label("Promote", systemImage: "star.fill")
+                                }
+                                .tint(.pink)
+                                .disabled(promotingItemIDs.contains(item.id))
+                            }
+                        }
                     }
                 }
             }
@@ -318,6 +330,19 @@ private struct PlaylistManagementView: View {
             let count = try await PlaylistSyncService().syncPlaylist(playlist, in: modelContext)
             try? LegacyModelMigration.migrate(in: modelContext)
             message = "Synced \(count) tracks from \(playlist.name)."
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    private func promote(_ item: PlaylistItemRecord, track: TrackRecord) async {
+        guard playlist.role == .triage else { return }
+        promotingItemIDs.insert(item.id)
+        defer { promotingItemIDs.remove(item.id) }
+
+        do {
+            _ = try await PlaylistMutationService().promote(item: item, in: modelContext)
+            message = "Promoted \(track.title)."
         } catch {
             message = error.localizedDescription
         }

@@ -169,19 +169,19 @@ Verification:
 - Complete: Triage playlist playback works.
 - Complete: Playback queue filtering tests pass.
 
-## Step 12 - Add Promotion Flow
+## Step 12 - Add Promotion Flow - Complete
 
-- Add `PlaylistMutationService.promote(item:)`.
-- Add the track to the Apple Music One True Playlist when possible.
-- Create or reactivate the local One True Playlist item on success.
-- Preserve source triage stats and history.
-- Record a promotion history event.
+- Complete: Add `PlaylistMutationService.promote(item:)`.
+- Complete: Add the track to the Apple Music One True Playlist when possible.
+- Complete: Create or reactivate the local One True Playlist item on success.
+- Complete: Preserve source triage stats and history.
+- Complete: Record a promotion history event.
 
 Verification:
 
-- Promotion succeeds or fails visibly.
-- Failed promotion does not corrupt local state.
-- Promotion tests cover local state transitions.
+- Complete: Promotion succeeds or fails visibly.
+- Complete: Failed promotion does not corrupt local state.
+- Complete: Promotion tests cover local state transitions.
 
 ## Step 13 - Update Search and Manual Add
 
