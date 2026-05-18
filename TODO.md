@@ -156,18 +156,18 @@ Verification:
 - Complete: Triage items do not auto-evict from skip count.
 - Complete: Eviction engine tests cover both roles.
 
-## Step 11 - Update Playback to Use Playlist Context
+## Step 11 - Update Playback to Use Playlist Context - Complete
 
-- Change playback entry points to accept a linked playlist.
-- Build queues from active, non-evicted, non-removed playlist items.
-- Preserve device-local playback/session state.
-- Keep current One True Playlist playback button working.
+- Complete: Change playback entry points to accept a linked playlist.
+- Complete: Build queues from active, non-evicted, non-removed playlist items.
+- Complete: Preserve device-local playback/session state.
+- Complete: Keep current One True Playlist playback button working.
 
 Verification:
 
-- One True Playlist playback still works.
-- Triage playlist playback works.
-- Playback queue filtering tests pass.
+- Complete: One True Playlist playback still works.
+- Complete: Triage playlist playback works.
+- Complete: Playback queue filtering tests pass.
 
 ## Step 12 - Add Promotion Flow
 

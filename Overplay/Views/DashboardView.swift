@@ -183,7 +183,7 @@ private struct PlaylistManagementView: View {
                             )
                         }
                         .buttonStyle(.plain)
-                        .disabled(!item.isPlayable || !canPlayPlaylist)
+                        .disabled(!item.isPlayable)
                     }
                 }
             }
@@ -205,7 +205,6 @@ private struct PlaylistManagementView: View {
                     } label: {
                         Label(playButtonTitle, systemImage: "play.fill")
                     }
-                    .disabled(!canPlayPlaylist)
 
                     Button {
                         Task { await syncPlaylist() }
@@ -294,22 +293,16 @@ private struct PlaylistManagementView: View {
         playbackController.isCurrentPlaylist(playlist) ? "Playing" : "Play"
     }
 
-    private var canPlayPlaylist: Bool {
-        playlist.role == .oneTruePlaylist
-    }
-
     private func isCurrentTrack(_ track: TrackRecord) -> Bool {
         playbackController.currentTrack?.id == track.catalogID || playbackController.currentTrack?.id == track.libraryID
     }
 
     private func play(_ item: PlaylistItemRecord, track: TrackRecord) async {
-        guard item.isPlayable, canPlayPlaylist else { return }
+        guard item.isPlayable else { return }
         await playbackController.playPlaylist(playlist, startingAt: track, settings: settings, context: modelContext)
     }
 
     private func playPlaylist() async {
-        guard canPlayPlaylist else { return }
-
         if playbackController.isCurrentPlaylist(playlist) {
             return
         }

@@ -7,6 +7,7 @@ import SwiftData
 @Observable
 final class PlaybackController {
     var currentTrack: TrackedTrack?
+    var currentPlaylistItem: PlaylistItemRecord?
     var elapsedSeconds: Double = 0
     var durationSeconds: Double?
     var isPlaying = false
@@ -57,25 +58,19 @@ final class PlaybackController {
             return
         }
 
-        await playPlaylist(id: playlistID, context: context)
+        if let playlist = try? PlaylistRepository.playlist(musicPlaylistID: playlistID, in: context) {
+            await playPlaylist(playlist, settings: settings, context: context)
+        } else {
+            await playPlaylist(id: playlistID, context: context)
+        }
     }
 
     func playPlaylist(_ playlist: PlaylistRecord, settings: OverplaySettings, context: ModelContext) async {
-        guard playlist.role == .oneTruePlaylist else {
-            statusMessage = "Choose the One True Playlist to start playback."
-            return
-        }
-
-        await playPlaylist(id: playlist.musicPlaylistID, context: context)
+        await playPlaylist(playlist, startingAt: nil, context: context)
     }
 
     func playPlaylist(_ playlist: PlaylistRecord, startingAt track: TrackRecord, settings: OverplaySettings, context: ModelContext) async {
-        guard playlist.role == .oneTruePlaylist else {
-            statusMessage = "Choose the One True Playlist to start playback."
-            return
-        }
-
-        await playPlaylist(id: playlist.musicPlaylistID, startingAt: track, context: context)
+        await playPlaylist(playlist, startingAt: track, context: context)
     }
 
     func isCurrentPlaylist(_ playlist: PlaylistRecord) -> Bool {
@@ -83,7 +78,46 @@ final class PlaybackController {
     }
 
     private func playPlaylist(id playlistID: String, context: ModelContext) async {
+        if let playlist = try? PlaylistRepository.playlist(musicPlaylistID: playlistID, in: context) {
+            await playPlaylist(playlist, startingAt: nil, context: context)
+            return
+        }
+
         await playPlaylist(id: playlistID, startingAt: nil, context: context)
+    }
+
+    private func playPlaylist(_ playlist: PlaylistRecord, startingAt trackRecord: TrackRecord?, context: ModelContext) async {
+        do {
+            let tracks = try await PlaylistSyncService().playableMusicTracks(for: playlist, in: context)
+            guard !tracks.isEmpty else {
+                statusMessage = "No playable tracks remain after local evictions."
+                return
+            }
+
+            for track in tracks {
+                try TrackRepository.upsert(snapshot(from: track, playlistID: playlist.musicPlaylistID), in: context)
+            }
+            try context.save()
+
+            let startingTrack = trackRecord.flatMap { record in
+                tracks.first { track in
+                    track.id.rawValue == record.catalogID || track.id.rawValue == record.libraryID
+                }
+            }
+
+            if trackRecord != nil && startingTrack == nil {
+                statusMessage = "That track is not playable in this playlist."
+                return
+            }
+
+            player.queue = ApplicationMusicPlayer.Queue(for: tracks, startingAt: startingTrack)
+            try await player.play()
+            currentPlaylistID = playlist.musicPlaylistID
+            statusMessage = nil
+            await refresh(context: context)
+        } catch {
+            statusMessage = error.localizedDescription
+        }
     }
 
     private func playPlaylist(id playlistID: String, startingAt trackRecord: TrackRecord?, context: ModelContext) async {
@@ -170,12 +204,48 @@ final class PlaybackController {
     }
 
     func keepCurrent(settings: OverplaySettings, context: ModelContext) {
+        if let item = currentPlaylistItem,
+           let playlist = try? currentPlaylist(in: context) {
+            item.skipCount = 0
+            if settings.protectKeptTracks {
+                item.protected = true
+            }
+            item.updatedAt = .now
+            EventRepository.logHistory(
+                playlistID: playlist.id,
+                trackID: item.trackID,
+                eventType: .skipIgnored,
+                source: .user,
+                skipCountAtEvent: item.skipCount,
+                message: "Kept by user",
+                in: context
+            )
+            try? context.save()
+            return
+        }
+
         guard let currentTrack else { return }
         EvictionEngine.keep(currentTrack, settings: settings, context: context)
         try? context.save()
     }
 
     func evictCurrent(settings: OverplaySettings, context: ModelContext) async {
+        if let item = currentPlaylistItem,
+           let playlist = try? currentPlaylist(in: context) {
+            EvictionEngine.evict(
+                item,
+                playlist: playlist,
+                reason: .manual,
+                source: .user,
+                message: "Evicted manually",
+                context: context
+            )
+            try? context.save()
+            await removeEvictedItemFromPlaylist(item, playlist: playlist, context: context)
+            await next(settings: settings, context: context)
+            return
+        }
+
         guard let currentTrack else { return }
         EvictionEngine.evict(currentTrack, reason: "Evicted manually", context: context)
         try? context.save()
@@ -246,10 +316,11 @@ final class PlaybackController {
         if let newTrackID {
             currentTrack = try? TrackRepository.track(id: newTrackID, in: context)
             if currentTrack == nil,
-               let snapshot = snapshot(from: player.queue.currentEntry?.item, playlistID: try? SettingsRepository.settings(in: context).selectedPlaylistID) {
+               let snapshot = snapshot(from: player.queue.currentEntry?.item, playlistID: currentPlaylistID ?? (try? SettingsRepository.settings(in: context).selectedPlaylistID)) {
                 currentTrack = try? TrackRepository.upsert(snapshot, in: context)
                 try? context.save()
             }
+            currentPlaylistItem = try? playlistItem(matching: newTrackID, context: context)
             durationSeconds = currentTrack?.durationSeconds
 
             if activeSession?.trackID != newTrackID {
@@ -270,6 +341,7 @@ final class PlaybackController {
             evaluatePlaythroughIfNeeded(context: context)
         } else {
             currentTrack = nil
+            currentPlaylistItem = nil
             durationSeconds = nil
             activeSession = nil
             currentPlaylistID = nil
@@ -283,6 +355,16 @@ final class PlaybackController {
         guard let settings = try? SettingsRepository.settings(in: context) else { return }
         guard let progress = session.progressPercentage else { return }
         guard progress >= settings.playthroughThresholdPercentage else { return }
+        if let item = currentPlaylistItem,
+           let playlist = try? currentPlaylist(in: context),
+           item.evictedAt == nil {
+            EvictionEngine.countPlaythrough(item, playlist: playlist, session: session, settings: settings, context: context)
+            session.hasEvaluated = true
+            activeSession = session
+            try? context.save()
+            return
+        }
+
         guard let track = currentTrack, !track.isEvicted else { return }
 
         EvictionEngine.countPlaythrough(track, session: session, settings: settings, context: context)
@@ -303,11 +385,47 @@ final class PlaybackController {
         }
     }
 
+    private func removeEvictedItemFromPlaylist(_ item: PlaylistItemRecord, playlist: PlaylistRecord, context: ModelContext) async {
+        guard item.evictedAt != nil else { return }
+        let trackID = currentTrack?.id
+            ?? (try? TrackRecordRepository.track(id: item.trackID, in: context)?.catalogID)
+            ?? (try? TrackRecordRepository.track(id: item.trackID, in: context)?.libraryID)
+        guard let trackID else { return }
+
+        do {
+            try await PlaylistSyncService().removeTrackFromPlaylist(trackID: trackID, playlistID: playlist.musicPlaylistID)
+            statusMessage = "Removed \(currentTrack?.title ?? "track") from the Apple Music playlist."
+        } catch {
+            statusMessage = "Evicted locally, but Apple Music playlist removal failed: \(error.localizedDescription)"
+        }
+    }
+
     private func evaluateActiveSession(settings: OverplaySettings, context: ModelContext, naturalCompletion: Bool) async {
         guard var session = activeSession else { return }
         session.lastObservedPlaybackTime = elapsedSeconds
         session.durationSeconds = durationSeconds
         do {
+            if let item = currentPlaylistItem,
+               let playlist = try currentPlaylist(in: context) {
+                let wasEvicted = item.evictedAt != nil
+                EvictionEngine.evaluateSkip(
+                    item: item,
+                    playlist: playlist,
+                    session: session,
+                    transitionWasNaturalCompletion: naturalCompletion,
+                    settings: settings,
+                    context: context
+                )
+                session.hasEvaluated = true
+                activeSession = session
+                try context.save()
+
+                if !wasEvicted, item.evictedAt != nil {
+                    await removeEvictedItemFromPlaylist(item, playlist: playlist, context: context)
+                }
+                return
+            }
+
             let track = try TrackRepository.track(id: session.trackID, in: context)
             let wasEvicted = track?.isEvicted == true
 
@@ -327,5 +445,21 @@ final class PlaybackController {
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+
+    private func currentPlaylist(in context: ModelContext) throws -> PlaylistRecord? {
+        guard let currentPlaylistID else { return nil }
+        return try PlaylistRepository.playlist(musicPlaylistID: currentPlaylistID, in: context)
+    }
+
+    private func playlistItem(matching musicItemID: String, context: ModelContext) throws -> PlaylistItemRecord? {
+        guard let playlist = try currentPlaylist(in: context) else { return nil }
+        let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
+        let tracksByID = Dictionary(uniqueKeysWithValues: try TrackRecordRepository.allTracks(in: context).map { ($0.id, $0) })
+        return PlaybackQueueBuilder.playlistItem(
+            matching: musicItemID,
+            items: items,
+            tracksByID: tracksByID
+        )
     }
 }

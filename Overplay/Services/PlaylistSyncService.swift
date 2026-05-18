@@ -146,20 +146,32 @@ struct PlaylistSyncService {
     }
 
     func playableMusicTracks(for playlistID: String, in context: ModelContext) async throws -> [Track] {
+        if let playlistRecord = try PlaylistRepository.playlist(musicPlaylistID: playlistID, in: context) {
+            return try await playableMusicTracks(for: playlistRecord, in: context)
+        }
+
         let playlist = try await loadPlaylist(id: playlistID)
         let tracks = try await loadTracks(for: playlist)
-        let playlistRecord = try PlaylistRepository.playlist(musicPlaylistID: playlistID, in: context)
-        let removedOrEvictedIDs = try playlistRecord.map { record in
-            Set(try PlaylistItemRepository.items(forPlaylistID: record.id, in: context)
-                .filter { !$0.isPlayable }
-                .compactMap { item in
-                    try TrackRecordRepository.track(id: item.trackID, in: context)?.catalogID
-                })
-        } ?? []
         let legacyTracks = try TrackRepository.tracks(forPlaylistID: playlistID, in: context)
         let legacyEvictedIDs = Set(legacyTracks.filter(\.isEvicted).map(\.id))
-        let excludedIDs = removedOrEvictedIDs.union(legacyEvictedIDs)
-        return tracks.filter { !excludedIDs.contains($0.id.rawValue) }
+        return tracks.filter { !legacyEvictedIDs.contains($0.id.rawValue) }
+    }
+
+    func playableMusicTracks(for playlistRecord: PlaylistRecord, in context: ModelContext) async throws -> [Track] {
+        let items = try PlaylistItemRepository.items(forPlaylistID: playlistRecord.id, in: context)
+        let tracksByID = Dictionary(uniqueKeysWithValues: try TrackRecordRepository.allTracks(in: context).map { ($0.id, $0) })
+        let playableMusicItemIDs = PlaybackQueueBuilder.playableMusicItemIDs(
+            items: items,
+            tracksByID: tracksByID
+        )
+
+        guard !playableMusicItemIDs.isEmpty else {
+            return []
+        }
+
+        let playlist = try await loadPlaylist(id: playlistRecord.musicPlaylistID)
+        let tracks = try await loadTracks(for: playlist)
+        return tracks.filter { playableMusicItemIDs.contains($0.id.rawValue) }
     }
 
     func removeTrackFromPlaylist(trackID: String, playlistID: String) async throws {

@@ -191,8 +191,8 @@ struct NewModelRepositoryTests {
         #expect(events.first?.remoteMutationStatus == .succeeded)
     }
 
-    @Test("triage playlist playback does not replace the one true playlist flow")
-    func triagePlaylistPlaybackDoesNotReplaceOneTruePlaylistFlow() async throws {
+    @Test("triage playlist playback uses linked playlist state")
+    func triagePlaylistPlaybackUsesLinkedPlaylistState() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let controller = PlaybackController()
@@ -211,6 +211,6 @@ struct NewModelRepositoryTests {
         await controller.playPlaylist(triagePlaylist, settings: settings, context: context)
 
         #expect(controller.currentPlaylistID == nil)
-        #expect(controller.statusMessage == "Choose the One True Playlist to start playback.")
+        #expect(controller.statusMessage == "No playable tracks remain after local evictions.")
     }
 }
