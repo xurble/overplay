@@ -5,6 +5,7 @@ import SwiftData
 enum PlaylistMutationError: LocalizedError {
     case oneTruePlaylistMissing
     case sourcePlaylistMissing
+    case sourcePlaylistNotTriage
     case trackMissing
     case musicItemMissing
 
@@ -14,6 +15,8 @@ enum PlaylistMutationError: LocalizedError {
             "Choose a One True Playlist before promoting tracks."
         case .sourcePlaylistMissing:
             "The source playlist is no longer linked."
+        case .sourcePlaylistNotTriage:
+            "Only tracks from triage playlists can be promoted."
         case .trackMissing:
             "The track is no longer available locally."
         case .musicItemMissing:
@@ -31,6 +34,9 @@ struct PlaylistMutationService {
         }
         guard let sourcePlaylist = try PlaylistRepository.playlist(id: sourceItem.playlistID, in: context) else {
             throw PlaylistMutationError.sourcePlaylistMissing
+        }
+        guard sourcePlaylist.role == .triage else {
+            throw PlaylistMutationError.sourcePlaylistNotTriage
         }
         guard let track = try TrackRecordRepository.track(id: sourceItem.trackID, in: context) else {
             throw PlaylistMutationError.trackMissing
@@ -72,6 +78,10 @@ struct PlaylistMutationService {
         promotedAt: Date = .now,
         in context: ModelContext
     ) throws -> PlaylistItemRecord {
+        guard sourcePlaylist.role == .triage else {
+            throw PlaylistMutationError.sourcePlaylistNotTriage
+        }
+
         let promotedItem = try PlaylistItemRepository.upsert(
             playlistID: oneTruePlaylist.id,
             trackID: track.id,
@@ -96,6 +106,66 @@ struct PlaylistMutationService {
         )
 
         return promotedItem
+    }
+
+    @discardableResult
+    func recordSuccessfulManualAdd(
+        _ result: SearchSongResult,
+        to playlist: PlaylistRecord,
+        addedAt: Date = .now,
+        in context: ModelContext
+    ) throws -> PlaylistItemRecord {
+        let track = try TrackRecordRepository.upsert(
+            catalogID: result.id,
+            libraryID: result.id,
+            title: result.title,
+            artistName: result.artistName,
+            albumTitle: result.albumTitle,
+            artworkURLTemplate: result.artworkURL,
+            updatedAt: addedAt,
+            in: context
+        )
+        let item = try PlaylistItemRepository.upsert(
+            playlistID: playlist.id,
+            trackID: track.id,
+            in: context
+        )
+        item.removedFromRemoteAt = nil
+        item.evictedAt = nil
+        item.evictionReason = nil
+        item.evictionSource = nil
+        item.lastSeenInPlaylistAt = addedAt
+        item.updatedAt = addedAt
+
+        EventRepository.logHistory(
+            playlistID: playlist.id,
+            trackID: track.id,
+            eventType: .trackAdded,
+            source: .user,
+            remoteMutationStatus: .succeeded,
+            message: "Added to \(playlist.name)",
+            in: context
+        )
+
+        try context.save()
+        return item
+    }
+
+    func recordFailedManualAdd(
+        _ result: SearchSongResult,
+        to playlist: PlaylistRecord?,
+        message: String,
+        in context: ModelContext
+    ) {
+        EventRepository.logHistory(
+            playlistID: playlist?.id,
+            eventType: .remoteMutation,
+            source: .user,
+            remoteMutationStatus: .failed,
+            message: "Add failed for \(result.title): \(message)",
+            in: context
+        )
+        try? context.save()
     }
 
     private func add(track: TrackRecord, to playlistRecord: PlaylistRecord) async throws {

@@ -7,6 +7,7 @@ final class PlaylistItemRecord {
     var playlistID: UUID = UUID()
     var trackID: UUID = UUID()
     var musicPlaylistEntryID: String?
+    var sortOrder: Int = 0
     var skipCount: Int = 0
     var playthroughCount: Int = 0
     var lastPlayedAt: Date?
@@ -35,6 +36,7 @@ final class PlaylistItemRecord {
         playlistID: UUID,
         trackID: UUID,
         musicPlaylistEntryID: String? = nil,
+        sortOrder: Int = 0,
         skipCount: Int = 0,
         playthroughCount: Int = 0,
         lastPlayedAt: Date? = nil,
@@ -52,6 +54,7 @@ final class PlaylistItemRecord {
         self.playlistID = playlistID
         self.trackID = trackID
         self.musicPlaylistEntryID = musicPlaylistEntryID
+        self.sortOrder = sortOrder
         self.skipCount = skipCount
         self.playthroughCount = playthroughCount
         self.lastPlayedAt = lastPlayedAt

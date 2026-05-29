@@ -29,7 +29,9 @@ struct PlaylistSyncReconciliationTests {
 
         #expect(count == 2)
         #expect(try TrackRecordRepository.allTracks(in: context).count == 2)
-        #expect(try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context).count == 2)
+        let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
+        #expect(items.count == 2)
+        #expect(items.map(\.sortOrder) == [0, 1])
         #expect(playlist.lastSyncedAt == Date(timeIntervalSince1970: 100))
     }
 

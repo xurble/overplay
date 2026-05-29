@@ -108,7 +108,8 @@ struct NewModelRepositoryTests {
             artistName: "Sample Artist",
             albumTitle: "Original Album",
             artworkURLTemplate: nil,
-            durationSeconds: 180
+            durationSeconds: 180,
+            musicKitPlaybackData: Data("cached-playback".utf8)
         )
         let inserted = try TrackRecordRepository.upsert(firstSnapshot, in: context)
 
@@ -132,6 +133,7 @@ struct NewModelRepositoryTests {
         #expect(updated.title == "Updated")
         #expect(updated.albumTitle == "Updated Album")
         #expect(updated.durationSeconds == 210)
+        #expect(updated.musicKitPlaybackData == Data("cached-playback".utf8))
     }
 
     @Test("playlist item upsert creates then updates membership by playlist and track")
@@ -161,6 +163,39 @@ struct NewModelRepositoryTests {
         #expect(inserted.id == updated.id)
         #expect(updated.musicPlaylistEntryID == "entry-2")
         #expect(updated.skipCount == 2)
+    }
+
+    @Test("playlist items are returned in synced playlist order")
+    func playlistItemsAreReturnedInSyncedPlaylistOrder() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlistID = UUID()
+
+        let last = try PlaylistItemRepository.upsert(
+            playlistID: playlistID,
+            trackID: UUID(),
+            musicPlaylistEntryID: "entry-last",
+            sortOrder: 2,
+            in: context
+        )
+        let first = try PlaylistItemRepository.upsert(
+            playlistID: playlistID,
+            trackID: UUID(),
+            musicPlaylistEntryID: "entry-first",
+            sortOrder: 0,
+            in: context
+        )
+        let middle = try PlaylistItemRepository.upsert(
+            playlistID: playlistID,
+            trackID: UUID(),
+            musicPlaylistEntryID: "entry-middle",
+            sortOrder: 1,
+            in: context
+        )
+
+        let items = try PlaylistItemRepository.items(forPlaylistID: playlistID, in: context)
+
+        #expect(items.map(\.id) == [first.id, middle.id, last.id])
     }
 
     @Test("event repository writes history events")

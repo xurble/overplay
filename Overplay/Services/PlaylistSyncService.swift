@@ -89,12 +89,13 @@ struct PlaylistSyncService {
     ) throws -> Int {
         var seenTrackIDs = Set<UUID>()
 
-        for snapshot in snapshots {
+        for (sortOrder, snapshot) in snapshots.enumerated() {
             let track = try TrackRecordRepository.upsert(snapshot, in: context)
             let item = try PlaylistItemRepository.upsert(
                 playlistID: playlistRecord.id,
                 trackID: track.id,
                 musicPlaylistEntryID: snapshot.playlistEntryID,
+                sortOrder: sortOrder,
                 in: context
             )
             item.lastSeenInPlaylistAt = syncedAt
@@ -215,7 +216,8 @@ struct PlaylistSyncService {
             artistName: track.artistName,
             albumTitle: track.albumTitle,
             artworkURLTemplate: track.artwork?.url(width: 512, height: 512)?.absoluteString,
-            durationSeconds: track.duration
+            durationSeconds: track.duration,
+            musicKitPlaybackData: try? JSONEncoder().encode(track)
         )
     }
 }

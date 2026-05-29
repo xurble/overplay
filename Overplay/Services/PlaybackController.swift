@@ -88,33 +88,26 @@ final class PlaybackController {
 
     private func playPlaylist(_ playlist: PlaylistRecord, startingAt trackRecord: TrackRecord?, context: ModelContext) async {
         do {
+            let cachedTracks = try cachedPlayableMusicTracks(for: playlist, in: context)
+            if !cachedTracks.isEmpty {
+                try await startPlayback(
+                    tracks: cachedTracks,
+                    playlistID: playlist.musicPlaylistID,
+                    startingAt: trackRecord,
+                    context: context
+                )
+                refreshPlaylistInBackground(playlist, context: context)
+                return
+            }
+
             let tracks = try await PlaylistSyncService().playableMusicTracks(for: playlist, in: context)
-            guard !tracks.isEmpty else {
-                statusMessage = "No playable tracks remain after local evictions."
-                return
-            }
-
-            for track in tracks {
-                try TrackRepository.upsert(snapshot(from: track, playlistID: playlist.musicPlaylistID), in: context)
-            }
-            try context.save()
-
-            let startingTrack = trackRecord.flatMap { record in
-                tracks.first { track in
-                    track.id.rawValue == record.catalogID || track.id.rawValue == record.libraryID
-                }
-            }
-
-            if trackRecord != nil && startingTrack == nil {
-                statusMessage = "That track is not playable in this playlist."
-                return
-            }
-
-            player.queue = ApplicationMusicPlayer.Queue(for: tracks, startingAt: startingTrack)
-            try await player.play()
-            currentPlaylistID = playlist.musicPlaylistID
-            statusMessage = nil
-            await refresh(context: context)
+            try await startPlayback(
+                tracks: tracks,
+                playlistID: playlist.musicPlaylistID,
+                startingAt: trackRecord,
+                context: context
+            )
+            refreshPlaylistInBackground(playlist, context: context)
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -123,34 +116,66 @@ final class PlaybackController {
     private func playPlaylist(id playlistID: String, startingAt trackRecord: TrackRecord?, context: ModelContext) async {
         do {
             let tracks = try await PlaylistSyncService().playableMusicTracks(for: playlistID, in: context)
-            guard !tracks.isEmpty else {
-                statusMessage = "No playable tracks remain after local evictions."
-                return
-            }
-
-            for track in tracks {
-                try TrackRepository.upsert(snapshot(from: track, playlistID: playlistID), in: context)
-            }
-            try context.save()
-
-            let startingTrack = trackRecord.flatMap { record in
-                tracks.first { track in
-                    track.id.rawValue == record.catalogID || track.id.rawValue == record.libraryID
-                }
-            }
-
-            if trackRecord != nil && startingTrack == nil {
-                statusMessage = "That track is not playable in this playlist."
-                return
-            }
-
-            player.queue = ApplicationMusicPlayer.Queue(for: tracks, startingAt: startingTrack)
-            try await player.play()
-            currentPlaylistID = playlistID
-            statusMessage = nil
-            await refresh(context: context)
+            try await startPlayback(
+                tracks: tracks,
+                playlistID: playlistID,
+                startingAt: trackRecord,
+                context: context
+            )
         } catch {
             statusMessage = error.localizedDescription
+        }
+    }
+
+    private func cachedPlayableMusicTracks(for playlist: PlaylistRecord, in context: ModelContext) throws -> [Track] {
+        let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
+        let tracksByID = Dictionary(uniqueKeysWithValues: try TrackRecordRepository.allTracks(in: context).map { ($0.id, $0) })
+        return PlaybackQueueBuilder.cachedPlayableMusicTracks(items: items, tracksByID: tracksByID)
+    }
+
+    private func startPlayback(
+        tracks: [Track],
+        playlistID: String,
+        startingAt trackRecord: TrackRecord?,
+        context: ModelContext
+    ) async throws {
+        guard !tracks.isEmpty else {
+            statusMessage = "No playable tracks remain after local evictions."
+            return
+        }
+
+        for track in tracks {
+            try TrackRepository.upsert(snapshot(from: track, playlistID: playlistID), in: context)
+        }
+        try context.save()
+
+        let startingTrack = trackRecord.flatMap { record in
+            tracks.first { track in
+                track.id.rawValue == record.catalogID || track.id.rawValue == record.libraryID
+            }
+        }
+
+        if trackRecord != nil && startingTrack == nil {
+            statusMessage = "That track is not playable in this playlist."
+            return
+        }
+
+        player.queue = ApplicationMusicPlayer.Queue(for: tracks, startingAt: startingTrack)
+        try await player.play()
+        currentPlaylistID = playlistID
+        statusMessage = nil
+        await refresh(context: context)
+    }
+
+    private func refreshPlaylistInBackground(_ playlist: PlaylistRecord, context: ModelContext) {
+        Task(priority: .background) {
+            do {
+                _ = try await PlaylistSyncService().syncPlaylist(playlist, in: context)
+            } catch {
+                playlist.lastSyncError = error.localizedDescription
+                playlist.updatedAt = .now
+                try? context.save()
+            }
         }
     }
 

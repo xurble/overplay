@@ -4,7 +4,7 @@ import SwiftData
 enum PlaylistItemRepository {
     static func allItems(in context: ModelContext) throws -> [PlaylistItemRecord] {
         let descriptor = FetchDescriptor<PlaylistItemRecord>(
-            sortBy: [SortDescriptor(\.createdAt)]
+            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.createdAt)]
         )
         return try context.fetch(descriptor)
     }
@@ -34,6 +34,7 @@ enum PlaylistItemRepository {
         playlistID: UUID,
         trackID: UUID,
         musicPlaylistEntryID: String? = nil,
+        sortOrder: Int? = nil,
         in context: ModelContext
     ) throws -> PlaylistItemRecord {
         let item = try item(playlistID: playlistID, trackID: trackID, in: context) ?? PlaylistItemRecord(
@@ -46,6 +47,9 @@ enum PlaylistItemRepository {
         }
 
         item.musicPlaylistEntryID = musicPlaylistEntryID
+        if let sortOrder {
+            item.sortOrder = sortOrder
+        }
         item.updatedAt = .now
         return item
     }

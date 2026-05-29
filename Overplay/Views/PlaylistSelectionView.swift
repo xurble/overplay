@@ -198,6 +198,7 @@ struct PlaylistSelectionView: View {
     private func select(_ playlist: AppleMusicPlaylist) {
         do {
             try SettingsRepository.selectPlaylist(playlist, in: modelContext)
+            refreshPlaylistInBackground(id: playlist.id)
             dismiss()
         } catch {
             message = error.localizedDescription
@@ -220,6 +221,7 @@ struct PlaylistSelectionView: View {
                 AppleMusicPlaylist(id: playlist.musicPlaylistID, name: playlist.name, trackCount: nil),
                 in: modelContext
             )
+            refreshPlaylistInBackground(playlist)
             dismiss()
         } catch {
             message = error.localizedDescription
@@ -247,6 +249,28 @@ struct PlaylistSelectionView: View {
             message = "Synced \(count) tracks across linked playlists."
         } catch {
             message = error.localizedDescription
+        }
+    }
+
+    private func refreshPlaylistInBackground(_ playlist: PlaylistRecord) {
+        Task(priority: .background) {
+            do {
+                _ = try await PlaylistSyncService().syncPlaylist(playlist, in: modelContext)
+            } catch {
+                playlist.lastSyncError = error.localizedDescription
+                playlist.updatedAt = .now
+                try? modelContext.save()
+            }
+        }
+    }
+
+    private func refreshPlaylistInBackground(id playlistID: String) {
+        Task(priority: .background) {
+            do {
+                _ = try await PlaylistSyncService().syncPlaylist(id: playlistID, in: modelContext)
+            } catch {
+                message = error.localizedDescription
+            }
         }
     }
 }

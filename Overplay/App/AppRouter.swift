@@ -6,7 +6,7 @@ struct AppRouter: View {
     @Environment(MusicAuthorizationService.self) private var authorizationService
     @Environment(PlaybackController.self) private var playbackController
 
-    @Query private var settingsRecords: [OverplaySettings]
+    @Query(sort: \OverplaySettings.createdAt) private var settingsRecords: [OverplaySettings]
     @State private var remoteCommandService = RemoteCommandService()
     @State private var playerSheetDetent: PresentationDetent = .height(96)
 
@@ -38,10 +38,25 @@ struct AppRouter: View {
             }
         }
         .task {
-            _ = try? SettingsRepository.settings(in: modelContext)
-            await authorizationService.refresh()
-            playbackController.startMonitoring(context: modelContext)
-            remoteCommandService.install(playbackController: playbackController, context: modelContext)
+            do {
+                _ = try StartupProfiler.measure("Startup settings load") {
+                    try SettingsRepository.settings(in: modelContext)
+                }
+            } catch {
+                StartupProfiler.mark("Startup settings load failed: \(error.localizedDescription)")
+            }
+
+            await StartupProfiler.measure("Apple Music authorization refresh") {
+                await authorizationService.refresh()
+            }
+
+            StartupProfiler.measure("Playback monitoring startup") {
+                playbackController.startMonitoring(context: modelContext)
+            }
+
+            StartupProfiler.measure("Remote command startup") {
+                remoteCommandService.install(playbackController: playbackController, context: modelContext)
+            }
         }
     }
 

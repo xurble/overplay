@@ -38,23 +38,25 @@ struct OverplayApp: App {
     }
 
     private static func makeModelContainer() throws -> ModelContainer {
-        let schema = Self.schema
-        let configuration: ModelConfiguration
+        try StartupProfiler.measure("SwiftData model container") {
+            let schema = Self.schema
+            let configuration: ModelConfiguration
 
-        if isRunningTests {
-            configuration = ModelConfiguration(
-                schema: schema,
-                isStoredInMemoryOnly: true,
-                cloudKitDatabase: .none
-            )
-        } else {
-            configuration = ModelConfiguration(
-                schema: schema,
-                cloudKitDatabase: .private(Self.cloudKitContainerIdentifier)
-            )
+            if isRunningTests {
+                configuration = ModelConfiguration(
+                    schema: schema,
+                    isStoredInMemoryOnly: true,
+                    cloudKitDatabase: .none
+                )
+            } else {
+                configuration = ModelConfiguration(
+                    schema: schema,
+                    cloudKitDatabase: .private(Self.cloudKitContainerIdentifier)
+                )
+            }
+
+            return try ModelContainer(for: schema, configurations: [configuration])
         }
-
-        return try ModelContainer(for: schema, configurations: [configuration])
     }
 
     private let modelContainer: ModelContainer
@@ -66,7 +68,13 @@ struct OverplayApp: App {
             fatalError("Could not create Overplay model container: \(error)")
         }
 
-        try? LegacyModelMigration.migrate(in: modelContainer.mainContext)
+        do {
+            try StartupProfiler.measure("Legacy model migration") {
+                try LegacyModelMigration.migrate(in: modelContainer.mainContext)
+            }
+        } catch {
+            StartupProfiler.mark("Legacy model migration failed: \(error.localizedDescription)")
+        }
     }
 
     var body: some Scene {

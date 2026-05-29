@@ -35,6 +35,7 @@ enum TrackRecordRepository {
             albumTitle: snapshot.albumTitle,
             artworkURLTemplate: snapshot.artworkURLTemplate,
             durationSeconds: snapshot.durationSeconds,
+            musicKitPlaybackData: snapshot.musicKitPlaybackData,
             in: context
         )
     }
@@ -64,6 +65,7 @@ enum TrackRecordRepository {
         albumTitle: String? = nil,
         artworkURLTemplate: String? = nil,
         durationSeconds: Double? = nil,
+        musicKitPlaybackData: Data? = nil,
         createdAt: Date = .now,
         updatedAt: Date = .now,
         in context: ModelContext
@@ -73,6 +75,7 @@ enum TrackRecordRepository {
             libraryID: libraryID,
             title: title,
             artistName: artistName,
+            musicKitPlaybackData: musicKitPlaybackData,
             createdAt: createdAt,
             updatedAt: updatedAt
         )
@@ -88,6 +91,9 @@ enum TrackRecordRepository {
         track.albumTitle = albumTitle
         track.artworkURLTemplate = artworkURLTemplate
         track.durationSeconds = durationSeconds
+        if let musicKitPlaybackData {
+            track.musicKitPlaybackData = musicKitPlaybackData
+        }
         track.updatedAt = updatedAt
         return track
     }

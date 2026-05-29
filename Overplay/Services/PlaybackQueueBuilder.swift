@@ -1,6 +1,22 @@
 import Foundation
+@preconcurrency import MusicKit
 
 enum PlaybackQueueBuilder {
+    static func cachedPlayableMusicTracks(
+        items: [PlaylistItemRecord],
+        tracksByID: [UUID: TrackRecord]
+    ) -> [Track] {
+        items.compactMap { item in
+            guard item.isPlayable,
+                  let track = tracksByID[item.trackID],
+                  let playbackData = track.musicKitPlaybackData else {
+                return nil
+            }
+
+            return try? JSONDecoder().decode(Track.self, from: playbackData)
+        }
+    }
+
     static func playableMusicItemIDs(
         items: [PlaylistItemRecord],
         tracksByID: [UUID: TrackRecord]

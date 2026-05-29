@@ -4,21 +4,26 @@ import SwiftData
 enum LegacyModelMigration {
     @MainActor
     static func migrate(in context: ModelContext) throws {
-        let settings = try existingSettings(in: context)
-        let legacyTracks = try TrackRepository.allTracks(in: context)
+        let settings = try StartupProfiler.measure("Legacy migration fetch settings") {
+            try existingSettings(in: context)
+        }
+        let containsLegacyTracks: Bool = try StartupProfiler.measure("Legacy migration detect legacy tracks") {
+            try hasLegacyTracks(in: context)
+        }
+        let containsNewPlaylists: Bool = try StartupProfiler.measure("Legacy migration detect new playlists") {
+            try hasNewPlaylists(in: context)
+        }
+        let shouldReset = containsLegacyTracks || (settings?.selectedPlaylistID != nil && !containsNewPlaylists)
 
-        guard settings?.selectedPlaylistID != nil || !legacyTracks.isEmpty else {
+        guard shouldReset else {
+            StartupProfiler.mark("Legacy migration skipped: no legacy data")
             return
         }
 
-        let selectedPlaylist = try settings.flatMap { try migrateSelectedPlaylist($0, in: context) }
-        try migrateLegacyTracks(
-            legacyTracks,
-            fallbackPlaylist: selectedPlaylist,
-            evictAfterSkips: settings?.evictAfterSkips ?? 3,
-            in: context
-        )
-        try context.save()
+        StartupProfiler.mark("Legacy data found; resetting persisted store")
+        try StartupProfiler.measure("Legacy data reset") {
+            try resetStore(in: context)
+        }
     }
 
     @MainActor
@@ -31,104 +36,29 @@ enum LegacyModelMigration {
     }
 
     @MainActor
-    private static func migrateSelectedPlaylist(
-        _ settings: OverplaySettings,
-        in context: ModelContext
-    ) throws -> PlaylistRecord? {
-        guard let selectedPlaylistID = settings.selectedPlaylistID else {
-            return nil
-        }
-
-        return try PlaylistRepository.upsert(
-            musicPlaylistID: selectedPlaylistID,
-            name: settings.selectedPlaylistName ?? "One True Playlist",
-            role: .oneTruePlaylist,
-            in: context
-        )
+    private static func hasLegacyTracks(in context: ModelContext) throws -> Bool {
+        var descriptor = FetchDescriptor<TrackedTrack>()
+        descriptor.fetchLimit = 1
+        return try !context.fetch(descriptor).isEmpty
     }
 
     @MainActor
-    private static func migrateLegacyTracks(
-        _ legacyTracks: [TrackedTrack],
-        fallbackPlaylist: PlaylistRecord?,
-        evictAfterSkips: Int,
-        in context: ModelContext
-    ) throws {
-        for legacyTrack in legacyTracks {
-            let playlist = try playlist(for: legacyTrack, fallbackPlaylist: fallbackPlaylist, in: context)
-            let track = try TrackRecordRepository.upsert(legacyTrack, in: context)
-            let item = try PlaylistItemRepository.upsert(
-                playlistID: playlist.id,
-                trackID: track.id,
-                musicPlaylistEntryID: legacyTrack.playlistEntryID,
-                in: context
-            )
-
-            item.skipCount = legacyTrack.skipCount
-            item.playthroughCount = legacyTrack.playthroughCount
-            item.lastPlayedAt = legacyTrack.lastPlayedAt
-            item.lastSkippedAt = legacyTrack.lastSkippedAt
-            item.lastSeenInPlaylistAt = legacyTrack.lastSeenInPlaylistAt
-            item.evictedAt = legacyTrack.evictedAt
-            item.protected = legacyTrack.protected
-            item.createdAt = legacyTrack.createdAt
-            item.updatedAt = legacyTrack.updatedAt
-
-            if legacyTrack.evictedAt != nil {
-                let eviction = evictionDetails(for: legacyTrack, evictAfterSkips: evictAfterSkips)
-                item.evictionReason = eviction.reason
-                item.evictionSource = eviction.source
-            } else {
-                item.evictionReason = nil
-                item.evictionSource = nil
-            }
-        }
+    private static func hasNewPlaylists(in context: ModelContext) throws -> Bool {
+        var descriptor = FetchDescriptor<PlaylistRecord>()
+        descriptor.fetchLimit = 1
+        return try !context.fetch(descriptor).isEmpty
     }
 
     @MainActor
-    private static func playlist(
-        for legacyTrack: TrackedTrack,
-        fallbackPlaylist: PlaylistRecord?,
-        in context: ModelContext
-    ) throws -> PlaylistRecord {
-        if let playlistID = legacyTrack.playlistID {
-            if let playlist = try PlaylistRepository.playlist(musicPlaylistID: playlistID, in: context) {
-                return playlist
-            }
-
-            return try PlaylistRepository.upsert(
-                musicPlaylistID: playlistID,
-                name: fallbackPlaylist?.musicPlaylistID == playlistID ? fallbackPlaylist?.name ?? "One True Playlist" : "Imported Playlist",
-                role: fallbackPlaylist?.musicPlaylistID == playlistID ? .oneTruePlaylist : .triage,
-                in: context
-            )
-        }
-
-        if let fallbackPlaylist {
-            return fallbackPlaylist
-        }
-
-        return try PlaylistRepository.upsert(
-            musicPlaylistID: "legacy-unassigned",
-            name: "Legacy Unassigned",
-            role: .triage,
-            isActive: false,
-            in: context
-        )
-    }
-
-    private static func evictionDetails(
-        for legacyTrack: TrackedTrack,
-        evictAfterSkips: Int
-    ) -> (reason: EvictionReason, source: EvictionSource) {
-        guard let evictionReason = legacyTrack.evictionReason?.lowercased() else {
-            return (.manual, .user)
-        }
-
-        if evictionReason.contains("skip") || legacyTrack.skipCount >= evictAfterSkips {
-            return (.skipCount, .playbackRule)
-        }
-
-        return (.manual, .user)
+    private static func resetStore(in context: ModelContext) throws {
+        try context.delete(model: PlaybackEvent.self)
+        try context.delete(model: HistoryEvent.self)
+        try context.delete(model: PlaylistItemRecord.self)
+        try context.delete(model: TrackRecord.self)
+        try context.delete(model: PlaylistRecord.self)
+        try context.delete(model: SettingsRecord.self)
+        try context.delete(model: TrackedTrack.self)
+        try context.delete(model: OverplaySettings.self)
+        try context.save()
     }
 }

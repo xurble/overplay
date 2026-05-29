@@ -183,18 +183,18 @@ Verification:
 - Complete: Failed promotion does not corrupt local state.
 - Complete: Promotion tests cover local state transitions.
 
-## Step 13 - Update Search and Manual Add
+## Step 13 - Update Search and Manual Add - Complete
 
-- Add destination playlist selection to search.
-- Allow manual add to the One True Playlist or any triage playlist.
-- Sync or locally insert/update after successful add.
-- Show clear errors when Apple Music mutation fails.
+- Complete: Add destination playlist selection to search.
+- Complete: Allow manual add to the One True Playlist or any triage playlist.
+- Complete: Sync or locally insert/update after successful add.
+- Complete: Show clear errors when Apple Music mutation fails.
 
 Verification:
 
-- Add to One True Playlist works or fails gracefully.
-- Add to triage playlist works or fails gracefully.
-- Mutation service tests cover success and failure results.
+- Complete: Add to One True Playlist works or fails gracefully.
+- Complete: Add to triage playlist works or fails gracefully.
+- Complete: Mutation service tests cover success and failure results.
 
 ## Step 14 - Expand History Screen
 

@@ -2,6 +2,17 @@ import Foundation
 @preconcurrency import MusicKit
 import Observation
 
+enum SearchServiceError: LocalizedError {
+    case resultUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .resultUnavailable:
+            "Search result is no longer available."
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class SearchService {
@@ -47,19 +58,14 @@ final class SearchService {
         }
     }
 
-    func addSong(id songID: String, toPlaylistID playlistID: String) async {
+    func addSong(id songID: String, toPlaylistID playlistID: String) async throws -> String {
         guard let song = songsByID[songID] else {
-            message = "Search result is no longer available."
-            return
+            throw SearchServiceError.resultUnavailable
         }
 
-        do {
-            let playlist = try await playlist(for: playlistID)
-            try await MusicLibrary.shared.add(song, to: playlist)
-            message = "Added to \(playlist.name). Sync the playlist to update local tracking."
-        } catch {
-            message = "Could not add this song to the playlist: \(error.localizedDescription)"
-        }
+        let playlist = try await playlist(for: playlistID)
+        try await MusicLibrary.shared.add(song, to: playlist)
+        return playlist.name
     }
 
     private func searchFailureMessage(for error: Error) -> String {

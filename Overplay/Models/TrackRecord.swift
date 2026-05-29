@@ -11,6 +11,7 @@ final class TrackRecord {
     var albumTitle: String?
     var artworkURLTemplate: String?
     var durationSeconds: Double?
+    var musicKitPlaybackData: Data?
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
@@ -23,6 +24,7 @@ final class TrackRecord {
         albumTitle: String? = nil,
         artworkURLTemplate: String? = nil,
         durationSeconds: Double? = nil,
+        musicKitPlaybackData: Data? = nil,
         createdAt: Date = .now,
         updatedAt: Date = .now
     ) {
@@ -34,6 +36,7 @@ final class TrackRecord {
         self.albumTitle = albumTitle
         self.artworkURLTemplate = artworkURLTemplate
         self.durationSeconds = durationSeconds
+        self.musicKitPlaybackData = musicKitPlaybackData
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

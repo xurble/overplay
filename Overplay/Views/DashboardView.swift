@@ -227,12 +227,10 @@ private struct PlaylistManagementView: View {
 
                     Divider()
 
-                    if playlist.role == .oneTruePlaylist {
-                        NavigationLink {
-                            SearchMusicView(settings: settings, playlistID: playlist.musicPlaylistID)
-                        } label: {
-                            Label("Search Apple Music", systemImage: "magnifyingglass")
-                        }
+                    NavigationLink {
+                        SearchMusicView(settings: settings, playlistID: playlist.musicPlaylistID)
+                    } label: {
+                        Label("Search Apple Music", systemImage: "magnifyingglass")
                     }
 
                     NavigationLink {
