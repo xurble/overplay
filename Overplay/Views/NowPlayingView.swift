@@ -3,6 +3,7 @@ import SwiftUI
 
 struct NowPlayingView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(AppRuntime.self) private var runtime
     @Environment(PlaybackController.self) private var playbackController
 
     var settings: OverplaySettings
@@ -105,17 +106,23 @@ struct NowPlayingView: View {
             GridRow {
                 Button {
                     playbackController.toggleShuffle()
+                    runtime.remoteCommandService.syncPlaybackModes(from: playbackController)
                 } label: {
                     Label("Shuffle", systemImage: playbackController.shuffleEnabled ? "shuffle.circle.fill" : "shuffle")
                         .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(playbackController.shuffleEnabled ? .accentColor : .secondary.opacity(0.24))
 
                 Button {
                     playbackController.cycleRepeatMode()
+                    runtime.remoteCommandService.syncPlaybackModes(from: playbackController)
                 } label: {
-                    Label("Repeat \(playbackController.repeatModeTitle)", systemImage: "repeat")
+                    Label("Repeat \(playbackController.repeatModeTitle)", systemImage: repeatIconName)
                         .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.borderedProminent)
+                .tint(playbackController.repeatEnabled ? .accentColor : .secondary.opacity(0.24))
             }
 
             GridRow {
@@ -139,6 +146,10 @@ struct NowPlayingView: View {
         .buttonStyle(.bordered)
     }
 
+    private var repeatIconName: String {
+        playbackController.repeatsSingleTrack ? "repeat.1" : "repeat"
+    }
+
     private func formatTime(_ seconds: Double) -> String {
         guard seconds.isFinite else { return "0:00" }
         let totalSeconds = max(Int(seconds), 0)
@@ -151,5 +162,6 @@ struct NowPlayingView: View {
         NowPlayingView(settings: OverplaySettings(selectedPlaylistID: "preview-playlist", selectedPlaylistName: "Overplay"))
     }
     .environment(PlaybackController())
+    .environment(AppRuntime.shared)
     .modelContainer(PreviewContainer.make())
 }

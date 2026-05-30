@@ -16,6 +16,8 @@ final class RemoteCommandService {
         commandCenter.nextTrackCommand.isEnabled = true
         commandCenter.previousTrackCommand.isEnabled = true
         commandCenter.togglePlayPauseCommand.isEnabled = true
+        commandCenter.changeRepeatModeCommand.isEnabled = true
+        syncPlaybackModes(from: playbackController)
 
         commandCenter.playCommand.addTarget { _ in
             Task { await playbackController.play() }
@@ -40,5 +42,21 @@ final class RemoteCommandService {
             Task { await playbackController.previous(context: context) }
             return .success
         }
+        commandCenter.changeRepeatModeCommand.addTarget { [weak self] event in
+            guard let event = event as? MPChangeRepeatModeCommandEvent else {
+                return .commandFailed
+            }
+
+            Task { @MainActor in
+                playbackController.setRepeatMode(RemotePlaybackModeMapper.repeatMode(for: event.repeatType))
+                self?.syncPlaybackModes(from: playbackController)
+            }
+            return .success
+        }
+    }
+
+    func syncPlaybackModes(from playbackController: PlaybackController) {
+        let commandCenter = MPRemoteCommandCenter.shared()
+        commandCenter.changeRepeatModeCommand.currentRepeatType = RemotePlaybackModeMapper.repeatType(for: playbackController.repeatMode)
     }
 }

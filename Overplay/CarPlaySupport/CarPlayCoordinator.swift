@@ -7,12 +7,14 @@ import UIKit
 final class CarPlayCoordinator: NSObject {
     private weak var interfaceController: CPInterfaceController?
     private var playbackController: PlaybackController?
+    private var remoteCommandService: RemoteCommandService?
     private var modelContext: ModelContext?
     private var refreshTask: Task<Void, Never>?
 
     func connect(interfaceController: CPInterfaceController, runtime: AppRuntime) {
         self.interfaceController = interfaceController
         playbackController = runtime.playbackController
+        remoteCommandService = runtime.remoteCommandService
         modelContext = runtime.makeModelContext()
 
         if let modelContext {
@@ -37,6 +39,7 @@ final class CarPlayCoordinator: NSObject {
         interfaceController = nil
         modelContext = nil
         playbackController = nil
+        remoteCommandService = nil
         CPNowPlayingTemplate.shared.remove(self)
     }
 
@@ -175,8 +178,14 @@ final class CarPlayCoordinator: NSObject {
             },
             CPNowPlayingRepeatButton { [weak self] _ in
                 self?.playbackController?.cycleRepeatMode()
+                self?.syncPlaybackModes()
             }
         ])
+    }
+
+    private func syncPlaybackModes() {
+        guard let playbackController else { return }
+        remoteCommandService?.syncPlaybackModes(from: playbackController)
     }
 
     private func showError(title: String, message: String) {

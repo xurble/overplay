@@ -315,6 +315,7 @@ private struct MiniPlayerLozengeView: View {
 
 private struct NowPlayingPaneView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(AppRuntime.self) private var runtime
     @Environment(PlaybackController.self) private var playbackController
 
     var settings: OverplaySettings
@@ -336,6 +337,7 @@ private struct NowPlayingPaneView: View {
                 trackText
                 progressBlock
                 skipStatus
+                playbackModeControls
                 triageControls
 
                 if let statusMessage = playbackController.statusMessage {
@@ -410,6 +412,30 @@ private struct NowPlayingPaneView: View {
         .background(.thinMaterial, in: Capsule())
     }
 
+    private var playbackModeControls: some View {
+        HStack(spacing: 12) {
+            Button {
+                playbackController.toggleShuffle()
+                runtime.remoteCommandService.syncPlaybackModes(from: playbackController)
+            } label: {
+                Label("Shuffle", systemImage: playbackController.shuffleEnabled ? "shuffle.circle.fill" : "shuffle")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(playbackController.shuffleEnabled ? .accentColor : .secondary.opacity(0.24))
+
+            Button {
+                playbackController.cycleRepeatMode()
+                runtime.remoteCommandService.syncPlaybackModes(from: playbackController)
+            } label: {
+                Label("Repeat \(playbackController.repeatModeTitle)", systemImage: repeatIconName)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(playbackController.repeatEnabled ? .accentColor : .secondary.opacity(0.24))
+        }
+    }
+
     private var triageControls: some View {
         HStack(spacing: 12) {
             Button {
@@ -429,6 +455,10 @@ private struct NowPlayingPaneView: View {
             .disabled(playbackController.currentTrack == nil)
         }
         .buttonStyle(.bordered)
+    }
+
+    private var repeatIconName: String {
+        playbackController.repeatsSingleTrack ? "repeat.1" : "repeat"
     }
 
     private func formatTime(_ seconds: Double) -> String {

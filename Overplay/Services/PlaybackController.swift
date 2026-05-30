@@ -13,6 +13,7 @@ final class PlaybackController {
     var isPlaying = false
     var currentPlaylistID: String?
     var statusMessage: String?
+    private var playbackModeVersion = 0
 
     @ObservationIgnored private lazy var player = ApplicationMusicPlayer.shared
     @ObservationIgnored private var monitorTask: Task<Void, Never>?
@@ -30,11 +31,25 @@ final class PlaybackController {
     }
 
     var shuffleEnabled: Bool {
-        player.state.shuffleMode == .songs
+        _ = playbackModeVersion
+        return player.state.shuffleMode == .songs
+    }
+
+    var repeatMode: MusicPlayer.RepeatMode {
+        _ = playbackModeVersion
+        return player.state.repeatMode ?? .none
+    }
+
+    var repeatEnabled: Bool {
+        repeatMode != .none
+    }
+
+    var repeatsSingleTrack: Bool {
+        repeatMode == .one
     }
 
     var repeatModeTitle: String {
-        switch player.state.repeatMode {
+        switch repeatMode {
         case .one:
             "1"
         case .all:
@@ -273,19 +288,25 @@ final class PlaybackController {
 
     func toggleShuffle() {
         player.state.shuffleMode = shuffleEnabled ? .off : .songs
+        playbackModeVersion += 1
     }
 
     func cycleRepeatMode() {
-        switch player.state.repeatMode {
-        case nil, .some(.none):
-            player.state.repeatMode = .all
-        case .some(.all):
-            player.state.repeatMode = .one
-        case .some(.one):
-            player.state.repeatMode = MusicPlayer.RepeatMode.none
+        switch repeatMode {
+        case .none:
+            setRepeatMode(.all)
+        case .all:
+            setRepeatMode(.one)
+        case .one:
+            setRepeatMode(.none)
         @unknown default:
-            player.state.repeatMode = MusicPlayer.RepeatMode.none
+            setRepeatMode(.none)
         }
+    }
+
+    func setRepeatMode(_ repeatMode: MusicPlayer.RepeatMode) {
+        player.state.repeatMode = repeatMode
+        playbackModeVersion += 1
     }
 
     func clearLocalStateAfterDatabaseReset() {
