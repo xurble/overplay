@@ -190,6 +190,30 @@ instructed.
 
 ------------------------------------------------------------------------
 
+## Pre-release Data Policy
+
+This app is pre-release and has no user data compatibility promise yet.
+
+Agents should:
+
+-   Deprioritize persistent data migration work until beta or release
+    hardening.
+-   Prefer simple schema resets or development-only cleanup when model shape
+    changes, if that matches existing project patterns.
+-   Keep release-time data upgrade notes lightweight and explicit when a
+    change may matter later.
+
+Agents should not:
+
+-   Add complex compatibility layers, historical preservation shims, or
+    released-data upgrade paths unless explicitly requested.
+-   Treat local development data as something that must be preserved.
+
+Before a public beta or release, revisit this policy and design the required
+data upgrade path deliberately.
+
+------------------------------------------------------------------------
+
 ## Unit Tests for Code Changes
 
 Code changes should be accompanied by unit tests that exercise the

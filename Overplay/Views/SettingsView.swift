@@ -4,9 +4,12 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(PlaybackController.self) private var playbackController
 
     @Bindable var settings: OverplaySettings
     @State private var showResetConfirmation = false
+    @State private var showNukeConfirmation = false
+    @State private var didNukeDatabase = false
     @State private var message: String?
 
     var body: some View {
@@ -51,6 +54,14 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Database") {
+                Button(role: .destructive) {
+                    showNukeConfirmation = true
+                } label: {
+                    Label("Nuke Database", systemImage: "trash")
+                }
+            }
+
             if let message {
                 Section {
                     Text(message)
@@ -60,6 +71,7 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .onDisappear {
+            guard !didNukeDatabase else { return }
             try? SettingsRepository.save(settings, in: modelContext)
         }
         .confirmationDialog("Reset all local stats?", isPresented: $showResetConfirmation, titleVisibility: .visible) {
@@ -69,6 +81,14 @@ struct SettingsView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("This clears Overplay skip, playthrough, protection, and eviction state. It does not delete Apple Music playlist content.")
+        }
+        .confirmationDialog("Nuke local and iCloud data?", isPresented: $showNukeConfirmation, titleVisibility: .visible) {
+            Button("Nuke Database", role: .destructive) {
+                nukeDatabase()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This deletes Overplay records locally and saves the deletions so iCloud can sync them. Apple Music playlists are not deleted.")
         }
     }
 
@@ -81,6 +101,18 @@ struct SettingsView: View {
             message = error.localizedDescription
         }
     }
+
+    private func nukeDatabase() {
+        do {
+            try DatabaseResetService.nukeDatabase(in: modelContext)
+            didNukeDatabase = true
+            playbackController.clearLocalStateAfterDatabaseReset()
+            message = "Database nuked."
+            dismiss()
+        } catch {
+            message = error.localizedDescription
+        }
+    }
 }
 
 #Preview {
@@ -88,4 +120,5 @@ struct SettingsView: View {
         SettingsView(settings: OverplaySettings(selectedPlaylistID: "preview-playlist", selectedPlaylistName: "Overplay"))
     }
     .modelContainer(PreviewContainer.make())
+    .environment(PlaybackController())
 }

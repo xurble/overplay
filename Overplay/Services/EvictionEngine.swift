@@ -332,8 +332,6 @@ private extension EvictionSource {
             .playback
         case .appleMusicSync:
             .appleMusic
-        case .migration:
-            .migration
         }
     }
 }

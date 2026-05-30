@@ -24,7 +24,6 @@ enum HistoryEventSource: String, CaseIterable, Codable, Hashable, Sendable {
     case sync
     case appleMusic
     case overplay
-    case migration
 }
 
 enum EvictionReason: String, CaseIterable, Codable, Hashable, Sendable {
@@ -37,7 +36,6 @@ enum EvictionSource: String, CaseIterable, Codable, Hashable, Sendable {
     case user
     case playbackRule
     case appleMusicSync
-    case migration
 }
 
 enum RemoteMutationStatus: String, CaseIterable, Codable, Hashable, Sendable {

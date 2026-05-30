@@ -326,7 +326,6 @@ private struct PlaylistManagementView: View {
 
         do {
             let count = try await PlaylistSyncService().syncPlaylist(playlist, in: modelContext)
-            try? LegacyModelMigration.migrate(in: modelContext)
             message = "Synced \(count) tracks from \(playlist.name)."
         } catch {
             message = error.localizedDescription

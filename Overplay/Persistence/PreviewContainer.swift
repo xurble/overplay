@@ -25,27 +25,45 @@ enum PreviewContainer {
             selectedPlaylistID: "preview-playlist",
             selectedPlaylistName: "Overplay"
         )
-        context.insert(settings)
-        context.insert(TrackedTrack(
-            id: "preview-track",
-            playlistID: "preview-playlist",
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "preview-playlist",
+            name: "Overplay",
+            role: .oneTruePlaylist
+        )
+        let playableTrack = TrackRecord(
+            catalogID: "preview-track",
+            libraryID: "preview-track",
             title: "Glasshouse",
             artistName: "The Sample Set",
             albumTitle: "Overplay Sessions",
-            durationSeconds: 214,
-            skipCount: 2
-        ))
-        context.insert(TrackedTrack(
-            id: "preview-evicted",
-            playlistID: "preview-playlist",
+            durationSeconds: 214
+        )
+        let evictedTrack = TrackRecord(
+            catalogID: "preview-evicted",
+            libraryID: "preview-evicted",
             title: "Too Soon",
             artistName: "The Sample Set",
-            durationSeconds: 186,
-            skipCount: 3,
-            evictedAt: .now,
-            evictionReason: "3 skips before 50%"
+            durationSeconds: 186
+        )
+        context.insert(settings)
+        context.insert(playlist)
+        context.insert(playableTrack)
+        context.insert(evictedTrack)
+        context.insert(PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: playableTrack.id,
+            skipCount: 2,
+            lastSeenInPlaylistAt: .now
         ))
-        try? LegacyModelMigration.migrate(in: context)
+        context.insert(PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: evictedTrack.id,
+            skipCount: 3,
+            lastSeenInPlaylistAt: .now,
+            evictedAt: .now,
+            evictionReason: .skipCount,
+            evictionSource: .playbackRule
+        ))
         try? context.save()
         return container
     }

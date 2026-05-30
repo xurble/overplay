@@ -228,6 +228,19 @@ final class PlaybackController {
         }
     }
 
+    func clearLocalStateAfterDatabaseReset() {
+        player.pause()
+        currentTrack = nil
+        currentPlaylistItem = nil
+        elapsedSeconds = 0
+        durationSeconds = nil
+        isPlaying = false
+        currentPlaylistID = nil
+        activeSession = nil
+        statusMessage = "Overplay data reset."
+        NowPlayingMetadataService.update(track: nil, elapsed: 0, isPlaying: false)
+    }
+
     func keepCurrent(settings: OverplaySettings, context: ModelContext) {
         if let item = currentPlaylistItem,
            let playlist = try? currentPlaylist(in: context) {

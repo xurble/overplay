@@ -1,8 +1,8 @@
-# Overplay Migration Todo
+# Overplay Development Todo
 
-This plan moves the current single-playlist implementation toward the agreed
-long-term design in small, committable steps. Each step should leave the app
-buildable, and the One True Playlist flow should remain usable throughout.
+This plan moves Overplay toward the agreed long-term design in small,
+committable steps. Each step should leave the app buildable, and the One True
+Playlist flow should remain usable throughout.
 
 ## Step 0 - Add Unit Test Foundation - Complete
 
@@ -75,26 +75,12 @@ Verification:
 - Complete: App target builds.
 - Complete: Unit tests pass.
 
-## Step 5 - Add One-Way Local Migration - Complete
-
-- Convert `OverplaySettings.selectedPlaylistID/name` into a
-  `PlaylistRecord(role: oneTruePlaylist)`.
-- Convert each `TrackedTrack` into a `TrackRecord` plus `PlaylistItemRecord`.
-- Preserve skip counts, playthrough counts, eviction state, and timestamps.
-- Make migration idempotent.
-
-Verification:
-
-- Complete: Existing selected playlist and stats survive after launch.
-- Complete: Migration tests pass for empty data and populated legacy data.
-- Complete: App target builds.
-
-## Step 6 - Move Dashboard Reads to the New Model - Complete
+## Step 5 - Move Dashboard Reads to the New Model - Complete
 
 - Compute known, playable, evicted, and at-risk counts from `PlaylistRecord`
   and `PlaylistItemRecord`.
 - Keep the visible dashboard mostly unchanged.
-- Leave old model writes in place until sync/playback are migrated.
+- Leave old model writes in place until sync and playback callers are updated.
 
 Verification:
 
@@ -102,7 +88,7 @@ Verification:
 - Complete: Unit tests cover count calculations.
 - Complete: App target builds.
 
-## Step 7 - Sync a PlaylistRecord - Complete
+## Step 6 - Sync a PlaylistRecord - Complete
 
 - Change `PlaylistSyncService` to sync a `PlaylistRecord`.
 - Upsert `TrackRecord` and `PlaylistItemRecord` instead of `TrackedTrack`.
@@ -115,7 +101,7 @@ Verification:
 - Complete: Repeated sync does not duplicate tracks.
 - Complete: Unit tests cover reconciliation helpers.
 
-## Step 8 - Reconcile Remote Removals - Complete
+## Step 7 - Reconcile Remote Removals - Complete
 
 - During sync, mark missing Apple Music tracks as removed from that linked
   playlist.
@@ -130,7 +116,7 @@ Verification:
 - Complete: History still shows the removed item.
 - Complete: Reconciliation tests pass.
 
-## Step 9 - Add Linked Playlist Management UI - Complete
+## Step 8 - Add Linked Playlist Management UI - Complete
 
 - Complete: Replace simple playlist selection with linked playlist management.
 - Complete: Allow choosing the One True Playlist.
@@ -144,7 +130,7 @@ Verification:
 - Complete: Triage playlists can be added without affecting existing playback.
 - Complete: App target builds.
 
-## Step 10 - Restrict Automatic Eviction to the One True Playlist - Complete
+## Step 9 - Restrict Automatic Eviction to the One True Playlist - Complete
 
 - Complete: Update `EvictionEngine` to check playlist role before count-based eviction.
 - Complete: Continue tracking skips and playthroughs for triage playlists.
@@ -156,7 +142,7 @@ Verification:
 - Complete: Triage items do not auto-evict from skip count.
 - Complete: Eviction engine tests cover both roles.
 
-## Step 11 - Update Playback to Use Playlist Context - Complete
+## Step 10 - Update Playback to Use Playlist Context - Complete
 
 - Complete: Change playback entry points to accept a linked playlist.
 - Complete: Build queues from active, non-evicted, non-removed playlist items.
@@ -169,7 +155,7 @@ Verification:
 - Complete: Triage playlist playback works.
 - Complete: Playback queue filtering tests pass.
 
-## Step 12 - Add Promotion Flow - Complete
+## Step 11 - Add Promotion Flow - Complete
 
 - Complete: Add `PlaylistMutationService.promote(item:)`.
 - Complete: Add the track to the Apple Music One True Playlist when possible.
@@ -183,7 +169,7 @@ Verification:
 - Complete: Failed promotion does not corrupt local state.
 - Complete: Promotion tests cover local state transitions.
 
-## Step 13 - Update Search and Manual Add - Complete
+## Step 12 - Update Search and Manual Add - Complete
 
 - Complete: Add destination playlist selection to search.
 - Complete: Allow manual add to the One True Playlist or any triage playlist.
@@ -196,7 +182,7 @@ Verification:
 - Complete: Add to triage playlist works or fails gracefully.
 - Complete: Mutation service tests cover success and failure results.
 
-## Step 14 - Expand History Screen
+## Step 13 - Expand History Screen
 
 - Replace eviction-only history with unified history.
 - Show evictions, removals, promotions, restores, and remote mutation outcomes.
@@ -209,7 +195,7 @@ Verification:
 - New promotion and removal events appear.
 - History filtering/sorting tests pass where logic is extracted.
 
-## Step 15 - Audit Shared vs Device-Local State
+## Step 14 - Audit Shared vs Device-Local State
 
 - Keep shared playlist, track, stats, settings, and history data in SwiftData.
 - Move transient playback and navigation state to `AppStorage`, `SceneStorage`,
@@ -222,7 +208,7 @@ Verification:
 - Playback state is not represented in shared SwiftData records.
 - App target builds.
 
-## Step 16 - Introduce Adaptive Platform Shell
+## Step 15 - Introduce Adaptive Platform Shell
 
 - Add a root shell that chooses appropriate navigation per platform/size.
 - Keep compact `NavigationStack` behavior for iPhone.
@@ -235,7 +221,7 @@ Verification:
 - iPad layout uses a sidebar.
 - App target builds.
 
-## Step 17 - Refine iPad Experience
+## Step 16 - Refine iPad Experience
 
 - Improve playlist management, playlist detail, history, and Now Playing in
   split layouts.
@@ -249,7 +235,7 @@ Verification:
 - Keyboard shortcuts do not break touch workflows.
 - App target builds.
 
-## Step 18 - Add Mac Target
+## Step 17 - Add Mac Target
 
 - Add a native SwiftUI macOS target sharing models, repositories, services, and
   reusable views.
@@ -263,7 +249,7 @@ Verification:
 - Shared unit tests still pass.
 - No iOS-only APIs leak into shared code.
 
-## Step 19 - Add Mac Interaction Polish
+## Step 18 - Add Mac Interaction Polish
 
 - Add menu commands.
 - Add keyboard shortcuts.
@@ -278,16 +264,17 @@ Verification:
 - Media commands are local to the Mac.
 - macOS target builds.
 
-## Step 20 - Remove Legacy Model Usage
+## Step 19 - Remove Deprecated Model Usage
 
 - Remove `TrackedTrack`-centric code once all reads and writes use the new
   model.
 - Remove `PlaybackEvent` if `HistoryEvent` has fully replaced it.
-- Remove migration shims only when development CloudKit data strategy is clear.
-- Keep any required migration code documented.
+- Remove pre-release reset and development cleanup shims once the schema has
+  settled.
+- Document any release-time data upgrade requirements outside this active plan.
 
 Verification:
 
 - Full iPhone/iPad/Mac build matrix passes.
 - Unit tests pass.
-- No callers remain for legacy repositories or models.
+- No callers remain for deprecated repositories or models.

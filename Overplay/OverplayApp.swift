@@ -25,7 +25,8 @@ struct OverplayApp: App {
     }
 
     private static var isRunningTests: Bool {
-        NSClassFromString("XCTestCase") != nil
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
     }
 
     private static var cloudKitContainerIdentifier: String {
@@ -66,14 +67,6 @@ struct OverplayApp: App {
             modelContainer = try Self.makeModelContainer()
         } catch {
             fatalError("Could not create Overplay model container: \(error)")
-        }
-
-        do {
-            try StartupProfiler.measure("Legacy model migration") {
-                try LegacyModelMigration.migrate(in: modelContainer.mainContext)
-            }
-        } catch {
-            StartupProfiler.mark("Legacy model migration failed: \(error.localizedDescription)")
         }
     }
 
