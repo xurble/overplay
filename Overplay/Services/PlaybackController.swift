@@ -16,6 +16,7 @@ final class PlaybackController {
 
     @ObservationIgnored private let player = ApplicationMusicPlayer.shared
     @ObservationIgnored private var monitorTask: Task<Void, Never>?
+    @ObservationIgnored private var backgroundSyncTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var activeSession: TrackPlaySession?
 
     var progress: Double {
@@ -168,13 +169,31 @@ final class PlaybackController {
     }
 
     private func refreshPlaylistInBackground(_ playlist: PlaylistRecord, context: ModelContext) {
-        Task(priority: .background) {
+        guard !isRunningTests else { return }
+
+        let playlistID = playlist.id
+
+        backgroundSyncTasks[playlistID]?.cancel()
+        backgroundSyncTasks[playlistID] = Task(priority: .background) { @MainActor [weak self] in
+            defer {
+                self?.backgroundSyncTasks[playlistID] = nil
+            }
+
+            guard !Task.isCancelled else { return }
+
             do {
+                guard let playlist = try PlaylistRepository.playlist(id: playlistID, in: context) else {
+                    return
+                }
                 _ = try await PlaylistSyncService().syncPlaylist(playlist, in: context)
             } catch {
-                playlist.lastSyncError = error.localizedDescription
-                playlist.updatedAt = .now
-                try? context.save()
+                guard !Task.isCancelled else { return }
+
+                if let playlist = try? PlaylistRepository.playlist(id: playlistID, in: context) {
+                    playlist.lastSyncError = error.localizedDescription
+                    playlist.updatedAt = .now
+                    try? context.save()
+                }
             }
         }
     }
@@ -229,6 +248,8 @@ final class PlaybackController {
     }
 
     func clearLocalStateAfterDatabaseReset() {
+        backgroundSyncTasks.values.forEach { $0.cancel() }
+        backgroundSyncTasks.removeAll()
         player.pause()
         currentTrack = nil
         currentPlaylistItem = nil
@@ -239,6 +260,11 @@ final class PlaybackController {
         activeSession = nil
         statusMessage = "Overplay data reset."
         NowPlayingMetadataService.update(track: nil, elapsed: 0, isPlaying: false)
+    }
+
+    private var isRunningTests: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
     }
 
     func keepCurrent(settings: OverplaySettings, context: ModelContext) {

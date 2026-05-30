@@ -221,7 +221,23 @@ Verification:
 - iPad layout uses a sidebar.
 - App target builds.
 
-## Step 16 - Refine iPad Experience
+## Step 16 - Add Basic CarPlay Music Player
+
+- Add the CarPlay scene configuration and connect it to `CarPlaySceneDelegate`.
+- Build a basic CarPlay music interface using CarPlay templates.
+- Show the One True Playlist and playable linked playlists.
+- Support play/pause, next, previous, and current-track display through the
+  shared playback controller.
+- Keep CarPlay UI logic isolated from the iPhone/iPad shell.
+
+Verification:
+
+- CarPlay entitlement is present in the app provisioning profile.
+- CarPlay simulator launches the scene and shows the basic player.
+- Playback controls work without breaking the phone UI.
+- App target builds.
+
+## Step 17 - Refine iPad Experience
 
 - Improve playlist management, playlist detail, history, and Now Playing in
   split layouts.
@@ -235,7 +251,7 @@ Verification:
 - Keyboard shortcuts do not break touch workflows.
 - App target builds.
 
-## Step 17 - Add Mac Target
+## Step 18 - Add Mac Target
 
 - Add a native SwiftUI macOS target sharing models, repositories, services, and
   reusable views.
@@ -249,7 +265,7 @@ Verification:
 - Shared unit tests still pass.
 - No iOS-only APIs leak into shared code.
 
-## Step 18 - Add Mac Interaction Polish
+## Step 19 - Add Mac Interaction Polish
 
 - Add menu commands.
 - Add keyboard shortcuts.
@@ -264,7 +280,7 @@ Verification:
 - Media commands are local to the Mac.
 - macOS target builds.
 
-## Step 19 - Remove Deprecated Model Usage
+## Step 20 - Remove Deprecated Model Usage
 
 - Remove `TrackedTrack`-centric code once all reads and writes use the new
   model.
