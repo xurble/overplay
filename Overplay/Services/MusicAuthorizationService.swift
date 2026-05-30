@@ -65,13 +65,18 @@ enum AppleMusicReadiness: Equatable {
 final class MusicAuthorizationService {
     var readiness: AppleMusicReadiness = .notDetermined
     var isLoading = false
+    var hasCheckedReadiness = false
 
     func refresh() async {
 #if targetEnvironment(simulator)
         readiness = .authorized(canPlayCatalogContent: true, hasCloudLibraryEnabled: true)
+        hasCheckedReadiness = true
 #else
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            isLoading = false
+            hasCheckedReadiness = true
+        }
 
         let status = MusicAuthorization.currentStatus
         switch status {
@@ -92,11 +97,15 @@ final class MusicAuthorizationService {
     func requestAccess() async {
 #if targetEnvironment(simulator)
         readiness = .authorized(canPlayCatalogContent: true, hasCloudLibraryEnabled: true)
+        hasCheckedReadiness = true
 #else
         isLoading = true
-        let status = await MusicAuthorization.request()
-        isLoading = false
+        defer {
+            isLoading = false
+            hasCheckedReadiness = true
+        }
 
+        let status = await MusicAuthorization.request()
         switch status {
         case .authorized:
             await refreshSubscription()

@@ -18,11 +18,11 @@ final class RemoteCommandService {
         commandCenter.togglePlayPauseCommand.isEnabled = true
 
         commandCenter.playCommand.addTarget { _ in
-            Task { await playbackController.togglePlayPause() }
+            Task { await playbackController.play() }
             return .success
         }
         commandCenter.pauseCommand.addTarget { _ in
-            Task { await playbackController.togglePlayPause() }
+            Task { @MainActor in playbackController.pause() }
             return .success
         }
         commandCenter.togglePlayPauseCommand.addTarget { _ in

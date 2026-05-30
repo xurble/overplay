@@ -126,7 +126,7 @@ private struct PlaylistHomeRowView: View {
     }
 }
 
-private struct PlaylistManagementView: View {
+struct PlaylistManagementView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackController.self) private var playbackController
 

@@ -3,23 +3,30 @@ import SwiftUI
 
 struct AppRouter: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(AppRuntime.self) private var runtime
     @Environment(MusicAuthorizationService.self) private var authorizationService
     @Environment(PlaybackController.self) private var playbackController
 
+    @AppStorage("overplay.hasPresentedAuthorizedUI") private var hasPresentedAuthorizedUI = false
+
     @Query(sort: \OverplaySettings.createdAt) private var settingsRecords: [OverplaySettings]
-    @State private var remoteCommandService = RemoteCommandService()
     @State private var playerSheetDetent: PresentationDetent = .height(96)
 
     private let playerSheetCollapsedHeight = MiniPlayerLayout.collapsedHeight
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if !authorizationService.readiness.isReady {
+        Group {
+            if shouldShowPermissionView {
+                NavigationStack {
                     PermissionView()
-                } else if let settings {
-                    DashboardView(settings: settings)
-                } else {
+                }
+            } else if let settings {
+                PlatformShell(settings: settings)
+                    .onAppear {
+                        hasPresentedAuthorizedUI = true
+                    }
+            } else {
+                NavigationStack {
                     ProgressView("Preparing Overplay")
                 }
             }
@@ -50,12 +57,14 @@ struct AppRouter: View {
                 await authorizationService.refresh()
             }
 
-            StartupProfiler.measure("Playback monitoring startup") {
-                playbackController.startMonitoring(context: modelContext)
+            StartupProfiler.measure("Remote command startup") {
+                runtime.remoteCommandService.install(playbackController: playbackController, context: modelContext)
             }
 
-            StartupProfiler.measure("Remote command startup") {
-                remoteCommandService.install(playbackController: playbackController, context: modelContext)
+            if authorizationService.readiness.isReady {
+                StartupProfiler.measure("Playback warm-up scheduling") {
+                    playbackController.schedulePostLaunchWarmUp()
+                }
             }
         }
     }
@@ -64,11 +73,138 @@ struct AppRouter: View {
         settingsRecords.first
     }
 
+    private var shouldShowPermissionView: Bool {
+        StartupAuthorizationGate.shouldShowPermissionView(
+            readiness: authorizationService.readiness,
+            hasCheckedReadiness: authorizationService.hasCheckedReadiness,
+            hasPresentedAuthorizedUI: hasPresentedAuthorizedUI
+        )
+    }
+
     private var playerSheetPresentation: Binding<Bool> {
         Binding {
             authorizationService.readiness.isReady && settings != nil
         } set: { _ in
             playerSheetDetent = .height(playerSheetCollapsedHeight)
+        }
+    }
+}
+
+private struct PlatformShell: View {
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    var settings: OverplaySettings
+
+    var body: some View {
+        if horizontalSizeClass == .compact {
+            CompactAppShell(settings: settings)
+        } else {
+            SplitAppShell(settings: settings)
+        }
+    }
+}
+
+private struct CompactAppShell: View {
+    var settings: OverplaySettings
+
+    var body: some View {
+        NavigationStack {
+            DashboardView(settings: settings)
+        }
+    }
+}
+
+private enum AppShellDestination: Hashable {
+    case dashboard
+    case playlist(UUID)
+    case search
+    case history
+    case settings
+    case linkedPlaylists
+}
+
+private struct SplitAppShell: View {
+    @Query(sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
+
+    var settings: OverplaySettings
+
+    @State private var selection: AppShellDestination? = .dashboard
+
+    var body: some View {
+        NavigationSplitView {
+            List(selection: $selection) {
+                Section {
+                    Label("Dashboard", systemImage: "rectangle.grid.2x2")
+                        .tag(AppShellDestination.dashboard)
+                    Label("Search", systemImage: "magnifyingglass")
+                        .tag(AppShellDestination.search)
+                    Label("History", systemImage: "clock.arrow.circlepath")
+                        .tag(AppShellDestination.history)
+                    Label("Settings", systemImage: "gearshape")
+                        .tag(AppShellDestination.settings)
+                }
+
+                Section("Playlists") {
+                    ForEach(activePlaylists) { playlist in
+                        Label(playlist.name, systemImage: playlistIcon(for: playlist))
+                            .tag(AppShellDestination.playlist(playlist.id))
+                    }
+
+                    Label("Manage Links", systemImage: "music.note.list")
+                        .tag(AppShellDestination.linkedPlaylists)
+                }
+            }
+            .miniPlayerScrollContentInset()
+            .listStyle(.sidebar)
+            .navigationTitle("Overplay")
+        } detail: {
+            detailView
+        }
+    }
+
+    @ViewBuilder
+    private var detailView: some View {
+        switch selection ?? .dashboard {
+        case .dashboard:
+            DashboardView(settings: settings)
+        case let .playlist(playlistID):
+            if let playlist = activePlaylists.first(where: { $0.id == playlistID }) {
+                PlaylistManagementView(settings: settings, playlist: playlist)
+            } else {
+                ContentUnavailableView(
+                    "Playlist Unavailable",
+                    systemImage: "music.note.list",
+                    description: Text("Choose another linked playlist from the sidebar.")
+                )
+            }
+        case .search:
+            SearchMusicView(settings: settings)
+        case .history:
+            HistoryView()
+        case .settings:
+            SettingsView(settings: settings)
+        case .linkedPlaylists:
+            PlaylistSelectionView()
+        }
+    }
+
+    private var activePlaylists: [PlaylistRecord] {
+        playlists
+            .filter(\.isActive)
+            .sorted { left, right in
+                if left.role != right.role {
+                    return left.role == .oneTruePlaylist
+                }
+                return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
+            }
+    }
+
+    private func playlistIcon(for playlist: PlaylistRecord) -> String {
+        switch playlist.role {
+        case .oneTruePlaylist:
+            "star.fill"
+        case .triage:
+            "tray.fill"
         }
     }
 }
@@ -304,6 +440,7 @@ private struct NowPlayingPaneView: View {
 
 #Preview {
     AppRouter()
+        .environment(AppRuntime.shared)
         .environment(MusicAuthorizationService())
         .environment(PlaybackController())
         .modelContainer(PreviewContainer.make())

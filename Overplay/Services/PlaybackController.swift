@@ -14,8 +14,9 @@ final class PlaybackController {
     var currentPlaylistID: String?
     var statusMessage: String?
 
-    @ObservationIgnored private let player = ApplicationMusicPlayer.shared
+    @ObservationIgnored private lazy var player = ApplicationMusicPlayer.shared
     @ObservationIgnored private var monitorTask: Task<Void, Never>?
+    @ObservationIgnored private var warmUpTask: Task<Void, Never>?
     @ObservationIgnored private var backgroundSyncTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var activeSession: TrackPlaySession?
 
@@ -51,6 +52,28 @@ final class PlaybackController {
                 await self?.refresh(context: context)
             }
         }
+    }
+
+    func schedulePostLaunchWarmUp() {
+        guard warmUpTask == nil, monitorTask == nil, !isRunningTests else { return }
+        warmUpTask = Task(priority: .background) { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            await self?.warmUpPlayerConnection()
+            self?.clearWarmUpTask()
+        }
+    }
+
+    private func warmUpPlayerConnection() async {
+        do {
+            try await player.prepareToPlay()
+        } catch {
+            StartupProfiler.mark("Playback warm-up failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func clearWarmUpTask() {
+        warmUpTask = nil
     }
 
     func playPlaylist(settings: OverplaySettings, context: ModelContext) async {
@@ -161,10 +184,14 @@ final class PlaybackController {
             return
         }
 
+        warmUpTask?.cancel()
+        warmUpTask = nil
+
         player.queue = ApplicationMusicPlayer.Queue(for: tracks, startingAt: startingTrack)
         try await player.play()
         currentPlaylistID = playlistID
         statusMessage = nil
+        startMonitoring(context: context)
         await refresh(context: context)
     }
 
@@ -209,6 +236,20 @@ final class PlaybackController {
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+
+    func play() async {
+        do {
+            try await player.play()
+            isPlaying = player.state.playbackStatus == .playing
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func pause() {
+        player.pause()
+        isPlaying = false
     }
 
     func next(settings: OverplaySettings, context: ModelContext) async {

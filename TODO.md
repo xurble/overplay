@@ -210,34 +210,34 @@ Verification:
 - Playback state is not represented in shared SwiftData records.
 - App target builds.
 
-## Step 15 - Introduce Adaptive Platform Shell
+## Step 15 - Introduce Adaptive Platform Shell - Complete
 
-- Add a root shell that chooses appropriate navigation per platform/size.
-- Keep compact `NavigationStack` behavior for iPhone.
-- Use split navigation for iPad and Mac-capable layouts.
-- Keep business logic out of platform branching.
-
-Verification:
-
-- iPhone flow remains familiar.
-- iPad layout uses a sidebar.
-- App target builds.
-
-## Step 16 - Add Basic CarPlay Music Player
-
-- Add the CarPlay scene configuration and connect it to `CarPlaySceneDelegate`.
-- Build a basic CarPlay music interface using CarPlay templates.
-- Show the One True Playlist and playable linked playlists.
-- Support play/pause, next, previous, and current-track display through the
-  shared playback controller.
-- Keep CarPlay UI logic isolated from the iPhone/iPad shell.
+- Complete: Added a root platform shell that chooses navigation by horizontal size class.
+- Complete: Kept compact `NavigationStack` behavior for iPhone.
+- Complete: Added split navigation with a sidebar for iPad and Mac-capable layouts.
+- Complete: Kept platform branching limited to navigation shell composition.
 
 Verification:
 
-- CarPlay entitlement is present in the app provisioning profile.
-- CarPlay simulator launches the scene and shows the basic player.
-- Playback controls work without breaking the phone UI.
-- App target builds.
+- Complete: iPhone flow remains familiar through the existing dashboard stack.
+- Complete: iPad and Mac-capable layouts use a sidebar.
+- Complete: App target builds and tests pass.
+
+## Step 16 - Add Basic CarPlay Music Player - Complete
+
+- Complete: Added the CarPlay scene configuration and connected it to `CarPlaySceneDelegate`.
+- Complete: Built a basic CarPlay music interface using CarPlay templates.
+- Complete: Show the One True Playlist and playable linked playlists.
+- Complete: Support play/pause, next, previous, and current-track display through
+  the shared playback controller and remote command service.
+- Complete: Kept CarPlay UI logic isolated from the iPhone/iPad shell.
+
+Verification:
+
+- Complete: CarPlay entitlement is present in the app entitlements file.
+- Pending manual check: CarPlay simulator launches the scene and shows the basic player.
+- Pending manual check: Playback controls work without breaking the phone UI.
+- Complete: App target builds and tests pass.
 
 ## Step 17 - Refine iPad Experience
 

@@ -10,6 +10,7 @@ import SwiftData
 import SwiftUI
 
 @main
+@MainActor
 struct OverplayApp: App {
     private static var schema: Schema {
         Schema([
@@ -65,6 +66,7 @@ struct OverplayApp: App {
     init() {
         do {
             modelContainer = try Self.makeModelContainer()
+            AppRuntime.shared.configure(modelContainer: modelContainer)
         } catch {
             fatalError("Could not create Overplay model container: \(error)")
         }
@@ -72,7 +74,7 @@ struct OverplayApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(runtime: .shared)
         }
         .modelContainer(modelContainer)
     }

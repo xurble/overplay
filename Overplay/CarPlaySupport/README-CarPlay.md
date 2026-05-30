@@ -1,15 +1,35 @@
 # CarPlay Support
 
-CarPlay support stays isolated so the iPhone app can compile and run before
-the CarPlay entitlement is granted.
+CarPlay is an active Overplay surface. The app target has the CarPlay audio
+entitlement, and `Config/Info.plist` declares a CarPlay scene using
+`CPTemplateApplicationScene`.
 
-Once the entitlement is available:
+## Structure
 
-1. Add a CarPlay scene configuration to the generated Info.plist.
-2. Point that scene at `CarPlaySceneDelegate`.
-3. Build templates in `CarPlayCoordinator` using the shared
-   `PlaybackController` for Play Overplay, triage playlists, At Risk,
-   Recently Evicted, and Now Playing actions.
+- `CarPlaySceneDelegate` receives CarPlay scene connections and hands the
+  `CPInterfaceController` to `CarPlayCoordinator`.
+- `CarPlayCoordinator` owns CarPlay templates and keeps CarPlay-specific types
+  isolated from the SwiftUI iPhone/iPad shell.
+- `CarPlayLibrarySnapshot` builds testable playlist summaries for the CarPlay
+  list UI.
+- `AppRuntime.shared` provides the shared model container, playback controller,
+  authorization service, and remote command service used by both phone UI and
+  CarPlay.
 
-The shared playback controller, now playing metadata, and remote command
-handlers are already app-level services.
+## Current CarPlay UI
+
+The root CarPlay template shows:
+
+- Now Playing.
+- The One True Playlist.
+- Active linked playlists.
+
+Selecting a playlist starts playback through `PlaybackController`, then opens
+`CPNowPlayingTemplate`. Standard CarPlay playback controls are routed through
+the shared remote command and playback services.
+
+## Verification
+
+The app target builds and unit tests cover CarPlay playlist summary ordering and
+playable counts. CarPlay simulator or device verification is still required for
+scene launch, template presentation, and in-car playback controls.

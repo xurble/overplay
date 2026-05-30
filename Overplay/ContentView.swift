@@ -9,17 +9,17 @@ import SwiftUI
 import SwiftData
 
 struct ContentView: View {
-    @State private var authorizationService = MusicAuthorizationService()
-    @State private var playbackController = PlaybackController()
+    let runtime: AppRuntime
 
     var body: some View {
         AppRouter()
-            .environment(authorizationService)
-            .environment(playbackController)
+            .environment(runtime)
+            .environment(runtime.authorizationService)
+            .environment(runtime.playbackController)
     }
 }
 
 #Preview {
-    ContentView()
+    ContentView(runtime: .shared)
         .modelContainer(PreviewContainer.make())
 }
