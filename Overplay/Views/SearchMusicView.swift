@@ -77,6 +77,7 @@ struct SearchMusicView: View {
                 .padding(.vertical, 6)
             }
         }
+        .miniPlayerScrollContentInset()
         .navigationTitle("Search Apple Music")
         .searchable(text: $searchText, prompt: "Search songs")
         .onSubmit(of: .search) {

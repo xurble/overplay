@@ -31,6 +31,7 @@ struct NowPlayingView: View {
                 }
                 .padding()
             }
+            .miniPlayerScrollContentInset()
         }
         .navigationTitle("Now Playing")
         .navigationBarTitleDisplayMode(.inline)

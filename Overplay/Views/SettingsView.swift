@@ -69,6 +69,7 @@ struct SettingsView: View {
                 }
             }
         }
+        .miniPlayerScrollContentInset()
         .navigationTitle("Settings")
         .onDisappear {
             guard !didNukeDatabase else { return }

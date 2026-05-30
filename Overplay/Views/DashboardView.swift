@@ -62,6 +62,7 @@ struct DashboardView: View {
                 }
             }
         }
+        .miniPlayerScrollContentInset()
         .navigationTitle("Overplay")
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -207,6 +208,7 @@ private struct PlaylistManagementView: View {
                 }
             }
         }
+        .miniPlayerScrollContentInset()
         .navigationTitle("Playlist")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -234,9 +236,9 @@ private struct PlaylistManagementView: View {
                     }
 
                     NavigationLink {
-                        EvictionHistoryView()
+                        HistoryView()
                     } label: {
-                        Label("Eviction History", systemImage: "clock.arrow.circlepath")
+                        Label("History", systemImage: "clock.arrow.circlepath")
                     }
 
                     NavigationLink {

@@ -4,6 +4,8 @@ This plan moves Overplay toward the agreed long-term design in small,
 committable steps. Each step should leave the app buildable, and the One True
 Playlist flow should remain usable throughout.
 
+This plan should be read as a roadmap to the completion of OVERPLAY_DESIGN_SPEC.md
+
 ## Step 0 - Add Unit Test Foundation - Complete
 
 - Add a unit test target for shared Overplay logic.
@@ -182,18 +184,18 @@ Verification:
 - Complete: Add to triage playlist works or fails gracefully.
 - Complete: Mutation service tests cover success and failure results.
 
-## Step 13 - Expand History Screen
+## Step 13 - Expand History Screen - Complete
 
-- Replace eviction-only history with unified history.
-- Show evictions, removals, promotions, restores, and remote mutation outcomes.
-- Include playlist, event source, count/manual flag, dates, and restore actions
+- Complete: Replace eviction-only history with unified history.
+- Complete: Show evictions, removals, promotions, restores, and remote mutation outcomes.
+- Complete: Include playlist, event source, count/manual flag, dates, and restore actions
   where appropriate.
 
 Verification:
 
-- Existing eviction events remain visible.
-- New promotion and removal events appear.
-- History filtering/sorting tests pass where logic is extracted.
+- Complete: Existing eviction events remain visible.
+- Complete: New promotion and removal events appear.
+- Complete: History filtering/sorting tests pass where logic is extracted.
 
 ## Step 14 - Audit Shared vs Device-Local State
 

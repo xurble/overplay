@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		06993F5B2FCA9A9100306B6E /* TODO.md in Resources */ = {isa = PBXBuildFile; fileRef = 06993F5A2FCA9A9100306B6E /* TODO.md */; };
 		06E38A9A2FB5E0E200F0D393 /* AGENTS.md in Resources */ = {isa = PBXBuildFile; fileRef = 06E38A992FB5E0E200F0D393 /* AGENTS.md */; };
 /* End PBXBuildFile section */
 
@@ -21,6 +22,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		06993F5A2FCA9A9100306B6E /* TODO.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = TODO.md; sourceTree = "<group>"; };
 		06E38A8B2FB5E0C800F0D393 /* Overplay.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Overplay.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		06E38A992FB5E0E200F0D393 /* AGENTS.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = AGENTS.md; sourceTree = "<group>"; };
 		06E38A9E2FB5E0F000F0D393 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
@@ -63,6 +65,7 @@
 		06E38A822FB5E0C800F0D393 = {
 			isa = PBXGroup;
 			children = (
+				06993F5A2FCA9A9100306B6E /* TODO.md */,
 				06E38A992FB5E0E200F0D393 /* AGENTS.md */,
 				06E38AA02FB65E8700F0D393 /* OVERPLAY_DESIGN_SPEC.md */,
 				06E38A9D2FB5E0F000F0D393 /* Config */,
@@ -188,6 +191,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				06E38A9A2FB5E0E200F0D393 /* AGENTS.md in Resources */,
+				06993F5B2FCA9A9100306B6E /* TODO.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

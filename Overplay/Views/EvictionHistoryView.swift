@@ -1,51 +1,54 @@
 import SwiftData
 import SwiftUI
 
-struct EvictionHistoryView: View {
+typealias EvictionHistoryView = HistoryView
+
+struct HistoryView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \TrackedTrack.title) private var tracks: [TrackedTrack]
+
+    @Query private var events: [HistoryEvent]
+    @Query(sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
+    @Query(sort: \PlaylistItemRecord.createdAt) private var playlistItems: [PlaylistItemRecord]
+    @Query(sort: \TrackRecord.title) private var tracks: [TrackRecord]
+    @Query(sort: \TrackedTrack.title) private var legacyTracks: [TrackedTrack]
+
+    @State private var selectedFilter = HistoryEventFilter.all
     @State private var message: String?
 
     var body: some View {
         List {
-            if evictedTracks.isEmpty {
+            Section {
+                Picker("History Filter", selection: $selectedFilter) {
+                    ForEach(HistoryEventFilter.allCases) { filter in
+                        Text(filter.title)
+                            .tag(filter)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+
+            if rows.isEmpty && visibleLegacyEvictedTracks.isEmpty {
                 ContentUnavailableView(
-                    "No Evictions",
-                    systemImage: "checkmark.seal",
-                    description: Text("Tracks evicted locally by Overplay will appear here.")
+                    emptyTitle,
+                    systemImage: "clock.arrow.circlepath",
+                    description: Text("Playback, promotion, removal, restore, and remote mutation events will appear here.")
                 )
             }
 
-            ForEach(evictedTracks) { track in
-                HStack(spacing: 12) {
-                    ArtworkView(urlString: track.artworkURLTemplate, cornerRadius: 8)
-                        .frame(width: 56, height: 56)
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(track.title)
-                            .font(.headline)
-                        Text(track.artistName)
-                            .foregroundStyle(.secondary)
-                        if let reason = track.evictionReason {
-                            Text(reason)
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                        }
-                        if let evictedAt = track.evictedAt {
-                            Text(evictedAt, style: .date)
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
-
-                    Spacer()
-
-                    Button("Restore") {
-                        restore(track)
-                    }
-                    .buttonStyle(.bordered)
+            ForEach(rows) { row in
+                HistoryEventRowView(row: row, canRestore: restorableItem(for: row) != nil) {
+                    restore(row)
                 }
-                .padding(.vertical, 6)
+            }
+
+            if !visibleLegacyEvictedTracks.isEmpty {
+                Section("Legacy Evictions") {
+                    ForEach(visibleLegacyEvictedTracks) { track in
+                        LegacyEvictedTrackRowView(track: track) {
+                            restore(track)
+                        }
+                    }
+                }
             }
 
             if let message {
@@ -53,17 +56,64 @@ struct EvictionHistoryView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .navigationTitle("Eviction History")
+        .miniPlayerScrollContentInset()
+        .navigationTitle("History")
     }
 
-    private var evictedTracks: [TrackedTrack] {
-        tracks
+    private var rows: [HistoryEventRowModel] {
+        HistoryTimeline.rows(
+            events: events,
+            playlists: playlists,
+            tracks: tracks,
+            filter: selectedFilter
+        )
+    }
+
+    private var emptyTitle: String {
+        selectedFilter == .all ? "No History" : "No \(selectedFilter.title)"
+    }
+
+    private var visibleLegacyEvictedTracks: [TrackedTrack] {
+        guard selectedFilter == .all || selectedFilter == .evictions else {
+            return []
+        }
+
+        return legacyTracks
             .filter(\.isEvicted)
             .sorted { ($0.evictedAt ?? .distantPast) > ($1.evictedAt ?? .distantPast) }
     }
 
+    private func restorableItem(for row: HistoryEventRowModel) -> PlaylistItemRecord? {
+        guard let playlistID = row.playlistID, let trackID = row.trackID else {
+            return nil
+        }
+
+        return playlistItems.first {
+            $0.playlistID == playlistID
+                && $0.trackID == trackID
+                && ($0.evictedAt != nil || $0.removedFromRemoteAt != nil)
+        }
+    }
+
+    private func playlist(for item: PlaylistItemRecord) -> PlaylistRecord? {
+        playlists.first { $0.id == item.playlistID }
+    }
+
+    private func restore(_ row: HistoryEventRowModel) {
+        guard let item = restorableItem(for: row) else { return }
+        EvictionEngine.restore(item, playlist: playlist(for: item), context: modelContext)
+
+        do {
+            try modelContext.save()
+            message = "Restored \(row.trackTitle)."
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
     private func restore(_ track: TrackedTrack) {
         EvictionEngine.restore(track, context: modelContext)
+
         do {
             try modelContext.save()
             message = "Restored \(track.title)."
@@ -73,9 +123,136 @@ struct EvictionHistoryView: View {
     }
 }
 
+private struct HistoryEventRowView: View {
+    var row: HistoryEventRowModel
+    var canRestore: Bool
+    var restore: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ArtworkView(urlString: row.artworkURLTemplate, cornerRadius: 8)
+                .frame(width: 56, height: 56)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Label(row.eventTitle, systemImage: row.systemImage)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Text(row.createdAt, style: .date)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                Text(row.trackTitle)
+                    .font(.headline)
+
+                Text(row.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HistoryEventBadgesView(row: row)
+
+                if let message = row.message, !message.isEmpty {
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            Spacer()
+
+            if canRestore {
+                Button("Restore", action: restore)
+                    .buttonStyle(.bordered)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+private struct HistoryEventBadgesView: View {
+    var row: HistoryEventRowModel
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) {
+                badges
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                badges
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var badges: some View {
+        HistoryBadgeView(text: row.sourceTitle)
+
+        if let skipCountText = row.skipCountText {
+            HistoryBadgeView(text: skipCountText)
+        }
+
+        if let remoteMutationStatusText = row.remoteMutationStatusText {
+            HistoryBadgeView(text: remoteMutationStatusText)
+        }
+    }
+}
+
+private struct HistoryBadgeView: View {
+    var text: String
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(.thinMaterial, in: Capsule())
+    }
+}
+
+private struct LegacyEvictedTrackRowView: View {
+    var track: TrackedTrack
+    var restore: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ArtworkView(urlString: track.artworkURLTemplate, cornerRadius: 8)
+                .frame(width: 56, height: 56)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Evicted", systemImage: "trash.fill")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Text(track.title)
+                    .font(.headline)
+
+                Text(track.artistName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if let reason = track.evictionReason {
+                    Text(reason)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            Spacer()
+
+            Button("Restore", action: restore)
+                .buttonStyle(.bordered)
+        }
+        .padding(.vertical, 6)
+    }
+}
+
 #Preview {
     NavigationStack {
-        EvictionHistoryView()
+        HistoryView()
     }
     .modelContainer(PreviewContainer.make())
 }

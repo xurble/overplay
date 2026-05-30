@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Overplay is an Apple Music companion app for iPhone, iPad, and Mac. It keeps a
-user's main music playlist fresh while using other playlists as intake and
-triage sources.
+Overplay is an Apple Music companion app for iPhone, iPad, Mac, and CarPlay.
+It keeps a user's main music playlist fresh while using other playlists as
+intake and triage sources.
 
 The core playlist is the user's **One True Playlist**. Overplay plays it,
 tracks the user's own skip and playthrough behaviour, and evicts tracks that
@@ -20,6 +20,7 @@ Music's global play count or skip count.
 
 - Target platforms:
   - iPhone on iOS 26 and later.
+  - CarPlay through the iPhone app on iOS 26 and later.
   - iPad on iPadOS 26 and later.
   - Mac on macOS 26 and later.
 - Language: Swift 6.
@@ -52,7 +53,7 @@ iPhone is the focused playback and quick-triage experience.
 - Use compact navigation with a dashboard-first flow.
 - Keep Now Playing as the strongest visual surface.
 - Prioritize fast actions: play, skip, keep, evict, promote, sync.
-- Support lock-screen metadata, remote commands, and CarPlay readiness.
+- Support lock-screen metadata, remote commands, and the CarPlay music player.
 
 ### iPad
 
@@ -427,6 +428,30 @@ Platform notes:
 - Mac should support a compact mini-player style window in addition to the
   full Now Playing view where practical.
 
+### CarPlay music player
+
+Purpose: provide the in-car playback and browsing surface through CarPlay
+templates connected to the shared playback controller.
+
+Show:
+
+- One True Playlist playback entry point.
+- Playable linked playlists.
+- At-risk tracks.
+- Recently evicted tracks.
+- Current track title, artist, album, and artwork where CarPlay templates
+  support it.
+- Play, pause, next, previous, and Now Playing controls.
+
+Platform notes:
+
+- CarPlay belongs to the iPhone app target and should use CarPlay scene
+  configuration.
+- CarPlay templates should remain thin and delegate playback, queue building,
+  metadata, and command handling to shared services.
+- The iPhone SwiftUI shell, iPad target, and Mac target should not import or
+  depend on CarPlay-specific types.
+
 ### Search
 
 Purpose: search Apple Music and add tracks to any linked playlist.
@@ -659,15 +684,17 @@ Exact SwiftData syntax may evolve, but the model should retain these concepts.
 - A hardware keyboard or media key command arrives while a modal sheet is open.
 - Platform-specific MusicKit capability differs or is temporarily unavailable.
 
-## CarPlay Direction
+## CarPlay
 
-CarPlay remains an iPhone-supported direction once entitlement requirements
-are met.
+CarPlay is a current iPhone-supported product goal. Entitlement requirements
+have been met, and the iPhone app target should include a CarPlay music
+interface using CarPlay templates.
+
 The app architecture should keep playback, now-playing metadata, and remote
-commands independent of SwiftUI views so CarPlay templates can use the same
-services.
+commands independent of SwiftUI views so CarPlay templates use the same shared
+services as the phone UI.
 
-When enabled, CarPlay should support:
+CarPlay should support:
 
 - Play One True Playlist.
 - Browse triage playlists.
@@ -675,9 +702,8 @@ When enabled, CarPlay should support:
 - View recently evicted tracks.
 - Now Playing controls.
 
-The iPhone and shared app code must continue to compile and run without
-CarPlay entitlement. iPad and Mac targets should not depend on CarPlay-specific
-types or entitlements.
+CarPlay UI logic should remain isolated from the iPhone/iPad SwiftUI shell.
+iPad and Mac targets must not depend on CarPlay-specific types or entitlements.
 
 ## Development Guidelines
 
@@ -690,6 +716,8 @@ types or entitlements.
 - Prefer local filtering over blocking the user when Apple Music mutation is
   unavailable.
 - Keep device-local playback state out of iCloud-backed records.
+- Keep CarPlay templates thin; route playback and queue actions through shared
+  services.
 - Avoid adding compatibility paths for pre-iOS 26, pre-iPadOS 26, or
   pre-macOS 26 systems.
 - Prefer shared SwiftUI views that adapt by size class and platform idiom, but
@@ -717,3 +745,5 @@ The product is healthy when a user can:
 14. Use native iPad layouts for triage and management.
 15. Use native Mac windows, menus, keyboard shortcuts, and media controls for
     management and playback.
+16. Use a CarPlay music player for playlist browsing, Now Playing controls,
+    and playback through the shared playback controller.

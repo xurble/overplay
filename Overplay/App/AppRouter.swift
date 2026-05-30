@@ -10,7 +10,7 @@ struct AppRouter: View {
     @State private var remoteCommandService = RemoteCommandService()
     @State private var playerSheetDetent: PresentationDetent = .height(96)
 
-    private let playerSheetCollapsedHeight: CGFloat = 96
+    private let playerSheetCollapsedHeight = MiniPlayerLayout.collapsedHeight
 
     var body: some View {
         NavigationStack {
@@ -29,7 +29,7 @@ struct AppRouter: View {
                 PlayerSheetView(settings: settings, collapsedHeight: playerSheetCollapsedHeight)
                     .presentationDetents([.height(playerSheetCollapsedHeight), .large], selection: $playerSheetDetent)
                     .presentationDragIndicator(.visible)
-                    .presentationBackground(.regularMaterial)
+                    .presentationBackground(.clear)
                     .presentationBackgroundInteraction(.enabled(upThrough: .height(playerSheetCollapsedHeight)))
                     .presentationContentInteraction(.resizes)
                     .interactiveDismissDisabled()
@@ -80,8 +80,11 @@ private struct PlayerSheetView: View {
     var body: some View {
         GeometryReader { proxy in
             let contentOpacity = expandedContentOpacity(for: proxy.size.height)
+            let backgroundOpacity = expandedBackgroundOpacity(for: proxy.size.height)
 
             ZStack(alignment: .bottom) {
+                PlayerSheetBackground(opaqueProgress: backgroundOpacity)
+
                 NowPlayingPaneView(settings: settings)
                     .padding(.bottom, collapsedHeight + proxy.safeAreaInsets.bottom)
                     .opacity(contentOpacity)
@@ -89,11 +92,19 @@ private struct PlayerSheetView: View {
 
                 MiniPlayerLozengeView(settings: settings)
                     .frame(height: collapsedHeight)
-                    .background(.regularMaterial)
                     .padding(.bottom, proxy.safeAreaInsets.bottom)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            .ignoresSafeArea(edges: .bottom)
         }
+    }
+
+    private func expandedBackgroundOpacity(for sheetHeight: CGFloat) -> Double {
+        let fadeStart = collapsedHeight + 96
+        let fadeDistance: CGFloat = 320
+        let progress = min(max((sheetHeight - fadeStart) / fadeDistance, 0), 1)
+        let easedProgress = progress * progress * (3 - 2 * progress)
+        return Double(easedProgress)
     }
 
     private func expandedContentOpacity(for sheetHeight: CGFloat) -> Double {
@@ -102,6 +113,33 @@ private struct PlayerSheetView: View {
         let progress = min(max((sheetHeight - fadeStart) / fadeDistance, 0), 1)
         let easedProgress = progress * progress * (3 - 2 * progress)
         return Double(easedProgress)
+    }
+}
+
+private struct PlayerSheetBackground: View {
+    var opaqueProgress: Double
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .opacity(0.42 + (0.58 * opaqueProgress))
+
+            LinearGradient(
+                colors: [
+                    .white.opacity(0.12),
+                    .white.opacity(0.04),
+                    .clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .opacity(1 - opaqueProgress)
+
+            Rectangle()
+                .fill(.background)
+                .opacity(opaqueProgress)
+        }
     }
 }
 
@@ -131,6 +169,11 @@ private struct MiniPlayerLozengeView: View {
         }
         .padding(.horizontal, 14)
         .frame(maxHeight: .infinity, alignment: .center)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(.white.opacity(0.18))
+                .frame(height: 1)
+        }
     }
 }
 

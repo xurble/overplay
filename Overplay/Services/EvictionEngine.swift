@@ -290,6 +290,27 @@ enum EvictionEngine {
         )
     }
 
+    static func restore(
+        _ item: PlaylistItemRecord,
+        playlist: PlaylistRecord?,
+        context: ModelContext
+    ) {
+        item.removedFromRemoteAt = nil
+        item.evictedAt = nil
+        item.evictionReason = nil
+        item.evictionSource = nil
+        item.updatedAt = .now
+        EventRepository.logHistory(
+            playlistID: playlist?.id ?? item.playlistID,
+            trackID: item.trackID,
+            eventType: .restored,
+            source: .user,
+            skipCountAtEvent: item.skipCount,
+            message: "Restored locally",
+            in: context
+        )
+    }
+
     private static func canAutomaticallyEvict(_ track: TrackedTrack, in context: ModelContext) throws -> Bool {
         guard let playlistID = track.playlistID,
               let playlist = try PlaylistRepository.playlist(musicPlaylistID: playlistID, in: context) else {
