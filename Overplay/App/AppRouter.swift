@@ -121,6 +121,47 @@ private enum AppShellDestination: Hashable {
     case history
     case settings
     case linkedPlaylists
+
+    init?(storageValue: String) {
+        if storageValue.hasPrefix("playlist:") {
+            let uuidString = String(storageValue.dropFirst("playlist:".count))
+            guard let id = UUID(uuidString: uuidString) else { return nil }
+            self = .playlist(id)
+            return
+        }
+
+        switch storageValue {
+        case Self.dashboard.storageValue:
+            self = .dashboard
+        case Self.search.storageValue:
+            self = .search
+        case Self.history.storageValue:
+            self = .history
+        case Self.settings.storageValue:
+            self = .settings
+        case Self.linkedPlaylists.storageValue:
+            self = .linkedPlaylists
+        default:
+            return nil
+        }
+    }
+
+    var storageValue: String {
+        switch self {
+        case .dashboard:
+            "dashboard"
+        case let .playlist(id):
+            "playlist:\(id.uuidString)"
+        case .search:
+            "search"
+        case .history:
+            "history"
+        case .settings:
+            "settings"
+        case .linkedPlaylists:
+            "linkedPlaylists"
+        }
+    }
 }
 
 private struct SplitAppShell: View {
@@ -128,11 +169,11 @@ private struct SplitAppShell: View {
 
     var settings: OverplaySettings
 
-    @State private var selection: AppShellDestination? = .dashboard
+    @SceneStorage("overplay.splitSelection") private var storedSelection = AppShellDestination.dashboard.storageValue
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $selection) {
+            List(selection: selection) {
                 Section {
                     Label("Dashboard", systemImage: "rectangle.grid.2x2")
                         .tag(AppShellDestination.dashboard)
@@ -164,7 +205,7 @@ private struct SplitAppShell: View {
 
     @ViewBuilder
     private var detailView: some View {
-        switch selection ?? .dashboard {
+        switch selectedDestination {
         case .dashboard:
             DashboardView(settings: settings)
         case let .playlist(playlistID):
@@ -207,6 +248,18 @@ private struct SplitAppShell: View {
             "tray.fill"
         }
     }
+
+    private var selectedDestination: AppShellDestination {
+        AppShellDestination(storageValue: storedSelection) ?? .dashboard
+    }
+
+    private var selection: Binding<AppShellDestination?> {
+        Binding {
+            selectedDestination
+        } set: { newSelection in
+            storedSelection = (newSelection ?? .dashboard).storageValue
+        }
+    }
 }
 
 private struct PlayerSheetView: View {
@@ -226,7 +279,7 @@ private struct PlayerSheetView: View {
                     .opacity(contentOpacity)
                     .allowsHitTesting(contentOpacity > 0.5)
 
-                MiniPlayerLozengeView(settings: settings)
+                MiniPlayerLozengeView(settings: settings, expandedProgress: backgroundOpacity)
                     .frame(height: collapsedHeight)
                     .padding(.bottom, proxy.safeAreaInsets.bottom)
             }
@@ -283,8 +336,29 @@ private struct MiniPlayerLozengeView: View {
     @Environment(PlaybackController.self) private var playbackController
 
     var settings: OverplaySettings
+    var expandedProgress: Double
 
     var body: some View {
+        ZStack {
+            compactContent
+                .opacity(1 - expandedProgress)
+                .allowsHitTesting(expandedProgress < 0.5)
+
+            expandedContent
+                .opacity(expandedProgress)
+                .allowsHitTesting(expandedProgress >= 0.5)
+        }
+        .frame(maxHeight: .infinity, alignment: .center)
+        .animation(.smooth(duration: 0.22), value: expandedProgress)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(.white.opacity(0.18))
+                .frame(height: 1)
+                .opacity(1 - expandedProgress)
+        }
+    }
+
+    private var compactContent: some View {
         HStack(spacing: 12) {
             ArtworkView(urlString: playbackController.currentTrack?.artworkURLTemplate, cornerRadius: 10)
                 .frame(width: 50, height: 50)
@@ -304,12 +378,12 @@ private struct MiniPlayerLozengeView: View {
             PlaybackControlsView(settings: settings, controlSize: .compact)
         }
         .padding(.horizontal, 14)
-        .frame(maxHeight: .infinity, alignment: .center)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(.white.opacity(0.18))
-                .frame(height: 1)
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    private var expandedContent: some View {
+        PlaybackControlsView(settings: settings, controlSize: .regular)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 }
 

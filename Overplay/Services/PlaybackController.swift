@@ -6,7 +6,7 @@ import SwiftData
 @MainActor
 @Observable
 final class PlaybackController {
-    var currentTrack: TrackedTrack?
+    var currentTrack: CurrentPlaybackTrack?
     var currentPlaylistItem: PlaylistItemRecord?
     var elapsedSeconds: Double = 0
     var durationSeconds: Double?
@@ -350,8 +350,11 @@ final class PlaybackController {
             return
         }
 
-        guard let currentTrack else { return }
-        EvictionEngine.keep(currentTrack, settings: settings, context: context)
+        guard let currentTrack,
+              let legacyTrack = try? TrackRepository.track(id: currentTrack.id, in: context) else {
+            return
+        }
+        EvictionEngine.keep(legacyTrack, settings: settings, context: context)
         try? context.save()
     }
 
@@ -372,10 +375,13 @@ final class PlaybackController {
             return
         }
 
-        guard let currentTrack else { return }
-        EvictionEngine.evict(currentTrack, reason: "Evicted manually", context: context)
+        guard let currentTrack,
+              let legacyTrack = try? TrackRepository.track(id: currentTrack.id, in: context) else {
+            return
+        }
+        EvictionEngine.evict(legacyTrack, reason: "Evicted manually", context: context)
         try? context.save()
-        await removeEvictedTrackFromPlaylist(currentTrack, context: context)
+        await removeEvictedTrackFromPlaylist(legacyTrack, context: context)
         await next(settings: settings, context: context)
     }
 
@@ -440,13 +446,14 @@ final class PlaybackController {
         }
 
         if let newTrackID {
-            currentTrack = try? TrackRepository.track(id: newTrackID, in: context)
-            if currentTrack == nil,
-               let snapshot = snapshot(from: player.queue.currentEntry?.item, playlistID: currentPlaylistID ?? (try? SettingsRepository.settings(in: context).selectedPlaylistID)) {
-                currentTrack = try? TrackRepository.upsert(snapshot, in: context)
-                try? context.save()
-            }
+            let legacyTrack = try? TrackRepository.track(id: newTrackID, in: context)
             currentPlaylistItem = try? playlistItem(matching: newTrackID, context: context)
+            currentTrack = currentPlaybackTrack(
+                musicItemID: newTrackID,
+                legacyTrack: legacyTrack,
+                playlistItem: currentPlaylistItem,
+                context: context
+            )
             durationSeconds = currentTrack?.durationSeconds
 
             if activeSession?.trackID != newTrackID {
@@ -457,8 +464,6 @@ final class PlaybackController {
                     durationSeconds: durationSeconds,
                     hasEvaluated: false
                 )
-                EventRepository.log(trackID: newTrackID, eventType: "started", in: context)
-                try? context.save()
             } else {
                 activeSession?.lastObservedPlaybackTime = elapsedSeconds
                 activeSession?.durationSeconds = durationSeconds
@@ -491,7 +496,11 @@ final class PlaybackController {
             return
         }
 
-        guard let track = currentTrack, !track.isEvicted else { return }
+        guard let currentTrack,
+              let track = try? TrackRepository.track(id: currentTrack.id, in: context),
+              !track.isEvicted else {
+            return
+        }
 
         EvictionEngine.countPlaythrough(track, session: session, settings: settings, context: context)
         session.hasEvaluated = true
@@ -587,5 +596,27 @@ final class PlaybackController {
             items: items,
             tracksByID: tracksByID
         )
+    }
+
+    private func currentPlaybackTrack(
+        musicItemID: String,
+        legacyTrack: TrackedTrack?,
+        playlistItem: PlaylistItemRecord?,
+        context: ModelContext
+    ) -> CurrentPlaybackTrack? {
+        if let playlistItem,
+           let trackRecord = try? TrackRecordRepository.track(id: playlistItem.trackID, in: context) {
+            return CurrentPlaybackTrack(trackRecord, musicItemID: musicItemID, item: playlistItem)
+        }
+
+        if let legacyTrack {
+            return CurrentPlaybackTrack(legacyTrack)
+        }
+
+        guard let snapshot = snapshot(from: player.queue.currentEntry?.item, playlistID: currentPlaylistID) else {
+            return nil
+        }
+
+        return CurrentPlaybackTrack(snapshot)
     }
 }

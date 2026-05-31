@@ -19,17 +19,16 @@ struct PlaybackControlsView: View {
             }
             .accessibilityLabel("Previous track")
             .disabled(!playbackController.canControlPlayback)
+            .buttonStyle(PlaybackControlButtonStyle(controlSize: controlSize, prominence: .secondary))
 
             Button {
                 Task { await primaryPlaybackAction() }
             } label: {
                 Image(systemName: playbackController.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: controlSize.primaryIconSize, weight: .bold))
-                    .frame(width: controlSize.primaryButtonSize, height: controlSize.primaryButtonSize)
-                    .background(.ultraThinMaterial, in: Circle())
             }
             .accessibilityLabel(playbackController.isPlaying ? "Pause" : "Play")
             .disabled(!canUsePrimaryPlaybackAction)
+            .buttonStyle(PlaybackControlButtonStyle(controlSize: controlSize, prominence: .primary))
 
             Button {
                 Task { await playbackController.next(settings: settings, context: modelContext) }
@@ -38,9 +37,8 @@ struct PlaybackControlsView: View {
             }
             .accessibilityLabel("Next track")
             .disabled(!playbackController.canControlPlayback)
+            .buttonStyle(PlaybackControlButtonStyle(controlSize: controlSize, prominence: .secondary))
         }
-        .font(.system(size: controlSize.secondaryIconSize, weight: .semibold))
-        .buttonStyle(.plain)
     }
 
     private var canUsePrimaryPlaybackAction: Bool {
@@ -104,6 +102,79 @@ enum PlaybackControlSize {
             16
         case .regular:
             24
+        }
+    }
+
+    var secondaryButtonSize: CGFloat {
+        switch self {
+        case .compact:
+            34
+        case .regular:
+            48
+        }
+    }
+}
+
+private struct PlaybackControlButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    enum Prominence {
+        case primary
+        case secondary
+    }
+
+    var controlSize: PlaybackControlSize
+    var prominence: Prominence
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: iconSize, weight: iconWeight))
+            .foregroundStyle(isEnabled ? .primary : .tertiary)
+            .frame(width: buttonSize, height: buttonSize)
+            .contentShape(Circle())
+            .background {
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .opacity(backgroundOpacity(isPressed: configuration.isPressed))
+            }
+            .overlay {
+                Circle()
+                    .stroke(.white.opacity(configuration.isPressed ? 0.24 : 0.12), lineWidth: 1)
+            }
+            .scaleEffect(configuration.isPressed ? 0.92 : 1)
+            .opacity(isEnabled ? 1 : 0.42)
+            .animation(.smooth(duration: 0.16), value: configuration.isPressed)
+            .animation(.smooth(duration: 0.16), value: isEnabled)
+    }
+
+    private var buttonSize: CGFloat {
+        switch prominence {
+        case .primary:
+            controlSize.primaryButtonSize
+        case .secondary:
+            controlSize.secondaryButtonSize
+        }
+    }
+
+    private var iconSize: CGFloat {
+        switch prominence {
+        case .primary:
+            controlSize.primaryIconSize
+        case .secondary:
+            controlSize.secondaryIconSize
+        }
+    }
+
+    private var iconWeight: Font.Weight {
+        prominence == .primary ? .bold : .semibold
+    }
+
+    private func backgroundOpacity(isPressed: Bool) -> Double {
+        switch prominence {
+        case .primary:
+            isPressed ? 0.78 : 1
+        case .secondary:
+            isPressed ? 0.42 : 0.18
         }
     }
 }

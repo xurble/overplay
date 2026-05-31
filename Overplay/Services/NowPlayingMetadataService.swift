@@ -3,7 +3,7 @@ import MediaPlayer
 
 @MainActor
 enum NowPlayingMetadataService {
-    static func update(track: TrackedTrack?, elapsed: Double, isPlaying: Bool) {
+    static func update(track: CurrentPlaybackTrack?, elapsed: Double, isPlaying: Bool) {
         guard let track else {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             return

@@ -197,18 +197,18 @@ Verification:
 - Complete: New promotion and removal events appear.
 - Complete: History filtering/sorting tests pass where logic is extracted.
 
-## Step 14 - Audit Shared vs Device-Local State
+## Step 14 - Audit Shared vs Device-Local State - Complete
 
-- Keep shared playlist, track, stats, settings, and history data in SwiftData.
-- Move transient playback and navigation state to `AppStorage`, `SceneStorage`,
+- Complete: Keep shared playlist, track, stats, settings, and history data in SwiftData.
+- Complete: Move transient playback and navigation state to `AppStorage`, `SceneStorage`,
   or other local-only storage.
-- Ensure current playback state does not sync through CloudKit.
+- Complete: Ensure current playback state does not sync through CloudKit.
 
 Verification:
 
-- Two devices/windows can show different selected views.
-- Playback state is not represented in shared SwiftData records.
-- App target builds.
+- Complete: Two devices/windows can show different selected views.
+- Complete: Playback state is not represented in shared SwiftData records.
+- Complete: App target builds.
 
 ## Step 15 - Introduce Adaptive Platform Shell - Complete
 
