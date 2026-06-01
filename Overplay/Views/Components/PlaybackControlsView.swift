@@ -56,7 +56,7 @@ struct PlaybackControlsView: View {
 
     private func primaryPlaybackAction() async {
         if playbackController.canControlPlayback {
-            await playbackController.togglePlayPause()
+            await playbackController.togglePlayPause(context: modelContext)
             return
         }
 

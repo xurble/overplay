@@ -152,10 +152,7 @@ struct PlaylistSyncService {
         }
 
         let playlist = try await loadPlaylist(id: playlistID)
-        let tracks = try await loadTracks(for: playlist)
-        let legacyTracks = try TrackRepository.tracks(forPlaylistID: playlistID, in: context)
-        let legacyEvictedIDs = Set(legacyTracks.filter(\.isEvicted).map(\.id))
-        return tracks.filter { !legacyEvictedIDs.contains($0.id.rawValue) }
+        return try await loadTracks(for: playlist)
     }
 
     func playableMusicTracks(for playlistRecord: PlaylistRecord, in context: ModelContext) async throws -> [Track] {

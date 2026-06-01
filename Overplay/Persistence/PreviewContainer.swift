@@ -6,13 +6,10 @@ enum PreviewContainer {
     static func make() -> ModelContainer {
         let schema = Schema([
             OverplaySettings.self,
-            TrackedTrack.self,
-            PlaybackEvent.self,
             PlaylistRecord.self,
             TrackRecord.self,
             PlaylistItemRecord.self,
-            HistoryEvent.self,
-            SettingsRecord.self
+            HistoryEvent.self
         ])
         let configuration = ModelConfiguration(
             schema: schema,

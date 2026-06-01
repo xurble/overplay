@@ -40,21 +40,6 @@ struct CurrentPlaybackTrack: Equatable, Sendable {
         self.protected = protected
     }
 
-    init(_ track: TrackedTrack) {
-        self.init(
-            id: track.id,
-            title: track.title,
-            artistName: track.artistName,
-            albumTitle: track.albumTitle,
-            artworkURLTemplate: track.artworkURLTemplate,
-            durationSeconds: track.durationSeconds,
-            skipCount: track.skipCount,
-            playthroughCount: track.playthroughCount,
-            evictedAt: track.evictedAt,
-            protected: track.protected
-        )
-    }
-
     init(_ track: TrackRecord, musicItemID: String, item: PlaylistItemRecord?) {
         self.init(
             id: musicItemID,

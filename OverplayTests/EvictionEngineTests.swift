@@ -16,84 +16,81 @@ struct EvictionEngineTests {
             name: "Main",
             role: .oneTruePlaylist
         )
-        let track = TrackedTrack(
-            id: "track-1",
-            playlistID: "playlist-1",
-            title: "Skip Candidate",
-            artistName: "Sample Artist",
+        let item = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: UUID(),
             skipCount: 2
         )
         context.insert(settings)
         context.insert(playlist)
-        context.insert(track)
+        context.insert(item)
 
         let session = TrackPlaySession(
-            trackID: track.id,
+            trackID: "track-1",
             sessionStartDate: .now,
             lastObservedPlaybackTime: 20,
             durationSeconds: 100,
             hasEvaluated: false
         )
 
-        try EvictionEngine.evaluateSkip(
+        EvictionEngine.evaluateSkip(
+            item: item,
+            playlist: playlist,
             session: session,
             transitionWasNaturalCompletion: false,
             settings: settings,
             context: context
         )
 
-        let events = try OverplayTestSupport.playbackEvents(in: context)
-        #expect(track.skipCount == 3)
-        #expect(track.isEvicted)
-        #expect(track.evictionReason == "3 skips before 50%")
-        #expect(events.contains { $0.eventType == "skipCounted" })
-        #expect(events.contains { $0.eventType == "evicted" })
+        let history = try context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(item.skipCount == 3)
+        #expect(item.evictedAt != nil)
+        #expect(item.evictionReason == .skipCount)
+        #expect(history.contains { $0.eventType == .skipCounted })
+        #expect(history.contains { $0.eventType == .evicted })
     }
 
-    @Test("triage legacy track counts skip but does not auto evict")
-    func triageLegacyTrackCountsSkipButDoesNotAutoEvict() throws {
+    @Test("protected playlist item ignores skip")
+    func protectedPlaylistItemIgnoresSkip() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let settings = OverplaySettings(evictAfterSkips: 3)
         let playlist = PlaylistRecord(
-            musicPlaylistID: "playlist-2",
-            name: "Triage",
-            role: .triage
+            musicPlaylistID: "playlist-1",
+            name: "Main",
+            role: .oneTruePlaylist
         )
-        let track = TrackedTrack(
-            id: "track-1",
-            playlistID: "playlist-2",
-            title: "Triage Candidate",
-            artistName: "Sample Artist",
-            skipCount: 2
+        let item = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: UUID(),
+            skipCount: 2,
+            protected: true
         )
         context.insert(settings)
         context.insert(playlist)
-        context.insert(track)
+        context.insert(item)
 
         let session = TrackPlaySession(
-            trackID: track.id,
+            trackID: "track-1",
             sessionStartDate: .now,
             lastObservedPlaybackTime: 20,
             durationSeconds: 100,
             hasEvaluated: false
         )
 
-        try EvictionEngine.evaluateSkip(
+        EvictionEngine.evaluateSkip(
+            item: item,
+            playlist: playlist,
             session: session,
             transitionWasNaturalCompletion: false,
             settings: settings,
             context: context
         )
 
-        let events = try OverplayTestSupport.playbackEvents(in: context)
-        #expect(track.skipCount == 3)
-        #expect(!track.isEvicted)
-        #expect(events.contains { $0.eventType == "skipCounted" })
-        #expect(events.contains {
-            $0.eventType == "skipIgnored"
-                && $0.reason == "Automatic eviction is limited to the One True Playlist"
-        })
+        let history = try context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(item.skipCount == 2)
+        #expect(item.evictedAt == nil)
+        #expect(history.contains { $0.eventType == .skipIgnored && $0.message == "Protected" })
     }
 
     @Test("skip before minimum listening time is ignored")
@@ -101,34 +98,37 @@ struct EvictionEngineTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let settings = OverplaySettings(minimumSkipListeningSeconds: 10)
-        let track = TrackedTrack(
-            id: "track-1",
-            playlistID: "playlist-1",
-            title: "Too Soon",
-            artistName: "Sample Artist"
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "playlist-1",
+            name: "Main",
+            role: .oneTruePlaylist
         )
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: UUID())
         context.insert(settings)
-        context.insert(track)
+        context.insert(playlist)
+        context.insert(item)
 
         let session = TrackPlaySession(
-            trackID: track.id,
+            trackID: "track-1",
             sessionStartDate: .now,
             lastObservedPlaybackTime: 4,
             durationSeconds: 100,
             hasEvaluated: false
         )
 
-        try EvictionEngine.evaluateSkip(
+        EvictionEngine.evaluateSkip(
+            item: item,
+            playlist: playlist,
             session: session,
             transitionWasNaturalCompletion: false,
             settings: settings,
             context: context
         )
 
-        let events = try OverplayTestSupport.playbackEvents(in: context)
-        #expect(track.skipCount == 0)
-        #expect(!track.isEvicted)
-        #expect(events.contains { $0.eventType == "skipIgnored" && $0.reason == "Below minimum listening time" })
+        let history = try context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(item.skipCount == 0)
+        #expect(item.evictedAt == nil)
+        #expect(history.contains { $0.eventType == .skipIgnored && $0.message == "Below minimum listening time" })
     }
 
     @Test("playthrough increments count and resets skips")
@@ -136,35 +136,41 @@ struct EvictionEngineTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let settings = OverplaySettings(playthroughResetsSkipCount: true)
-        let track = TrackedTrack(
-            id: "track-1",
-            playlistID: "playlist-1",
-            title: "Keeper",
-            artistName: "Sample Artist",
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "playlist-1",
+            name: "Main",
+            role: .oneTruePlaylist
+        )
+        let item = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: UUID(),
             skipCount: 2
         )
         context.insert(settings)
-        context.insert(track)
+        context.insert(playlist)
+        context.insert(item)
 
         let session = TrackPlaySession(
-            trackID: track.id,
+            trackID: "track-1",
             sessionStartDate: .now,
             lastObservedPlaybackTime: 95,
             durationSeconds: 100,
             hasEvaluated: false
         )
 
-        try EvictionEngine.evaluateSkip(
+        EvictionEngine.evaluateSkip(
+            item: item,
+            playlist: playlist,
             session: session,
             transitionWasNaturalCompletion: true,
             settings: settings,
             context: context
         )
 
-        let events = try OverplayTestSupport.playbackEvents(in: context)
-        #expect(track.playthroughCount == 1)
-        #expect(track.skipCount == 0)
-        #expect(events.contains { $0.eventType == "playthrough" })
+        let history = try context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(item.playthroughCount == 1)
+        #expect(item.skipCount == 0)
+        #expect(history.contains { $0.eventType == .playthrough })
     }
 
     @Test("triage playlist item counts skip but does not auto evict")

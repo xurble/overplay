@@ -198,6 +198,36 @@ struct NewModelRepositoryTests {
         #expect(items.map(\.id) == [first.id, middle.id, last.id])
     }
 
+    @Test("reset playlist stats clears item counters and eviction state")
+    func resetPlaylistStatsClearsItemCountersAndEvictionState() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let item = PlaylistItemRecord(
+            playlistID: UUID(),
+            trackID: UUID(),
+            skipCount: 4,
+            playthroughCount: 2,
+            lastPlayedAt: Date(timeIntervalSince1970: 100),
+            lastSkippedAt: Date(timeIntervalSince1970: 200),
+            evictedAt: Date(timeIntervalSince1970: 300),
+            evictionReason: .skipCount,
+            evictionSource: .playbackRule,
+            protected: true
+        )
+        context.insert(item)
+
+        try TrackRecordRepository.resetPlaylistStats(in: context)
+
+        #expect(item.skipCount == 0)
+        #expect(item.playthroughCount == 0)
+        #expect(item.lastPlayedAt == nil)
+        #expect(item.lastSkippedAt == nil)
+        #expect(item.evictedAt == nil)
+        #expect(item.evictionReason == nil)
+        #expect(item.evictionSource == nil)
+        #expect(!item.protected)
+    }
+
     @Test("event repository writes history events")
     func eventRepositoryWritesHistoryEvents() throws {
         let container = try OverplayTestSupport.makeModelContainer()

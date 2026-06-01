@@ -282,17 +282,18 @@ Verification:
 - Media commands are local to the Mac.
 - macOS target builds.
 
-## Step 20 - Remove Deprecated Model Usage
+## Step 20 - Remove Deprecated Model Usage - Complete
 
-- Remove `TrackedTrack`-centric code once all reads and writes use the new
+- Complete: Remove `TrackedTrack`-centric code once all reads and writes use the new
   model.
-- Remove `PlaybackEvent` if `HistoryEvent` has fully replaced it.
-- Remove pre-release reset and development cleanup shims once the schema has
+- Complete: Remove `PlaybackEvent` if `HistoryEvent` has fully replaced it.
+- Complete: Remove pre-release reset and development cleanup shims once the schema has
   settled.
-- Document any release-time data upgrade requirements outside this active plan.
+- Complete: Document any release-time data upgrade requirements outside this active plan.
 
 Verification:
 
-- Full iPhone/iPad/Mac build matrix passes.
-- Unit tests pass.
-- No callers remain for deprecated repositories or models.
+- Complete: iPhone/iPad app target builds.
+- Pending: Mac target build awaits Step 18.
+- Complete: Unit tests pass.
+- Complete: No callers remain for deprecated repositories or models.

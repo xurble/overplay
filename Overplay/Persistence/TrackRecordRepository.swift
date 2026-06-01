@@ -25,6 +25,10 @@ enum TrackRecordRepository {
         }
     }
 
+    static func track(musicItemID: String, in context: ModelContext) throws -> TrackRecord? {
+        try track(catalogID: musicItemID, libraryID: musicItemID, in: context)
+    }
+
     @discardableResult
     static func upsert(_ snapshot: TrackSnapshot, in context: ModelContext) throws -> TrackRecord {
         try upsert(
@@ -36,22 +40,6 @@ enum TrackRecordRepository {
             artworkURLTemplate: snapshot.artworkURLTemplate,
             durationSeconds: snapshot.durationSeconds,
             musicKitPlaybackData: snapshot.musicKitPlaybackData,
-            in: context
-        )
-    }
-
-    @discardableResult
-    static func upsert(_ legacyTrack: TrackedTrack, in context: ModelContext) throws -> TrackRecord {
-        try upsert(
-            catalogID: legacyTrack.catalogID ?? legacyTrack.id,
-            libraryID: legacyTrack.libraryID ?? legacyTrack.id,
-            title: legacyTrack.title,
-            artistName: legacyTrack.artistName,
-            albumTitle: legacyTrack.albumTitle,
-            artworkURLTemplate: legacyTrack.artworkURLTemplate,
-            durationSeconds: legacyTrack.durationSeconds,
-            createdAt: legacyTrack.createdAt,
-            updatedAt: legacyTrack.updatedAt,
             in: context
         )
     }
@@ -96,5 +84,22 @@ enum TrackRecordRepository {
         }
         track.updatedAt = updatedAt
         return track
+    }
+
+    static func resetPlaylistStats(in context: ModelContext) throws {
+        let items = try context.fetch(FetchDescriptor<PlaylistItemRecord>())
+        for item in items {
+            item.skipCount = 0
+            item.playthroughCount = 0
+            item.lastPlayedAt = nil
+            item.lastSkippedAt = nil
+            item.evictedAt = nil
+            item.evictionReason = nil
+            item.evictionSource = nil
+            item.protected = false
+            item.updatedAt = .now
+        }
+
+        try context.save()
     }
 }

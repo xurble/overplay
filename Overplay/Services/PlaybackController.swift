@@ -20,6 +20,7 @@ final class PlaybackController {
     @ObservationIgnored private var warmUpTask: Task<Void, Never>?
     @ObservationIgnored private var backgroundSyncTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var activeSession: TrackPlaySession?
+    @ObservationIgnored private var hasRestoredLocalPlaybackState = false
 
     var progress: Double {
         guard let durationSeconds, durationSeconds > 0 else { return 0 }
@@ -89,6 +90,47 @@ final class PlaybackController {
 
     private func clearWarmUpTask() {
         warmUpTask = nil
+    }
+
+    func restoreLocalPlaybackState(context: ModelContext) async {
+        guard !hasRestoredLocalPlaybackState else { return }
+        hasRestoredLocalPlaybackState = true
+
+        guard let state = LocalPlaybackStateStore.load() else {
+            return
+        }
+
+        do {
+            guard let playlist = try PlaylistRepository.playlist(musicPlaylistID: state.playlistID, in: context) else {
+                return
+            }
+
+            let tracks = try await playableTracksForRestoration(playlist, context: context)
+            guard let startingTrack = tracks.first(where: { $0.id.rawValue == state.musicItemID }) else {
+                return
+            }
+
+            warmUpTask?.cancel()
+            warmUpTask = nil
+
+            currentPlaylistID = state.playlistID
+            elapsedSeconds = state.elapsedSeconds
+            isPlaying = false
+            currentPlaylistItem = try playlistItem(matching: state.musicItemID, context: context)
+            currentTrack = currentPlaybackTrack(
+                musicItemID: state.musicItemID,
+                playlistItem: currentPlaylistItem,
+                context: context
+            )
+            durationSeconds = currentTrack?.durationSeconds
+            statusMessage = nil
+            player.queue = ApplicationMusicPlayer.Queue(for: tracks, startingAt: startingTrack)
+            player.playbackTime = state.elapsedSeconds
+            player.pause()
+            NowPlayingMetadataService.update(track: currentTrack, elapsed: elapsedSeconds, isPlaying: false)
+        } catch {
+            statusMessage = "Could not restore playback: \(error.localizedDescription)"
+        }
     }
 
     func playPlaylist(settings: OverplaySettings, context: ModelContext) async {
@@ -172,6 +214,15 @@ final class PlaybackController {
         return PlaybackQueueBuilder.cachedPlayableMusicTracks(items: items, tracksByID: tracksByID)
     }
 
+    private func playableTracksForRestoration(_ playlist: PlaylistRecord, context: ModelContext) async throws -> [Track] {
+        let cachedTracks = try cachedPlayableMusicTracks(for: playlist, in: context)
+        if !cachedTracks.isEmpty {
+            return cachedTracks
+        }
+
+        return try await PlaylistSyncService().playableMusicTracks(for: playlist, in: context)
+    }
+
     private func startPlayback(
         tracks: [Track],
         playlistID: String,
@@ -184,7 +235,7 @@ final class PlaybackController {
         }
 
         for track in tracks {
-            try TrackRepository.upsert(snapshot(from: track, playlistID: playlistID), in: context)
+            try TrackRecordRepository.upsert(snapshot(from: track, playlistID: playlistID), in: context)
         }
         try context.save()
 
@@ -240,23 +291,25 @@ final class PlaybackController {
         }
     }
 
-    func togglePlayPause() async {
+    func togglePlayPause(context: ModelContext) async {
         do {
             if player.state.playbackStatus == .playing {
                 player.pause()
             } else {
                 try await player.play()
+                startMonitoring(context: context)
             }
-            isPlaying = player.state.playbackStatus == .playing
+            await refresh(context: context)
         } catch {
             statusMessage = error.localizedDescription
         }
     }
 
-    func play() async {
+    func play(context: ModelContext) async {
         do {
             try await player.play()
-            isPlaying = player.state.playbackStatus == .playing
+            startMonitoring(context: context)
+            await refresh(context: context)
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -265,6 +318,9 @@ final class PlaybackController {
     func pause() {
         player.pause()
         isPlaying = false
+        if let musicItemID = currentTrack?.id {
+            persistLocalPlaybackState(musicItemID: musicItemID)
+        }
     }
 
     func next(settings: OverplaySettings, context: ModelContext) async {
@@ -309,21 +365,6 @@ final class PlaybackController {
         playbackModeVersion += 1
     }
 
-    func clearLocalStateAfterDatabaseReset() {
-        backgroundSyncTasks.values.forEach { $0.cancel() }
-        backgroundSyncTasks.removeAll()
-        player.pause()
-        currentTrack = nil
-        currentPlaylistItem = nil
-        elapsedSeconds = 0
-        durationSeconds = nil
-        isPlaying = false
-        currentPlaylistID = nil
-        activeSession = nil
-        statusMessage = "Overplay data reset."
-        NowPlayingMetadataService.update(track: nil, elapsed: 0, isPlaying: false)
-    }
-
     private var isRunningTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
             || NSClassFromString("XCTestCase") != nil
@@ -350,12 +391,7 @@ final class PlaybackController {
             return
         }
 
-        guard let currentTrack,
-              let legacyTrack = try? TrackRepository.track(id: currentTrack.id, in: context) else {
-            return
-        }
-        EvictionEngine.keep(legacyTrack, settings: settings, context: context)
-        try? context.save()
+        statusMessage = "Choose a linked playlist track to keep."
     }
 
     func evictCurrent(settings: OverplaySettings, context: ModelContext) async {
@@ -375,14 +411,7 @@ final class PlaybackController {
             return
         }
 
-        guard let currentTrack,
-              let legacyTrack = try? TrackRepository.track(id: currentTrack.id, in: context) else {
-            return
-        }
-        EvictionEngine.evict(legacyTrack, reason: "Evicted manually", context: context)
-        try? context.save()
-        await removeEvictedTrackFromPlaylist(legacyTrack, context: context)
-        await next(settings: settings, context: context)
+        statusMessage = "Choose a linked playlist track to evict."
     }
 
     private func snapshot(from track: Track, playlistID: String?) -> TrackSnapshot {
@@ -396,7 +425,8 @@ final class PlaybackController {
             artistName: track.artistName,
             albumTitle: track.albumTitle,
             artworkURLTemplate: track.artwork?.url(width: 512, height: 512)?.absoluteString,
-            durationSeconds: track.duration
+            durationSeconds: track.duration,
+            musicKitPlaybackData: try? JSONEncoder().encode(track)
         )
     }
 
@@ -446,11 +476,9 @@ final class PlaybackController {
         }
 
         if let newTrackID {
-            let legacyTrack = try? TrackRepository.track(id: newTrackID, in: context)
             currentPlaylistItem = try? playlistItem(matching: newTrackID, context: context)
             currentTrack = currentPlaybackTrack(
                 musicItemID: newTrackID,
-                legacyTrack: legacyTrack,
                 playlistItem: currentPlaylistItem,
                 context: context
             )
@@ -479,6 +507,10 @@ final class PlaybackController {
         }
 
         NowPlayingMetadataService.update(track: currentTrack, elapsed: elapsedSeconds, isPlaying: isPlaying)
+
+        if let newTrackID {
+            persistLocalPlaybackState(musicItemID: newTrackID)
+        }
     }
 
     private func evaluatePlaythroughIfNeeded(context: ModelContext) {
@@ -496,28 +528,6 @@ final class PlaybackController {
             return
         }
 
-        guard let currentTrack,
-              let track = try? TrackRepository.track(id: currentTrack.id, in: context),
-              !track.isEvicted else {
-            return
-        }
-
-        EvictionEngine.countPlaythrough(track, session: session, settings: settings, context: context)
-        session.hasEvaluated = true
-        activeSession = session
-        try? context.save()
-    }
-
-    private func removeEvictedTrackFromPlaylist(_ track: TrackedTrack, context: ModelContext) async {
-        guard track.isEvicted else { return }
-        guard let playlistID = track.playlistID ?? (try? SettingsRepository.settings(in: context).selectedPlaylistID) else { return }
-
-        do {
-            try await PlaylistSyncService().removeTrackFromPlaylist(trackID: track.id, playlistID: playlistID)
-            statusMessage = "Removed \(track.title) from the Apple Music playlist."
-        } catch {
-            statusMessage = "Evicted locally, but Apple Music playlist removal failed: \(error.localizedDescription)"
-        }
     }
 
     private func removeEvictedItemFromPlaylist(_ item: PlaylistItemRecord, playlist: PlaylistRecord, context: ModelContext) async {
@@ -561,22 +571,8 @@ final class PlaybackController {
                 return
             }
 
-            let track = try TrackRepository.track(id: session.trackID, in: context)
-            let wasEvicted = track?.isEvicted == true
-
-            try EvictionEngine.evaluateSkip(
-                session: session,
-                transitionWasNaturalCompletion: naturalCompletion,
-                settings: settings,
-                context: context
-            )
             session.hasEvaluated = true
             activeSession = session
-            try context.save()
-
-            if let track, !wasEvicted, track.isEvicted {
-                await removeEvictedTrackFromPlaylist(track, context: context)
-            }
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -600,7 +596,6 @@ final class PlaybackController {
 
     private func currentPlaybackTrack(
         musicItemID: String,
-        legacyTrack: TrackedTrack?,
         playlistItem: PlaylistItemRecord?,
         context: ModelContext
     ) -> CurrentPlaybackTrack? {
@@ -609,8 +604,8 @@ final class PlaybackController {
             return CurrentPlaybackTrack(trackRecord, musicItemID: musicItemID, item: playlistItem)
         }
 
-        if let legacyTrack {
-            return CurrentPlaybackTrack(legacyTrack)
+        if let trackRecord = try? TrackRecordRepository.track(musicItemID: musicItemID, in: context) {
+            return CurrentPlaybackTrack(trackRecord, musicItemID: musicItemID, item: nil)
         }
 
         guard let snapshot = snapshot(from: player.queue.currentEntry?.item, playlistID: currentPlaylistID) else {
@@ -618,5 +613,19 @@ final class PlaybackController {
         }
 
         return CurrentPlaybackTrack(snapshot)
+    }
+
+    private func persistLocalPlaybackState(musicItemID: String) {
+        guard let currentPlaylistID else {
+            return
+        }
+
+        LocalPlaybackStateStore.save(LocalPlaybackState(
+            playlistID: currentPlaylistID,
+            musicItemID: musicItemID,
+            elapsedSeconds: elapsedSeconds,
+            wasPlaying: isPlaying,
+            updatedAt: .now
+        ))
     }
 }

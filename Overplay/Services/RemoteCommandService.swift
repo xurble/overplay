@@ -20,7 +20,7 @@ final class RemoteCommandService {
         syncPlaybackModes(from: playbackController)
 
         commandCenter.playCommand.addTarget { _ in
-            Task { await playbackController.play() }
+            Task { await playbackController.play(context: context) }
             return .success
         }
         commandCenter.pauseCommand.addTarget { _ in
@@ -28,7 +28,7 @@ final class RemoteCommandService {
             return .success
         }
         commandCenter.togglePlayPauseCommand.addTarget { _ in
-            Task { await playbackController.togglePlayPause() }
+            Task { await playbackController.togglePlayPause(context: context) }
             return .success
         }
         commandCenter.nextTrackCommand.addTarget { _ in

@@ -62,6 +62,10 @@ struct AppRouter: View {
             }
 
             if authorizationService.readiness.isReady {
+                await StartupProfiler.measure("Local playback restore") {
+                    await playbackController.restoreLocalPlaybackState(context: modelContext)
+                }
+
                 StartupProfiler.measure("Playback warm-up scheduling") {
                     playbackController.schedulePostLaunchWarmUp()
                 }

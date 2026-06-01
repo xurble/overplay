@@ -10,7 +10,6 @@ struct HistoryView: View {
     @Query(sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
     @Query(sort: \PlaylistItemRecord.createdAt) private var playlistItems: [PlaylistItemRecord]
     @Query(sort: \TrackRecord.title) private var tracks: [TrackRecord]
-    @Query(sort: \TrackedTrack.title) private var legacyTracks: [TrackedTrack]
 
     @State private var selectedFilter = HistoryEventFilter.all
     @State private var message: String?
@@ -27,7 +26,7 @@ struct HistoryView: View {
                 .pickerStyle(.menu)
             }
 
-            if rows.isEmpty && visibleLegacyEvictedTracks.isEmpty {
+            if rows.isEmpty {
                 ContentUnavailableView(
                     emptyTitle,
                     systemImage: "clock.arrow.circlepath",
@@ -38,16 +37,6 @@ struct HistoryView: View {
             ForEach(rows) { row in
                 HistoryEventRowView(row: row, canRestore: restorableItem(for: row) != nil) {
                     restore(row)
-                }
-            }
-
-            if !visibleLegacyEvictedTracks.isEmpty {
-                Section("Legacy Evictions") {
-                    ForEach(visibleLegacyEvictedTracks) { track in
-                        LegacyEvictedTrackRowView(track: track) {
-                            restore(track)
-                        }
-                    }
                 }
             }
 
@@ -73,16 +62,6 @@ struct HistoryView: View {
         selectedFilter == .all ? "No History" : "No \(selectedFilter.title)"
     }
 
-    private var visibleLegacyEvictedTracks: [TrackedTrack] {
-        guard selectedFilter == .all || selectedFilter == .evictions else {
-            return []
-        }
-
-        return legacyTracks
-            .filter(\.isEvicted)
-            .sorted { ($0.evictedAt ?? .distantPast) > ($1.evictedAt ?? .distantPast) }
-    }
-
     private func restorableItem(for row: HistoryEventRowModel) -> PlaylistItemRecord? {
         guard let playlistID = row.playlistID, let trackID = row.trackID else {
             return nil
@@ -106,17 +85,6 @@ struct HistoryView: View {
         do {
             try modelContext.save()
             message = "Restored \(row.trackTitle)."
-        } catch {
-            message = error.localizedDescription
-        }
-    }
-
-    private func restore(_ track: TrackedTrack) {
-        EvictionEngine.restore(track, context: modelContext)
-
-        do {
-            try modelContext.save()
-            message = "Restored \(track.title)."
         } catch {
             message = error.localizedDescription
         }
@@ -210,43 +178,6 @@ private struct HistoryBadgeView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(.thinMaterial, in: Capsule())
-    }
-}
-
-private struct LegacyEvictedTrackRowView: View {
-    var track: TrackedTrack
-    var restore: () -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            ArtworkView(urlString: track.artworkURLTemplate, cornerRadius: 8)
-                .frame(width: 56, height: 56)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Label("Evicted", systemImage: "trash.fill")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                Text(track.title)
-                    .font(.headline)
-
-                Text(track.artistName)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                if let reason = track.evictionReason {
-                    Text(reason)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-
-            Spacer()
-
-            Button("Restore", action: restore)
-                .buttonStyle(.bordered)
-        }
-        .padding(.vertical, 6)
     }
 }
 

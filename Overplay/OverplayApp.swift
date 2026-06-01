@@ -15,13 +15,10 @@ struct OverplayApp: App {
     private static var schema: Schema {
         Schema([
             OverplaySettings.self,
-            TrackedTrack.self,
-            PlaybackEvent.self,
             PlaylistRecord.self,
             TrackRecord.self,
             PlaylistItemRecord.self,
-            HistoryEvent.self,
-            SettingsRecord.self
+            HistoryEvent.self
         ])
     }
 

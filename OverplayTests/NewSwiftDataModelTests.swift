@@ -72,25 +72,6 @@ struct NewSwiftDataModelTests {
         #expect(events.first?.remoteMutationStatus == .pending)
     }
 
-    @Test("new settings record carries expanded defaults")
-    func settingsRecordCarriesExpandedDefaults() throws {
-        let container = try OverplayTestSupport.makeModelContainer()
-        let context = container.mainContext
-
-        context.insert(SettingsRecord())
-        try context.save()
-
-        let settings = try #require(context.fetch(FetchDescriptor<SettingsRecord>()).first)
-        #expect(settings.evictAfterSkips == 3)
-        #expect(settings.skipThresholdPercentage == 50)
-        #expect(settings.minimumSkipListeningSeconds == 10)
-        #expect(settings.playthroughThresholdPercentage == 90)
-        #expect(settings.playthroughResetsSkipCount)
-        #expect(!settings.protectKeptTracks)
-        #expect(settings.syncOnForeground)
-        #expect(settings.foregroundSyncStalenessSeconds == 3600)
-    }
-
     @Test("playlist item playability excludes evictions and remote removals")
     func playlistItemPlayabilityExcludesEvictionsAndRemoteRemovals() {
         let playlistID = UUID()
