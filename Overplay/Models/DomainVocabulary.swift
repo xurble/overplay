@@ -3,6 +3,11 @@ enum PlaylistRole: String, CaseIterable, Codable, Hashable, Sendable {
     case triage
 }
 
+enum PlaylistWritePolicy: String, CaseIterable, Codable, Hashable, Sendable {
+    case managed
+    case incomingOnly
+}
+
 enum HistoryEventType: String, CaseIterable, Codable, Hashable, Sendable {
     case playlistLinked
     case playlistUpdated

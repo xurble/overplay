@@ -8,6 +8,7 @@ enum PlaylistMutationError: LocalizedError {
     case sourcePlaylistNotTriage
     case trackMissing
     case musicItemMissing
+    case playlistIncomingOnly
 
     var errorDescription: String? {
         switch self {
@@ -21,6 +22,8 @@ enum PlaylistMutationError: LocalizedError {
             "The track is no longer available locally."
         case .musicItemMissing:
             "This track does not have an Apple Music identifier Overplay can add."
+        case .playlistIncomingOnly:
+            "This playlist is incoming only, so Overplay will not write changes back to Apple Music."
         }
     }
 }
@@ -40,6 +43,9 @@ struct PlaylistMutationService {
         }
         guard let track = try TrackRecordRepository.track(id: sourceItem.trackID, in: context) else {
             throw PlaylistMutationError.trackMissing
+        }
+        guard oneTruePlaylist.allowsRemoteWrites else {
+            throw PlaylistMutationError.playlistIncomingOnly
         }
 
         do {

@@ -29,6 +29,26 @@ struct NewModelRepositoryTests {
         #expect(inserted.id == updated.id)
         #expect(updated.name == "One True Playlist")
         #expect(updated.role == .oneTruePlaylist)
+        #expect(updated.writePolicy == .managed)
+    }
+
+    @Test("setting one true playlist stores incoming only write policy")
+    func settingOneTruePlaylistStoresIncomingOnlyWritePolicy() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+
+        try SettingsRepository.selectPlaylist(
+            AppleMusicPlaylist(id: "source-playlist", name: "Source", trackCount: 10),
+            writePolicy: .incomingOnly,
+            in: context
+        )
+        let settings = try SettingsRepository.settings(in: context)
+        let playlist = try #require(try PlaylistRepository.oneTruePlaylist(in: context))
+
+        #expect(settings.selectedPlaylistID == "source-playlist")
+        #expect(playlist.role == .oneTruePlaylist)
+        #expect(playlist.writePolicy == .incomingOnly)
+        #expect(!playlist.allowsRemoteWrites)
     }
 
     @Test("setting one true playlist demotes previous one true playlist")

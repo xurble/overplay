@@ -165,6 +165,47 @@ struct PlaylistMutationServiceTests {
         #expect(history.isEmpty)
     }
 
+    @Test("promotion to incoming only one true playlist is rejected without changing local state")
+    func promotionToIncomingOnlyOneTruePlaylistIsRejectedWithoutChangingLocalState() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let sourcePlaylist = PlaylistRecord(
+            musicPlaylistID: "triage-playlist",
+            name: "Triage",
+            role: .triage
+        )
+        let oneTruePlaylist = PlaylistRecord(
+            musicPlaylistID: "source-playlist",
+            name: "Source",
+            role: .oneTruePlaylist,
+            writePolicy: .incomingOnly
+        )
+        let track = TrackRecord(catalogID: "song-1", libraryID: "song-1", title: "Song", artistName: "Artist")
+        let sourceItem = PlaylistItemRecord(
+            playlistID: sourcePlaylist.id,
+            trackID: track.id,
+            skipCount: 1
+        )
+        context.insert(sourcePlaylist)
+        context.insert(oneTruePlaylist)
+        context.insert(track)
+        context.insert(sourceItem)
+        try context.save()
+
+        do {
+            _ = try await PlaylistMutationService().promote(item: sourceItem, in: context)
+            Issue.record("Promotion should fail for incoming-only One True Playlists.")
+        } catch PlaylistMutationError.playlistIncomingOnly {
+            // Expected: incoming-only playlists never receive outbound writes.
+        }
+
+        let oneTrueItems = try PlaylistItemRepository.items(forPlaylistID: oneTruePlaylist.id, in: context)
+        let history = try context.fetch(FetchDescriptor<HistoryEvent>())
+
+        #expect(oneTrueItems.isEmpty)
+        #expect(history.isEmpty)
+    }
+
     @Test("promotion from one true playlist is rejected without changing local state")
     func promotionFromOneTruePlaylistIsRejectedWithoutChangingLocalState() async throws {
         let container = try OverplayTestSupport.makeModelContainer()

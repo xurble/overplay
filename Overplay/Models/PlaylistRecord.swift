@@ -7,6 +7,7 @@ final class PlaylistRecord {
     var musicPlaylistID: String = ""
     var name: String = ""
     var roleRawValue: String = PlaylistRole.triage.rawValue
+    var writePolicyRawValue: String = PlaylistWritePolicy.managed.rawValue
     var isActive: Bool = true
     var lastSyncedAt: Date?
     var lastSyncError: String?
@@ -19,11 +20,21 @@ final class PlaylistRecord {
         set { roleRawValue = newValue.rawValue }
     }
 
+    var writePolicy: PlaylistWritePolicy {
+        get { PlaylistWritePolicy(rawValue: writePolicyRawValue) ?? .managed }
+        set { writePolicyRawValue = newValue.rawValue }
+    }
+
+    var allowsRemoteWrites: Bool {
+        writePolicy == .managed
+    }
+
     init(
         id: UUID = UUID(),
         musicPlaylistID: String,
         name: String,
         role: PlaylistRole = .triage,
+        writePolicy: PlaylistWritePolicy = .managed,
         isActive: Bool = true,
         lastSyncedAt: Date? = nil,
         lastSyncError: String? = nil,
@@ -35,6 +46,7 @@ final class PlaylistRecord {
         self.musicPlaylistID = musicPlaylistID
         self.name = name
         self.roleRawValue = role.rawValue
+        self.writePolicyRawValue = writePolicy.rawValue
         self.isActive = isActive
         self.lastSyncedAt = lastSyncedAt
         self.lastSyncError = lastSyncError

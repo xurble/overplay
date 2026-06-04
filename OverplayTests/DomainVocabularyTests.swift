@@ -14,6 +14,12 @@ struct DomainVocabularyTests {
         #expect(PlaylistRole.triage.rawValue == "triage")
     }
 
+    @Test("playlist write policy raw values are stable")
+    func playlistWritePolicyRawValuesAreStable() {
+        #expect(PlaylistWritePolicy.managed.rawValue == "managed")
+        #expect(PlaylistWritePolicy.incomingOnly.rawValue == "incomingOnly")
+    }
+
     @Test("history event type raw values are stable")
     func historyEventTypeRawValuesAreStable() {
         #expect(HistoryEventType.skipIgnored.rawValue == "skipIgnored")
@@ -56,6 +62,7 @@ struct DomainVocabularyTests {
     @Test("domain vocabulary codable values round trip")
     func domainVocabularyCodableValuesRoundTrip() throws {
         try assertRoundTrips(PlaylistRole.oneTruePlaylist)
+        try assertRoundTrips(PlaylistWritePolicy.incomingOnly)
         try assertRoundTrips(HistoryEventType.promoted)
         try assertRoundTrips(HistoryEventSource.sync)
         try assertRoundTrips(EvictionReason.skipCount)

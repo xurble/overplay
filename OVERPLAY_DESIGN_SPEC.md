@@ -101,6 +101,15 @@ Overplay tracks multiple Apple Music playlists:
 
 - **One True Playlist**: the main playlist Overplay manages and plays by
   default. Count-based eviction rules apply here.
+
+  When no One True Playlist is linked, the playlist management UI offers two
+  setup paths. The user can create a new Apple Music playlist named "Overplay"
+  by default, or choose an existing Apple Music playlist. Choosing an existing
+  playlist offers to copy its tracks into a new managed "Overplay" playlist so
+  the app can write changes back going forward. If the user opts out of copying,
+  Overplay links the source playlist as incoming only and does not attempt
+  outbound Apple Music mutations for that playlist.
+
 - **Triage playlists**: additional playlists used as intake sources. Overplay
   tracks skips and playthroughs for these playlists, but does not automatically
   evict from them by skip count.
@@ -110,13 +119,14 @@ Each linked playlist stores:
 - Apple Music playlist identifier.
 - Display name.
 - Role: `oneTruePlaylist` or `triage`.
+- Write policy: `managed` or `incomingOnly`.
 - Last successful sync date.
 - Last sync error, if any.
 - Local sort/order preferences.
 - Whether the playlist is active.
 
-Exactly one active playlist should have the `oneTruePlaylist` role. The user
-may add, remove, deactivate, or rename linked triage playlists.
+Exactly one active playlist has the `oneTruePlaylist` role. The user may add,
+remove, deactivate, or rename linked triage playlists.
 
 ### Track state
 
@@ -142,10 +152,38 @@ When a single catalogue song appears in multiple linked playlists, Overplay may
 share metadata, but playlist membership, skip count, playthrough count, and
 eviction state must remain playlist-specific.
 
+### Album artwork cache
+
+Overplay stores artwork source metadata in SwiftData, but not artwork image
+bytes. `TrackRecord.artworkURLTemplate` remains the shared source of truth for
+album art, and each device downloads artwork directly from the Apple Music CDN
+as needed.
+
+Artwork image files live in the local caches directory under
+`Overplay/ArtworkCache`. They are disposable, are not synced through CloudKit,
+and can be redownloaded from their source URL. A local JSON manifest tracks each
+cached file's cache key, source URL, requested size, associated playlist IDs,
+last access date, and byte size.
+
+Artwork loading must not block playlist rendering or playback. Playlist and
+track lists show placeholders immediately, then load cached or downloaded art in
+the background. When playback needs current-track artwork that is not cached,
+the player requests it at high priority and caches the result without delaying
+queue setup, playback, or skip/playthrough evaluation.
+
+The cache has a default 250 MB budget. When it exceeds that budget, eviction
+starts with artwork associated only with least-recently-used playlists, then
+least-recently-accessed files within those groups. Artwork associated with the
+currently playing playlist is protected during the active eviction pass.
+
 ## Sync Behaviour
 
 All linked playlists should be periodically synced against Apple Music. The
 user can also trigger sync manually.
+
+For performance reasons, if a playlist has existing tracks, the UI should act
+on the stored tracks as soon as possible, loading, scrolling, playing etc
+and should initiate a sync in the background.
 
 ### Additions from Apple Music
 
@@ -352,7 +390,7 @@ Required capabilities:
 - Choose the One True Playlist.
 - Add triage playlists.
 - Search/filter Apple Music library playlists.
-- Show playlist role, track count, and sync status.
+- Show playlist artwork, role, track count, and sync status.
 - Manually sync one playlist or all playlists.
 - Deactivate or remove a linked triage playlist.
 
@@ -522,6 +560,9 @@ window through the standard app settings command as well as in-app navigation.
 ### PlaylistSyncService
 
 - Fetch Apple Music library playlists.
+- Create a managed One True Playlist in Apple Music.
+- Copy tracks from a source Apple Music playlist into a new managed One True
+  Playlist when requested.
 - Fetch tracks for each linked playlist.
 - Reconcile additions and removals.
 - Preserve history.
@@ -546,12 +587,12 @@ window through the standard app settings command as well as in-app navigation.
 - Evict One True Playlist items by count.
 - Manually evict items from any linked playlist.
 - Record eviction events.
-- Request remote playlist deletion through a playlist mutation service.
+- Request remote playlist deletion for managed playlists.
 
 ### PlaylistMutationService
 
-- Add tracks to linked Apple Music playlists.
-- Promote tracks from triage playlists to the One True Playlist.
+- Add tracks to managed linked Apple Music playlists.
+- Promote tracks from triage playlists to a managed One True Playlist.
 - Attempt remote playlist deletion for local evictions.
 - Return explicit success/failure results.
 
@@ -593,6 +634,7 @@ Exact SwiftData syntax may evolve, but the model should retain these concepts.
 - `musicPlaylistID: String`
 - `name: String`
 - `role: PlaylistRole`
+- `writePolicy: PlaylistWritePolicy`
 - `isActive: Bool`
 - `lastSyncedAt: Date?`
 - `lastSyncError: String?`
@@ -611,6 +653,22 @@ Exact SwiftData syntax may evolve, but the model should retain these concepts.
 - `durationSeconds: Double?`
 - `createdAt: Date`
 - `updatedAt: Date`
+
+Artwork image bytes are intentionally excluded from SwiftData models and
+CloudKit sync.
+
+### Artwork cache manifest
+
+Local JSON file only:
+
+- `cacheKey: String`
+- `sourceURL: String`
+- `pixelSize: Int`
+- `associatedPlaylistIDs: [String]`
+- `lastAccessedAt: Date`
+- `byteSize: Int`
+- `fileName: String`
+- Playlist usage dates for cache eviction.
 
 ### PlaylistItemRecord
 

@@ -14,7 +14,10 @@ struct NowPlayingView: View {
 
             ScrollView {
                 VStack(spacing: 24) {
-                    ArtworkView(urlString: playbackController.currentTrack?.artworkURLTemplate)
+                    ArtworkView(
+                        urlString: playbackController.currentTrack?.artworkURLTemplate,
+                        playlistID: playbackController.currentPlaylistID
+                    )
                         .aspectRatio(1, contentMode: .fit)
                         .shadow(color: .black.opacity(0.35), radius: 24, y: 18)
 

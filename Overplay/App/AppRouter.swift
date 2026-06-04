@@ -364,7 +364,11 @@ private struct MiniPlayerLozengeView: View {
 
     private var compactContent: some View {
         HStack(spacing: 12) {
-            ArtworkView(urlString: playbackController.currentTrack?.artworkURLTemplate, cornerRadius: 10)
+            ArtworkView(
+                urlString: playbackController.currentTrack?.artworkURLTemplate,
+                playlistID: playbackController.currentPlaylistID,
+                cornerRadius: 10
+            )
                 .frame(width: 50, height: 50)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -408,7 +412,10 @@ private struct NowPlayingPaneView: View {
             )
 
             VStack(spacing: compactLayout ? 12 : 18) {
-                ArtworkView(urlString: playbackController.currentTrack?.artworkURLTemplate)
+                ArtworkView(
+                    urlString: playbackController.currentTrack?.artworkURLTemplate,
+                    playlistID: playbackController.currentPlaylistID
+                )
                     .frame(width: artworkSize, height: artworkSize)
                     .shadow(color: .black.opacity(0.28), radius: 22, y: 16)
 

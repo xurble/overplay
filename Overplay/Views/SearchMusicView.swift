@@ -23,9 +23,9 @@ struct SearchMusicView: View {
             Section {
                 if activePlaylists.isEmpty {
                     ContentUnavailableView(
-                        "No Linked Playlists",
+                        "No Writable Playlists",
                         systemImage: "music.note.list",
-                        description: Text("Link a One True Playlist or triage playlist before adding songs.")
+                        description: Text("Create a managed playlist before adding songs from search.")
                     )
                 } else {
                     Picker("Destination", selection: $selectedPlaylistRecordID) {
@@ -98,7 +98,12 @@ struct SearchMusicView: View {
 
     private func add(_ result: SearchSongResult) async {
         guard let playlist = selectedPlaylist else {
-            searchService.message = "Choose a monitored playlist before adding songs."
+            searchService.message = "Choose a writable playlist before adding songs."
+            return
+        }
+
+        guard playlist.allowsRemoteWrites else {
+            searchService.message = "\(playlist.name) is incoming only, so Overplay will not write changes back to Apple Music."
             return
         }
 
@@ -130,7 +135,7 @@ struct SearchMusicView: View {
 
     private var activePlaylists: [PlaylistRecord] {
         playlists
-            .filter(\.isActive)
+            .filter { $0.isActive && $0.allowsRemoteWrites }
             .sorted { left, right in
                 if left.role != right.role {
                     return left.role == .oneTruePlaylist

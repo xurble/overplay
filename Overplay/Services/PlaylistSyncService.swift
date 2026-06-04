@@ -81,6 +81,55 @@ struct PlaylistSyncService {
     }
 
     @discardableResult
+    func createManagedOneTruePlaylist(
+        named name: String,
+        copyingTracksFrom sourcePlaylistID: String? = nil,
+        in context: ModelContext
+    ) async throws -> PlaylistRecord {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let playlistName = trimmedName.isEmpty ? "Overplay" : trimmedName
+        let sourceTracks: [Track]
+
+        if let sourcePlaylistID {
+            let sourcePlaylist = try await loadPlaylist(id: sourcePlaylistID)
+            sourceTracks = try await loadTracks(for: sourcePlaylist)
+        } else {
+            sourceTracks = []
+        }
+
+        let createdPlaylist = if sourceTracks.isEmpty {
+            try await MusicLibrary.shared.createPlaylist(
+                name: playlistName,
+                description: "Managed by Overplay"
+            )
+        } else {
+            try await MusicLibrary.shared.createPlaylist(
+                name: playlistName,
+                description: "Managed by Overplay",
+                items: sourceTracks
+            )
+        }
+        let appleMusicPlaylist = AppleMusicPlaylist(
+            id: createdPlaylist.id.rawValue,
+            name: createdPlaylist.name,
+            trackCount: sourceTracks.count
+        )
+        let record = try PlaylistRepository.setOneTruePlaylist(
+            appleMusicPlaylist,
+            writePolicy: .managed,
+            in: context
+        )
+        try reconcile(
+            snapshots: sourceTracks.map { snapshot(from: $0, playlistID: record.musicPlaylistID) },
+            playlistRecord: record,
+            syncedAt: .now,
+            in: context
+        )
+        try context.save()
+        return record
+    }
+
+    @discardableResult
     func reconcile(
         snapshots: [TrackSnapshot],
         playlistRecord: PlaylistRecord,
@@ -196,10 +245,7 @@ struct PlaylistSyncService {
 
     private func loadTracks(for playlist: Playlist) async throws -> [Track] {
         let detailedPlaylist = try await playlist.with(.tracks)
-        guard let tracks = detailedPlaylist.tracks else {
-            throw PlaylistSyncError.playlistHasNoTracks
-        }
-        return Array(tracks)
+        return Array(detailedPlaylist.tracks ?? [])
     }
 
     private func snapshot(from track: Track, playlistID: String) -> TrackSnapshot {

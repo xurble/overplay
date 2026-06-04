@@ -21,6 +21,7 @@ final class PlaybackController {
     @ObservationIgnored private var backgroundSyncTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var activeSession: TrackPlaySession?
     @ObservationIgnored private var hasRestoredLocalPlaybackState = false
+    @ObservationIgnored private var prefetchedArtworkTrackID: String?
 
     var progress: Double {
         guard let durationSeconds, durationSeconds > 0 else { return 0 }
@@ -92,6 +93,24 @@ final class PlaybackController {
         warmUpTask = nil
     }
 
+    func clearLocalStateAfterDatabaseReset() {
+        backgroundSyncTasks.values.forEach { $0.cancel() }
+        backgroundSyncTasks.removeAll()
+        player.pause()
+        currentTrack = nil
+        currentPlaylistItem = nil
+        elapsedSeconds = 0
+        durationSeconds = nil
+        isPlaying = false
+        currentPlaylistID = nil
+        activeSession = nil
+        prefetchedArtworkTrackID = nil
+        statusMessage = "Overplay data reset."
+        hasRestoredLocalPlaybackState = false
+        LocalPlaybackStateStore.clear()
+        NowPlayingMetadataService.update(track: nil, elapsed: 0, isPlaying: false)
+    }
+
     func restoreLocalPlaybackState(context: ModelContext) async {
         guard !hasRestoredLocalPlaybackState else { return }
         hasRestoredLocalPlaybackState = true
@@ -128,6 +147,7 @@ final class PlaybackController {
             player.playbackTime = state.elapsedSeconds
             player.pause()
             NowPlayingMetadataService.update(track: currentTrack, elapsed: elapsedSeconds, isPlaying: false)
+            prefetchCurrentArtworkIfNeeded(musicItemID: state.musicItemID, playlistID: state.playlistID)
         } catch {
             statusMessage = "Could not restore playback: \(error.localizedDescription)"
         }
@@ -256,6 +276,7 @@ final class PlaybackController {
         player.queue = ApplicationMusicPlayer.Queue(for: tracks, startingAt: startingTrack)
         try await player.play()
         currentPlaylistID = playlistID
+        await ArtworkCacheService.shared.touchPlaylistUsage(playlistID)
         statusMessage = nil
         startMonitoring(context: context)
         await refresh(context: context)
@@ -483,6 +504,7 @@ final class PlaybackController {
                 context: context
             )
             durationSeconds = currentTrack?.durationSeconds
+            prefetchCurrentArtworkIfNeeded(musicItemID: newTrackID, playlistID: currentPlaylistID)
 
             if activeSession?.trackID != newTrackID {
                 activeSession = TrackPlaySession(
@@ -504,6 +526,7 @@ final class PlaybackController {
             durationSeconds = nil
             activeSession = nil
             currentPlaylistID = nil
+            prefetchedArtworkTrackID = nil
         }
 
         NowPlayingMetadataService.update(track: currentTrack, elapsed: elapsedSeconds, isPlaying: isPlaying)
@@ -532,6 +555,10 @@ final class PlaybackController {
 
     private func removeEvictedItemFromPlaylist(_ item: PlaylistItemRecord, playlist: PlaylistRecord, context: ModelContext) async {
         guard item.evictedAt != nil else { return }
+        guard playlist.allowsRemoteWrites else {
+            statusMessage = "Evicted locally. \(playlist.name) is incoming only, so Apple Music was not changed."
+            return
+        }
         let trackID = currentTrack?.id
             ?? (try? TrackRecordRepository.track(id: item.trackID, in: context)?.catalogID)
             ?? (try? TrackRecordRepository.track(id: item.trackID, in: context)?.libraryID)
@@ -613,6 +640,24 @@ final class PlaybackController {
         }
 
         return CurrentPlaybackTrack(snapshot)
+    }
+
+    private func prefetchCurrentArtworkIfNeeded(musicItemID: String, playlistID: String?) {
+        guard prefetchedArtworkTrackID != musicItemID,
+              let artworkURLTemplate = currentTrack?.artworkURLTemplate else {
+            return
+        }
+
+        prefetchedArtworkTrackID = musicItemID
+        Task(priority: .userInitiated) {
+            await ArtworkCacheService.shared.artworkFileURL(
+                for: artworkURLTemplate,
+                pixelSize: 512,
+                playlistID: playlistID,
+                priority: .userInitiated,
+                protectedPlaylistID: playlistID
+            )
+        }
     }
 
     private func persistLocalPlaybackState(musicItemID: String) {

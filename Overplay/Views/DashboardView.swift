@@ -6,6 +6,7 @@ struct DashboardView: View {
 
     @Query(sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
     @Query(sort: \PlaylistItemRecord.createdAt) private var playlistItems: [PlaylistItemRecord]
+    @Query(sort: \TrackRecord.title) private var tracks: [TrackRecord]
 
     var settings: OverplaySettings
 
@@ -19,6 +20,8 @@ struct DashboardView: View {
                         PlaylistHomeRowView(
                             title: oneTruePlaylist.name,
                             detail: detailText(for: oneTruePlaylist),
+                            artworkURLString: representativeArtworkURL(for: oneTruePlaylist),
+                            playlistID: oneTruePlaylist.musicPlaylistID,
                             systemImage: "star.fill",
                             tint: .pink
                         )
@@ -30,6 +33,8 @@ struct DashboardView: View {
                         PlaylistHomeRowView(
                             title: "Link One True Playlist",
                             detail: "Choose the main playlist Overplay manages.",
+                            artworkURLString: nil,
+                            playlistID: nil,
                             systemImage: "star",
                             tint: .pink
                         )
@@ -45,6 +50,8 @@ struct DashboardView: View {
                         PlaylistHomeRowView(
                             title: playlist.name,
                             detail: detailText(for: playlist),
+                            artworkURLString: representativeArtworkURL(for: playlist),
+                            playlistID: playlist.musicPlaylistID,
                             systemImage: "tray.fill",
                             tint: .teal
                         )
@@ -92,7 +99,28 @@ struct DashboardView: View {
     private func detailText(for playlist: PlaylistRecord) -> String {
         let activeCount = playlistItems.filter { $0.playlistID == playlist.id && $0.removedFromRemoteAt == nil }.count
         let syncStatus = playlist.lastSyncedAt.map { "Synced \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Not synced"
-        return "\(activeCount) tracks - \(syncStatus)"
+        return "\(activeCount) tracks - \(syncStatus) - \(writePolicyText(for: playlist))"
+    }
+
+    private var tracksByID: [UUID: TrackRecord] {
+        Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
+    }
+
+    private func representativeArtworkURL(for playlist: PlaylistRecord) -> String? {
+        PlaylistArtworkSelector.representativeArtworkURL(
+            for: playlist,
+            items: playlistItems,
+            tracksByID: tracksByID
+        )
+    }
+
+    private func writePolicyText(for playlist: PlaylistRecord) -> String {
+        switch playlist.writePolicy {
+        case .managed:
+            "Managed"
+        case .incomingOnly:
+            "Incoming only"
+        }
     }
 
     private func deleteTriagePlaylists(at offsets: IndexSet) {
@@ -106,11 +134,29 @@ struct DashboardView: View {
 private struct PlaylistHomeRowView: View {
     var title: String
     var detail: String
+    var artworkURLString: String?
+    var playlistID: String?
     var systemImage: String
     var tint: Color
 
     var body: some View {
-        Label {
+        HStack(spacing: 12) {
+            ZStack(alignment: .bottomTrailing) {
+                ArtworkView(
+                    urlString: artworkURLString,
+                    pixelSize: 96,
+                    playlistID: playlistID,
+                    cornerRadius: 8
+                )
+                .frame(width: 48, height: 48)
+
+                Image(systemName: systemImage)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(4)
+                    .background(tint, in: Circle())
+            }
+
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.headline)
@@ -118,9 +164,8 @@ private struct PlaylistHomeRowView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-        } icon: {
-            Image(systemName: systemImage)
-                .foregroundStyle(tint)
+
+            Spacer()
         }
         .padding(.vertical, 6)
     }
@@ -181,6 +226,7 @@ struct PlaylistManagementView: View {
                             PlaylistTrackRowView(
                                 track: track,
                                 item: item,
+                                playlistID: playlist.musicPlaylistID,
                                 isCurrent: isCurrentTrack(track)
                             )
                         }
@@ -211,6 +257,9 @@ struct PlaylistManagementView: View {
         .miniPlayerScrollContentInset()
         .navigationTitle("Playlist")
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: playlist.musicPlaylistID) {
+            await ArtworkCacheService.shared.touchPlaylistUsage(playlist.musicPlaylistID)
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -351,31 +400,45 @@ struct PlaylistManagementView: View {
 private struct PlaylistTrackRowView: View {
     var track: TrackRecord
     var item: PlaylistItemRecord
+    var playlistID: String
     var isCurrent: Bool
 
     var body: some View {
-        Label {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(track.title)
-                        .font(.headline)
-                        .foregroundStyle(item.isPlayable ? .primary : .secondary)
-                    Text(trackSubtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+        HStack(spacing: 12) {
+            ZStack(alignment: .bottomTrailing) {
+                ArtworkView(
+                    urlString: track.artworkURLTemplate,
+                    pixelSize: 96,
+                    playlistID: playlistID,
+                    cornerRadius: 8
+                )
+                .frame(width: 48, height: 48)
 
-                Spacer()
-
-                if item.skipCount > 0 {
-                    Text("\(item.skipCount) skips")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                if let rowImage {
+                    Image(systemName: rowImage)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(4)
+                        .background(rowTint, in: Circle())
                 }
             }
-        } icon: {
-            Image(systemName: rowImage)
-                .foregroundStyle(rowTint)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(track.title)
+                    .font(.headline)
+                    .foregroundStyle(item.isPlayable ? .primary : .secondary)
+                Text(trackSubtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if item.skipCount > 0 {
+                Text("\(item.skipCount) skips")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .contentShape(Rectangle())
         .padding(.vertical, 4)
@@ -389,7 +452,7 @@ private struct PlaylistTrackRowView: View {
         return track.artistName
     }
 
-    private var rowImage: String {
+    private var rowImage: String? {
         if isCurrent {
             return "play.fill"
         }
@@ -399,7 +462,7 @@ private struct PlaylistTrackRowView: View {
         if item.removedFromRemoteAt != nil {
             return "xmark.circle.fill"
         }
-        return "music.note"
+        return nil
     }
 
     private var rowTint: Color {

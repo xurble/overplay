@@ -30,6 +30,7 @@ enum PlaylistRepository {
         musicPlaylistID: String,
         name: String,
         role: PlaylistRole,
+        writePolicy: PlaylistWritePolicy = .managed,
         isActive: Bool = true,
         sortOrder: Int = 0,
         in context: ModelContext
@@ -46,6 +47,7 @@ enum PlaylistRepository {
 
         playlist.name = name
         playlist.role = role
+        playlist.writePolicy = writePolicy
         playlist.isActive = isActive
         playlist.sortOrder = sortOrder
         playlist.updatedAt = .now
@@ -53,7 +55,11 @@ enum PlaylistRepository {
     }
 
     @discardableResult
-    static func setOneTruePlaylist(_ appleMusicPlaylist: AppleMusicPlaylist, in context: ModelContext) throws -> PlaylistRecord {
+    static func setOneTruePlaylist(
+        _ appleMusicPlaylist: AppleMusicPlaylist,
+        writePolicy: PlaylistWritePolicy = .managed,
+        in context: ModelContext
+    ) throws -> PlaylistRecord {
         for existingPlaylist in try activePlaylists(in: context) where existingPlaylist.role == .oneTruePlaylist && existingPlaylist.musicPlaylistID != appleMusicPlaylist.id {
             existingPlaylist.role = .triage
             existingPlaylist.updatedAt = .now
@@ -63,6 +69,7 @@ enum PlaylistRepository {
             musicPlaylistID: appleMusicPlaylist.id,
             name: appleMusicPlaylist.name,
             role: .oneTruePlaylist,
+            writePolicy: writePolicy,
             in: context
         )
     }
@@ -81,6 +88,7 @@ enum PlaylistRepository {
             musicPlaylistID: appleMusicPlaylist.id,
             name: appleMusicPlaylist.name,
             role: .triage,
+            writePolicy: .managed,
             in: context
         )
     }
