@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SearchMusicView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(PlaybackController.self) private var playbackController
     @Query(sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
 
     var settings: OverplaySettings
@@ -193,6 +194,7 @@ struct SearchMusicView: View {
     private func syncPlaylistIfPossible(_ playlist: PlaylistRecord) async -> String? {
         do {
             _ = try await PlaylistSyncService().syncPlaylist(playlist, in: modelContext)
+            playbackController.reconcileStoredOrder(for: playlist, context: modelContext)
             return nil
         } catch {
             return "Added to \(playlist.name), but sync failed: \(error.localizedDescription)"
@@ -204,5 +206,6 @@ struct SearchMusicView: View {
     NavigationStack {
         SearchMusicView(settings: OverplaySettings(selectedPlaylistID: "preview-playlist", selectedPlaylistName: "Overplay"))
     }
+    .environment(PlaybackController())
     .modelContainer(PreviewContainer.make())
 }

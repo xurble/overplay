@@ -173,11 +173,15 @@ final class CarPlayCoordinator: NSObject {
         nowPlayingTemplate.isAlbumArtistButtonEnabled = false
         nowPlayingTemplate.updateNowPlayingButtons([
             CPNowPlayingShuffleButton { [weak self] button in
-                self?.playbackController?.toggleShuffle()
-                button.isSelected = self?.playbackController?.shuffleEnabled == true
+                Task { @MainActor in
+                    guard let self, let playbackController = self.playbackController, let modelContext = self.modelContext else { return }
+                    await playbackController.toggleShuffle(context: modelContext)
+                    button.isSelected = playbackController.shuffleEnabled
+                    self.syncPlaybackModes()
+                }
             },
             CPNowPlayingRepeatButton { [weak self] _ in
-                self?.playbackController?.cycleRepeatMode()
+                self?.playbackController?.toggleRepeat()
                 self?.syncPlaybackModes()
             }
         ])

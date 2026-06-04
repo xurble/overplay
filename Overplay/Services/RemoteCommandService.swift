@@ -16,6 +16,7 @@ final class RemoteCommandService {
         commandCenter.nextTrackCommand.isEnabled = true
         commandCenter.previousTrackCommand.isEnabled = true
         commandCenter.togglePlayPauseCommand.isEnabled = true
+        commandCenter.changeShuffleModeCommand.isEnabled = true
         commandCenter.changeRepeatModeCommand.isEnabled = true
         syncPlaybackModes(from: playbackController)
 
@@ -42,13 +43,27 @@ final class RemoteCommandService {
             Task { await playbackController.previous(context: context) }
             return .success
         }
+        commandCenter.changeShuffleModeCommand.addTarget { [weak self] event in
+            guard let event = event as? MPChangeShuffleModeCommandEvent else {
+                return .commandFailed
+            }
+
+            Task { @MainActor in
+                await playbackController.setShuffleEnabled(
+                    RemotePlaybackModeMapper.shuffleEnabled(for: event.shuffleType),
+                    context: context
+                )
+                self?.syncPlaybackModes(from: playbackController)
+            }
+            return .success
+        }
         commandCenter.changeRepeatModeCommand.addTarget { [weak self] event in
             guard let event = event as? MPChangeRepeatModeCommandEvent else {
                 return .commandFailed
             }
 
             Task { @MainActor in
-                playbackController.setRepeatMode(RemotePlaybackModeMapper.repeatMode(for: event.repeatType))
+                playbackController.setRepeatEnabled(RemotePlaybackModeMapper.repeatEnabled(for: event.repeatType))
                 self?.syncPlaybackModes(from: playbackController)
             }
             return .success
@@ -57,6 +72,11 @@ final class RemoteCommandService {
 
     func syncPlaybackModes(from playbackController: PlaybackController) {
         let commandCenter = MPRemoteCommandCenter.shared()
-        commandCenter.changeRepeatModeCommand.currentRepeatType = RemotePlaybackModeMapper.repeatType(for: playbackController.repeatMode)
+        commandCenter.changeShuffleModeCommand.currentShuffleType = RemotePlaybackModeMapper.shuffleType(
+            for: playbackController.shuffleEnabled
+        )
+        commandCenter.changeRepeatModeCommand.currentRepeatType = RemotePlaybackModeMapper.repeatType(
+            for: playbackController.repeatEnabled
+        )
     }
 }

@@ -2,6 +2,17 @@ import Foundation
 @preconcurrency import MusicKit
 
 enum PlaybackQueueBuilder {
+    static func playbackOrderTracks(items: [PlaylistItemRecord]) -> [PlaybackOrderTrack] {
+        items.map { item in
+            PlaybackOrderTrack(
+                id: item.trackID.uuidString,
+                sortOrder: item.sortOrder,
+                createdAt: item.createdAt,
+                isPlayable: item.isPlayable
+            )
+        }
+    }
+
     static func cachedPlayableMusicTracks(
         items: [PlaylistItemRecord],
         tracksByID: [UUID: TrackRecord]
@@ -55,5 +66,35 @@ enum PlaybackQueueBuilder {
 
     static func musicItemIDs(for track: TrackRecord) -> [String] {
         [track.catalogID, track.libraryID].compactMap { $0 }
+    }
+
+    static func localTrackID(
+        matching musicItemID: String,
+        tracksByID: [UUID: TrackRecord]
+    ) -> String? {
+        tracksByID.first { _, track in
+            musicItemIDs(for: track).contains(musicItemID)
+        }?.key.uuidString
+    }
+
+    static func localTrackID(
+        for musicTrack: Track,
+        tracksByID: [UUID: TrackRecord]
+    ) -> String? {
+        localTrackID(matching: musicTrack.id.rawValue, tracksByID: tracksByID)
+    }
+
+    static func orderedMusicTracks(
+        _ musicTracks: [Track],
+        orderedTrackIDs: [String],
+        tracksByID: [UUID: TrackRecord]
+    ) -> [Track] {
+        let musicTracksByLocalID = Dictionary(
+            uniqueKeysWithValues: musicTracks.compactMap { musicTrack in
+                localTrackID(for: musicTrack, tracksByID: tracksByID).map { ($0, musicTrack) }
+            }
+        )
+
+        return orderedTrackIDs.compactMap { musicTracksByLocalID[$0] }
     }
 }

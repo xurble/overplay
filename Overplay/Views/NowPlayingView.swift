@@ -108,8 +108,10 @@ struct NowPlayingView: View {
         Grid(horizontalSpacing: 12, verticalSpacing: 12) {
             GridRow {
                 Button {
-                    playbackController.toggleShuffle()
-                    runtime.remoteCommandService.syncPlaybackModes(from: playbackController)
+                    Task {
+                        await playbackController.toggleShuffle(context: modelContext)
+                        runtime.remoteCommandService.syncPlaybackModes(from: playbackController)
+                    }
                 } label: {
                     Label("Shuffle", systemImage: playbackController.shuffleEnabled ? "shuffle.circle.fill" : "shuffle")
                         .frame(maxWidth: .infinity)
@@ -118,7 +120,7 @@ struct NowPlayingView: View {
                 .tint(playbackController.shuffleEnabled ? .accentColor : .secondary.opacity(0.24))
 
                 Button {
-                    playbackController.cycleRepeatMode()
+                    playbackController.toggleRepeat()
                     runtime.remoteCommandService.syncPlaybackModes(from: playbackController)
                 } label: {
                     Label("Repeat \(playbackController.repeatModeTitle)", systemImage: repeatIconName)
@@ -150,7 +152,7 @@ struct NowPlayingView: View {
     }
 
     private var repeatIconName: String {
-        playbackController.repeatsSingleTrack ? "repeat.1" : "repeat"
+        "repeat"
     }
 
     private func formatTime(_ seconds: Double) -> String {

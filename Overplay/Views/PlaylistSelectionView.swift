@@ -361,6 +361,7 @@ struct PlaylistSelectionView: View {
 
         do {
             let count = try await PlaylistSyncService().syncPlaylist(playlist, in: modelContext)
+            playbackController.reconcileStoredOrder(for: playlist, context: modelContext)
             message = "Synced \(count) tracks from \(playlist.name)."
         } catch {
             message = error.localizedDescription
@@ -373,6 +374,9 @@ struct PlaylistSelectionView: View {
 
         do {
             let count = try await PlaylistSyncService().syncAllLinkedPlaylists(in: modelContext)
+            for playlist in linkedPlaylists {
+                playbackController.reconcileStoredOrder(for: playlist, context: modelContext)
+            }
             message = "Synced \(count) tracks across linked playlists."
         } catch {
             message = error.localizedDescription
@@ -383,6 +387,7 @@ struct PlaylistSelectionView: View {
         Task(priority: .background) {
             do {
                 _ = try await PlaylistSyncService().syncPlaylist(playlist, in: modelContext)
+                playbackController.reconcileStoredOrder(for: playlist, context: modelContext)
             } catch {
                 playlist.lastSyncError = error.localizedDescription
                 playlist.updatedAt = .now

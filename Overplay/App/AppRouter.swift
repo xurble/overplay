@@ -500,8 +500,10 @@ private struct NowPlayingPaneView: View {
     private var playbackModeControls: some View {
         HStack(spacing: 12) {
             Button {
-                playbackController.toggleShuffle()
-                runtime.remoteCommandService.syncPlaybackModes(from: playbackController)
+                Task {
+                    await playbackController.toggleShuffle(context: modelContext)
+                    runtime.remoteCommandService.syncPlaybackModes(from: playbackController)
+                }
             } label: {
                 Label("Shuffle", systemImage: playbackController.shuffleEnabled ? "shuffle.circle.fill" : "shuffle")
                     .frame(maxWidth: .infinity)
@@ -510,7 +512,7 @@ private struct NowPlayingPaneView: View {
             .tint(playbackController.shuffleEnabled ? .accentColor : .secondary.opacity(0.24))
 
             Button {
-                playbackController.cycleRepeatMode()
+                playbackController.toggleRepeat()
                 runtime.remoteCommandService.syncPlaybackModes(from: playbackController)
             } label: {
                 Label("Repeat \(playbackController.repeatModeTitle)", systemImage: repeatIconName)
@@ -543,7 +545,7 @@ private struct NowPlayingPaneView: View {
     }
 
     private var repeatIconName: String {
-        playbackController.repeatsSingleTrack ? "repeat.1" : "repeat"
+        "repeat"
     }
 
     private func formatTime(_ seconds: Double) -> String {

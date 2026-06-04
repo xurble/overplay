@@ -357,6 +357,77 @@ different playlists or views at the same time.
 Two devices should be able to share playlist and eviction data without
 interfering with each other's playback.
 
+## Playback Order, Shuffle, and Repeat
+
+Overplay owns playback order. MusicKit should receive an explicit queue from
+Overplay, while MusicKit shuffle and repeat modes remain off. This keeps skip
+tracking, eviction filtering, playlist display order, CarPlay, and remote
+commands aligned to the same source of truth.
+
+Shuffle and repeat state is local-only and must not be stored in SwiftData or
+iCloud-backed records. Persist the state in local storage keyed by player and
+playlist so independent players or windows can avoid overwriting each other's
+mode state. The stored state should include whether shuffle is enabled, whether
+repeat-all is enabled, and the current local shuffled track order.
+
+Shuffle behavior:
+
+- Turning shuffle on immediately records a new shuffled order for the current
+  playlist and updates playlist display order.
+- If a track is currently playing, that track is excluded from the random
+  portion and promoted to the head of the new shuffled order.
+- The current track must continue playing without restarting. Do not replace the
+  MusicKit queue while the current track is still playing solely because shuffle
+  was toggled.
+- When playback leaves the current track, replace the MusicKit queue with the
+  app-owned shuffled order and continue from the correct next or previous track.
+- For playlists with one or two playable tracks, shuffle may be enabled, but the
+  order remains normal until the playlist grows.
+
+Shuffle-off behavior follows the same seamless rule:
+
+- Turning shuffle off immediately clears the stored shuffled order and updates
+  playlist display order back to normal playlist order.
+- The current track must continue playing without restarting.
+- When playback leaves the current track, replace the MusicKit queue with normal
+  playlist order.
+- If moving forward after shuffle is turned off, continue with the track below
+  the last-playing track in normal playlist order.
+- If the last-playing track is already the final track in normal order and
+  repeat is off, do not continue into the stale shuffled queue.
+
+Sync and eviction behavior:
+
+- New playable tracks synced into a shuffled playlist are appended to the end of
+  the stored shuffled order until the next shuffle.
+- Tracks that are evicted or removed from the remote playlist are removed from
+  the stored shuffled order.
+- If the removed or evicted track is currently playing, keep it in the effective
+  order until playback leaves it, then remove it.
+- Playlist track lists should reflect the stored shuffled order whenever shuffle
+  is enabled for that player and playlist; otherwise they should use normal
+  playlist order.
+
+Repeat behavior:
+
+- Repeat is an on/off repeat-all mode. Repeat-one is not part of Overplay's
+  playback model.
+- Repeat state is persisted in the same local player-and-playlist state as
+  shuffle.
+- When repeat is on and the end of a non-shuffled queue is reached, restart from
+  the first playable track in normal playlist order.
+- When repeat is on and the end of a shuffled queue is reached, create a fresh
+  shuffle and start from the head of the new shuffled order.
+- The last-played track must not appear in the top five tracks of the fresh
+  shuffle. If there are five or fewer playable tracks, keep the last-played
+  track last. If there are only one or two playable tracks, use the normal-order
+  short-circuit behavior.
+
+All playback surfaces must use the same behavior: Now Playing, mini player,
+lock-screen and remote commands, CarPlay, keyboard/media keys, and playlist row
+play actions should route through the shared playback controller rather than
+implementing shuffle or repeat locally.
+
 ## Required Screens
 
 Screens should be adaptive rather than separate products. iPhone can present
@@ -572,7 +643,9 @@ window through the standard app settings command as well as in-app navigation.
 ### PlaybackController
 
 - Own Apple Music playback.
-- Build queues from active, non-evicted playlist items.
+- Build app-owned queues from active, non-evicted playlist items.
+- Own shuffle and repeat behavior, including seamless deferred queue
+  replacement when shuffle is toggled during playback.
 - Track play sessions.
 - Publish current playback state.
 - Forward transitions to the eviction engine.

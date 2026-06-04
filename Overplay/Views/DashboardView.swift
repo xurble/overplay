@@ -308,7 +308,8 @@ struct PlaylistManagementView: View {
     }
 
     private var orderedItems: [PlaylistItemRecord] {
-        visibleItems.sorted { $0.createdAt < $1.createdAt }
+        let state = playbackController.playbackModeState(for: playlist.musicPlaylistID)
+        return PlaylistDisplayOrder.orderedItems(visibleItems, state: state)
     }
 
     private var tracksByID: [UUID: TrackRecord] {
@@ -377,6 +378,7 @@ struct PlaylistManagementView: View {
 
         do {
             let count = try await PlaylistSyncService().syncPlaylist(playlist, in: modelContext)
+            playbackController.reconcileStoredOrder(for: playlist, context: modelContext)
             message = "Synced \(count) tracks from \(playlist.name)."
         } catch {
             message = error.localizedDescription
