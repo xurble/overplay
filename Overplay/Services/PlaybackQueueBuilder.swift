@@ -89,12 +89,19 @@ enum PlaybackQueueBuilder {
         orderedTrackIDs: [String],
         tracksByID: [UUID: TrackRecord]
     ) -> [Track] {
-        let musicTracksByLocalID = Dictionary(
+        let musicTracksByLocalID = musicTracksByLocalID(musicTracks, tracksByID: tracksByID)
+
+        return orderedTrackIDs.compactMap { musicTracksByLocalID[$0] }
+    }
+
+    static func musicTracksByLocalID(
+        _ musicTracks: [Track],
+        tracksByID: [UUID: TrackRecord]
+    ) -> [String: Track] {
+        Dictionary(
             uniqueKeysWithValues: musicTracks.compactMap { musicTrack in
                 localTrackID(for: musicTrack, tracksByID: tracksByID).map { ($0, musicTrack) }
             }
         )
-
-        return orderedTrackIDs.compactMap { musicTracksByLocalID[$0] }
     }
 }

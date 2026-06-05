@@ -102,6 +102,25 @@ enum PlaybackOrderEngine {
         }.map(\.id)
     }
 
+    static func adjacentAvailableID(
+        to trackID: String,
+        in orderedIDs: [String],
+        availableIDs: Set<String>,
+        movingForward: Bool
+    ) -> String? {
+        guard let index = orderedIDs.firstIndex(of: trackID) else {
+            return nil
+        }
+
+        let candidates: [String] = if movingForward {
+            Array(orderedIDs[orderedIDs.index(after: index)...])
+        } else {
+            Array(orderedIDs[..<index].reversed())
+        }
+
+        return candidates.first { availableIDs.contains($0) }
+    }
+
     private static func ordered(_ tracks: [PlaybackOrderTrack]) -> [PlaybackOrderTrack] {
         tracks.sorted(by: normalPrecedes)
     }

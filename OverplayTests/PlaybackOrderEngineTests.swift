@@ -105,6 +105,31 @@ struct PlaybackOrderEngineTests {
         #expect(order.last == "track-2")
     }
 
+    @Test("adjacent available ID uses ordered local IDs without falling back to the head")
+    func adjacentAvailableIDUsesOrderedLocalIDs() {
+        let orderedIDs = ["track-1", "track-2", "track-3", "track-4"]
+        let availableIDs = Set(["track-1", "track-4"])
+
+        #expect(PlaybackOrderEngine.adjacentAvailableID(
+            to: "track-2",
+            in: orderedIDs,
+            availableIDs: availableIDs,
+            movingForward: true
+        ) == "track-4")
+        #expect(PlaybackOrderEngine.adjacentAvailableID(
+            to: "missing",
+            in: orderedIDs,
+            availableIDs: availableIDs,
+            movingForward: true
+        ) == nil)
+        #expect(PlaybackOrderEngine.adjacentAvailableID(
+            to: "track-2",
+            in: orderedIDs,
+            availableIDs: availableIDs,
+            movingForward: false
+        ) == "track-1")
+    }
+
     private func makeTracks(count: Int) -> [PlaybackOrderTrack] {
         (1...count).map { index in
             PlaybackOrderTrack(

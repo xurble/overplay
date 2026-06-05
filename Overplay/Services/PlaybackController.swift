@@ -9,6 +9,12 @@ final class PlaybackController {
     private struct PendingModeQueueRebuild {
         var playlistID: String
         var currentMusicItemID: String
+        var currentLocalTrackID: String?
+    }
+
+    private struct OrderedQueueEntry {
+        var localTrackID: String
+        var musicTrack: Track
     }
 
     let playerID: String
@@ -26,6 +32,8 @@ final class PlaybackController {
     @ObservationIgnored private var warmUpTask: Task<Void, Never>?
     @ObservationIgnored private var backgroundSyncTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var activeSession: TrackPlaySession?
+    @ObservationIgnored private var activeQueueLocalTrackIDs: [String] = []
+    @ObservationIgnored private var activeQueueIndex: Int?
     @ObservationIgnored private var hasRestoredLocalPlaybackState = false
     @ObservationIgnored private var prefetchedArtworkTrackID: String?
     @ObservationIgnored private var isRestartingQueue = false
@@ -119,6 +127,8 @@ final class PlaybackController {
         isPlaying = false
         currentPlaylistID = nil
         activeSession = nil
+        activeQueueLocalTrackIDs = []
+        activeQueueIndex = nil
         prefetchedArtworkTrackID = nil
         pendingModeQueueRebuild = nil
         statusMessage = "Overplay data reset."
@@ -161,14 +171,17 @@ final class PlaybackController {
             durationSeconds = currentTrack?.durationSeconds
             statusMessage = nil
             disableMusicKitPlaybackModes()
-            let queueTracks = try orderedQueueTracks(
+            let queueEntries = try orderedQueueEntries(
                 from: tracks,
                 playlistID: state.playlistID,
                 startingTrackID: currentPlaylistItem?.trackID.uuidString,
                 promoteStartingTrackInShuffle: false,
                 context: context
             )
+            let queueTracks = queueTracks(from: queueEntries, fallback: tracks)
             let queueStartingTrack = queueTracks.first { $0.id == startingTrack.id } ?? startingTrack
+            pendingModeQueueRebuild = nil
+            updateActiveQueue(entries: queueEntries, startingAt: currentPlaylistItem?.trackID.uuidString)
             player.queue = ApplicationMusicPlayer.Queue(for: queueTracks, startingAt: queueStartingTrack)
             player.playbackTime = state.elapsedSeconds
             player.pause()
@@ -287,8 +300,32 @@ final class PlaybackController {
         playlistID: String,
         startingTrackID: String?,
         promoteStartingTrackInShuffle: Bool = false,
+        retainedTrackID: String? = nil,
         context: ModelContext
     ) throws -> [Track] {
+        let entries = try orderedQueueEntries(
+            from: tracks,
+            playlistID: playlistID,
+            startingTrackID: startingTrackID,
+            promoteStartingTrackInShuffle: promoteStartingTrackInShuffle,
+            retainedTrackID: retainedTrackID,
+            context: context
+        )
+        return entries.isEmpty ? tracks : entries.map(\.musicTrack)
+    }
+
+    private func queueTracks(from entries: [OrderedQueueEntry], fallback tracks: [Track]) -> [Track] {
+        entries.isEmpty ? tracks : entries.map(\.musicTrack)
+    }
+
+    private func orderedQueueEntries(
+        from tracks: [Track],
+        playlistID: String,
+        startingTrackID: String?,
+        promoteStartingTrackInShuffle: Bool = false,
+        retainedTrackID: String? = nil,
+        context: ModelContext
+    ) throws -> [OrderedQueueEntry] {
         let inputs = try playlistPlaybackInputs(for: playlistID, context: context)
         let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: inputs.items)
         var state = PlaybackModeStore.state(playerID: playerID, musicPlaylistID: playlistID)
@@ -304,26 +341,107 @@ final class PlaybackController {
                 orderedTrackIDs = PlaybackOrderEngine.reconciledShuffleOrder(
                     storedOrder: state.orderedTrackIDs,
                     tracks: orderTracks,
-                    currentTrackID: nil
+                    currentTrackID: retainedTrackID
                 )
             }
             state.orderedTrackIDs = orderedTrackIDs
             PlaybackModeStore.save(state)
         } else {
-            orderedTrackIDs = PlaybackOrderEngine.normalOrder(for: orderTracks)
+            orderedTrackIDs = PlaybackOrderEngine.normalOrder(
+                for: orderTracks,
+                includeUnplayableTrackID: retainedTrackID
+            )
         }
 
-        let orderedTracks = PlaybackQueueBuilder.orderedMusicTracks(
+        let musicTracksByLocalID = PlaybackQueueBuilder.musicTracksByLocalID(
             tracks,
-            orderedTrackIDs: orderedTrackIDs,
             tracksByID: inputs.tracksByID
         )
-        return orderedTracks.isEmpty ? tracks : orderedTracks
+        return orderedTrackIDs.compactMap { localTrackID in
+            musicTracksByLocalID[localTrackID].map {
+                OrderedQueueEntry(localTrackID: localTrackID, musicTrack: $0)
+            }
+        }
+    }
+
+    private func orderedLocalTrackIDs(
+        for playlistID: String,
+        retaining retainedTrackID: String?,
+        context: ModelContext
+    ) throws -> [String] {
+        let inputs = try playlistPlaybackInputs(for: playlistID, context: context)
+        let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: inputs.items)
+        let state = PlaybackModeStore.state(playerID: playerID, musicPlaylistID: playlistID)
+
+        if state.shuffleEnabled {
+            return PlaybackOrderEngine.reconciledShuffleOrder(
+                storedOrder: state.orderedTrackIDs,
+                tracks: orderTracks,
+                currentTrackID: retainedTrackID
+            )
+        }
+
+        return PlaybackOrderEngine.normalOrder(
+            for: orderTracks,
+            includeUnplayableTrackID: retainedTrackID
+        )
     }
 
     private func localTrackID(matching musicItemID: String, context: ModelContext) throws -> String? {
         let tracksByID = Dictionary(uniqueKeysWithValues: try TrackRecordRepository.allTracks(in: context).map { ($0.id, $0) })
         return PlaybackQueueBuilder.localTrackID(matching: musicItemID, tracksByID: tracksByID)
+    }
+
+    private var activeQueueCurrentLocalTrackID: String? {
+        guard let activeQueueIndex,
+              activeQueueLocalTrackIDs.indices.contains(activeQueueIndex) else {
+            return nil
+        }
+
+        return activeQueueLocalTrackIDs[activeQueueIndex]
+    }
+
+    private func updateActiveQueue(entries: [OrderedQueueEntry], startingAt localTrackID: String?) {
+        activeQueueLocalTrackIDs = entries.map(\.localTrackID)
+        guard !activeQueueLocalTrackIDs.isEmpty else {
+            activeQueueIndex = nil
+            return
+        }
+
+        activeQueueIndex = localTrackID
+            .flatMap { activeQueueLocalTrackIDs.firstIndex(of: $0) }
+            ?? activeQueueLocalTrackIDs.startIndex
+    }
+
+    private func updateActiveQueueCurrentTrackID(_ localTrackID: String?) {
+        guard let localTrackID,
+              let index = activeQueueLocalTrackIDs.firstIndex(of: localTrackID) else {
+            return
+        }
+
+        activeQueueIndex = index
+    }
+
+    private func advanceActiveQueueIndex(by offset: Int) {
+        guard let activeQueueIndex else { return }
+        let newIndex = activeQueueIndex + offset
+        guard activeQueueLocalTrackIDs.indices.contains(newIndex) else {
+            self.activeQueueIndex = nil
+            return
+        }
+
+        self.activeQueueIndex = newIndex
+    }
+
+    private func transitionQueueEntries(
+        from entries: [OrderedQueueEntry],
+        startingAt localTrackID: String
+    ) -> [OrderedQueueEntry] {
+        guard let index = entries.firstIndex(where: { $0.localTrackID == localTrackID }) else {
+            return entries
+        }
+
+        return Array(entries[index...])
     }
 
     private func disableMusicKitPlaybackModes() {
@@ -363,16 +481,19 @@ final class PlaybackController {
 
         disableMusicKitPlaybackModes()
         let startingTrackID = trackRecord?.id.uuidString
-        let queueTracks = try orderedQueueTracks(
+        let queueEntries = try orderedQueueEntries(
             from: tracks,
             playlistID: playlistID,
             startingTrackID: startingTrackID,
             promoteStartingTrackInShuffle: trackRecord != nil,
             context: context
         )
+        let queueTracks = queueTracks(from: queueEntries, fallback: tracks)
         let queueStartingTrack = startingTrack.flatMap { startingTrack in
             queueTracks.first { $0.id == startingTrack.id }
         }
+        pendingModeQueueRebuild = nil
+        updateActiveQueue(entries: queueEntries, startingAt: startingTrackID)
         player.queue = ApplicationMusicPlayer.Queue(for: queueTracks, startingAt: queueStartingTrack)
         try await player.play()
         currentPlaylistID = playlistID
@@ -455,6 +576,7 @@ final class PlaybackController {
 
         do {
             try await player.skipToNextEntry()
+            advanceActiveQueueIndex(by: 1)
             await refresh(context: context)
         } catch {
             if let skippedTrackID,
@@ -473,6 +595,7 @@ final class PlaybackController {
 
         do {
             try await player.skipToPreviousEntry()
+            advanceActiveQueueIndex(by: -1)
             await refresh(context: context)
         } catch {
             statusMessage = error.localizedDescription
@@ -493,6 +616,7 @@ final class PlaybackController {
             let inputs = try playlistPlaybackInputs(for: currentPlaylistID, context: context)
             let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: inputs.items)
             let currentLocalTrackID = currentPlaylistItem?.trackID.uuidString
+                ?? activeQueueCurrentLocalTrackID
                 ?? currentTrack.flatMap { try? localTrackID(matching: $0.id, context: context) }
             PlaybackModeStore.update(playerID: playerID, musicPlaylistID: currentPlaylistID) { state in
                 state.shuffleEnabled = isEnabled
@@ -511,7 +635,8 @@ final class PlaybackController {
             if let currentMusicItemID = player.queue.currentEntry?.item?.id.rawValue ?? currentTrack?.id {
                 pendingModeQueueRebuild = PendingModeQueueRebuild(
                     playlistID: currentPlaylistID,
-                    currentMusicItemID: currentMusicItemID
+                    currentMusicItemID: currentMusicItemID,
+                    currentLocalTrackID: currentLocalTrackID
                 )
             } else {
                 await rebuildCurrentQueue(context: context)
@@ -560,17 +685,26 @@ final class PlaybackController {
             let tracks = try await playableTracksForRestoration(playlist, context: context)
             guard !tracks.isEmpty else { return }
 
-            let queueTracks = try orderedQueueTracks(
+            let currentLocalTrackID = currentPlaylistItem?.trackID.uuidString
+                ?? activeQueueCurrentLocalTrackID
+                ?? currentMusicItemID.flatMap { try? localTrackID(matching: $0, context: context) }
+            let queueEntries = try orderedQueueEntries(
                 from: tracks,
                 playlistID: currentPlaylistID,
                 startingTrackID: nil,
+                retainedTrackID: currentLocalTrackID,
                 context: context
             )
-            let startingTrack = currentMusicItemID.flatMap { musicItemID in
+            let queueTracks = queueTracks(from: queueEntries, fallback: tracks)
+            let startingTrack = currentLocalTrackID.flatMap { localTrackID in
+                queueEntries.first { $0.localTrackID == localTrackID }?.musicTrack
+            } ?? currentMusicItemID.flatMap { musicItemID in
                 queueTracks.first { $0.id.rawValue == musicItemID }
             }
 
             disableMusicKitPlaybackModes()
+            pendingModeQueueRebuild = nil
+            updateActiveQueue(entries: queueEntries, startingAt: currentLocalTrackID)
             player.queue = ApplicationMusicPlayer.Queue(for: queueTracks, startingAt: startingTrack)
             if startingTrack != nil {
                 player.playbackTime = playbackTime
@@ -719,6 +853,7 @@ final class PlaybackController {
 
         if let newTrackID {
             currentPlaylistItem = try? playlistItem(matching: newTrackID, context: context)
+            updateActiveQueueCurrentTrackID(currentPlaylistItem?.trackID.uuidString)
             currentTrack = currentPlaybackTrack(
                 musicItemID: newTrackID,
                 playlistItem: currentPlaylistItem,
@@ -747,6 +882,8 @@ final class PlaybackController {
             currentPlaylistItem = nil
             durationSeconds = nil
             activeSession = nil
+            activeQueueLocalTrackIDs = []
+            activeQueueIndex = nil
             currentPlaylistID = nil
             prefetchedArtworkTrackID = nil
         }
@@ -941,6 +1078,8 @@ final class PlaybackController {
             guard !queueTracks.isEmpty else { return false }
 
             disableMusicKitPlaybackModes()
+            activeQueueLocalTrackIDs = orderedTrackIDs
+            activeQueueIndex = activeQueueLocalTrackIDs.isEmpty ? nil : activeQueueLocalTrackIDs.startIndex
             player.queue = ApplicationMusicPlayer.Queue(for: queueTracks)
             try await player.play()
             await refresh(context: context)
@@ -957,38 +1096,63 @@ final class PlaybackController {
         context: ModelContext
     ) async -> Bool {
         guard let pendingModeQueueRebuild,
-              pendingModeQueueRebuild.currentMusicItemID == lastMusicItemID,
               pendingModeQueueRebuild.playlistID == currentPlaylistID,
               let playlist = try? currentPlaylist(in: context) else {
             return false
         }
 
         do {
+            let anchorLocalTrackID = pendingModeQueueRebuild.currentLocalTrackID
+                ?? (try? localTrackID(matching: pendingModeQueueRebuild.currentMusicItemID, context: context))
+                ?? (try? localTrackID(matching: lastMusicItemID, context: context))
+            guard let anchorLocalTrackID else {
+                return false
+            }
+
             let tracks = try await playableTracksForRestoration(playlist, context: context)
             guard !tracks.isEmpty else { return false }
 
-            let queueTracks = try orderedQueueTracks(
+            let queueEntries = try orderedQueueEntries(
                 from: tracks,
                 playlistID: pendingModeQueueRebuild.playlistID,
                 startingTrackID: nil,
+                retainedTrackID: anchorLocalTrackID,
                 context: context
             )
+            let queueTracks = queueEntries.map(\.musicTrack)
             guard !queueTracks.isEmpty else { return false }
+            let availableLocalTrackIDs = Set(queueEntries.map(\.localTrackID))
+            let orderedLocalTrackIDs = try orderedLocalTrackIDs(
+                for: pendingModeQueueRebuild.playlistID,
+                retaining: anchorLocalTrackID,
+                context: context
+            )
 
             if movingForward,
-               successorTrack(after: lastMusicItemID, in: queueTracks) == nil,
+               PlaybackOrderEngine.adjacentAvailableID(
+                   to: anchorLocalTrackID,
+                   in: orderedLocalTrackIDs,
+                   availableIDs: availableLocalTrackIDs,
+                   movingForward: true
+               ) == nil,
                PlaybackModeStore.state(playerID: playerID, musicPlaylistID: pendingModeQueueRebuild.playlistID).repeatEnabled {
                 self.pendingModeQueueRebuild = nil
-                return await handleQueueEnded(lastMusicItemID: lastMusicItemID, context: context)
+                return await handleQueueEnded(lastMusicItemID: pendingModeQueueRebuild.currentMusicItemID, context: context)
             }
 
-            guard let startingTrack = movingForward
-                ? successorTrack(after: lastMusicItemID, in: queueTracks)
-                : predecessorTrack(before: lastMusicItemID, in: queueTracks) else {
+            guard let startingLocalTrackID = PlaybackOrderEngine.adjacentAvailableID(
+                to: anchorLocalTrackID,
+                in: orderedLocalTrackIDs,
+                availableIDs: availableLocalTrackIDs,
+                movingForward: movingForward
+            ), let startingTrack = queueEntries.first(where: { $0.localTrackID == startingLocalTrackID })?.musicTrack else {
                 if movingForward,
-                   let lastTrack = queueTracks.first(where: { $0.id.rawValue == lastMusicItemID }) {
+                   let lastTrack = queueEntries.first(where: { $0.localTrackID == anchorLocalTrackID })?.musicTrack {
+                    let transitionEntries = transitionQueueEntries(from: queueEntries, startingAt: anchorLocalTrackID)
+                    let transitionTracks = transitionEntries.map(\.musicTrack)
                     disableMusicKitPlaybackModes()
-                    player.queue = ApplicationMusicPlayer.Queue(for: queueTracks, startingAt: lastTrack)
+                    updateActiveQueue(entries: transitionEntries, startingAt: anchorLocalTrackID)
+                    player.queue = ApplicationMusicPlayer.Queue(for: transitionTracks, startingAt: lastTrack)
                     player.pause()
                     self.pendingModeQueueRebuild = nil
                     await refresh(context: context)
@@ -999,8 +1163,11 @@ final class PlaybackController {
             }
 
             let shouldResumePlayback = player.state.playbackStatus == .playing
+            let transitionEntries = transitionQueueEntries(from: queueEntries, startingAt: startingLocalTrackID)
+            let transitionTracks = transitionEntries.map(\.musicTrack)
             disableMusicKitPlaybackModes()
-            player.queue = ApplicationMusicPlayer.Queue(for: queueTracks, startingAt: startingTrack)
+            updateActiveQueue(entries: transitionEntries, startingAt: startingLocalTrackID)
+            player.queue = ApplicationMusicPlayer.Queue(for: transitionTracks, startingAt: startingTrack)
             if shouldResumePlayback {
                 try await player.play()
             } else {
@@ -1014,31 +1181,6 @@ final class PlaybackController {
             statusMessage = error.localizedDescription
             return false
         }
-    }
-
-    private func successorTrack(after musicItemID: String, in tracks: [Track]) -> Track? {
-        guard let index = tracks.firstIndex(where: { $0.id.rawValue == musicItemID }) else {
-            return tracks.first
-        }
-
-        let successorIndex = tracks.index(after: index)
-        guard successorIndex < tracks.endIndex else {
-            return nil
-        }
-
-        return tracks[successorIndex]
-    }
-
-    private func predecessorTrack(before musicItemID: String, in tracks: [Track]) -> Track? {
-        guard let index = tracks.firstIndex(where: { $0.id.rawValue == musicItemID }) else {
-            return nil
-        }
-
-        guard index > tracks.startIndex else {
-            return nil
-        }
-
-        return tracks[tracks.index(before: index)]
     }
 
     func reconcileStoredOrder(for playlist: PlaylistRecord, context: ModelContext) {
