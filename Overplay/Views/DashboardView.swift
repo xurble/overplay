@@ -20,7 +20,7 @@ struct DashboardView: View {
                         PlaylistHomeRowView(
                             title: oneTruePlaylist.name,
                             detail: presentation(for: oneTruePlaylist).dashboardDetailText,
-                            artworkURLString: representativeArtworkURL(for: oneTruePlaylist),
+                            artworkURLString: presentation(for: oneTruePlaylist).artworkURLString,
                             playlistID: oneTruePlaylist.musicPlaylistID,
                             systemImage: presentation(for: oneTruePlaylist).iconIntent.systemImage,
                             tint: .pink
@@ -50,7 +50,7 @@ struct DashboardView: View {
                         PlaylistHomeRowView(
                             title: playlist.name,
                             detail: presentation(for: playlist).dashboardDetailText,
-                            artworkURLString: representativeArtworkURL(for: playlist),
+                            artworkURLString: presentation(for: playlist).artworkURLString,
                             playlistID: playlist.musicPlaylistID,
                             systemImage: presentation(for: playlist).iconIntent.systemImage,
                             tint: .teal
@@ -97,29 +97,15 @@ struct DashboardView: View {
     }
 
     private func presentation(for playlist: PlaylistRecord) -> PlaylistSummaryPresentation {
-        let activeCount = playlistItems.filter { $0.playlistID == playlist.id }.count
-        let playableCount = playlistItems.filter { $0.playlistID == playlist.id && $0.isPlayable }.count
-        return PlaylistSummaryPresentation(
-            id: playlist.id,
-            title: playlist.name,
-            role: playlist.role,
-            writePolicy: playlist.writePolicy,
-            activeTrackCount: activeCount,
-            playableTrackCount: playableCount,
-            lastSyncedAt: playlist.lastSyncedAt,
-            isCurrentPlaybackPlaylist: false
-        )
+        presentationBuilder.summary(for: playlist)
     }
 
-    private var tracksByID: [UUID: TrackRecord] {
-        Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
-    }
-
-    private func representativeArtworkURL(for playlist: PlaylistRecord) -> String? {
-        PlaylistArtworkSelector.representativeArtworkURL(
-            for: playlist,
+    private var presentationBuilder: PlaylistPresentationBuilder {
+        PlaylistPresentationBuilder(
+            playlists: playlists,
             items: playlistItems,
-            tracksByID: tracksByID
+            tracks: tracks,
+            evictAfterSkips: settings.evictAfterSkips
         )
     }
 
@@ -321,19 +307,20 @@ struct PlaylistManagementView: View {
     }
 
     private var summary: DashboardSummary {
-        DashboardSummary(items: visibleItems, evictAfterSkips: settings.evictAfterSkips)
+        presentationBuilder.dashboardSummary(forPlaylistID: playlist.id)
     }
 
     private var playlistPresentation: PlaylistSummaryPresentation {
-        PlaylistSummaryPresentation(
-            id: playlist.id,
-            title: playlist.name,
-            role: playlist.role,
-            writePolicy: playlist.writePolicy,
-            activeTrackCount: visibleItems.count,
-            playableTrackCount: visibleItems.filter(\.isPlayable).count,
-            lastSyncedAt: playlist.lastSyncedAt,
-            isCurrentPlaybackPlaylist: playbackController.isCurrentPlaylist(playlist)
+        presentationBuilder.summary(for: playlist)
+    }
+
+    private var presentationBuilder: PlaylistPresentationBuilder {
+        PlaylistPresentationBuilder(
+            playlists: [playlist],
+            items: playlistItems,
+            tracks: tracks,
+            currentPlaylistID: playbackController.currentPlaylistID,
+            evictAfterSkips: settings.evictAfterSkips
         )
     }
 

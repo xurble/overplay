@@ -2,10 +2,15 @@ import Foundation
 
 struct TrackSummaryPresentation: Equatable, Identifiable, Sendable {
     let id: UUID
+    var playlistID: UUID?
+    var trackID: UUID?
     let title: String
     let artistName: String
     let albumTitle: String?
+    var artworkURLString: String?
     let skipCount: Int
+    var isPlayable: Bool = true
+    var healthStatus: TrackHealthStatus?
 
     var subtitle: String {
         guard let albumTitle, !albumTitle.isEmpty else {

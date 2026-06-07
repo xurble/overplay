@@ -90,12 +90,12 @@ struct PlaylistSelectionView: View {
 
     private var sortedLinkedPlaylists: [PlaylistRecord] {
         linkedPlaylists.sorted { left, right in
-            let leftPresentation = presentation(for: left)
-            let rightPresentation = presentation(for: right)
-            if leftPresentation.displayPriority != rightPresentation.displayPriority {
-                return leftPresentation.displayPriority < rightPresentation.displayPriority
+            let leftSummary = presentation(for: left)
+            let rightSummary = presentation(for: right)
+            if leftSummary.displayPriority != rightSummary.displayPriority {
+                return leftSummary.displayPriority < rightSummary.displayPriority
             }
-            return leftPresentation.title.localizedCaseInsensitiveCompare(rightPresentation.title) == .orderedAscending
+            return leftSummary.title.localizedCaseInsensitiveCompare(rightSummary.title) == .orderedAscending
         }
     }
 
@@ -108,16 +108,8 @@ struct PlaylistSelectionView: View {
         return playlists.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
     }
 
-    private var tracksByID: [UUID: TrackRecord] {
-        Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
-    }
-
     private func representativeArtworkURL(for playlist: PlaylistRecord) -> String? {
-        PlaylistArtworkSelector.representativeArtworkURL(
-            for: playlist,
-            items: playlistItems,
-            tracksByID: tracksByID
-        )
+        presentation(for: playlist).artworkURLString
     }
 
     private func linkedPlaylistRow(_ playlist: PlaylistRecord) -> some View {
@@ -219,17 +211,16 @@ struct PlaylistSelectionView: View {
     }
 
     private func presentation(for playlist: PlaylistRecord) -> PlaylistSummaryPresentation {
-        let activeCount = playlistItems.filter { $0.playlistID == playlist.id }.count
-        let playableCount = playlistItems.filter { $0.playlistID == playlist.id && $0.isPlayable }.count
-        return PlaylistSummaryPresentation(
-            id: playlist.id,
-            title: playlist.name,
-            role: playlist.role,
-            writePolicy: playlist.writePolicy,
-            activeTrackCount: activeCount,
-            playableTrackCount: playableCount,
-            lastSyncedAt: playlist.lastSyncedAt,
-            isCurrentPlaybackPlaylist: playbackController.isCurrentPlaylist(playlist)
+        presentationBuilder.summary(for: playlist)
+    }
+
+    private var presentationBuilder: PlaylistPresentationBuilder {
+        PlaylistPresentationBuilder(
+            playlists: linkedPlaylists,
+            items: playlistItems,
+            tracks: tracks,
+            currentPlaylistID: playbackController.currentPlaylistID,
+            evictAfterSkips: OverplaySettings().evictAfterSkips
         )
     }
 

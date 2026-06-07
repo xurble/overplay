@@ -19,7 +19,9 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
     }
 
     let id: UUID
+    var musicPlaylistID: String?
     let title: String
+    var artworkURLString: String?
     let role: PlaylistRole
     let writePolicy: PlaylistWritePolicy
     let activeTrackCount: Int
