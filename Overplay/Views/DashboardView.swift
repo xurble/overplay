@@ -19,10 +19,10 @@ struct DashboardView: View {
                     } label: {
                         PlaylistHomeRowView(
                             title: oneTruePlaylist.name,
-                            detail: detailText(for: oneTruePlaylist),
+                            detail: presentation(for: oneTruePlaylist).dashboardDetailText,
                             artworkURLString: representativeArtworkURL(for: oneTruePlaylist),
                             playlistID: oneTruePlaylist.musicPlaylistID,
-                            systemImage: "star.fill",
+                            systemImage: presentation(for: oneTruePlaylist).iconIntent.systemImage,
                             tint: .pink
                         )
                     }
@@ -49,10 +49,10 @@ struct DashboardView: View {
                     } label: {
                         PlaylistHomeRowView(
                             title: playlist.name,
-                            detail: detailText(for: playlist),
+                            detail: presentation(for: playlist).dashboardDetailText,
                             artworkURLString: representativeArtworkURL(for: playlist),
                             playlistID: playlist.musicPlaylistID,
-                            systemImage: "tray.fill",
+                            systemImage: presentation(for: playlist).iconIntent.systemImage,
                             tint: .teal
                         )
                     }
@@ -96,10 +96,19 @@ struct DashboardView: View {
         playlists.filter { $0.role == .triage && $0.isActive }
     }
 
-    private func detailText(for playlist: PlaylistRecord) -> String {
+    private func presentation(for playlist: PlaylistRecord) -> PlaylistSummaryPresentation {
         let activeCount = playlistItems.filter { $0.playlistID == playlist.id }.count
-        let syncStatus = playlist.lastSyncedAt.map { "Synced \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Not synced"
-        return "\(activeCount) tracks - \(syncStatus) - \(writePolicyText(for: playlist))"
+        let playableCount = playlistItems.filter { $0.playlistID == playlist.id && $0.isPlayable }.count
+        return PlaylistSummaryPresentation(
+            id: playlist.id,
+            title: playlist.name,
+            role: playlist.role,
+            writePolicy: playlist.writePolicy,
+            activeTrackCount: activeCount,
+            playableTrackCount: playableCount,
+            lastSyncedAt: playlist.lastSyncedAt,
+            isCurrentPlaybackPlaylist: false
+        )
     }
 
     private var tracksByID: [UUID: TrackRecord] {
@@ -112,15 +121,6 @@ struct DashboardView: View {
             items: playlistItems,
             tracksByID: tracksByID
         )
-    }
-
-    private func writePolicyText(for playlist: PlaylistRecord) -> String {
-        switch playlist.writePolicy {
-        case .managed:
-            "Managed"
-        case .incomingOnly:
-            "Incoming only"
-        }
     }
 
     private func deleteTriagePlaylists(at offsets: IndexSet) {
@@ -189,7 +189,7 @@ struct PlaylistManagementView: View {
         List {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label(roleTitle, systemImage: roleImage)
+                    Label(playlistPresentation.roleTitle, systemImage: playlistPresentation.iconIntent.systemImage)
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(roleTint)
                     Text(playlist.name)
@@ -324,22 +324,17 @@ struct PlaylistManagementView: View {
         DashboardSummary(items: visibleItems, evictAfterSkips: settings.evictAfterSkips)
     }
 
-    private var roleTitle: String {
-        switch playlist.role {
-        case .oneTruePlaylist:
-            "One True Playlist"
-        case .triage:
-            "Triage Playlist"
-        }
-    }
-
-    private var roleImage: String {
-        switch playlist.role {
-        case .oneTruePlaylist:
-            "star.fill"
-        case .triage:
-            "tray.fill"
-        }
+    private var playlistPresentation: PlaylistSummaryPresentation {
+        PlaylistSummaryPresentation(
+            id: playlist.id,
+            title: playlist.name,
+            role: playlist.role,
+            writePolicy: playlist.writePolicy,
+            activeTrackCount: visibleItems.count,
+            playableTrackCount: visibleItems.filter(\.isPlayable).count,
+            lastSyncedAt: playlist.lastSyncedAt,
+            isCurrentPlaybackPlaylist: playbackController.isCurrentPlaylist(playlist)
+        )
     }
 
     private var roleTint: Color {
@@ -429,15 +424,15 @@ private struct PlaylistTrackRowView: View {
                 Text(track.title)
                     .font(.headline)
                     .foregroundStyle(item.isPlayable ? .primary : .secondary)
-                Text(trackSubtitle)
+                Text(presentation.subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            if item.skipCount > 0 {
-                Text("\(item.skipCount) skips")
+            if let skipCountLabel = presentation.skipCountLabel {
+                Text(skipCountLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -446,12 +441,14 @@ private struct PlaylistTrackRowView: View {
         .padding(.vertical, 4)
     }
 
-    private var trackSubtitle: String {
-        if let albumTitle = track.albumTitle, !albumTitle.isEmpty {
-            return "\(track.artistName) - \(albumTitle)"
-        }
-
-        return track.artistName
+    private var presentation: TrackSummaryPresentation {
+        TrackSummaryPresentation(
+            id: item.id,
+            title: track.title,
+            artistName: track.artistName,
+            albumTitle: track.albumTitle,
+            skipCount: item.skipCount
+        )
     }
 
     private var rowImage: String? {

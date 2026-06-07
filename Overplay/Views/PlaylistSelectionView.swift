@@ -90,10 +90,12 @@ struct PlaylistSelectionView: View {
 
     private var sortedLinkedPlaylists: [PlaylistRecord] {
         linkedPlaylists.sorted { left, right in
-            if left.role != right.role {
-                return left.role == .oneTruePlaylist
+            let leftPresentation = presentation(for: left)
+            let rightPresentation = presentation(for: right)
+            if leftPresentation.displayPriority != rightPresentation.displayPriority {
+                return leftPresentation.displayPriority < rightPresentation.displayPriority
             }
-            return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
+            return leftPresentation.title.localizedCaseInsensitiveCompare(rightPresentation.title) == .orderedAscending
         }
     }
 
@@ -119,7 +121,9 @@ struct PlaylistSelectionView: View {
     }
 
     private func linkedPlaylistRow(_ playlist: PlaylistRecord) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let presentation = presentation(for: playlist)
+
+        return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
                 ArtworkView(
                     urlString: representativeArtworkURL(for: playlist),
@@ -132,12 +136,12 @@ struct PlaylistSelectionView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(playlist.name)
                         .font(.headline)
-                    Text(linkedPlaylistDetail(for: playlist))
+                    Text(presentation.dashboardDetailText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Label(roleTitle(for: playlist.role), systemImage: roleImage(for: playlist))
+                Label(presentation.shortRoleTitle, systemImage: presentation.iconIntent.systemImage)
                     .font(.caption)
                     .foregroundStyle(playlist.role == .oneTruePlaylist ? .pink : .secondary)
             }
@@ -214,41 +218,19 @@ struct PlaylistSelectionView: View {
         .padding(.vertical, 6)
     }
 
-    private func linkedPlaylistDetail(for playlist: PlaylistRecord) -> String {
+    private func presentation(for playlist: PlaylistRecord) -> PlaylistSummaryPresentation {
         let activeCount = playlistItems.filter { $0.playlistID == playlist.id }.count
-        let syncStatus = playlist.lastSyncedAt.map { "Synced \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Not synced"
-        return "\(activeCount) tracks - \(syncStatus) - \(writePolicyTitle(for: playlist))"
-    }
-
-    private func roleTitle(for role: PlaylistRole) -> String {
-        switch role {
-        case .oneTruePlaylist:
-            "Main"
-        case .triage:
-            "Triage"
-        }
-    }
-
-    private func roleImage(for playlist: PlaylistRecord) -> String {
-        if playbackController.isCurrentPlaylist(playlist) {
-            return "play.fill"
-        }
-
-        return switch playlist.role {
-        case .oneTruePlaylist:
-            "star.fill"
-        case .triage:
-            "tray.fill"
-        }
-    }
-
-    private func writePolicyTitle(for playlist: PlaylistRecord) -> String {
-        switch playlist.writePolicy {
-        case .managed:
-            "Managed"
-        case .incomingOnly:
-            "Incoming only"
-        }
+        let playableCount = playlistItems.filter { $0.playlistID == playlist.id && $0.isPlayable }.count
+        return PlaylistSummaryPresentation(
+            id: playlist.id,
+            title: playlist.name,
+            role: playlist.role,
+            writePolicy: playlist.writePolicy,
+            activeTrackCount: activeCount,
+            playableTrackCount: playableCount,
+            lastSyncedAt: playlist.lastSyncedAt,
+            isCurrentPlaybackPlaylist: playbackController.isCurrentPlaylist(playlist)
+        )
     }
 
     private func loadPlaylists() async {

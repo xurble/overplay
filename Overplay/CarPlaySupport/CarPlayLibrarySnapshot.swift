@@ -6,6 +6,7 @@ struct CarPlayPlaylistSummary: Equatable, Identifiable {
     let musicPlaylistID: String
     let title: String
     let role: PlaylistRole
+    let displayPriority: Int
     let playableTrackCount: Int
 
     var isOneTruePlaylist: Bool {
@@ -13,13 +14,17 @@ struct CarPlayPlaylistSummary: Equatable, Identifiable {
     }
 
     var detailText: String {
-        let trackLabel = playableTrackCount == 1 ? "1 playable track" : "\(playableTrackCount) playable tracks"
-        switch role {
-        case .oneTruePlaylist:
-            return trackLabel
-        case .triage:
-            return trackLabel
-        }
+        PlaylistSummaryPresentation(
+            id: id,
+            title: title,
+            role: role,
+            writePolicy: .managed,
+            activeTrackCount: playableTrackCount,
+            playableTrackCount: playableTrackCount,
+            lastSyncedAt: nil,
+            isCurrentPlaybackPlaylist: false
+        )
+        .playableTrackCountLabel
     }
 }
 
@@ -33,12 +38,14 @@ struct CarPlayTrackSummary: Equatable, Identifiable {
     let healthStatus: TrackHealthStatus
 
     var detailText: String {
-        guard skipCount > 0 else {
-            return artistName
-        }
-
-        let skipLabel = skipCount == 1 ? "1 skip" : "\(skipCount) skips"
-        return "\(artistName) - \(skipLabel)"
+        TrackSummaryPresentation(
+            id: id,
+            title: title,
+            artistName: artistName,
+            albumTitle: nil,
+            skipCount: skipCount
+        )
+        .detailText
     }
 }
 
@@ -52,17 +59,28 @@ enum CarPlayLibrarySnapshot {
 
         return playlists
             .map { playlist in
-                CarPlayPlaylistSummary(
+                let presentation = PlaylistSummaryPresentation(
                     id: playlist.id,
-                    musicPlaylistID: playlist.musicPlaylistID,
                     title: playlist.name,
                     role: playlist.role,
-                    playableTrackCount: playableCounts[playlist.id, default: 0]
+                    writePolicy: playlist.writePolicy,
+                    activeTrackCount: playableCounts[playlist.id, default: 0],
+                    playableTrackCount: playableCounts[playlist.id, default: 0],
+                    lastSyncedAt: playlist.lastSyncedAt,
+                    isCurrentPlaybackPlaylist: false
+                )
+                return CarPlayPlaylistSummary(
+                    id: playlist.id,
+                    musicPlaylistID: playlist.musicPlaylistID,
+                    title: presentation.title,
+                    role: playlist.role,
+                    displayPriority: presentation.displayPriority,
+                    playableTrackCount: presentation.playableTrackCount
                 )
             }
             .sorted { left, right in
-                if left.role != right.role {
-                    return left.role == .oneTruePlaylist
+                if left.displayPriority != right.displayPriority {
+                    return left.displayPriority < right.displayPriority
                 }
                 return left.title.localizedCaseInsensitiveCompare(right.title) == .orderedAscending
             }

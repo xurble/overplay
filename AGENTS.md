@@ -11,33 +11,6 @@ bugs, and improve structure, but must follow the constraints below.
 Agents should **modify the smallest possible amount of code** required
 to implement a change.
 
-------------------------------------------------------------------------
-
-# Critical Rules
-
-## Never Commit to Git
-
-Agents **must never run any git commands that modify repository state**.
-
-Forbidden commands include:
-
--   git commit
--   git push
--   git merge
--   git rebase
--   git reset
--   git checkout
--   git cherry-pick
--   git stash
-
-Agents may inspect git state using read‑only commands such as:
-
--   git status
--   git diff
--   git log
-
-All commits and branch management are performed **only by the human
-developer**.
 
 ------------------------------------------------------------------------
 

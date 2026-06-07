@@ -24,9 +24,9 @@ struct PlaybackControlsView: View {
             Button {
                 Task { await primaryPlaybackAction() }
             } label: {
-                Image(systemName: playbackController.isPlaying ? "pause.fill" : "play.fill")
+                Image(systemName: controlsPresentation.primarySystemImage)
             }
-            .accessibilityLabel(playbackController.isPlaying ? "Pause" : "Play")
+            .accessibilityLabel(controlsPresentation.primaryAccessibilityLabel)
             .disabled(!canUsePrimaryPlaybackAction)
             .buttonStyle(PlaybackControlButtonStyle(controlSize: controlSize, prominence: .primary))
 
@@ -43,6 +43,14 @@ struct PlaybackControlsView: View {
 
     private var canUsePrimaryPlaybackAction: Bool {
         playbackController.canControlPlayback || restoredPlaybackTarget != nil || defaultPlaybackPlaylist != nil
+    }
+
+    private var controlsPresentation: PlaybackControlsPresentation {
+        PlaybackControlsPresentation(
+            isPlaying: playbackController.isPlaying,
+            shuffleEnabled: playbackController.shuffleEnabled,
+            repeatEnabled: playbackController.repeatEnabled
+        )
     }
 
     private var defaultPlaybackPlaylist: PlaylistRecord? {

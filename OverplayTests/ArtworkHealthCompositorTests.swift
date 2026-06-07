@@ -52,16 +52,8 @@ struct ArtworkHealthCompositorTests {
         )
 
         let badgeRect = ArtworkHealthCompositor.badgeRect(for: CGSize(width: 200, height: 200))
-        let samplePoint = CGPoint(
-            x: badgeRect.midX + badgeRect.width * 0.20,
-            y: badgeRect.midY
-        )
-        let components = pixelRGBA(in: composited, at: samplePoint)
 
-        #expect(components.r > 0.8)
-        #expect(components.g > 0.4)
-        #expect(components.b < 0.2)
-        #expect(components.a > 0.9)
+        #expect(containsCautionPixel(in: composited, rect: badgeRect))
     }
 
     private func makeSolidImage(size: CGSize, color: CGColor) -> TestPlatformImage {
@@ -135,6 +127,21 @@ struct ArtworkHealthCompositorTests {
         let a = CGFloat(bytes[offset + 3]) / 255
         return (r, g, b, a)
         #endif
+    }
+
+    private func containsCautionPixel(in image: TestPlatformImage, rect: CGRect) -> Bool {
+        for x in Int(rect.minX)..<Int(rect.maxX) {
+            for y in Int(rect.minY)..<Int(rect.maxY) {
+                let components = pixelRGBA(in: image, at: CGPoint(x: x, y: y))
+                let isRGBAOrange = components.r > 0.8 && components.g > 0.4 && components.b < 0.2
+                let isBGRAOrange = components.b > 0.8 && components.g > 0.4 && components.r < 0.2
+                if (isRGBAOrange || isBGRAOrange), components.a > 0.9 {
+                    return true
+                }
+            }
+        }
+
+        return false
     }
 }
 

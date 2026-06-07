@@ -53,14 +53,14 @@ struct NowPlayingView: View {
 
     private var trackText: some View {
         VStack(spacing: 8) {
-            Text(playbackController.currentTrack?.title ?? "Nothing playing")
+            Text(nowPlayingPresentation.title)
                 .font(.title.bold())
                 .multilineTextAlignment(.center)
-            Text(playbackController.currentTrack?.artistName ?? "Choose Play Overplay from the dashboard.")
+            Text(nowPlayingPresentation.artistName)
                 .font(.title3)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            if let albumTitle = playbackController.currentTrack?.albumTitle {
+            if let albumTitle = nowPlayingPresentation.albumTitle {
                 Text(albumTitle)
                     .font(.subheadline)
                     .foregroundStyle(.tertiary)
@@ -71,12 +71,12 @@ struct NowPlayingView: View {
 
     private var progressBlock: some View {
         VStack(spacing: 6) {
-            ProgressView(value: playbackController.progress)
+            ProgressView(value: nowPlayingPresentation.progress)
                 .tint(.white)
             HStack {
-                Text(formatTime(playbackController.elapsedSeconds))
+                Text(nowPlayingPresentation.elapsedText)
                 Spacer()
-                Text(formatTime(playbackController.durationSeconds ?? 0))
+                Text(nowPlayingPresentation.durationText)
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
@@ -86,15 +86,17 @@ struct NowPlayingView: View {
     private var skipStatus: some View {
         HStack(spacing: 14) {
             Label(
-                "Skips: \(playbackController.displayedSkipCount) / \(settings.evictAfterSkips)",
+                nowPlayingPresentation.skipCountText,
                 systemImage: "forward.end.fill"
             )
-            if playbackController.displayedIsEvicted {
-                Label("Evicted", systemImage: "trash.fill")
+            if nowPlayingPresentation.isEvicted {
+                let healthPresentation = TrackHealthPresentation(status: .critical, isEvicted: true, isProtected: false)
+                Label(healthPresentation.title, systemImage: healthPresentation.systemImage)
                     .foregroundStyle(.red)
             }
-            if playbackController.displayedIsProtected {
-                Label("Protected", systemImage: "shield.fill")
+            if nowPlayingPresentation.isProtected {
+                let healthPresentation = TrackHealthPresentation(status: .healthy, isEvicted: false, isProtected: true)
+                Label(healthPresentation.title, systemImage: healthPresentation.systemImage)
                     .foregroundStyle(.green)
             }
         }
@@ -113,21 +115,21 @@ struct NowPlayingView: View {
                         runtime.remoteCommandService.syncPlaybackModes(from: playbackController)
                     }
                 } label: {
-                    Label("Shuffle", systemImage: playbackController.shuffleEnabled ? "shuffle.circle.fill" : "shuffle")
+                    Label(controlsPresentation.shuffleTitle, systemImage: controlsPresentation.shuffleSystemImage)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(playbackController.shuffleEnabled ? .accentColor : .secondary.opacity(0.24))
+                .tint(controlsPresentation.shuffleEnabled ? .accentColor : .secondary.opacity(0.24))
 
                 Button {
                     playbackController.toggleRepeat()
                     runtime.remoteCommandService.syncPlaybackModes(from: playbackController)
                 } label: {
-                    Label("Repeat \(playbackController.repeatModeTitle)", systemImage: repeatIconName)
+                    Label(controlsPresentation.repeatTitle, systemImage: controlsPresentation.repeatSystemImage)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(playbackController.repeatEnabled ? .accentColor : .secondary.opacity(0.24))
+                .tint(controlsPresentation.repeatEnabled ? .accentColor : .secondary.opacity(0.24))
             }
 
             GridRow {
@@ -151,14 +153,27 @@ struct NowPlayingView: View {
         .buttonStyle(.bordered)
     }
 
-    private var repeatIconName: String {
-        "repeat"
+    private var nowPlayingPresentation: NowPlayingPresentation {
+        NowPlayingPresentation(
+            title: playbackController.currentTrack?.title,
+            artistName: playbackController.currentTrack?.artistName,
+            albumTitle: playbackController.currentTrack?.albumTitle,
+            progress: playbackController.progress,
+            elapsedSeconds: playbackController.elapsedSeconds,
+            durationSeconds: playbackController.durationSeconds,
+            skipCount: playbackController.displayedSkipCount,
+            evictAfterSkips: settings.evictAfterSkips,
+            isEvicted: playbackController.displayedIsEvicted,
+            isProtected: playbackController.displayedIsProtected
+        )
     }
 
-    private func formatTime(_ seconds: Double) -> String {
-        guard seconds.isFinite else { return "0:00" }
-        let totalSeconds = max(Int(seconds), 0)
-        return "\(totalSeconds / 60):\(String(format: "%02d", totalSeconds % 60))"
+    private var controlsPresentation: PlaybackControlsPresentation {
+        PlaybackControlsPresentation(
+            isPlaying: playbackController.isPlaying,
+            shuffleEnabled: playbackController.shuffleEnabled,
+            repeatEnabled: playbackController.repeatEnabled
+        )
     }
 }
 
