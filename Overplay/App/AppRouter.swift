@@ -11,7 +11,7 @@ struct AppRouter: View {
 
     @Query(sort: \OverplaySettings.createdAt) private var settingsRecords: [OverplaySettings]
     @State private var playerSheetDetent: PresentationDetent = .height(96)
-    @State private var hasStartedAuthorizedServices = false
+    @State private var startupViewModel = AppStartupViewModel()
 
     private let playerSheetCollapsedHeight = MiniPlayerLayout.collapsedHeight
 
@@ -46,34 +46,17 @@ struct AppRouter: View {
             }
         }
         .task {
-            do {
-                _ = try StartupProfiler.measure("Startup settings load") {
-                    try SettingsRepository.settings(in: modelContext)
-                }
-            } catch {
-                StartupProfiler.mark("Startup settings load failed: \(error.localizedDescription)")
-            }
-
-            await StartupProfiler.measure("Apple Music authorization refresh") {
-                await authorizationService.refresh()
-            }
-
-            StartupProfiler.measure("Remote command startup") {
-                runtime.remoteCommandService.install(playbackController: playbackController, context: modelContext)
-            }
-
-            if authorizationService.readiness.isReady {
-                await startAuthorizedServices()
-            }
+            await startupViewModel.bootstrap(
+                isReady: authorizationService.readiness.isReady,
+                dependencies: startupDependencies
+            )
         }
         .onChange(of: authorizationService.readiness.isReady) { _, isReady in
-            if isReady {
-                Task {
-                    await startAuthorizedServices()
-                }
-            } else {
-                hasStartedAuthorizedServices = false
-                runtime.periodicPlaylistSyncService.stop()
+            Task {
+                startupViewModel.authorizationReadinessChanged(
+                    isReady: isReady,
+                    dependencies: startupDependencies
+                )
             }
         }
     }
@@ -83,7 +66,7 @@ struct AppRouter: View {
     }
 
     private var shouldShowPermissionView: Bool {
-        StartupAuthorizationGate.shouldShowPermissionView(
+        startupViewModel.shouldShowPermissionView(
             readiness: authorizationService.readiness,
             hasCheckedReadiness: authorizationService.hasCheckedReadiness,
             hasPresentedAuthorizedUI: hasPresentedAuthorizedUI
@@ -98,20 +81,13 @@ struct AppRouter: View {
         }
     }
 
-    private func startAuthorizedServices() async {
-        guard !hasStartedAuthorizedServices else { return }
-        hasStartedAuthorizedServices = true
-
-        StartupProfiler.measure("Local playback display restore") {
-            playbackController.restoreLocalPlaybackDisplay(context: modelContext)
-        }
-
-        StartupProfiler.measure("Periodic playlist sync startup") {
-            runtime.periodicPlaylistSyncService.start(
-                context: modelContext,
-                playbackController: playbackController
-            )
-        }
+    private var startupDependencies: AppStartupViewModel.Dependencies {
+        startupViewModel.dependencies(
+            modelContext: modelContext,
+            runtime: runtime,
+            authorizationService: authorizationService,
+            playbackController: playbackController
+        )
     }
 }
 
