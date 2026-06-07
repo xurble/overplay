@@ -10,19 +10,45 @@ enum PlaylistRepository {
     }
 
     static func activePlaylists(in context: ModelContext) throws -> [PlaylistRecord] {
-        try allPlaylists(in: context).filter(\.isActive)
+        var descriptor = FetchDescriptor<PlaylistRecord>(
+            predicate: #Predicate { $0.isActive },
+            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.name)]
+        )
+        descriptor.includePendingChanges = true
+        return try context.fetch(descriptor)
     }
 
     static func playlist(id: UUID, in context: ModelContext) throws -> PlaylistRecord? {
-        try allPlaylists(in: context).first { $0.id == id }
+        var descriptor = FetchDescriptor<PlaylistRecord>(
+            predicate: #Predicate { $0.id == id },
+            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.name)]
+        )
+        descriptor.fetchLimit = 1
+        descriptor.includePendingChanges = true
+        return try context.fetch(descriptor).first
     }
 
     static func playlist(musicPlaylistID: String, in context: ModelContext) throws -> PlaylistRecord? {
-        try allPlaylists(in: context).first { $0.musicPlaylistID == musicPlaylistID }
+        var descriptor = FetchDescriptor<PlaylistRecord>(
+            predicate: #Predicate { $0.musicPlaylistID == musicPlaylistID },
+            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.name)]
+        )
+        descriptor.fetchLimit = 1
+        descriptor.includePendingChanges = true
+        return try context.fetch(descriptor).first
     }
 
     static func oneTruePlaylist(in context: ModelContext) throws -> PlaylistRecord? {
-        try activePlaylists(in: context).first { $0.role == .oneTruePlaylist }
+        let oneTruePlaylistRole = PlaylistRole.oneTruePlaylist.rawValue
+        var descriptor = FetchDescriptor<PlaylistRecord>(
+            predicate: #Predicate {
+                $0.isActive && $0.roleRawValue == oneTruePlaylistRole
+            },
+            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.name)]
+        )
+        descriptor.fetchLimit = 1
+        descriptor.includePendingChanges = true
+        return try context.fetch(descriptor).first
     }
 
     @discardableResult

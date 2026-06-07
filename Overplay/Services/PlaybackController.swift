@@ -174,7 +174,9 @@ final class PlaybackController {
                 context: context
             )
             let restoredLocalTrackID = state.localTrackID ?? (try? localTrackID(matching: state.musicItemID, context: context))
-            let tracksByID = Dictionary(uniqueKeysWithValues: try TrackRecordRepository.allTracks(in: context).map { ($0.id, $0) })
+            let restorationItems = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
+            let restorationTracks = try TrackRecordRepository.tracks(ids: restorationItems.map(\.trackID), in: context)
+            let tracksByID = restorationTracks.firstValueDictionary(keyedBy: \.id)
             let musicTracksByLocalID = PlaybackQueueBuilder.musicTracksByLocalID(
                 tracks,
                 tracksByID: tracksByID
@@ -339,7 +341,8 @@ final class PlaybackController {
 
     private func cachedPlayableMusicTracks(for playlist: PlaylistRecord, in context: ModelContext) throws -> [Track] {
         let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
-        let tracksByID = Dictionary(uniqueKeysWithValues: try TrackRecordRepository.allTracks(in: context).map { ($0.id, $0) })
+        let tracks = try TrackRecordRepository.tracks(ids: items.map(\.trackID), in: context)
+        let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
         return PlaybackQueueBuilder.cachedPlayableMusicTracks(items: items, tracksByID: tracksByID)
     }
 
@@ -374,7 +377,8 @@ final class PlaybackController {
         }
 
         let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
-        let tracksByID = Dictionary(uniqueKeysWithValues: try TrackRecordRepository.allTracks(in: context).map { ($0.id, $0) })
+        let tracks = try TrackRecordRepository.tracks(ids: items.map(\.trackID), in: context)
+        let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
         return (playlist, items, tracksByID)
     }
 
@@ -533,8 +537,7 @@ final class PlaybackController {
     }
 
     private func localTrackID(matching musicItemID: String, context: ModelContext) throws -> String? {
-        let tracksByID = Dictionary(uniqueKeysWithValues: try TrackRecordRepository.allTracks(in: context).map { ($0.id, $0) })
-        return PlaybackQueueBuilder.localTrackID(matching: musicItemID, tracksByID: tracksByID)
+        try TrackRecordRepository.track(musicItemID: musicItemID, in: context)?.id.uuidString
     }
 
     private var activeQueueCurrentLocalTrackID: String? {
@@ -1089,7 +1092,8 @@ final class PlaybackController {
     private func playlistItem(matching musicItemID: String, context: ModelContext) throws -> PlaylistItemRecord? {
         guard let playlist = try currentPlaylist(in: context) else { return nil }
         let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
-        let tracksByID = Dictionary(uniqueKeysWithValues: try TrackRecordRepository.allTracks(in: context).map { ($0.id, $0) })
+        let tracks = try TrackRecordRepository.tracks(ids: items.map(\.trackID), in: context)
+        let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
         return PlaybackQueueBuilder.playlistItem(
             matching: musicItemID,
             items: items,

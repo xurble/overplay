@@ -40,7 +40,7 @@ final class SearchService {
             request.limit = 20
             let response = try await request.response()
             let songs = Array(response.songs)
-            songsByID = Dictionary(uniqueKeysWithValues: songs.map { ($0.id.rawValue, $0) })
+            songsByID = songs.firstValueDictionary(keyedBy: { $0.id.rawValue })
             results = songs.map {
                 SearchSongResult(
                     id: $0.id.rawValue,

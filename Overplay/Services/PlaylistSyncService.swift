@@ -284,7 +284,8 @@ struct PlaylistSyncService {
 
     func playableMusicTracks(for playlistRecord: PlaylistRecord, in context: ModelContext) async throws -> [Track] {
         let items = try PlaylistItemRepository.items(forPlaylistID: playlistRecord.id, in: context)
-        let tracksByID = Dictionary(uniqueKeysWithValues: try TrackRecordRepository.allTracks(in: context).map { ($0.id, $0) })
+        let localTracks = try TrackRecordRepository.tracks(ids: items.map(\.trackID), in: context)
+        let tracksByID = localTracks.firstValueDictionary(keyedBy: \.id)
         let playableMusicItemIDs = PlaybackQueueBuilder.playableMusicItemIDs(
             items: items,
             tracksByID: tracksByID

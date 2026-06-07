@@ -113,6 +113,50 @@ struct NewModelRepositoryTests {
         #expect(fetchedPlaylist?.isActive == false)
     }
 
+    @Test("playlist repository fetches by predicate scoped identifiers")
+    func playlistRepositoryFetchesByPredicateScopedIdentifiers() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let oneTruePlaylistID = UUID()
+        let triagePlaylistID = UUID()
+        let inactivePlaylistID = UUID()
+        let oneTruePlaylist = PlaylistRecord(
+            id: oneTruePlaylistID,
+            musicPlaylistID: "playlist-1",
+            name: "Main",
+            role: .oneTruePlaylist,
+            sortOrder: 1
+        )
+        let triagePlaylist = PlaylistRecord(
+            id: triagePlaylistID,
+            musicPlaylistID: "playlist-2",
+            name: "Triage",
+            role: .triage,
+            sortOrder: 0
+        )
+        let inactivePlaylist = PlaylistRecord(
+            id: inactivePlaylistID,
+            musicPlaylistID: "playlist-3",
+            name: "Hidden",
+            role: .triage,
+            isActive: false
+        )
+        context.insert(oneTruePlaylist)
+        context.insert(triagePlaylist)
+        context.insert(inactivePlaylist)
+
+        let activePlaylists = try PlaylistRepository.activePlaylists(in: context)
+        let fetchedByID = try PlaylistRepository.playlist(id: triagePlaylistID, in: context)
+        let fetchedByMusicID = try PlaylistRepository.playlist(musicPlaylistID: "playlist-1", in: context)
+        let fetchedOneTruePlaylist = try PlaylistRepository.oneTruePlaylist(in: context)
+
+        #expect(activePlaylists.map(\.id) == [triagePlaylistID, oneTruePlaylistID])
+        #expect(fetchedByID?.id == triagePlaylistID)
+        #expect(fetchedByMusicID?.id == oneTruePlaylistID)
+        #expect(fetchedOneTruePlaylist?.id == oneTruePlaylistID)
+        #expect(try PlaylistRepository.playlist(id: UUID(), in: context) == nil)
+    }
+
     @Test("track record upsert creates then updates without changing identity")
     func trackRecordUpsertCreatesThenUpdatesWithoutChangingIdentity() throws {
         let container = try OverplayTestSupport.makeModelContainer()
@@ -216,6 +260,80 @@ struct NewModelRepositoryTests {
         let items = try PlaylistItemRepository.items(forPlaylistID: playlistID, in: context)
 
         #expect(items.map(\.id) == [first.id, middle.id, last.id])
+    }
+
+    @Test("playlist item repository fetches scoped items by predicate")
+    func playlistItemRepositoryFetchesScopedItemsByPredicate() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlistID = UUID()
+        let otherPlaylistID = UUID()
+        let playableTrackID = UUID()
+        let evictedTrackID = UUID()
+        let playableItem = PlaylistItemRecord(
+            playlistID: playlistID,
+            trackID: playableTrackID,
+            sortOrder: 1
+        )
+        let evictedItem = PlaylistItemRecord(
+            playlistID: playlistID,
+            trackID: evictedTrackID,
+            sortOrder: 0,
+            evictedAt: Date(timeIntervalSince1970: 100)
+        )
+        let otherPlaylistItem = PlaylistItemRecord(
+            playlistID: otherPlaylistID,
+            trackID: UUID()
+        )
+        context.insert(playableItem)
+        context.insert(evictedItem)
+        context.insert(otherPlaylistItem)
+
+        let allPlaylistItems = try PlaylistItemRepository.items(forPlaylistID: playlistID, in: context)
+        let playableItems = try PlaylistItemRepository.playableItems(forPlaylistID: playlistID, in: context)
+        let fetchedItem = try PlaylistItemRepository.item(
+            playlistID: playlistID,
+            trackID: playableTrackID,
+            in: context
+        )
+
+        #expect(allPlaylistItems.map(\.id) == [evictedItem.id, playableItem.id])
+        #expect(playableItems.map(\.id) == [playableItem.id])
+        #expect(fetchedItem?.id == playableItem.id)
+        #expect(try PlaylistItemRepository.item(id: evictedItem.id, in: context)?.id == evictedItem.id)
+    }
+
+    @Test("track repository fetches scoped tracks by predicate")
+    func trackRepositoryFetchesScopedTracksByPredicate() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let firstTrackID = UUID()
+        let secondTrackID = UUID()
+        let firstTrack = TrackRecord(
+            id: firstTrackID,
+            catalogID: "catalog-1",
+            libraryID: "library-1",
+            title: "First",
+            artistName: "Sample Artist"
+        )
+        let secondTrack = TrackRecord(
+            id: secondTrackID,
+            catalogID: "catalog-2",
+            libraryID: "library-2",
+            title: "Second",
+            artistName: "Sample Artist"
+        )
+        context.insert(firstTrack)
+        context.insert(secondTrack)
+
+        let fetchedTracks = try TrackRecordRepository.tracks(ids: [secondTrackID, firstTrackID, firstTrackID], in: context)
+        let fetchedByID = try TrackRecordRepository.track(id: firstTrackID, in: context)
+        let fetchedByMusicID = try TrackRecordRepository.track(musicItemID: "library-2", in: context)
+
+        #expect(Set(fetchedTracks.map(\.id)) == [firstTrackID, secondTrackID])
+        #expect(fetchedByID?.id == firstTrackID)
+        #expect(fetchedByMusicID?.id == secondTrackID)
+        #expect(try TrackRecordRepository.tracks(ids: [], in: context).isEmpty)
     }
 
     @Test("reset playlist stats clears item counters and eviction state")

@@ -299,7 +299,7 @@ struct PlaylistManagementView: View {
     }
 
     private var tracksByID: [UUID: TrackRecord] {
-        Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
+        tracks.firstValueDictionary(keyedBy: \.id)
     }
 
     private func track(for item: PlaylistItemRecord) -> TrackRecord? {

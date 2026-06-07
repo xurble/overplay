@@ -70,8 +70,8 @@ enum HistoryTimeline {
         tracks: [TrackRecord],
         filter: HistoryEventFilter = .all
     ) -> [HistoryEventRowModel] {
-        let playlistsByID = Dictionary(uniqueKeysWithValues: playlists.map { ($0.id, $0) })
-        let tracksByID = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
+        let playlistsByID = playlists.firstValueDictionary(keyedBy: \.id)
+        let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
 
         return events
             .filter { filter.includes($0) }

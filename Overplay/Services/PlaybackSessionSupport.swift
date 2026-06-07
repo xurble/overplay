@@ -43,7 +43,8 @@ enum PlaybackSessionSupport {
         }
 
         let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
-        let tracksByID = Dictionary(uniqueKeysWithValues: try TrackRecordRepository.allTracks(in: context).map { ($0.id, $0) })
+        let tracks = try TrackRecordRepository.tracks(ids: items.map(\.trackID), in: context)
+        let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
         return PlaybackQueueBuilder.playlistItem(
             matching: musicItemID,
             items: items,

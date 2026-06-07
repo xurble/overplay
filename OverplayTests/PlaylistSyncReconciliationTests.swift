@@ -98,7 +98,7 @@ struct PlaylistSyncReconciliationTests {
         )
 
         let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
-        let tracksByID = Dictionary(uniqueKeysWithValues: try TrackRecordRepository.allTracks(in: context).map { ($0.id, $0) })
+        let tracksByID = try TrackRecordRepository.allTracks(in: context).firstValueDictionary(keyedBy: \.id)
         let missingRemoteItem = try #require(items.first { tracksByID[$0.trackID]?.catalogID == "track-2" })
         let activeItems = try PlaylistItemRepository.activeItems(forPlaylistID: playlist.id, in: context)
         let history = try context.fetch(FetchDescriptor<HistoryEvent>())

@@ -81,7 +81,8 @@ struct MusicKitDiagnosticsService {
 
             let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
             let playableItems = items.filter(\.isPlayable)
-            let tracksByID = Dictionary(uniqueKeysWithValues: try TrackRecordRepository.allTracks(in: context).map { ($0.id, $0) })
+            let tracks = try TrackRecordRepository.tracks(ids: items.map(\.trackID), in: context)
+            let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
             let cachedTracks = PlaybackQueueBuilder.cachedPlayableMusicTracks(items: items, tracksByID: tracksByID)
 
             report.add("Local selected playlist record", "ok: \(playlist.name), role=\(playlist.role.rawValue), writes=\(playlist.writePolicy.rawValue)")

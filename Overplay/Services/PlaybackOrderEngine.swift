@@ -96,7 +96,10 @@ enum PlaybackOrderEngine {
             return ordered(tracks).map(\.id)
         }
 
-        let storedIndex = Dictionary(uniqueKeysWithValues: storedOrder.enumerated().map { ($0.element, $0.offset) })
+        let storedIndex = storedOrder.enumerated().firstValueDictionary(
+            keyedBy: \.element,
+            value: \.offset
+        )
         return ordered(tracks).sorted { left, right in
             switch (storedIndex[left.id], storedIndex[right.id]) {
             case let (leftIndex?, rightIndex?):

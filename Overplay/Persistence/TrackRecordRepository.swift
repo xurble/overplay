@@ -10,19 +10,52 @@ enum TrackRecordRepository {
     }
 
     static func track(id: UUID, in context: ModelContext) throws -> TrackRecord? {
-        try allTracks(in: context).first { $0.id == id }
+        var descriptor = FetchDescriptor<TrackRecord>(
+            predicate: #Predicate { $0.id == id },
+            sortBy: [SortDescriptor(\.title), SortDescriptor(\.artistName)]
+        )
+        descriptor.fetchLimit = 1
+        descriptor.includePendingChanges = true
+        return try context.fetch(descriptor).first
+    }
+
+    static func tracks(ids: [UUID], in context: ModelContext) throws -> [TrackRecord] {
+        guard !ids.isEmpty else { return [] }
+        let uniqueIDs = Array(Set(ids))
+        var descriptor = FetchDescriptor<TrackRecord>(
+            predicate: #Predicate { uniqueIDs.contains($0.id) },
+            sortBy: [SortDescriptor(\.title), SortDescriptor(\.artistName)]
+        )
+        descriptor.includePendingChanges = true
+        return try context.fetch(descriptor)
     }
 
     static func track(catalogID: String?, libraryID: String?, in context: ModelContext) throws -> TrackRecord? {
-        try allTracks(in: context).first { track in
-            if let catalogID, track.catalogID == catalogID {
-                return true
-            }
-            if let libraryID, track.libraryID == libraryID {
-                return true
-            }
-            return false
+        let descriptor: FetchDescriptor<TrackRecord>
+        if let catalogID, let libraryID {
+            descriptor = FetchDescriptor<TrackRecord>(
+                predicate: #Predicate {
+                    $0.catalogID == catalogID || $0.libraryID == libraryID
+                },
+                sortBy: [SortDescriptor(\.title), SortDescriptor(\.artistName)]
+            )
+        } else if let catalogID {
+            descriptor = FetchDescriptor<TrackRecord>(
+                predicate: #Predicate { $0.catalogID == catalogID },
+                sortBy: [SortDescriptor(\.title), SortDescriptor(\.artistName)]
+            )
+        } else if let libraryID {
+            descriptor = FetchDescriptor<TrackRecord>(
+                predicate: #Predicate { $0.libraryID == libraryID },
+                sortBy: [SortDescriptor(\.title), SortDescriptor(\.artistName)]
+            )
+        } else {
+            return nil
         }
+        var limitedDescriptor = descriptor
+        limitedDescriptor.fetchLimit = 1
+        limitedDescriptor.includePendingChanges = true
+        return try context.fetch(limitedDescriptor).first
     }
 
     static func track(musicItemID: String, in context: ModelContext) throws -> TrackRecord? {

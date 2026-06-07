@@ -16,7 +16,7 @@ struct PlaylistPresentationBuilder {
     ) {
         self.playlists = playlists
         self.items = items
-        self.tracksByID = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
+        self.tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
         self.currentPlaylistID = currentPlaylistID
         self.evictAfterSkips = evictAfterSkips
     }

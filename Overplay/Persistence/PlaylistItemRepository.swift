@@ -10,23 +10,49 @@ enum PlaylistItemRepository {
     }
 
     static func item(id: UUID, in context: ModelContext) throws -> PlaylistItemRecord? {
-        try allItems(in: context).first { $0.id == id }
+        var descriptor = FetchDescriptor<PlaylistItemRecord>(
+            predicate: #Predicate { $0.id == id },
+            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.createdAt)]
+        )
+        descriptor.fetchLimit = 1
+        descriptor.includePendingChanges = true
+        return try context.fetch(descriptor).first
     }
 
     static func item(playlistID: UUID, trackID: UUID, in context: ModelContext) throws -> PlaylistItemRecord? {
-        try allItems(in: context).first { $0.playlistID == playlistID && $0.trackID == trackID }
+        var descriptor = FetchDescriptor<PlaylistItemRecord>(
+            predicate: #Predicate {
+                $0.playlistID == playlistID && $0.trackID == trackID
+            },
+            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.createdAt)]
+        )
+        descriptor.fetchLimit = 1
+        descriptor.includePendingChanges = true
+        return try context.fetch(descriptor).first
     }
 
     static func items(forPlaylistID playlistID: UUID, in context: ModelContext) throws -> [PlaylistItemRecord] {
-        try allItems(in: context).filter { $0.playlistID == playlistID }
+        var descriptor = FetchDescriptor<PlaylistItemRecord>(
+            predicate: #Predicate { $0.playlistID == playlistID },
+            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.createdAt)]
+        )
+        descriptor.includePendingChanges = true
+        return try context.fetch(descriptor)
     }
 
     static func playableItems(forPlaylistID playlistID: UUID, in context: ModelContext) throws -> [PlaylistItemRecord] {
-        try items(forPlaylistID: playlistID, in: context).filter(\.isPlayable)
+        var descriptor = FetchDescriptor<PlaylistItemRecord>(
+            predicate: #Predicate {
+                $0.playlistID == playlistID && $0.evictedAt == nil
+            },
+            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.createdAt)]
+        )
+        descriptor.includePendingChanges = true
+        return try context.fetch(descriptor)
     }
 
     static func activeItems(forPlaylistID playlistID: UUID, in context: ModelContext) throws -> [PlaylistItemRecord] {
-        try items(forPlaylistID: playlistID, in: context).filter { $0.evictedAt == nil }
+        try playableItems(forPlaylistID: playlistID, in: context)
     }
 
     @discardableResult

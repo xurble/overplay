@@ -10,7 +10,10 @@ enum PlaylistDisplayOrder {
             storedOrder: state.orderedTrackIDs,
             shuffleEnabled: state.shuffleEnabled
         )
-        let displayIndex = Dictionary(uniqueKeysWithValues: displayOrder.enumerated().map { ($0.element, $0.offset) })
+        let displayIndex = displayOrder.enumerated().firstValueDictionary(
+            keyedBy: \.element,
+            value: \.offset
+        )
 
         return items.sorted { left, right in
             switch (displayIndex[left.trackID.uuidString], displayIndex[right.trackID.uuidString]) {
