@@ -10,32 +10,30 @@ struct PlaylistSelectionView: View {
     @Query(sort: \PlaylistItemRecord.createdAt) private var playlistItems: [PlaylistItemRecord]
     @Query(sort: \TrackRecord.title) private var tracks: [TrackRecord]
 
-    @State private var playlists: [AppleMusicPlaylist] = []
-    @State private var searchText = ""
-    @State private var isLoading = false
-    @State private var isSyncingAll = false
-    @State private var isCreatingOneTruePlaylist = false
-    @State private var syncingPlaylistIDs = Set<UUID>()
-    @State private var newPlaylistName = "Overplay"
-    @State private var message: String?
+    @State private var viewModel = PlaylistSelectionViewModel()
 
     var body: some View {
         List {
             if oneTruePlaylist == nil {
                 Section("One True Playlist") {
                     VStack(alignment: .leading, spacing: 12) {
-                        TextField("Playlist name", text: $newPlaylistName)
+                        TextField("Playlist name", text: $viewModel.newPlaylistName)
 
                         Button {
-                            Task { await createManagedOneTruePlaylist() }
+                            Task {
+                                await viewModel.createManagedOneTruePlaylist(
+                                    context: modelContext,
+                                    dependencies: dependencies
+                                )
+                            }
                         } label: {
                             Label(
-                                isCreatingOneTruePlaylist ? "Creating" : "Start New Playlist",
+                                viewModel.isCreatingOneTruePlaylist ? "Creating" : "Start New Playlist",
                                 systemImage: "plus.circle.fill"
                             )
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(isCreatingOneTruePlaylist)
+                        .disabled(viewModel.isCreatingOneTruePlaylist)
                     }
                     .padding(.vertical, 6)
                 }
@@ -55,36 +53,42 @@ struct PlaylistSelectionView: View {
                 }
 
                 Button {
-                    Task { await syncAllLinkedPlaylists() }
+                    Task {
+                        await viewModel.syncAllLinkedPlaylists(
+                            linkedPlaylists,
+                            context: modelContext,
+                            dependencies: dependencies
+                        )
+                    }
                 } label: {
-                    Label(isSyncingAll ? "Syncing All" : "Sync All", systemImage: "arrow.triangle.2.circlepath")
+                    Label(viewModel.isSyncingAll ? "Syncing All" : "Sync All", systemImage: "arrow.triangle.2.circlepath")
                 }
-                .disabled(linkedPlaylists.isEmpty || isSyncingAll)
+                .disabled(linkedPlaylists.isEmpty || viewModel.isSyncingAll)
             }
 
             Section("Apple Music Playlists") {
-                if isLoading {
+                if viewModel.isLoading {
                     ProgressView("Loading playlists")
                 }
 
-                if let message {
+                if let message = viewModel.message {
                     Text(message)
                         .foregroundStyle(.secondary)
                 }
 
-                ForEach(filteredPlaylists) { playlist in
+                ForEach(viewModel.filteredPlaylists) { playlist in
                     appleMusicPlaylistRow(playlist)
                 }
             }
         }
         .miniPlayerScrollContentInset()
         .navigationTitle("Linked Playlists")
-        .searchable(text: $searchText, prompt: "Filter playlists")
+        .searchable(text: $viewModel.searchText, prompt: "Filter playlists")
         .refreshable {
-            await loadPlaylists()
+            await viewModel.loadPlaylists(dependencies: dependencies)
         }
         .task {
-            await loadPlaylists()
+            await viewModel.loadPlaylists(dependencies: dependencies)
         }
     }
 
@@ -101,11 +105,6 @@ struct PlaylistSelectionView: View {
 
     private var oneTruePlaylist: PlaylistRecord? {
         linkedPlaylists.first { $0.role == .oneTruePlaylist && $0.isActive }
-    }
-
-    private var filteredPlaylists: [AppleMusicPlaylist] {
-        guard !searchText.isEmpty else { return playlists }
-        return playlists.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
     }
 
     private func representativeArtworkURL(for playlist: PlaylistRecord) -> String? {
@@ -140,16 +139,16 @@ struct PlaylistSelectionView: View {
 
             HStack {
                 Button {
-                    Task { await sync(playlist) }
+                    Task { await viewModel.sync(playlist, context: modelContext, dependencies: dependencies) }
                 } label: {
-                    Label(syncingPlaylistIDs.contains(playlist.id) ? "Syncing" : "Sync", systemImage: "arrow.triangle.2.circlepath")
+                    Label(viewModel.syncingPlaylistIDs.contains(playlist.id) ? "Syncing" : "Sync", systemImage: "arrow.triangle.2.circlepath")
                 }
                 .buttonStyle(.bordered)
-                .disabled(syncingPlaylistIDs.contains(playlist.id))
+                .disabled(viewModel.syncingPlaylistIDs.contains(playlist.id))
 
                 if playlist.role != .oneTruePlaylist {
                     Button {
-                        makeOneTrue(playlist)
+                        viewModel.makeOneTrue(playlist, context: modelContext, dependencies: dependencies)
                     } label: {
                         Label("Make Main", systemImage: "checkmark.circle.fill")
                     }
@@ -182,25 +181,30 @@ struct PlaylistSelectionView: View {
 
             HStack {
                 Button {
-                    select(playlist)
+                    viewModel.select(
+                        playlist,
+                        oneTruePlaylist: oneTruePlaylist,
+                        context: modelContext,
+                        dependencies: dependencies
+                    )
                 } label: {
                     Label(oneTruePlaylist == nil ? "Copy to Overplay" : "Set Main", systemImage: "checkmark.circle.fill")
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isCreatingOneTruePlaylist)
+                .disabled(viewModel.isCreatingOneTruePlaylist)
 
                 if oneTruePlaylist == nil {
                     Button {
-                        useIncomingOnly(playlist)
+                        viewModel.useIncomingOnly(playlist, context: modelContext, dependencies: dependencies)
                     } label: {
                         Label("Use Incoming Only", systemImage: "arrow.down.circle")
                     }
                     .buttonStyle(.bordered)
-                    .disabled(isCreatingOneTruePlaylist)
+                    .disabled(viewModel.isCreatingOneTruePlaylist)
                 }
 
                 Button {
-                    addTriage(playlist)
+                    viewModel.addTriage(playlist, context: modelContext)
                 } label: {
                     Label("Add Triage", systemImage: "tray.and.arrow.down.fill")
                 }
@@ -224,159 +228,11 @@ struct PlaylistSelectionView: View {
         )
     }
 
-    private func loadPlaylists() async {
-        isLoading = true
-        defer { isLoading = false }
-
-        do {
-            playlists = try await PlaylistSyncService().fetchLibraryPlaylists()
-            message = playlists.isEmpty ? "No Apple Music library playlists were found." : nil
-        } catch {
-            message = error.localizedDescription
-        }
-    }
-
-    private func select(_ playlist: AppleMusicPlaylist) {
-        if oneTruePlaylist == nil {
-            Task { await copyToManagedOneTruePlaylist(from: playlist) }
-            return
-        }
-
-        do {
-            try SettingsRepository.selectPlaylist(playlist, in: modelContext)
-            refreshPlaylistInBackground(id: playlist.id)
-            dismiss()
-        } catch {
-            message = error.localizedDescription
-        }
-    }
-
-    private func useIncomingOnly(_ playlist: AppleMusicPlaylist) {
-        do {
-            try SettingsRepository.selectPlaylist(playlist, writePolicy: .incomingOnly, in: modelContext)
-            refreshPlaylistInBackground(id: playlist.id)
-            dismiss()
-        } catch {
-            message = error.localizedDescription
-        }
-    }
-
-    private func addTriage(_ playlist: AppleMusicPlaylist) {
-        do {
-            try PlaylistRepository.addTriagePlaylist(playlist, in: modelContext)
-            try modelContext.save()
-            message = "Added \(playlist.name) as a triage playlist."
-        } catch {
-            message = error.localizedDescription
-        }
-    }
-
-    private func makeOneTrue(_ playlist: PlaylistRecord) {
-        do {
-            try SettingsRepository.selectPlaylist(
-                AppleMusicPlaylist(id: playlist.musicPlaylistID, name: playlist.name, trackCount: nil),
-                writePolicy: playlist.writePolicy,
-                in: modelContext
-            )
-            refreshPlaylistInBackground(playlist)
-            dismiss()
-        } catch {
-            message = error.localizedDescription
-        }
-    }
-
-    private func createManagedOneTruePlaylist() async {
-        isCreatingOneTruePlaylist = true
-        defer { isCreatingOneTruePlaylist = false }
-
-        do {
-            let playlist = try await PlaylistSyncService().createManagedOneTruePlaylist(
-                named: newPlaylistName,
-                in: modelContext
-            )
-            try SettingsRepository.selectPlaylist(
-                AppleMusicPlaylist(id: playlist.musicPlaylistID, name: playlist.name, trackCount: 0),
-                writePolicy: .managed,
-                in: modelContext
-            )
-            message = "Created \(playlist.name) in Apple Music."
-            dismiss()
-        } catch {
-            message = error.localizedDescription
-        }
-    }
-
-    private func copyToManagedOneTruePlaylist(from sourcePlaylist: AppleMusicPlaylist) async {
-        isCreatingOneTruePlaylist = true
-        defer { isCreatingOneTruePlaylist = false }
-
-        do {
-            let playlist = try await PlaylistSyncService().createManagedOneTruePlaylist(
-                named: newPlaylistName,
-                copyingTracksFrom: sourcePlaylist.id,
-                in: modelContext
-            )
-            try SettingsRepository.selectPlaylist(
-                AppleMusicPlaylist(id: playlist.musicPlaylistID, name: playlist.name, trackCount: sourcePlaylist.trackCount),
-                writePolicy: .managed,
-                in: modelContext
-            )
-            message = "Copied \(sourcePlaylist.name) to \(playlist.name)."
-            dismiss()
-        } catch {
-            message = error.localizedDescription
-        }
-    }
-
-    private func sync(_ playlist: PlaylistRecord) async {
-        syncingPlaylistIDs.insert(playlist.id)
-        defer { syncingPlaylistIDs.remove(playlist.id) }
-
-        do {
-            let count = try await PlaylistSyncService().syncPlaylist(playlist, in: modelContext)
-            playbackController.reconcileStoredOrder(for: playlist, context: modelContext)
-            message = "Synced \(count) tracks from \(playlist.name)."
-        } catch {
-            message = error.localizedDescription
-        }
-    }
-
-    private func syncAllLinkedPlaylists() async {
-        isSyncingAll = true
-        defer { isSyncingAll = false }
-
-        do {
-            let count = try await PlaylistSyncService().syncAllLinkedPlaylists(in: modelContext)
-            for playlist in linkedPlaylists {
-                playbackController.reconcileStoredOrder(for: playlist, context: modelContext)
-            }
-            message = "Synced \(count) tracks across linked playlists."
-        } catch {
-            message = error.localizedDescription
-        }
-    }
-
-    private func refreshPlaylistInBackground(_ playlist: PlaylistRecord) {
-        Task(priority: .background) {
-            do {
-                _ = try await PlaylistSyncService().syncPlaylist(playlist, in: modelContext)
-                playbackController.reconcileStoredOrder(for: playlist, context: modelContext)
-            } catch {
-                playlist.lastSyncError = error.localizedDescription
-                playlist.updatedAt = .now
-                try? modelContext.save()
-            }
-        }
-    }
-
-    private func refreshPlaylistInBackground(id playlistID: String) {
-        Task(priority: .background) {
-            do {
-                _ = try await PlaylistSyncService().syncPlaylist(id: playlistID, in: modelContext)
-            } catch {
-                message = error.localizedDescription
-            }
-        }
+    private var dependencies: PlaylistSelectionViewModel.Dependencies {
+        PlaylistSelectionViewModel.Dependencies.live(
+            playbackController: playbackController,
+            dismiss: { dismiss() }
+        )
     }
 }
 
