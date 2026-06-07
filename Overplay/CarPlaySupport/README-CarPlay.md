@@ -20,13 +20,17 @@ entitlement, and `Config/Info.plist` declares a CarPlay scene using
 
 The root CarPlay template shows:
 
-- Now Playing.
-- The One True Playlist.
-- Active linked playlists.
+- The main Overplay playlist in a `Main Playlist` section.
+- Active triage playlists in a separate `Triage Playlists` section.
 
-Selecting a playlist starts playback through `PlaybackController`, then opens
-`CPNowPlayingTemplate`. Standard CarPlay playback controls are routed through
-the shared remote command and playback services.
+Selecting a playlist opens that playlist's playable track list. Selecting a
+track starts playback through `PlaybackController` with that playlist as the
+active queue, then opens `CPNowPlayingTemplate`. Standard CarPlay playback
+controls are routed through the shared remote command and playback services.
+
+The shared Now Playing template also installs a custom track-health image button
+using SF Symbols. The button opens a short CarPlay action sheet for resetting
+skip count, marking the current track safe, or evicting it immediately.
 
 ## Verification
 

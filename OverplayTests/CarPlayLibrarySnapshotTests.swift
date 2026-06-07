@@ -35,4 +35,35 @@ struct CarPlayLibrarySnapshotTests {
         #expect(summaries.first?.playableTrackCount == 1)
         #expect(summaries.last?.playableTrackCount == 0)
     }
+
+    @Test func trackSummariesIncludePlayableTracksWithHealthInPlaylistOrder() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = ModelContext(container)
+
+        let playlist = PlaylistRecord(musicPlaylistID: "one", name: "Overplay", role: .oneTruePlaylist)
+        context.insert(playlist)
+
+        let firstTrack = TrackRecord(title: "Mr Brightside", artistName: "The Killers")
+        let secondTrack = TrackRecord(title: "Somebody Told Me", artistName: "The Killers")
+        let evictedTrack = TrackRecord(title: "Smile Like You Mean It", artistName: "The Killers")
+        context.insert(firstTrack)
+        context.insert(secondTrack)
+        context.insert(evictedTrack)
+
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: secondTrack.id, sortOrder: 2, skipCount: 2))
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: firstTrack.id, sortOrder: 1))
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: evictedTrack.id, sortOrder: 3, evictedAt: .now))
+        try context.save()
+
+        let tracks = try CarPlayLibrarySnapshot.trackSummaries(
+            forPlaylistID: playlist.id,
+            evictAfterSkips: 3,
+            in: context
+        )
+
+        #expect(tracks.map(\.title) == ["Mr Brightside", "Somebody Told Me"])
+        #expect(tracks.first?.detailText == "The Killers")
+        #expect(tracks.last?.detailText == "The Killers - 2 skips")
+        #expect(tracks.last?.healthStatus == .critical)
+    }
 }
