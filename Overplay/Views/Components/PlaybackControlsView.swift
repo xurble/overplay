@@ -42,7 +42,7 @@ struct PlaybackControlsView: View {
     }
 
     private var canUsePrimaryPlaybackAction: Bool {
-        playbackController.canControlPlayback || defaultPlaybackPlaylist != nil
+        playbackController.canControlPlayback || restoredPlaybackTarget != nil || defaultPlaybackPlaylist != nil
     }
 
     private var defaultPlaybackPlaylist: PlaylistRecord? {
@@ -60,8 +60,37 @@ struct PlaybackControlsView: View {
             return
         }
 
+        if let restoredPlayback = restoredPlaybackTarget {
+            await playbackController.playPlaylist(
+                restoredPlayback.playlist,
+                startingAt: restoredPlayback.track,
+                settings: settings,
+                context: modelContext
+            )
+            return
+        }
+
         guard let playlist = defaultPlaybackPlaylist else { return }
         await playbackController.playPlaylist(playlist, settings: settings, context: modelContext)
+    }
+
+    private var restoredPlaybackTarget: (playlist: PlaylistRecord, track: TrackRecord)? {
+        guard let currentPlaylistID = playbackController.currentPlaylistID,
+              let playlist = playlists.first(where: { $0.musicPlaylistID == currentPlaylistID && $0.isActive }) else {
+            return nil
+        }
+
+        if let item = playbackController.currentPlaylistItem,
+           let track = try? TrackRecordRepository.track(id: item.trackID, in: modelContext) {
+            return (playlist, track)
+        }
+
+        if let musicItemID = playbackController.currentTrack?.id,
+           let track = try? TrackRecordRepository.track(musicItemID: musicItemID, in: modelContext) {
+            return (playlist, track)
+        }
+
+        return nil
     }
 }
 

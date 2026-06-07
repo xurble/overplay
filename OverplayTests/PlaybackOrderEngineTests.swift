@@ -54,6 +54,20 @@ struct PlaybackOrderEngineTests {
         #expect(order == ["track-2", "track-1", "track-3", "track-4"])
     }
 
+    @Test("reconcile creates shuffled order when shuffle has no stored order")
+    func reconcileCreatesShuffledOrderWhenStoredOrderIsEmpty() {
+        let tracks = makeTracks(count: 4)
+
+        let order = PlaybackOrderEngine.reconciledShuffleOrder(
+            storedOrder: [],
+            tracks: tracks,
+            currentTrackID: nil,
+            randomize: { $0.reversed() }
+        )
+
+        #expect(order == ["track-4", "track-3", "track-2", "track-1"])
+    }
+
     @Test("reconcile removes unplayable tracks except current")
     func reconcileRemovesUnplayableTracksExceptCurrent() {
         var tracks = makeTracks(count: 4)

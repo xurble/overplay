@@ -6,6 +6,7 @@ struct LocalPlaybackState: Codable, Equatable, Sendable {
     var elapsedSeconds: Double
     var wasPlaying: Bool
     var updatedAt: Date
+    var localTrackID: String? = nil
 }
 
 enum LocalPlaybackStateStore {

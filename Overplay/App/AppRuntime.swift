@@ -9,6 +9,7 @@ final class AppRuntime {
     let authorizationService = MusicAuthorizationService()
     let playbackController = PlaybackController()
     let remoteCommandService = RemoteCommandService()
+    let periodicPlaylistSyncService = PeriodicPlaylistSyncService()
 
     @ObservationIgnored private var modelContainer: ModelContainer?
 

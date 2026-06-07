@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 @preconcurrency import MusicKit
 import SwiftData
 
@@ -21,6 +22,11 @@ enum PlaylistSyncError: LocalizedError {
 
 @MainActor
 struct PlaylistSyncService {
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "Overplay",
+        category: "PlaylistSync"
+    )
+
     func fetchLibraryPlaylists() async throws -> [AppleMusicPlaylist] {
         var request = MusicLibraryRequest<Playlist>()
         request.limit = 100
@@ -58,6 +64,9 @@ struct PlaylistSyncService {
         let playlist = try await loadPlaylist(id: playlistRecord.musicPlaylistID)
         let tracks = try await loadTracks(for: playlist)
         let snapshots = tracks.map { snapshot(from: $0, playlistID: playlistRecord.musicPlaylistID) }
+        Self.logger.info(
+            "Fetched \(tracks.count, privacy: .public) remote tracks for playlist '\(playlistRecord.name, privacy: .public)' (\(playlistRecord.musicPlaylistID, privacy: .public))"
+        )
 
         try reconcile(
             snapshots: snapshots,
@@ -136,28 +145,54 @@ struct PlaylistSyncService {
         syncedAt: Date,
         in context: ModelContext
     ) throws -> Int {
-        var seenTrackIDs = Set<UUID>()
-
         for (sortOrder, snapshot) in snapshots.enumerated() {
-            let track = try TrackRecordRepository.upsert(snapshot, in: context)
-            let item = try PlaylistItemRepository.upsert(
-                playlistID: playlistRecord.id,
-                trackID: track.id,
-                musicPlaylistEntryID: snapshot.playlistEntryID,
-                sortOrder: sortOrder,
+            let existingTrack = try TrackRecordRepository.track(
+                catalogID: snapshot.catalogID ?? snapshot.id,
+                libraryID: snapshot.libraryID ?? snapshot.id,
                 in: context
             )
-            item.lastSeenInPlaylistAt = syncedAt
-            item.removedFromRemoteAt = nil
-            seenTrackIDs.insert(track.id)
-        }
+            let existingItem = try existingTrack.flatMap {
+                try PlaylistItemRepository.item(
+                    playlistID: playlistRecord.id,
+                    trackID: $0.id,
+                    in: context
+                )
+            }
+            logFoundRemoteTrack(
+                snapshot,
+                playlistRecord: playlistRecord,
+                sortOrder: sortOrder,
+                existingTrack: existingTrack,
+                existingItem: existingItem
+            )
 
-        try reconcileRemoteRemovals(
-            playlistRecord: playlistRecord,
-            seenTrackIDs: seenTrackIDs,
-            removedAt: syncedAt,
-            in: context
-        )
+            do {
+                let track = try TrackRecordRepository.upsert(snapshot, in: context)
+                let item = try PlaylistItemRepository.upsert(
+                    playlistID: playlistRecord.id,
+                    trackID: track.id,
+                    musicPlaylistEntryID: snapshot.playlistEntryID,
+                    sortOrder: sortOrder,
+                    in: context
+                )
+                item.lastSeenInPlaylistAt = syncedAt
+                item.removedFromRemoteAt = nil
+                logLocalAddSucceeded(
+                    snapshot,
+                    playlistRecord: playlistRecord,
+                    track: track,
+                    item: item,
+                    existedBeforeSync: existingItem != nil
+                )
+            } catch {
+                logLocalAddFailed(
+                    snapshot,
+                    playlistRecord: playlistRecord,
+                    error: error
+                )
+                throw error
+            }
+        }
 
         playlistRecord.lastSyncedAt = syncedAt
         playlistRecord.lastSyncError = nil
@@ -165,34 +200,60 @@ struct PlaylistSyncService {
         return snapshots.count
     }
 
-    func reconcileRemoteRemovals(
+    private func logFoundRemoteTrack(
+        _ snapshot: TrackSnapshot,
         playlistRecord: PlaylistRecord,
-        seenTrackIDs: Set<UUID>,
-        removedAt: Date,
-        in context: ModelContext
-    ) throws {
-        let existingItems = try PlaylistItemRepository.items(forPlaylistID: playlistRecord.id, in: context)
+        sortOrder: Int,
+        existingTrack: TrackRecord?,
+        existingItem: PlaylistItemRecord?
+    ) {
+        Self.logger.info(
+            """
+            Found remote track \(sortOrder, privacy: .public) in '\(playlistRecord.name, privacy: .public)': \
+            '\(snapshot.title, privacy: .public)' by '\(snapshot.artistName, privacy: .public)' \
+            musicItemID=\(snapshot.id, privacy: .public) \
+            catalogID=\(snapshot.catalogID ?? "nil", privacy: .public) \
+            libraryID=\(snapshot.libraryID ?? "nil", privacy: .public) \
+            localTrackExists=\(existingTrack != nil, privacy: .public) \
+            localPlaylistItemExists=\(existingItem != nil, privacy: .public) \
+            localItemPlayable=\(existingItem?.isPlayable.description ?? "nil", privacy: .public)
+            """
+        )
+    }
 
-        for item in existingItems where !seenTrackIDs.contains(item.trackID) && item.removedFromRemoteAt == nil {
-            item.removedFromRemoteAt = removedAt
-            item.updatedAt = removedAt
+    private func logLocalAddSucceeded(
+        _ snapshot: TrackSnapshot,
+        playlistRecord: PlaylistRecord,
+        track: TrackRecord,
+        item: PlaylistItemRecord,
+        existedBeforeSync: Bool
+    ) {
+        let action = existedBeforeSync ? "updated" : "inserted"
+        Self.logger.info(
+            """
+            Local sync \(action, privacy: .public) playlist item for '\(snapshot.title, privacy: .public)' \
+            in '\(playlistRecord.name, privacy: .public)' \
+            localTrackID=\(track.id.uuidString, privacy: .public) \
+            localPlaylistItemID=\(item.id.uuidString, privacy: .public) \
+            sortOrder=\(item.sortOrder, privacy: .public) \
+            removedFromRemoteAt=\(item.removedFromRemoteAt?.description ?? "nil", privacy: .public) \
+            evictedAt=\(item.evictedAt?.description ?? "nil", privacy: .public)
+            """
+        )
+    }
 
-            if item.evictedAt == nil {
-                item.evictedAt = removedAt
-                item.evictionReason = .manual
-                item.evictionSource = .appleMusicSync
-            }
-
-            EventRepository.logHistory(
-                playlistID: playlistRecord.id,
-                trackID: item.trackID,
-                eventType: .trackRemoved,
-                source: .appleMusic,
-                skipCountAtEvent: item.skipCount,
-                message: "Removed from Apple Music playlist",
-                in: context
-            )
-        }
+    private func logLocalAddFailed(
+        _ snapshot: TrackSnapshot,
+        playlistRecord: PlaylistRecord,
+        error: Error
+    ) {
+        Self.logger.error(
+            """
+            Local sync failed for '\(snapshot.title, privacy: .public)' \
+            in '\(playlistRecord.name, privacy: .public)' \
+            musicItemID=\(snapshot.id, privacy: .public): \(error.localizedDescription, privacy: .public)
+            """
+        )
     }
 
     func playableMusicTracks(for playlistID: String, in context: ModelContext) async throws -> [Track] {

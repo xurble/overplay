@@ -17,7 +17,8 @@ struct LocalPlaybackStateStoreTests {
             musicItemID: "track-1",
             elapsedSeconds: 42,
             wasPlaying: true,
-            updatedAt: Date(timeIntervalSince1970: 100)
+            updatedAt: Date(timeIntervalSince1970: 100),
+            localTrackID: "local-track-1"
         )
 
         LocalPlaybackStateStore.save(state, to: defaults)
@@ -25,5 +26,40 @@ struct LocalPlaybackStateStoreTests {
 
         LocalPlaybackStateStore.clear(from: defaults)
         #expect(LocalPlaybackStateStore.load(from: defaults) == nil)
+    }
+
+    @Test("loads legacy playback state without local track ID")
+    func loadsLegacyPlaybackStateWithoutLocalTrackID() throws {
+        struct LegacyLocalPlaybackState: Codable {
+            var playlistID: String
+            var musicItemID: String
+            var elapsedSeconds: Double
+            var wasPlaying: Bool
+            var updatedAt: Date
+        }
+
+        let suiteName = "OverplayTests.LocalPlaybackStateStore.Legacy.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let legacyState = LegacyLocalPlaybackState(
+            playlistID: "playlist-1",
+            musicItemID: "track-1",
+            elapsedSeconds: 42,
+            wasPlaying: true,
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        defaults.set(try JSONEncoder().encode(legacyState), forKey: "overplay.localPlaybackState")
+
+        let loadedState = try #require(LocalPlaybackStateStore.load(from: defaults))
+
+        #expect(loadedState.playlistID == legacyState.playlistID)
+        #expect(loadedState.musicItemID == legacyState.musicItemID)
+        #expect(loadedState.elapsedSeconds == legacyState.elapsedSeconds)
+        #expect(loadedState.wasPlaying == legacyState.wasPlaying)
+        #expect(loadedState.updatedAt == legacyState.updatedAt)
+        #expect(loadedState.localTrackID == nil)
     }
 }

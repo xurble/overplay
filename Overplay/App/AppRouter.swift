@@ -11,6 +11,7 @@ struct AppRouter: View {
 
     @Query(sort: \OverplaySettings.createdAt) private var settingsRecords: [OverplaySettings]
     @State private var playerSheetDetent: PresentationDetent = .height(96)
+    @State private var hasStartedAuthorizedServices = false
 
     private let playerSheetCollapsedHeight = MiniPlayerLayout.collapsedHeight
 
@@ -62,13 +63,17 @@ struct AppRouter: View {
             }
 
             if authorizationService.readiness.isReady {
-                await StartupProfiler.measure("Local playback restore") {
-                    await playbackController.restoreLocalPlaybackState(context: modelContext)
+                await startAuthorizedServices()
+            }
+        }
+        .onChange(of: authorizationService.readiness.isReady) { _, isReady in
+            if isReady {
+                Task {
+                    await startAuthorizedServices()
                 }
-
-                StartupProfiler.measure("Playback warm-up scheduling") {
-                    playbackController.schedulePostLaunchWarmUp()
-                }
+            } else {
+                hasStartedAuthorizedServices = false
+                runtime.periodicPlaylistSyncService.stop()
             }
         }
     }
@@ -90,6 +95,22 @@ struct AppRouter: View {
             authorizationService.readiness.isReady && settings != nil
         } set: { _ in
             playerSheetDetent = .height(playerSheetCollapsedHeight)
+        }
+    }
+
+    private func startAuthorizedServices() async {
+        guard !hasStartedAuthorizedServices else { return }
+        hasStartedAuthorizedServices = true
+
+        StartupProfiler.measure("Local playback display restore") {
+            playbackController.restoreLocalPlaybackDisplay(context: modelContext)
+        }
+
+        StartupProfiler.measure("Periodic playlist sync startup") {
+            runtime.periodicPlaylistSyncService.start(
+                context: modelContext,
+                playbackController: playbackController
+            )
         }
     }
 }

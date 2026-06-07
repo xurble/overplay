@@ -10,6 +10,8 @@ struct SettingsView: View {
     @State private var showResetConfirmation = false
     @State private var showNukeConfirmation = false
     @State private var didNukeDatabase = false
+    @State private var isRunningMusicKitDiagnostics = false
+    @State private var musicKitDiagnosticsReport: String?
     @State private var message: String?
 
     var body: some View {
@@ -59,6 +61,24 @@ struct SettingsView: View {
                     showNukeConfirmation = true
                 } label: {
                     Label("Nuke Database", systemImage: "trash")
+                }
+            }
+
+            Section("Diagnostics") {
+                Button {
+                    Task { await runMusicKitDiagnostics() }
+                } label: {
+                    Label(
+                        isRunningMusicKitDiagnostics ? "Running MusicKit Diagnostics" : "Run MusicKit Diagnostics",
+                        systemImage: "waveform.path.ecg"
+                    )
+                }
+                .disabled(isRunningMusicKitDiagnostics)
+
+                if let musicKitDiagnosticsReport {
+                    Text(musicKitDiagnosticsReport)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
                 }
             }
 
@@ -113,6 +133,16 @@ struct SettingsView: View {
         } catch {
             message = error.localizedDescription
         }
+    }
+
+    private func runMusicKitDiagnostics() async {
+        isRunningMusicKitDiagnostics = true
+        defer { isRunningMusicKitDiagnostics = false }
+
+        musicKitDiagnosticsReport = await MusicKitDiagnosticsService().run(
+            settings: settings,
+            context: modelContext
+        )
     }
 }
 

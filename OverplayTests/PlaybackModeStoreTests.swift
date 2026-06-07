@@ -25,11 +25,15 @@ struct PlaybackModeStoreTests {
         )
 
         let saved = PlaybackModeStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults)
+        let otherPlaylist = PlaybackModeStore.state(playerID: "main", musicPlaylistID: "playlist-2", from: defaults)
         let otherPlayer = PlaybackModeStore.state(playerID: "carplay", musicPlaylistID: "playlist-1", from: defaults)
 
         #expect(saved.shuffleEnabled)
         #expect(saved.repeatEnabled)
         #expect(saved.orderedTrackIDs == ["a", "b"])
+        #expect(!otherPlaylist.shuffleEnabled)
+        #expect(!otherPlaylist.repeatEnabled)
+        #expect(otherPlaylist.orderedTrackIDs.isEmpty)
         #expect(!otherPlayer.shuffleEnabled)
         #expect(!otherPlayer.repeatEnabled)
         #expect(otherPlayer.orderedTrackIDs.isEmpty)

@@ -68,8 +68,8 @@ struct PlaylistSyncReconciliationTests {
         #expect(playlist.lastSyncedAt == Date(timeIntervalSince1970: 200))
     }
 
-    @Test("reconcile remote removals excludes removed item and records history")
-    func reconcileRemoteRemovalsExcludesRemovedItemAndRecordsHistory() throws {
+    @Test("reconcile remote removals keeps local item playable")
+    func reconcileRemoteRemovalsKeepsLocalItemPlayable() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let playlist = PlaylistRecord(
@@ -98,23 +98,22 @@ struct PlaylistSyncReconciliationTests {
         )
 
         let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
-        let removedItem = try #require(items.first { $0.removedFromRemoteAt != nil })
+        let tracksByID = Dictionary(uniqueKeysWithValues: try TrackRecordRepository.allTracks(in: context).map { ($0.id, $0) })
+        let missingRemoteItem = try #require(items.first { tracksByID[$0.trackID]?.catalogID == "track-2" })
         let activeItems = try PlaylistItemRepository.activeItems(forPlaylistID: playlist.id, in: context)
         let history = try context.fetch(FetchDescriptor<HistoryEvent>())
 
-        #expect(removedItem.evictedAt == Date(timeIntervalSince1970: 200))
-        #expect(removedItem.evictionReason == .manual)
-        #expect(removedItem.evictionSource == .appleMusicSync)
-        #expect(!removedItem.isPlayable)
-        #expect(activeItems.count == 1)
-        #expect(history.count == 1)
-        #expect(history.first?.eventType == .trackRemoved)
-        #expect(history.first?.source == .appleMusic)
-        #expect(history.first?.trackID == removedItem.trackID)
+        #expect(missingRemoteItem.removedFromRemoteAt == nil)
+        #expect(missingRemoteItem.evictedAt == nil)
+        #expect(missingRemoteItem.evictionReason == nil)
+        #expect(missingRemoteItem.evictionSource == nil)
+        #expect(missingRemoteItem.isPlayable)
+        #expect(activeItems.count == 2)
+        #expect(history.isEmpty)
     }
 
-    @Test("remote removal preserves existing eviction details")
-    func remoteRemovalPreservesExistingEvictionDetails() throws {
+    @Test("remote removal preserves existing local eviction details")
+    func remoteRemovalPreservesExistingLocalEvictionDetails() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let playlist = PlaylistRecord(
@@ -143,7 +142,7 @@ struct PlaylistSyncReconciliationTests {
             in: context
         )
 
-        #expect(item.removedFromRemoteAt == Date(timeIntervalSince1970: 200))
+        #expect(item.removedFromRemoteAt == nil)
         #expect(item.evictedAt == Date(timeIntervalSince1970: 150))
         #expect(item.evictionReason == .skipCount)
         #expect(item.evictionSource == .playbackRule)

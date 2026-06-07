@@ -41,11 +41,20 @@ enum PlaybackOrderEngine {
     static func reconciledShuffleOrder(
         storedOrder: [String],
         tracks: [PlaybackOrderTrack],
-        currentTrackID: String?
+        currentTrackID: String?,
+        randomize: ([String]) -> [String] = { $0.shuffled() }
     ) -> [String] {
         let playableIDs = normalOrder(for: tracks)
         guard playableIDs.count > 2 else {
             return playableIDs
+        }
+
+        guard !storedOrder.isEmpty else {
+            return shuffleOrder(
+                for: tracks,
+                currentTrackID: currentTrackID,
+                randomize: randomize
+            )
         }
 
         let playableSet = Set(playableIDs)
