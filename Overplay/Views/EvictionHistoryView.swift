@@ -80,10 +80,13 @@ struct HistoryView: View {
 
     private func restore(_ row: HistoryEventRowModel) {
         guard let item = restorableItem(for: row) else { return }
-        EvictionEngine.restore(item, playlist: playlist(for: item), context: modelContext)
 
         do {
-            try modelContext.save()
+            try TrackHealthActionService.restoreTrack(
+                item,
+                playlist: playlist(for: item),
+                in: modelContext
+            )
             message = "Restored \(row.trackTitle)."
         } catch {
             message = error.localizedDescription

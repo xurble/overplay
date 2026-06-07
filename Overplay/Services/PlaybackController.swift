@@ -840,21 +840,19 @@ final class PlaybackController {
             return
         }
 
-        item.skipCount = 0
-        if settings.protectKeptTracks {
-            item.protected = true
+        do {
+            try TrackHealthActionService.keepCurrentTrack(
+                item,
+                playlist: playlist,
+                protect: settings.protectKeptTracks,
+                message: "Kept by user",
+                in: context
+            )
+        } catch {
+            statusMessage = error.localizedDescription
+            return
         }
-        item.updatedAt = .now
-        EventRepository.logHistory(
-            playlistID: playlist.id,
-            trackID: item.trackID,
-            eventType: .skipIgnored,
-            source: .user,
-            skipCountAtEvent: item.skipCount,
-            message: "Kept by user",
-            in: context
-        )
-        try? context.save()
+        currentPlaylistItem = item
         syncPlaybackMetadata(for: musicItemID, context: context)
     }
 
@@ -871,15 +869,18 @@ final class PlaybackController {
             return
         }
 
-        EvictionEngine.evict(
-            item,
-            playlist: playlist,
-            reason: .manual,
-            source: .user,
-            message: "Evicted manually",
-            context: context
-        )
-        try? context.save()
+        do {
+            try TrackHealthActionService.evictTrack(
+                item,
+                playlist: playlist,
+                message: "Evicted manually",
+                in: context
+            )
+        } catch {
+            statusMessage = error.localizedDescription
+            return
+        }
+        currentPlaylistItem = item
         await removeEvictedItemFromPlaylist(item, playlist: playlist, context: context)
         await next(settings: settings, context: context)
     }

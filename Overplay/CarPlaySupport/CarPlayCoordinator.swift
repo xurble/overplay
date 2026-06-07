@@ -384,18 +384,12 @@ final class CarPlayCoordinator: NSObject {
     private func resetCurrentSkipCount() {
         do {
             let context = try currentCarPlayTrackContext()
-            context.item.skipCount = 0
-            context.item.updatedAt = .now
-            EventRepository.logHistory(
-                playlistID: context.playlist.id,
-                trackID: context.item.trackID,
-                eventType: .skipIgnored,
-                source: .user,
-                skipCountAtEvent: context.item.skipCount,
+            try TrackHealthActionService.resetSkipCount(
+                context.item,
+                playlist: context.playlist,
                 message: "Skip count reset in CarPlay",
                 in: context.modelContext
             )
-            try context.modelContext.save()
             refreshAfterHealthAction()
         } catch {
             showError(title: "Health action failed", message: error.localizedDescription)
@@ -405,18 +399,12 @@ final class CarPlayCoordinator: NSObject {
     private func protectCurrentTrack() {
         do {
             let context = try currentCarPlayTrackContext()
-            context.item.protected = true
-            context.item.updatedAt = .now
-            EventRepository.logHistory(
-                playlistID: context.playlist.id,
-                trackID: context.item.trackID,
-                eventType: .skipIgnored,
-                source: .user,
-                skipCountAtEvent: context.item.skipCount,
+            try TrackHealthActionService.protectTrack(
+                context.item,
+                playlist: context.playlist,
                 message: "Protected in CarPlay",
                 in: context.modelContext
             )
-            try context.modelContext.save()
             refreshAfterHealthAction()
         } catch {
             showError(title: "Health action failed", message: error.localizedDescription)
