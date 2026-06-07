@@ -2,6 +2,10 @@ import Foundation
 import MediaPlayer
 import SwiftData
 
+#if canImport(UIKit)
+import UIKit
+#endif
+
 @MainActor
 final class RemoteCommandService {
     private var isInstalled = false
@@ -9,6 +13,10 @@ final class RemoteCommandService {
     func install(playbackController: PlaybackController, context: ModelContext) {
         guard !isInstalled else { return }
         isInstalled = true
+
+        #if canImport(UIKit)
+        UIApplication.shared.beginReceivingRemoteControlEvents()
+        #endif
 
         let commandCenter = MPRemoteCommandCenter.shared()
         commandCenter.playCommand.isEnabled = true

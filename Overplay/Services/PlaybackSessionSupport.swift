@@ -1,0 +1,53 @@
+import Foundation
+import SwiftData
+
+enum PlaybackSessionSupport {
+    static func makeSession(
+        trackID: String,
+        elapsedSeconds: Double,
+        durationSeconds: Double?,
+        sessionStartDate: Date = .now,
+        hasEvaluated: Bool = false
+    ) -> TrackPlaySession {
+        TrackPlaySession(
+            trackID: trackID,
+            sessionStartDate: sessionStartDate,
+            lastObservedPlaybackTime: elapsedSeconds,
+            durationSeconds: durationSeconds,
+            hasEvaluated: hasEvaluated
+        )
+    }
+
+    static func itemMatchesMusicItemID(
+        _ item: PlaylistItemRecord,
+        musicItemID: String,
+        in context: ModelContext
+    ) throws -> Bool {
+        guard let track = try TrackRecordRepository.track(id: item.trackID, in: context) else {
+            return false
+        }
+
+        return PlaybackQueueBuilder.musicItemIDs(for: track).contains(musicItemID)
+    }
+
+    static func resolvePlaylistItem(
+        forMusicItemID musicItemID: String,
+        currentPlaylistItem: PlaylistItemRecord?,
+        playlist: PlaylistRecord,
+        in context: ModelContext
+    ) throws -> PlaylistItemRecord? {
+        if let currentPlaylistItem,
+           currentPlaylistItem.playlistID == playlist.id,
+           try itemMatchesMusicItemID(currentPlaylistItem, musicItemID: musicItemID, in: context) {
+            return currentPlaylistItem
+        }
+
+        let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
+        let tracksByID = Dictionary(uniqueKeysWithValues: try TrackRecordRepository.allTracks(in: context).map { ($0.id, $0) })
+        return PlaybackQueueBuilder.playlistItem(
+            matching: musicItemID,
+            items: items,
+            tracksByID: tracksByID
+        )
+    }
+}

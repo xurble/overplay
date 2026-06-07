@@ -11,11 +11,11 @@ struct PlaylistArtworkSelectorTests {
             name: "Main",
             role: .oneTruePlaylist
         )
-        let removedTrack = TrackRecord(
-            catalogID: "removed",
-            title: "Removed",
+        let evictedTrack = TrackRecord(
+            catalogID: "evicted",
+            title: "Evicted",
             artistName: "Artist",
-            artworkURLTemplate: "https://example.com/removed.jpg"
+            artworkURLTemplate: "https://example.com/evicted.jpg"
         )
         let trackWithoutArtwork = TrackRecord(
             catalogID: "no-art",
@@ -34,11 +34,11 @@ struct PlaylistArtworkSelectorTests {
             artistName: "Artist",
             artworkURLTemplate: "https://example.com/later.jpg"
         )
-        let removedItem = PlaylistItemRecord(
+        let evictedItem = PlaylistItemRecord(
             playlistID: playlist.id,
-            trackID: removedTrack.id,
+            trackID: evictedTrack.id,
             sortOrder: 0,
-            removedFromRemoteAt: Date(timeIntervalSince1970: 10)
+            evictedAt: Date(timeIntervalSince1970: 10)
         )
         let noArtworkItem = PlaylistItemRecord(
             playlistID: playlist.id,
@@ -56,7 +56,7 @@ struct PlaylistArtworkSelectorTests {
             sortOrder: 3
         )
         let tracksByID = [
-            removedTrack.id: removedTrack,
+            evictedTrack.id: evictedTrack,
             trackWithoutArtwork.id: trackWithoutArtwork,
             firstPlayableArtworkTrack.id: firstPlayableArtworkTrack,
             laterPlayableArtworkTrack.id: laterPlayableArtworkTrack
@@ -64,7 +64,7 @@ struct PlaylistArtworkSelectorTests {
 
         let artworkURL = PlaylistArtworkSelector.representativeArtworkURL(
             for: playlist,
-            items: [laterArtworkItem, removedItem, firstArtworkItem, noArtworkItem],
+            items: [laterArtworkItem, evictedItem, firstArtworkItem, noArtworkItem],
             tracksByID: tracksByID
         )
 

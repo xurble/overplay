@@ -13,7 +13,7 @@ enum NowPlayingMetadataService {
             MPMediaItemPropertyTitle: track.title,
             MPMediaItemPropertyArtist: track.artistName,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed,
-            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
         ]
 
         if let albumTitle = track.albumTitle {

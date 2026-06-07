@@ -11,7 +11,6 @@ struct DashboardSummaryTests {
         let activeTrackID = UUID()
         let atRiskTrackID = UUID()
         let evictedTrackID = UUID()
-        let removedTrackID = UUID()
 
         let summary = DashboardSummary(
             items: [
@@ -24,13 +23,12 @@ struct DashboardSummaryTests {
                     evictedAt: .now,
                     evictionReason: .skipCount,
                     evictionSource: .playbackRule
-                ),
-                PlaylistItemRecord(playlistID: playlistID, trackID: removedTrackID, skipCount: 2, removedFromRemoteAt: .now)
+                )
             ],
             evictAfterSkips: 3
         )
 
-        #expect(summary.knownCount == 4)
+        #expect(summary.knownCount == 3)
         #expect(summary.playableCount == 2)
         #expect(summary.evictedCount == 1)
         #expect(summary.atRiskCount == 1)

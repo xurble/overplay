@@ -86,14 +86,14 @@ struct NowPlayingView: View {
     private var skipStatus: some View {
         HStack(spacing: 14) {
             Label(
-                "Skips: \(playbackController.currentPlaylistItem?.skipCount ?? playbackController.currentTrack?.skipCount ?? 0) / \(settings.evictAfterSkips)",
+                "Skips: \(playbackController.displayedSkipCount) / \(settings.evictAfterSkips)",
                 systemImage: "forward.end.fill"
             )
-            if playbackController.currentPlaylistItem?.evictedAt != nil || playbackController.currentTrack?.isEvicted == true {
+            if playbackController.displayedIsEvicted {
                 Label("Evicted", systemImage: "trash.fill")
                     .foregroundStyle(.red)
             }
-            if playbackController.currentPlaylistItem?.protected == true || playbackController.currentTrack?.protected == true {
+            if playbackController.displayedIsProtected {
                 Label("Protected", systemImage: "shield.fill")
                     .foregroundStyle(.green)
             }

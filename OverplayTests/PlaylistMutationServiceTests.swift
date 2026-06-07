@@ -53,7 +53,6 @@ struct PlaylistMutationServiceTests {
         #expect(oneTrueItems.count == 1)
         #expect(oneTrueItems.first?.id == promotedItem.id)
         #expect(promotedItem.trackID == track.id)
-        #expect(promotedItem.removedFromRemoteAt == nil)
         #expect(promotedItem.evictedAt == nil)
         #expect(promotedItem.lastSeenInPlaylistAt == Date(timeIntervalSince1970: 100))
         #expect(sourceItem.skipCount == 2)
@@ -93,7 +92,6 @@ struct PlaylistMutationServiceTests {
         let existingMainItem = PlaylistItemRecord(
             playlistID: oneTruePlaylist.id,
             trackID: track.id,
-            removedFromRemoteAt: Date(timeIntervalSince1970: 50),
             evictedAt: Date(timeIntervalSince1970: 60),
             evictionReason: .skipCount,
             evictionSource: .playbackRule
@@ -118,7 +116,6 @@ struct PlaylistMutationServiceTests {
 
         #expect(oneTrueItems.count == 1)
         #expect(promotedItem.id == existingMainItem.id)
-        #expect(existingMainItem.removedFromRemoteAt == nil)
         #expect(existingMainItem.evictedAt == nil)
         #expect(existingMainItem.evictionReason == nil)
         #expect(existingMainItem.evictionSource == nil)
@@ -332,7 +329,6 @@ struct PlaylistMutationServiceTests {
         #expect(tracks.first?.title == "New Main Track")
         #expect(items.count == 1)
         #expect(items.first?.id == item.id)
-        #expect(item.removedFromRemoteAt == nil)
         #expect(item.evictedAt == nil)
         #expect(item.lastSeenInPlaylistAt == Date(timeIntervalSince1970: 100))
         #expect(history.count == 1)
@@ -360,7 +356,6 @@ struct PlaylistMutationServiceTests {
         let existingItem = PlaylistItemRecord(
             playlistID: playlist.id,
             trackID: track.id,
-            removedFromRemoteAt: Date(timeIntervalSince1970: 50),
             evictedAt: Date(timeIntervalSince1970: 60),
             evictionReason: .manual,
             evictionSource: .user
@@ -387,7 +382,6 @@ struct PlaylistMutationServiceTests {
         #expect(items.count == 1)
         #expect(item.id == existingItem.id)
         #expect(track.title == "Updated Triage Track")
-        #expect(existingItem.removedFromRemoteAt == nil)
         #expect(existingItem.evictedAt == nil)
         #expect(existingItem.evictionReason == nil)
         #expect(existingItem.evictionSource == nil)

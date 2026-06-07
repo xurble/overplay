@@ -13,7 +13,6 @@ final class PlaylistItemRecord {
     var lastPlayedAt: Date?
     var lastSkippedAt: Date?
     var lastSeenInPlaylistAt: Date?
-    var removedFromRemoteAt: Date?
     var evictedAt: Date?
     var evictionReasonRawValue: String?
     var evictionSourceRawValue: String?
@@ -42,7 +41,6 @@ final class PlaylistItemRecord {
         lastPlayedAt: Date? = nil,
         lastSkippedAt: Date? = nil,
         lastSeenInPlaylistAt: Date? = nil,
-        removedFromRemoteAt: Date? = nil,
         evictedAt: Date? = nil,
         evictionReason: EvictionReason? = nil,
         evictionSource: EvictionSource? = nil,
@@ -60,7 +58,6 @@ final class PlaylistItemRecord {
         self.lastPlayedAt = lastPlayedAt
         self.lastSkippedAt = lastSkippedAt
         self.lastSeenInPlaylistAt = lastSeenInPlaylistAt
-        self.removedFromRemoteAt = removedFromRemoteAt
         self.evictedAt = evictedAt
         self.evictionReasonRawValue = evictionReason?.rawValue
         self.evictionSourceRawValue = evictionSource?.rawValue
@@ -70,6 +67,6 @@ final class PlaylistItemRecord {
     }
 
     var isPlayable: Bool {
-        evictedAt == nil && removedFromRemoteAt == nil
+        evictedAt == nil
     }
 }

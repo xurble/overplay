@@ -97,7 +97,7 @@ struct DashboardView: View {
     }
 
     private func detailText(for playlist: PlaylistRecord) -> String {
-        let activeCount = playlistItems.filter { $0.playlistID == playlist.id && $0.removedFromRemoteAt == nil }.count
+        let activeCount = playlistItems.filter { $0.playlistID == playlist.id }.count
         let syncStatus = playlist.lastSyncedAt.map { "Synced \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Not synced"
         return "\(activeCount) tracks - \(syncStatus) - \(writePolicyText(for: playlist))"
     }
@@ -460,9 +460,6 @@ private struct PlaylistTrackRowView: View {
         }
         if item.evictedAt != nil {
             return "trash.fill"
-        }
-        if item.removedFromRemoteAt != nil {
-            return "xmark.circle.fill"
         }
         return nil
     }

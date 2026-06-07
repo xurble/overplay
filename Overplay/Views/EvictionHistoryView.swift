@@ -70,7 +70,7 @@ struct HistoryView: View {
         return playlistItems.first {
             $0.playlistID == playlistID
                 && $0.trackID == trackID
-                && ($0.evictedAt != nil || $0.removedFromRemoteAt != nil)
+                && $0.evictedAt != nil
         }
     }
 

@@ -67,6 +67,11 @@ struct MusicKitDiagnosticsService {
 
         report.add("Selected playlist ID", selectedPlaylistID)
         report.add("Selected playlist name", settings.selectedPlaylistName ?? "nil")
+        await probeStoredPlaylistIDAlignment(
+            storedID: selectedPlaylistID,
+            name: settings.selectedPlaylistName,
+            into: &report
+        )
 
         do {
             guard let playlist = try PlaylistRepository.playlist(musicPlaylistID: selectedPlaylistID, in: context) else {
@@ -110,6 +115,36 @@ struct MusicKitDiagnosticsService {
             report.add("ApplicationMusicPlayer.prepareToPlay", "ok")
         } catch {
             report.add("ApplicationMusicPlayer.prepareToPlay", "failed: \(diagnosticDescription(for: error))")
+        }
+    }
+
+    private func probeStoredPlaylistIDAlignment(
+        storedID: String,
+        name: String?,
+        into report: inout MusicKitDiagnosticsReport
+    ) async {
+        do {
+            let libraryPlaylists = try await PlaylistSyncService().fetchLibraryPlaylists()
+            let resolvedID = PlaylistLibraryIDResolver.resolvedMusicPlaylistID(
+                storedID: storedID,
+                name: name,
+                libraryPlaylists: libraryPlaylists.map { .init(id: $0.id, name: $0.name) }
+            )
+
+            if let resolvedID {
+                if resolvedID == storedID {
+                    report.add("Stored playlist ID in library", "ok")
+                } else {
+                    report.add(
+                        "Stored playlist ID in library",
+                        "stale: stored=\(storedID), library=\(resolvedID)"
+                    )
+                }
+            } else {
+                report.add("Stored playlist ID in library", "missing")
+            }
+        } catch {
+            report.add("Stored playlist ID in library", "failed: \(diagnosticDescription(for: error))")
         }
     }
 

@@ -72,8 +72,8 @@ struct HistoryTimelineTests {
         #expect(HistoryTimeline.rows(events: events, playlists: [], tracks: [], filter: .remoteMutations).map(\.eventType) == [.remoteMutation])
     }
 
-    @Test("restoring playlist item clears eviction and remote removal state")
-    func restoringPlaylistItemClearsEvictionAndRemoteRemovalState() throws {
+    @Test("restoring playlist item clears eviction state")
+    func restoringPlaylistItemClearsEvictionState() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let playlist = PlaylistRecord(
@@ -85,10 +85,9 @@ struct HistoryTimelineTests {
             playlistID: playlist.id,
             trackID: UUID(),
             skipCount: 3,
-            removedFromRemoteAt: Date(timeIntervalSince1970: 10),
             evictedAt: Date(timeIntervalSince1970: 10),
-            evictionReason: .remoteRemoval,
-            evictionSource: .appleMusicSync
+            evictionReason: .manual,
+            evictionSource: .user
         )
         context.insert(playlist)
         context.insert(item)
@@ -97,7 +96,6 @@ struct HistoryTimelineTests {
         try context.save()
 
         let history = try context.fetch(FetchDescriptor<HistoryEvent>())
-        #expect(item.removedFromRemoteAt == nil)
         #expect(item.evictedAt == nil)
         #expect(item.evictionReason == nil)
         #expect(item.evictionSource == nil)

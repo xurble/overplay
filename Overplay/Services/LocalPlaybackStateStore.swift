@@ -31,4 +31,17 @@ enum LocalPlaybackStateStore {
     static func clear(from defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: key)
     }
+
+    static func rekeyMusicPlaylistID(
+        from oldID: String,
+        to newID: String,
+        from defaults: UserDefaults = .standard
+    ) {
+        guard oldID != newID, var state = load(from: defaults), state.playlistID == oldID else {
+            return
+        }
+
+        state.playlistID = newID
+        save(state, to: defaults)
+    }
 }

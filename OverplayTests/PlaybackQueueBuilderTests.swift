@@ -10,7 +10,6 @@ struct PlaybackQueueBuilderTests {
         let playlistID = UUID()
         let activeTrackID = UUID()
         let evictedTrackID = UUID()
-        let removedTrackID = UUID()
         let orphanTrackID = UUID()
         let tracksByID = [
             activeTrackID: TrackRecord(
@@ -25,17 +24,10 @@ struct PlaybackQueueBuilderTests {
                 title: "Evicted",
                 artistName: "Sample Artist"
             ),
-            removedTrackID: TrackRecord(
-                catalogID: "catalog-removed",
-                libraryID: "library-removed",
-                title: "Removed",
-                artistName: "Sample Artist"
-            )
         ]
         let items = [
             PlaylistItemRecord(playlistID: playlistID, trackID: activeTrackID),
             PlaylistItemRecord(playlistID: playlistID, trackID: evictedTrackID, evictedAt: .now),
-            PlaylistItemRecord(playlistID: playlistID, trackID: removedTrackID, removedFromRemoteAt: .now),
             PlaylistItemRecord(playlistID: playlistID, trackID: orphanTrackID)
         ]
 

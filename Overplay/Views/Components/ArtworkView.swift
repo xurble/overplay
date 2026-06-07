@@ -35,10 +35,25 @@ struct ArtworkView: View {
     var pixelSize: Int = 512
     var playlistID: String?
     var cornerRadius: CGFloat = 22
+    var healthStatus: TrackHealthStatus?
 
     @State private var image: OverplayPlatformImage?
 
     var body: some View {
+        artworkContent
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(.white.opacity(0.18), lineWidth: 1)
+            }
+            .task(id: cacheIdentity) {
+                await loadArtwork()
+            }
+    }
+
+    private var artworkContent: some View {
         Group {
             if let image {
                 Image(overplayPlatformImage: image)
@@ -47,14 +62,6 @@ struct ArtworkView: View {
             } else {
                 placeholder
             }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .stroke(.white.opacity(0.18), lineWidth: 1)
-        }
-        .task(id: cacheIdentity) {
-            await loadArtwork()
         }
     }
 
@@ -72,7 +79,15 @@ struct ArtworkView: View {
     }
 
     private var cacheIdentity: String {
-        "\(urlString ?? "")|\(pixelSize)|\(playlistID ?? "")"
+        let healthKey: String = {
+            guard let healthStatus else { return "none" }
+            switch healthStatus {
+            case .healthy: return "healthy"
+            case .caution: return "caution"
+            case .critical: return "critical"
+            }
+        }()
+        return "\(urlString ?? "")|\(pixelSize)|\(playlistID ?? "")|\(healthKey)"
     }
 
     @MainActor
@@ -87,7 +102,17 @@ struct ArtworkView: View {
         )
         guard !Task.isCancelled, let fileURL else { return }
 
-        image = platformImage(contentsOf: fileURL)
+        guard let baseImage = platformImage(contentsOf: fileURL) else { return }
+
+        if let healthStatus {
+            image = ArtworkHealthCompositor.compositedImage(
+                base: baseImage,
+                health: healthStatus,
+                pixelSize: pixelSize
+            )
+        } else {
+            image = baseImage
+        }
     }
 }
 

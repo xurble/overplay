@@ -64,6 +64,25 @@ enum PlaybackModeStore {
         save(states, to: defaults)
     }
 
+    static func rekeyMusicPlaylistID(
+        from oldID: String,
+        to newID: String,
+        from defaults: UserDefaults = .standard
+    ) {
+        guard oldID != newID else { return }
+
+        var storedStates = states(from: defaults)
+        var updatedStates = storedStates
+
+        for (key, var state) in storedStates where state.musicPlaylistID == oldID {
+            updatedStates.removeValue(forKey: key)
+            state.musicPlaylistID = newID
+            updatedStates[storageKey(playerID: state.playerID, musicPlaylistID: newID)] = state
+        }
+
+        save(updatedStates, to: defaults)
+    }
+
     private static func storageKey(playerID: String, musicPlaylistID: String) -> String {
         "\(playerID)::\(musicPlaylistID)"
     }

@@ -25,6 +25,7 @@ final class PlaybackController {
     var isPlaying = false
     var currentPlaylistID: String?
     var statusMessage: String?
+    private(set) var playbackItemMetadataVersion = 0
     private var playbackModeVersion = 0
 
     @ObservationIgnored private lazy var player = ApplicationMusicPlayer.shared
@@ -49,6 +50,26 @@ final class PlaybackController {
 
     var canControlPlayback: Bool {
         currentPlaylistID != nil && currentTrack != nil && activeQueueIndex != nil
+    }
+
+    var displayedSkipCount: Int {
+        _ = playbackItemMetadataVersion
+        return currentPlaylistItem?.skipCount ?? currentTrack?.skipCount ?? 0
+    }
+
+    var displayedPlaythroughCount: Int {
+        _ = playbackItemMetadataVersion
+        return currentPlaylistItem?.playthroughCount ?? currentTrack?.playthroughCount ?? 0
+    }
+
+    var displayedIsProtected: Bool {
+        _ = playbackItemMetadataVersion
+        return currentPlaylistItem?.protected == true || currentTrack?.protected == true
+    }
+
+    var displayedIsEvicted: Bool {
+        _ = playbackItemMetadataVersion
+        return currentPlaylistItem?.evictedAt != nil || currentTrack?.isEvicted == true
     }
 
     var shuffleEnabled: Bool {
@@ -246,10 +267,16 @@ final class PlaybackController {
             elapsedSeconds = state.elapsedSeconds
             durationSeconds = restored.track.durationSeconds
             isPlaying = false
-            activeSession = nil
+            activeSession = PlaybackSessionSupport.makeSession(
+                trackID: state.musicItemID,
+                elapsedSeconds: state.elapsedSeconds,
+                durationSeconds: restored.track.durationSeconds,
+                sessionStartDate: state.updatedAt
+            )
             activeQueueLocalTrackIDs = []
             activeQueueIndex = nil
             statusMessage = nil
+            bumpPlaybackItemMetadataVersion()
         } catch {
             StartupProfiler.mark("Local playback display restore failed: \(error.localizedDescription)")
         }
@@ -662,6 +689,7 @@ final class PlaybackController {
     }
 
     func previous(context: ModelContext) async {
+        markActiveSessionEvaluatedWithoutSkip()
         if let currentTrackID = activeSession?.trackID ?? currentTrack?.id,
            await applyPendingModeQueueRebuild(after: currentTrackID, movingForward: false, context: context) {
             return
@@ -797,47 +825,60 @@ final class PlaybackController {
     }
 
     func keepCurrent(settings: OverplaySettings, context: ModelContext) {
-        if let item = currentPlaylistItem,
-           let playlist = try? currentPlaylist(in: context) {
-            item.skipCount = 0
-            if settings.protectKeptTracks {
-                item.protected = true
-            }
-            item.updatedAt = .now
-            EventRepository.logHistory(
-                playlistID: playlist.id,
-                trackID: item.trackID,
-                eventType: .skipIgnored,
-                source: .user,
-                skipCountAtEvent: item.skipCount,
-                message: "Kept by user",
-                in: context
-            )
-            try? context.save()
+        guard let musicItemID = currentTrack?.id,
+              let playlist = try? currentPlaylist(in: context),
+              let item = try? PlaybackSessionSupport.resolvePlaylistItem(
+                  forMusicItemID: musicItemID,
+                  currentPlaylistItem: currentPlaylistItem,
+                  playlist: playlist,
+                  in: context
+              ) else {
+            statusMessage = "Choose a linked playlist track to keep."
             return
         }
 
-        statusMessage = "Choose a linked playlist track to keep."
+        item.skipCount = 0
+        if settings.protectKeptTracks {
+            item.protected = true
+        }
+        item.updatedAt = .now
+        EventRepository.logHistory(
+            playlistID: playlist.id,
+            trackID: item.trackID,
+            eventType: .skipIgnored,
+            source: .user,
+            skipCountAtEvent: item.skipCount,
+            message: "Kept by user",
+            in: context
+        )
+        try? context.save()
+        syncPlaybackMetadata(for: musicItemID, context: context)
     }
 
     func evictCurrent(settings: OverplaySettings, context: ModelContext) async {
-        if let item = currentPlaylistItem,
-           let playlist = try? currentPlaylist(in: context) {
-            EvictionEngine.evict(
-                item,
-                playlist: playlist,
-                reason: .manual,
-                source: .user,
-                message: "Evicted manually",
-                context: context
-            )
-            try? context.save()
-            await removeEvictedItemFromPlaylist(item, playlist: playlist, context: context)
-            await next(settings: settings, context: context)
+        guard let musicItemID = currentTrack?.id,
+              let playlist = try? currentPlaylist(in: context),
+              let item = try? PlaybackSessionSupport.resolvePlaylistItem(
+                  forMusicItemID: musicItemID,
+                  currentPlaylistItem: currentPlaylistItem,
+                  playlist: playlist,
+                  in: context
+              ) else {
+            statusMessage = "Choose a linked playlist track to evict."
             return
         }
 
-        statusMessage = "Choose a linked playlist track to evict."
+        EvictionEngine.evict(
+            item,
+            playlist: playlist,
+            reason: .manual,
+            source: .user,
+            message: "Evicted manually",
+            context: context
+        )
+        try? context.save()
+        await removeEvictedItemFromPlaylist(item, playlist: playlist, context: context)
+        await next(settings: settings, context: context)
     }
 
     private func snapshot(from track: Track, playlistID: String?) -> TrackSnapshot {
@@ -893,7 +934,7 @@ final class PlaybackController {
 
     private func refresh(context: ModelContext) async {
         let oldTrackID = activeSession?.trackID
-        let newTrackID = player.queue.currentEntry?.item?.id.rawValue
+        let newTrackID = resolvedCurrentMusicItemID(context: context)
         elapsedSeconds = player.playbackTime
         isPlaying = player.state.playbackStatus == .playing
 
@@ -924,21 +965,15 @@ final class PlaybackController {
         if let newTrackID {
             currentPlaylistItem = try? playlistItem(matching: newTrackID, context: context)
             updateActiveQueueCurrentTrackID(currentPlaylistItem?.trackID.uuidString)
-            currentTrack = currentPlaybackTrack(
-                musicItemID: newTrackID,
-                playlistItem: currentPlaylistItem,
-                context: context
-            )
+            syncPlaybackMetadata(for: newTrackID, context: context)
             durationSeconds = currentTrack?.durationSeconds
             prefetchCurrentArtworkIfNeeded(musicItemID: newTrackID, playlistID: currentPlaylistID)
 
             if activeSession?.trackID != newTrackID {
-                activeSession = TrackPlaySession(
+                activeSession = PlaybackSessionSupport.makeSession(
                     trackID: newTrackID,
-                    sessionStartDate: .now,
-                    lastObservedPlaybackTime: elapsedSeconds,
-                    durationSeconds: durationSeconds,
-                    hasEvaluated: false
+                    elapsedSeconds: elapsedSeconds,
+                    durationSeconds: durationSeconds
                 )
             } else {
                 activeSession?.lastObservedPlaybackTime = elapsedSeconds
@@ -947,6 +982,12 @@ final class PlaybackController {
 
             evaluatePlaythroughIfNeeded(context: context)
             reconcileCurrentPlaybackOrder(context: context)
+        } else if currentTrack != nil || currentPlaylistID != nil {
+            activeSession?.lastObservedPlaybackTime = elapsedSeconds
+            activeSession?.durationSeconds = durationSeconds ?? currentTrack?.durationSeconds
+            if let musicItemID = currentTrack?.id {
+                syncPlaybackMetadata(for: musicItemID, context: context)
+            }
         } else {
             currentTrack = nil
             currentPlaylistItem = nil
@@ -970,16 +1011,17 @@ final class PlaybackController {
         guard let settings = try? SettingsRepository.settings(in: context) else { return }
         guard let progress = session.progressPercentage else { return }
         guard progress >= settings.playthroughThresholdPercentage else { return }
-        if let item = currentPlaylistItem,
-           let playlist = try? currentPlaylist(in: context),
-           item.evictedAt == nil {
-            EvictionEngine.countPlaythrough(item, playlist: playlist, session: session, settings: settings, context: context)
-            session.hasEvaluated = true
-            activeSession = session
-            try? context.save()
+        guard let playlist = try? currentPlaylist(in: context),
+              let item = try? resolvedPlaylistItem(for: session, playlist: playlist, context: context),
+              item.evictedAt == nil else {
             return
         }
 
+        EvictionEngine.countPlaythrough(item, playlist: playlist, session: session, settings: settings, context: context)
+        session.hasEvaluated = true
+        activeSession = session
+        try? context.save()
+        syncPlaybackMetadata(for: session.trackID, context: context)
     }
 
     private func removeEvictedItemFromPlaylist(_ item: PlaylistItemRecord, playlist: PlaylistRecord, context: ModelContext) async {
@@ -1006,33 +1048,34 @@ final class PlaybackController {
     }
 
     private func evaluateActiveSession(settings: OverplaySettings, context: ModelContext, naturalCompletion: Bool) async {
-        guard var session = activeSession else { return }
+        guard var session = activeSession ?? bootstrapActiveSession() else { return }
         session.lastObservedPlaybackTime = elapsedSeconds
-        session.durationSeconds = durationSeconds
+        session.durationSeconds = durationSeconds ?? currentTrack?.durationSeconds
         do {
-            if let item = currentPlaylistItem,
-               let playlist = try currentPlaylist(in: context) {
-                let wasEvicted = item.evictedAt != nil
-                EvictionEngine.evaluateSkip(
-                    item: item,
-                    playlist: playlist,
-                    session: session,
-                    transitionWasNaturalCompletion: naturalCompletion,
-                    settings: settings,
-                    context: context
-                )
+            guard let playlist = try currentPlaylist(in: context),
+                  let item = try resolvedPlaylistItem(for: session, playlist: playlist, context: context) else {
                 session.hasEvaluated = true
                 activeSession = session
-                try context.save()
-
-                if !wasEvicted, item.evictedAt != nil {
-                    await removeEvictedItemFromPlaylist(item, playlist: playlist, context: context)
-                }
                 return
             }
 
+            let wasEvicted = item.evictedAt != nil
+            EvictionEngine.evaluateSkip(
+                item: item,
+                playlist: playlist,
+                session: session,
+                transitionWasNaturalCompletion: naturalCompletion,
+                settings: settings,
+                context: context
+            )
             session.hasEvaluated = true
             activeSession = session
+            try context.save()
+            syncPlaybackMetadata(for: session.trackID, context: context)
+
+            if !wasEvicted, item.evictedAt != nil {
+                await removeEvictedItemFromPlaylist(item, playlist: playlist, context: context)
+            }
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -1111,6 +1154,85 @@ final class PlaybackController {
         }
 
         return CurrentPlaybackTrack(snapshot)
+    }
+
+    private func refreshCurrentTrackMetadata(context: ModelContext) {
+        guard let musicItemID = currentTrack?.id else { return }
+        currentTrack = currentPlaybackTrack(
+            musicItemID: musicItemID,
+            playlistItem: currentPlaylistItem,
+            context: context
+        )
+        bumpPlaybackItemMetadataVersion()
+    }
+
+    private func syncPlaybackMetadata(for musicItemID: String, context: ModelContext) {
+        if let playlist = try? currentPlaylist(in: context),
+           let item = try? PlaybackSessionSupport.resolvePlaylistItem(
+               forMusicItemID: musicItemID,
+               currentPlaylistItem: currentPlaylistItem,
+               playlist: playlist,
+               in: context
+           ) {
+            currentPlaylistItem = item
+        }
+
+        if currentTrack?.id == musicItemID {
+            refreshCurrentTrackMetadata(context: context)
+        } else {
+            currentTrack = currentPlaybackTrack(
+                musicItemID: musicItemID,
+                playlistItem: currentPlaylistItem,
+                context: context
+            )
+            bumpPlaybackItemMetadataVersion()
+        }
+    }
+
+    private func bootstrapActiveSession() -> TrackPlaySession? {
+        guard let trackID = currentTrack?.id else { return nil }
+
+        let session = PlaybackSessionSupport.makeSession(
+            trackID: trackID,
+            elapsedSeconds: elapsedSeconds,
+            durationSeconds: durationSeconds ?? currentTrack?.durationSeconds
+        )
+        activeSession = session
+        return session
+    }
+
+    private func markActiveSessionEvaluatedWithoutSkip() {
+        guard var session = activeSession ?? bootstrapActiveSession() else { return }
+        session.hasEvaluated = true
+        activeSession = session
+    }
+
+    private func resolvedPlaylistItem(
+        for session: TrackPlaySession,
+        playlist: PlaylistRecord,
+        context: ModelContext
+    ) throws -> PlaylistItemRecord? {
+        try PlaybackSessionSupport.resolvePlaylistItem(
+            forMusicItemID: session.trackID,
+            currentPlaylistItem: currentPlaylistItem,
+            playlist: playlist,
+            in: context
+        )
+    }
+
+    private func bumpPlaybackItemMetadataVersion() {
+        playbackItemMetadataVersion += 1
+    }
+
+    private func resolvedCurrentMusicItemID(context: ModelContext) -> String? {
+        if let queueReportedTrackID = player.queue.currentEntry?.item?.id.rawValue {
+            if let localTrackID = try? localTrackID(matching: queueReportedTrackID, context: context) {
+                updateActiveQueueCurrentTrackID(localTrackID)
+            }
+            return queueReportedTrackID
+        }
+
+        return activeSession?.trackID ?? currentTrack?.id
     }
 
     private func prefetchCurrentArtworkIfNeeded(musicItemID: String, playlistID: String?) {
@@ -1316,5 +1438,17 @@ final class PlaybackController {
         }
 
         reconcileStoredOrder(for: playlist, context: context)
+    }
+
+    func evaluateActiveSessionForTesting(
+        settings: OverplaySettings,
+        context: ModelContext,
+        naturalCompletion: Bool
+    ) async {
+        await evaluateActiveSession(settings: settings, context: context, naturalCompletion: naturalCompletion)
+    }
+
+    func markActiveSessionEvaluatedWithoutSkipForTesting() {
+        markActiveSessionEvaluatedWithoutSkip()
     }
 }

@@ -26,7 +26,7 @@ enum PlaylistItemRepository {
     }
 
     static func activeItems(forPlaylistID playlistID: UUID, in context: ModelContext) throws -> [PlaylistItemRecord] {
-        try items(forPlaylistID: playlistID, in: context).filter { $0.removedFromRemoteAt == nil }
+        try items(forPlaylistID: playlistID, in: context).filter { $0.evictedAt == nil }
     }
 
     @discardableResult

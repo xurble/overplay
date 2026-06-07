@@ -72,17 +72,15 @@ struct NewSwiftDataModelTests {
         #expect(events.first?.remoteMutationStatus == .pending)
     }
 
-    @Test("playlist item playability excludes evictions and remote removals")
-    func playlistItemPlayabilityExcludesEvictionsAndRemoteRemovals() {
+    @Test("playlist item playability excludes evictions")
+    func playlistItemPlayabilityExcludesEvictions() {
         let playlistID = UUID()
         let trackID = UUID()
 
         let activeItem = PlaylistItemRecord(playlistID: playlistID, trackID: trackID)
         let evictedItem = PlaylistItemRecord(playlistID: playlistID, trackID: trackID, evictedAt: .now)
-        let removedItem = PlaylistItemRecord(playlistID: playlistID, trackID: trackID, removedFromRemoteAt: .now)
 
         #expect(activeItem.isPlayable)
         #expect(!evictedItem.isPlayable)
-        #expect(!removedItem.isPlayable)
     }
 }

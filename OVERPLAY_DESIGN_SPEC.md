@@ -145,7 +145,7 @@ For every tracked playlist item, store:
 - Last played date.
 - Last skipped date.
 - Last seen in Apple Music sync date.
-- Eviction/removal state.
+- Eviction state.
 - Created and updated dates.
 
 When a single catalogue song appears in multiple linked playlists, Overplay may
@@ -200,13 +200,13 @@ playlist:
 When a track that Overplay previously tracked is no longer present in the
 linked Apple Music playlist:
 
-- Mark the local playlist item as removed from that playlist.
-- Record a historic manual eviction/removal event.
+- Leave the local playlist item in place.
 - Preserve skip, playthrough, and eviction history.
-- Exclude the item from playback and visible active playlist counts.
+- Keep the item playable unless it has been locally evicted.
 
-This treats an external Apple Music deletion as a manual removal from
-Overplay's copy of that playlist.
+Overplay does not currently model Apple Music deletions as a separate local
+removal state. Local eviction remains the only way to exclude a track from
+playback.
 
 ### Local evictions
 
@@ -234,6 +234,11 @@ The app should sync:
 
 Sync must be idempotent. Running sync multiple times should not duplicate
 tracks or erase history.
+
+If MusicKit reports a different library playlist ID than the one Overplay
+stored (for example after `createPlaylist`), sync may heal the linked
+`musicPlaylistID` when the playlist name uniquely matches a library playlist.
+Ambiguous duplicate names should fail rather than relink silently.
 
 ## Promotion and Manual Add
 
@@ -499,7 +504,7 @@ Show:
 
 - Active tracks.
 - Skip and playthrough counts.
-- Eviction/removal state.
+- Eviction state.
 - Last seen in Apple Music.
 - Promote action for triage playlist tracks.
 - Manual evict/remove action.
@@ -754,7 +759,6 @@ Local JSON file only:
 - `lastPlayedAt: Date?`
 - `lastSkippedAt: Date?`
 - `lastSeenInPlaylistAt: Date?`
-- `removedFromRemoteAt: Date?`
 - `evictedAt: Date?`
 - `evictionReason: EvictionReason?`
 - `evictionSource: EvictionSource?`

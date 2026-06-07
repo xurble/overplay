@@ -49,7 +49,7 @@ struct PlaylistMutationService {
         }
 
         do {
-            try await add(track: track, to: oneTruePlaylist)
+            try await add(track: track, to: oneTruePlaylist, in: context)
             let promotedItem = try recordSuccessfulPromotion(
                 sourceItem: sourceItem,
                 sourcePlaylist: sourcePlaylist,
@@ -93,7 +93,6 @@ struct PlaylistMutationService {
             trackID: track.id,
             in: context
         )
-        promotedItem.removedFromRemoteAt = nil
         promotedItem.evictedAt = nil
         promotedItem.evictionReason = nil
         promotedItem.evictionSource = nil
@@ -136,7 +135,6 @@ struct PlaylistMutationService {
             trackID: track.id,
             in: context
         )
-        item.removedFromRemoteAt = nil
         item.evictedAt = nil
         item.evictionReason = nil
         item.evictionSource = nil
@@ -174,12 +172,17 @@ struct PlaylistMutationService {
         try? context.save()
     }
 
-    private func add(track: TrackRecord, to playlistRecord: PlaylistRecord) async throws {
+    private func add(track: TrackRecord, to playlistRecord: PlaylistRecord, in context: ModelContext) async throws {
         guard let musicItemID = track.catalogID ?? track.libraryID else {
             throw PlaylistMutationError.musicItemMissing
         }
 
-        let playlist = try await PlaylistSyncService().loadPlaylist(id: playlistRecord.musicPlaylistID)
+        let playlist = try await PlaylistSyncService().loadPlaylist(
+            id: playlistRecord.musicPlaylistID,
+            name: playlistRecord.name,
+            playlistRecord: playlistRecord,
+            in: context
+        )
         let song = try await song(id: musicItemID)
         try await MusicLibrary.shared.add(song, to: playlist)
     }

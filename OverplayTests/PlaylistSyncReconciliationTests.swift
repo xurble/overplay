@@ -103,7 +103,6 @@ struct PlaylistSyncReconciliationTests {
         let activeItems = try PlaylistItemRepository.activeItems(forPlaylistID: playlist.id, in: context)
         let history = try context.fetch(FetchDescriptor<HistoryEvent>())
 
-        #expect(missingRemoteItem.removedFromRemoteAt == nil)
         #expect(missingRemoteItem.evictedAt == nil)
         #expect(missingRemoteItem.evictionReason == nil)
         #expect(missingRemoteItem.evictionSource == nil)
@@ -142,7 +141,6 @@ struct PlaylistSyncReconciliationTests {
             in: context
         )
 
-        #expect(item.removedFromRemoteAt == nil)
         #expect(item.evictedAt == Date(timeIntervalSince1970: 150))
         #expect(item.evictionReason == .skipCount)
         #expect(item.evictionSource == .playbackRule)

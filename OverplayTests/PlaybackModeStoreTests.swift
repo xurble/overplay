@@ -58,4 +58,24 @@ struct PlaybackModeStoreTests {
 
         #expect(!PlaybackModeStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults).shuffleEnabled)
     }
+
+    @Test("rekeys stored mode state when playlist ID heals")
+    func rekeysStoredModeStateWhenPlaylistIDHeals() throws {
+        let suiteName = "OverplayTests.PlaybackModeStore.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        PlaybackModeStore.update(playerID: "main", musicPlaylistID: "p.old", in: defaults) { state in
+            state.shuffleEnabled = true
+            state.orderedTrackIDs = ["track-1"]
+        }
+
+        PlaybackModeStore.rekeyMusicPlaylistID(from: "p.old", to: "p.new", from: defaults)
+
+        #expect(PlaybackModeStore.state(playerID: "main", musicPlaylistID: "p.new", from: defaults).shuffleEnabled)
+        #expect(PlaybackModeStore.state(playerID: "main", musicPlaylistID: "p.new", from: defaults).orderedTrackIDs == ["track-1"])
+        #expect(!PlaybackModeStore.state(playerID: "main", musicPlaylistID: "p.old", from: defaults).shuffleEnabled)
+    }
 }

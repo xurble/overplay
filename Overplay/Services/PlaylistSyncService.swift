@@ -28,12 +28,7 @@ struct PlaylistSyncService {
     )
 
     func fetchLibraryPlaylists() async throws -> [AppleMusicPlaylist] {
-        var request = MusicLibraryRequest<Playlist>()
-        request.limit = 100
-        request.sort(by: \.name, ascending: true)
-        let response = try await request.response()
-
-        return response.items
+        try await fetchAllLibraryPlaylists()
             .map { playlist in
                 AppleMusicPlaylist(
                     id: playlist.id.rawValue,
@@ -50,18 +45,29 @@ struct PlaylistSyncService {
     }
 
     func syncPlaylist(id playlistID: String, in context: ModelContext) async throws -> Int {
-        let playlist = try await loadPlaylist(id: playlistID)
+        let existingRecord = try PlaylistRepository.playlist(musicPlaylistID: playlistID, in: context)
+        let playlist = try await loadPlaylist(
+            id: playlistID,
+            name: existingRecord?.name,
+            playlistRecord: existingRecord,
+            in: context
+        )
         let record = try PlaylistRepository.upsert(
-            musicPlaylistID: playlistID,
+            musicPlaylistID: playlist.id.rawValue,
             name: playlist.name,
-            role: try PlaylistRepository.playlist(musicPlaylistID: playlistID, in: context)?.role ?? .oneTruePlaylist,
+            role: existingRecord?.role ?? .oneTruePlaylist,
             in: context
         )
         return try await syncPlaylist(record, in: context)
     }
 
     func syncPlaylist(_ playlistRecord: PlaylistRecord, in context: ModelContext) async throws -> Int {
-        let playlist = try await loadPlaylist(id: playlistRecord.musicPlaylistID)
+        let playlist = try await loadPlaylist(
+            id: playlistRecord.musicPlaylistID,
+            name: playlistRecord.name,
+            playlistRecord: playlistRecord,
+            in: context
+        )
         let tracks = try await loadTracks(for: playlist)
         let snapshots = tracks.map { snapshot(from: $0, playlistID: playlistRecord.musicPlaylistID) }
         Self.logger.info(
@@ -118,8 +124,21 @@ struct PlaylistSyncService {
                 items: sourceTracks
             )
         }
+        let libraryPlaylists = try await fetchLibraryPlaylists()
+        let canonicalID = PlaylistLibraryIDResolver.resolvedMusicPlaylistID(
+            storedID: createdPlaylist.id.rawValue,
+            name: createdPlaylist.name,
+            libraryPlaylists: libraryPlaylists.map { .init(id: $0.id, name: $0.name) }
+        ) ?? createdPlaylist.id.rawValue
+
+        if canonicalID != createdPlaylist.id.rawValue {
+            Self.logger.warning(
+                "createPlaylist returned \(createdPlaylist.id.rawValue, privacy: .public), but library reports \(canonicalID, privacy: .public) for '\(createdPlaylist.name, privacy: .public)'"
+            )
+        }
+
         let appleMusicPlaylist = AppleMusicPlaylist(
-            id: createdPlaylist.id.rawValue,
+            id: canonicalID,
             name: createdPlaylist.name,
             trackCount: sourceTracks.count
         )
@@ -176,7 +195,6 @@ struct PlaylistSyncService {
                     in: context
                 )
                 item.lastSeenInPlaylistAt = syncedAt
-                item.removedFromRemoteAt = nil
                 logLocalAddSucceeded(
                     snapshot,
                     playlistRecord: playlistRecord,
@@ -236,7 +254,6 @@ struct PlaylistSyncService {
             localTrackID=\(track.id.uuidString, privacy: .public) \
             localPlaylistItemID=\(item.id.uuidString, privacy: .public) \
             sortOrder=\(item.sortOrder, privacy: .public) \
-            removedFromRemoteAt=\(item.removedFromRemoteAt?.description ?? "nil", privacy: .public) \
             evictedAt=\(item.evictedAt?.description ?? "nil", privacy: .public)
             """
         )
@@ -277,7 +294,12 @@ struct PlaylistSyncService {
             return []
         }
 
-        let playlist = try await loadPlaylist(id: playlistRecord.musicPlaylistID)
+        let playlist = try await loadPlaylist(
+            id: playlistRecord.musicPlaylistID,
+            name: playlistRecord.name,
+            playlistRecord: playlistRecord,
+            in: context
+        )
         let tracks = try await loadTracks(for: playlist)
         return tracks.filter { playableMusicItemIDs.contains($0.id.rawValue) }
     }
@@ -294,14 +316,72 @@ struct PlaylistSyncService {
         try await MusicLibrary.shared.edit(playlist, items: remainingTracks)
     }
 
-    func loadPlaylist(id playlistID: String) async throws -> Playlist {
-        var request = MusicLibraryRequest<Playlist>()
-        request.filter(matching: \.id, equalTo: MusicItemID(playlistID))
-        request.limit = 1
-        guard let playlist = try await request.response().items.first else {
+    func loadPlaylist(
+        id playlistID: String,
+        name: String? = nil,
+        playlistRecord: PlaylistRecord? = nil,
+        in context: ModelContext? = nil
+    ) async throws -> Playlist {
+        let libraryPlaylists = try await fetchAllLibraryPlaylists()
+        let candidates = libraryPlaylists.map {
+            PlaylistLibraryIDResolver.Candidate(id: $0.id.rawValue, name: $0.name)
+        }
+
+        guard let resolvedID = PlaylistLibraryIDResolver.resolvedMusicPlaylistID(
+            storedID: playlistID,
+            name: name,
+            libraryPlaylists: candidates
+        ) else {
             throw PlaylistSyncError.playlistNotFound
         }
+
+        if resolvedID != playlistID,
+           let playlistRecord,
+           let context {
+            try applyHealedMusicPlaylistID(
+                from: playlistID,
+                to: resolvedID,
+                playlistRecord: playlistRecord,
+                in: context
+            )
+        }
+
+        guard let playlist = libraryPlaylists.first(where: { $0.id.rawValue == resolvedID }) else {
+            throw PlaylistSyncError.playlistNotFound
+        }
+
         return playlist
+    }
+
+    private func fetchAllLibraryPlaylists() async throws -> [Playlist] {
+        var request = MusicLibraryRequest<Playlist>()
+        request.limit = 100
+        request.sort(by: \.name, ascending: true)
+        return Array(try await request.response().items)
+    }
+
+    private func applyHealedMusicPlaylistID(
+        from oldID: String,
+        to newID: String,
+        playlistRecord: PlaylistRecord,
+        in context: ModelContext
+    ) throws {
+        Self.logger.warning(
+            "Healed stale Apple Music playlist ID from \(oldID, privacy: .public) to \(newID, privacy: .public) for '\(playlistRecord.name, privacy: .public)'"
+        )
+
+        playlistRecord.musicPlaylistID = newID
+        playlistRecord.updatedAt = .now
+
+        let settings = try SettingsRepository.settings(in: context)
+        if settings.selectedPlaylistID == oldID {
+            settings.selectedPlaylistID = newID
+            settings.updatedAt = .now
+        }
+
+        PlaybackModeStore.rekeyMusicPlaylistID(from: oldID, to: newID)
+        LocalPlaybackStateStore.rekeyMusicPlaylistID(from: oldID, to: newID)
+        try context.save()
     }
 
     private func loadTracks(for playlist: Playlist) async throws -> [Track] {

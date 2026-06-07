@@ -161,7 +161,6 @@ enum EvictionEngine {
         playlist: PlaylistRecord?,
         context: ModelContext
     ) {
-        item.removedFromRemoteAt = nil
         item.evictedAt = nil
         item.evictionReason = nil
         item.evictionSource = nil

@@ -388,7 +388,11 @@ private struct MiniPlayerLozengeView: View {
             ArtworkView(
                 urlString: playbackController.currentTrack?.artworkURLTemplate,
                 playlistID: playbackController.currentPlaylistID,
-                cornerRadius: 10
+                cornerRadius: 10,
+                healthStatus: currentTrackHealth(
+                    playbackController: playbackController,
+                    settings: settings
+                )
             )
                 .frame(width: 50, height: 50)
 
@@ -435,7 +439,11 @@ private struct NowPlayingPaneView: View {
             VStack(spacing: compactLayout ? 12 : 18) {
                 ArtworkView(
                     urlString: playbackController.currentTrack?.artworkURLTemplate,
-                    playlistID: playbackController.currentPlaylistID
+                    playlistID: playbackController.currentPlaylistID,
+                    healthStatus: currentTrackHealth(
+                        playbackController: playbackController,
+                        settings: settings
+                    )
                 )
                     .frame(width: artworkSize, height: artworkSize)
                     .shadow(color: .black.opacity(0.28), radius: 22, y: 16)
@@ -500,14 +508,14 @@ private struct NowPlayingPaneView: View {
     private var skipStatus: some View {
         HStack(spacing: 14) {
             Label(
-                "Skips: \(playbackController.currentPlaylistItem?.skipCount ?? playbackController.currentTrack?.skipCount ?? 0) / \(settings.evictAfterSkips)",
+                "Skips: \(playbackController.displayedSkipCount) / \(settings.evictAfterSkips)",
                 systemImage: "forward.end.fill"
             )
-            if playbackController.currentPlaylistItem?.evictedAt != nil || playbackController.currentTrack?.isEvicted == true {
+            if playbackController.displayedIsEvicted {
                 Label("Evicted", systemImage: "trash.fill")
                     .foregroundStyle(.red)
             }
-            if playbackController.currentPlaylistItem?.protected == true || playbackController.currentTrack?.protected == true {
+            if playbackController.displayedIsProtected {
                 Label("Protected", systemImage: "shield.fill")
                     .foregroundStyle(.green)
             }
@@ -574,6 +582,19 @@ private struct NowPlayingPaneView: View {
         let totalSeconds = max(Int(seconds), 0)
         return "\(totalSeconds / 60):\(String(format: "%02d", totalSeconds % 60))"
     }
+}
+
+private func currentTrackHealth(
+    playbackController: PlaybackController,
+    settings: OverplaySettings
+) -> TrackHealthStatus? {
+    guard playbackController.currentTrack != nil else { return nil }
+    return TrackHealthStatus.resolve(
+        skipCount: playbackController.displayedSkipCount,
+        evictAfterSkips: settings.evictAfterSkips,
+        isEvicted: playbackController.displayedIsEvicted,
+        isProtected: playbackController.displayedIsProtected
+    )
 }
 
 #Preview {
