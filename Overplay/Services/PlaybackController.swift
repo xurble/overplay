@@ -795,57 +795,6 @@ final class PlaybackController {
         await next(settings: settings, context: context)
     }
 
-    private func snapshot(from track: Track, playlistID: String?) -> TrackSnapshot {
-        TrackSnapshot(
-            id: track.id.rawValue,
-            catalogID: track.id.rawValue,
-            libraryID: track.id.rawValue,
-            playlistEntryID: nil,
-            playlistID: playlistID,
-            title: track.title,
-            artistName: track.artistName,
-            albumTitle: track.albumTitle,
-            artworkURLTemplate: track.artwork?.url(width: 512, height: 512)?.absoluteString,
-            durationSeconds: track.duration,
-            musicKitPlaybackData: try? JSONEncoder().encode(track)
-        )
-    }
-
-    private func snapshot(from item: MusicPlayer.Queue.Entry.Item?, playlistID: String?) -> TrackSnapshot? {
-        guard let item else { return nil }
-
-        switch item {
-        case let .song(song):
-            return TrackSnapshot(
-                id: song.id.rawValue,
-                catalogID: song.id.rawValue,
-                libraryID: song.id.rawValue,
-                playlistEntryID: nil,
-                playlistID: playlistID,
-                title: song.title,
-                artistName: song.artistName,
-                albumTitle: song.albumTitle,
-                artworkURLTemplate: song.artwork?.url(width: 512, height: 512)?.absoluteString,
-                durationSeconds: song.duration
-            )
-        case let .musicVideo(musicVideo):
-            return TrackSnapshot(
-                id: musicVideo.id.rawValue,
-                catalogID: musicVideo.id.rawValue,
-                libraryID: musicVideo.id.rawValue,
-                playlistEntryID: nil,
-                playlistID: playlistID,
-                title: musicVideo.title,
-                artistName: musicVideo.artistName,
-                albumTitle: nil,
-                artworkURLTemplate: musicVideo.artwork?.url(width: 512, height: 512)?.absoluteString,
-                durationSeconds: musicVideo.duration
-            )
-        @unknown default:
-            return nil
-        }
-    }
-
     private func refresh(context: ModelContext) async {
         let oldTrackID = activeSession?.trackID
         let newTrackID = resolvedCurrentMusicItemID(context: context)
@@ -1002,31 +951,24 @@ final class PlaybackController {
     }
 
     private func currentPlaylist(in context: ModelContext) throws -> PlaylistRecord? {
-        guard let currentPlaylistID else { return nil }
-        return try PlaylistRepository.playlist(musicPlaylistID: currentPlaylistID, in: context)
+        try PlaybackTrackResolver.currentPlaylist(musicPlaylistID: currentPlaylistID, in: context)
     }
 
     private func playlistItem(matching musicItemID: String, context: ModelContext) throws -> PlaylistItemRecord? {
-        guard let playlist = try currentPlaylist(in: context) else { return nil }
-        let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
-        let tracks = try TrackRecordRepository.tracks(ids: items.map(\.trackID), in: context)
-        let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
-        return PlaybackQueueBuilder.playlistItem(
+        try PlaybackTrackResolver.playlistItem(
             matching: musicItemID,
-            items: items,
-            tracksByID: tracksByID
+            musicPlaylistID: currentPlaylistID,
+            currentPlaylistItem: currentPlaylistItem,
+            in: context
         )
     }
 
     private func playlistItem(localTrackID: String, context: ModelContext) throws -> PlaylistItemRecord? {
-        guard let playlist = try currentPlaylist(in: context),
-              let trackID = UUID(uuidString: localTrackID) else {
-            return nil
-        }
-
-        return try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context).first {
-            $0.trackID == trackID
-        }
+        try PlaybackTrackResolver.playlistItem(
+            localTrackID: localTrackID,
+            musicPlaylistID: currentPlaylistID,
+            in: context
+        )
     }
 
     private func restoredTrackAndItem(
@@ -1034,26 +976,7 @@ final class PlaybackController {
         playlist: PlaylistRecord,
         context: ModelContext
     ) throws -> (track: TrackRecord, item: PlaylistItemRecord?)? {
-        if let localTrackID = state.localTrackID,
-           let trackID = UUID(uuidString: localTrackID),
-           let track = try TrackRecordRepository.track(id: trackID, in: context) {
-            let item = try PlaylistItemRepository.item(
-                playlistID: playlist.id,
-                trackID: track.id,
-                in: context
-            )
-            return (track, item)
-        }
-
-        guard let track = try TrackRecordRepository.track(musicItemID: state.musicItemID, in: context) else {
-            return nil
-        }
-        let item = try PlaylistItemRepository.item(
-            playlistID: playlist.id,
-            trackID: track.id,
-            in: context
-        )
-        return (track, item)
+        try PlaybackTrackResolver.restoredTrackAndItem(from: state, playlist: playlist, in: context)
     }
 
     private func currentPlaybackTrack(
@@ -1061,20 +984,13 @@ final class PlaybackController {
         playlistItem: PlaylistItemRecord?,
         context: ModelContext
     ) -> CurrentPlaybackTrack? {
-        if let playlistItem,
-           let trackRecord = try? TrackRecordRepository.track(id: playlistItem.trackID, in: context) {
-            return CurrentPlaybackTrack(trackRecord, musicItemID: musicItemID, item: playlistItem)
-        }
-
-        if let trackRecord = try? TrackRecordRepository.track(musicItemID: musicItemID, in: context) {
-            return CurrentPlaybackTrack(trackRecord, musicItemID: musicItemID, item: nil)
-        }
-
-        guard let snapshot = snapshot(from: player.queue.currentEntry?.item, playlistID: currentPlaylistID) else {
-            return nil
-        }
-
-        return CurrentPlaybackTrack(snapshot)
+        PlaybackTrackResolver.currentPlaybackTrack(
+            musicItemID: musicItemID,
+            playlistItem: playlistItem,
+            musicPlaylistID: currentPlaylistID,
+            queueItem: player.queue.currentEntry?.item,
+            in: context
+        )
     }
 
     private func refreshCurrentTrackMetadata(context: ModelContext) {
