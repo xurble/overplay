@@ -80,6 +80,7 @@ struct PlaylistSyncService {
             in: context
         )
         try context.save()
+        warmUpArtworkThemes(for: snapshots)
         return tracks.count
     }
 
@@ -153,6 +154,7 @@ struct PlaylistSyncService {
             in: context
         )
         try context.save()
+        warmUpArtworkThemes(for: sourceTracks.map { snapshot(from: $0, playlistID: record.musicPlaylistID) })
         return record
     }
 
@@ -400,5 +402,12 @@ struct PlaylistSyncService {
             durationSeconds: track.duration,
             musicKitPlaybackData: try? JSONEncoder().encode(track)
         )
+    }
+
+    private func warmUpArtworkThemes(for snapshots: [TrackSnapshot]) {
+        let tracks = snapshots.map(AlbumArtworkThemeWarmupTrack.init(snapshot:))
+        Task(priority: .background) {
+            await AlbumArtworkThemeWarmupService.shared.enqueue(tracks)
+        }
     }
 }

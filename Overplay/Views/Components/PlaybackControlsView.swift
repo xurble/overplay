@@ -9,6 +9,7 @@ struct PlaybackControlsView: View {
 
     var settings: OverplaySettings
     var controlSize: PlaybackControlSize = .regular
+    var artworkTheme: AlbumArtworkTheme? = nil
 
     var body: some View {
         HStack(spacing: controlSize.spacing) {
@@ -19,7 +20,11 @@ struct PlaybackControlsView: View {
             }
             .accessibilityLabel("Previous track")
             .disabled(!playbackController.canControlPlayback)
-            .buttonStyle(PlaybackControlButtonStyle(controlSize: controlSize, prominence: .secondary))
+            .buttonStyle(PlaybackControlButtonStyle(
+                controlSize: controlSize,
+                prominence: .secondary,
+                artworkTheme: artworkTheme
+            ))
 
             Button {
                 Task { await primaryPlaybackAction() }
@@ -28,7 +33,11 @@ struct PlaybackControlsView: View {
             }
             .accessibilityLabel(controlsPresentation.primaryAccessibilityLabel)
             .disabled(!canUsePrimaryPlaybackAction)
-            .buttonStyle(PlaybackControlButtonStyle(controlSize: controlSize, prominence: .primary))
+            .buttonStyle(PlaybackControlButtonStyle(
+                controlSize: controlSize,
+                prominence: .primary,
+                artworkTheme: artworkTheme
+            ))
 
             Button {
                 Task { await playbackController.next(settings: settings, context: modelContext) }
@@ -37,7 +46,11 @@ struct PlaybackControlsView: View {
             }
             .accessibilityLabel("Next track")
             .disabled(!playbackController.canControlPlayback)
-            .buttonStyle(PlaybackControlButtonStyle(controlSize: controlSize, prominence: .secondary))
+            .buttonStyle(PlaybackControlButtonStyle(
+                controlSize: controlSize,
+                prominence: .secondary,
+                artworkTheme: artworkTheme
+            ))
         }
     }
 
@@ -162,22 +175,20 @@ private struct PlaybackControlButtonStyle: ButtonStyle {
 
     var controlSize: PlaybackControlSize
     var prominence: Prominence
+    var artworkTheme: AlbumArtworkTheme?
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: iconSize, weight: iconWeight))
-            .foregroundStyle(isEnabled ? .primary : .tertiary)
+            .foregroundStyle(foregroundStyle)
             .frame(width: buttonSize, height: buttonSize)
             .contentShape(Circle())
-            .background {
-                Circle()
-                    .fill(.ultraThinMaterial)
-                    .opacity(backgroundOpacity(isPressed: configuration.isPressed))
-            }
-            .overlay {
-                Circle()
-                    .stroke(.white.opacity(configuration.isPressed ? 0.24 : 0.12), lineWidth: 1)
-            }
+            .playbackControlBackdrop(
+                palette,
+                prominence: glassProminence,
+                isPressed: configuration.isPressed,
+                fallbackOpacity: backgroundOpacity(isPressed: configuration.isPressed)
+            )
             .scaleEffect(configuration.isPressed ? 0.92 : 1)
             .opacity(isEnabled ? 1 : 0.42)
             .animation(.smooth(duration: 0.16), value: configuration.isPressed)
@@ -206,6 +217,31 @@ private struct PlaybackControlButtonStyle: ButtonStyle {
         prominence == .primary ? .bold : .semibold
     }
 
+    private var palette: FullScreenPlayerControlPalette? {
+        artworkTheme.flatMap(FullScreenPlayerControlPalette.init(theme:))
+    }
+
+    private var foregroundStyle: Color {
+        guard let palette else {
+            return isEnabled ? .primary : .secondary.opacity(0.55)
+        }
+
+        guard isEnabled else {
+            return palette.disabledForeground
+        }
+
+        switch prominence {
+        case .primary:
+            return palette.foreground
+        case .secondary:
+            return palette.secondaryForeground
+        }
+    }
+
+    private var glassProminence: FullScreenPlayerControlProminence {
+        prominence == .primary ? .primary : .secondary
+    }
+
     private func backgroundOpacity(isPressed: Bool) -> Double {
         switch prominence {
         case .primary:
@@ -213,6 +249,51 @@ private struct PlaybackControlButtonStyle: ButtonStyle {
         case .secondary:
             isPressed ? 0.42 : 0.18
         }
+    }
+}
+
+private struct PlaybackControlBackdropModifier: ViewModifier {
+    var palette: FullScreenPlayerControlPalette?
+    var prominence: FullScreenPlayerControlProminence
+    var isPressed: Bool
+    var fallbackOpacity: Double
+
+    func body(content: Content) -> some View {
+        if let palette {
+            content.fullScreenPlayerGlassBackdrop(
+                palette,
+                shape: Circle(),
+                prominence: prominence,
+                isPressed: isPressed
+            )
+        } else {
+            content
+                .background {
+                    Circle()
+                        .fill(.ultraThinMaterial)
+                        .opacity(fallbackOpacity)
+                }
+                .overlay {
+                    Circle()
+                        .stroke(.white.opacity(isPressed ? 0.24 : 0.12), lineWidth: 1)
+                }
+        }
+    }
+}
+
+private extension View {
+    func playbackControlBackdrop(
+        _ palette: FullScreenPlayerControlPalette?,
+        prominence: FullScreenPlayerControlProminence,
+        isPressed: Bool,
+        fallbackOpacity: Double
+    ) -> some View {
+        modifier(PlaybackControlBackdropModifier(
+            palette: palette,
+            prominence: prominence,
+            isPressed: isPressed,
+            fallbackOpacity: fallbackOpacity
+        ))
     }
 }
 

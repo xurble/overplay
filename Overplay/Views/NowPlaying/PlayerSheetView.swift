@@ -1,8 +1,13 @@
 import SwiftUI
 
 struct PlayerSheetView: View {
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(PlaybackController.self) private var playbackController
+
     var settings: OverplaySettings
     var collapsedHeight: CGFloat
+
+    @State private var artworkTheme = AlbumArtworkTheme.fallback
 
     var body: some View {
         GeometryReader { proxy in
@@ -10,19 +15,107 @@ struct PlayerSheetView: View {
             let backgroundOpacity = expandedBackgroundOpacity(for: proxy.size.height)
 
             ZStack(alignment: .bottom) {
-                PlayerSheetBackground(opaqueProgress: backgroundOpacity)
+                PlayerSheetBackground(
+                    opaqueProgress: backgroundOpacity,
+                    artworkTheme: artworkTheme
+                )
 
-                NowPlayingPaneView(settings: settings)
+                NowPlayingPaneView(settings: settings, artworkTheme: artworkTheme)
                     .padding(.bottom, collapsedHeight + proxy.safeAreaInsets.bottom)
                     .opacity(contentOpacity)
                     .allowsHitTesting(contentOpacity > 0.5)
 
-                MiniPlayerLozengeView(settings: settings, expandedProgress: backgroundOpacity)
+                MiniPlayerLozengeView(
+                    settings: settings,
+                    expandedProgress: backgroundOpacity,
+                    artworkTheme: artworkTheme
+                )
                     .frame(height: collapsedHeight)
                     .padding(.bottom, proxy.safeAreaInsets.bottom)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             .ignoresSafeArea(edges: .bottom)
+            .animation(.easeInOut(duration: 0.35), value: artworkTheme)
+        }
+        .task(id: artworkThemeIdentity) {
+            await loadArtworkTheme()
+        }
+    }
+
+    private var artworkThemeIdentity: String {
+        [
+            playbackController.currentTrack?.id ?? "",
+            playbackController.currentTrack?.artworkURLTemplate ?? "",
+            playbackController.currentPlaylistID ?? "",
+            colorSchemeContrast == .increased ? "increased" : "standard"
+        ].joined(separator: "|")
+    }
+
+    @MainActor
+    private func loadArtworkTheme() async {
+        let requestIdentity = artworkThemeIdentity
+        let track = playbackController.currentTrack
+        let playlistID = playbackController.currentPlaylistID
+        let trackTitle = track?.title
+        let artistName = track?.artistName
+        let albumTitle = track?.albumTitle
+        let requiresIncreasedContrast = colorSchemeContrast == .increased
+        guard let artworkURLTemplate = track?.artworkURLTemplate else {
+            AlbumArtworkThemeDiagnostics.log(
+                "sheet fallback: missing artwork for trackID=\(track?.id ?? "nil") title=\(trackTitle ?? "nil")"
+            )
+            withAnimation(.easeInOut(duration: 0.35)) {
+                artworkTheme = .fallback
+            }
+            return
+        }
+
+        if let cachedTheme = await AlbumArtworkThemeProvider.shared.cachedTheme(
+            forArtworkURLTemplate: artworkURLTemplate,
+            requiresIncreasedContrast: requiresIncreasedContrast
+        ) {
+            guard !Task.isCancelled, requestIdentity == artworkThemeIdentity else { return }
+            applyArtworkTheme(cachedTheme, source: "cached")
+            Task(priority: .background) {
+                let refreshedTheme = await AlbumArtworkThemeProvider.shared.prepareTheme(
+                    forArtworkURLTemplate: artworkURLTemplate,
+                    playlistID: playlistID,
+                    trackTitle: trackTitle,
+                    artistName: artistName,
+                    albumTitle: albumTitle,
+                    requiresIncreasedContrast: requiresIncreasedContrast
+                )
+                await MainActor.run {
+                    guard requestIdentity == artworkThemeIdentity else { return }
+                    guard refreshedTheme != cachedTheme else { return }
+                    applyArtworkTheme(refreshedTheme, source: "refreshed")
+                }
+            }
+            return
+        }
+
+        AlbumArtworkThemeDiagnostics.log(
+            "sheet prepare: no cached theme for trackID=\(track?.id ?? "nil") title=\(trackTitle ?? "nil")"
+        )
+        let theme = await AlbumArtworkThemeProvider.shared.prepareTheme(
+            forArtworkURLTemplate: artworkURLTemplate,
+            playlistID: playlistID,
+            trackTitle: trackTitle,
+            artistName: artistName,
+            albumTitle: albumTitle,
+            requiresIncreasedContrast: requiresIncreasedContrast
+        )
+        guard !Task.isCancelled, requestIdentity == artworkThemeIdentity else { return }
+        applyArtworkTheme(theme, source: "prepared")
+    }
+
+    @MainActor
+    private func applyArtworkTheme(_ theme: AlbumArtworkTheme, source: String) {
+        AlbumArtworkThemeDiagnostics.log(
+            "sheet apply \(source): trackID=\(playbackController.currentTrack?.id ?? "nil") title=\(playbackController.currentTrack?.title ?? "nil") fallback=\(theme.isFallback) themeSource=\(theme.source.rawValue) background=\(AlbumArtworkThemeDiagnostics.describe(theme.backgroundRGB)) titleColor=\(AlbumArtworkThemeDiagnostics.describe(theme.trackTitleRGB))"
+        )
+        withAnimation(.easeInOut(duration: 0.35)) {
+            artworkTheme = theme
         }
     }
 
@@ -45,6 +138,7 @@ struct PlayerSheetView: View {
 
 private struct PlayerSheetBackground: View {
     var opaqueProgress: Double
+    var artworkTheme: AlbumArtworkTheme
 
     var body: some View {
         ZStack {
@@ -63,10 +157,33 @@ private struct PlayerSheetBackground: View {
             )
             .opacity(1 - opaqueProgress)
 
-            Rectangle()
-                .fill(.background)
+            if artworkTheme.isFallback {
+                Rectangle()
+                    .fill(.background)
+                    .opacity(opaqueProgress)
+            } else {
+                artworkTheme.background
+                    .opacity(opaqueProgress)
+
+                LinearGradient(
+                    colors: [
+                        .black.opacity(topScrimOpacity),
+                        .black.opacity(bottomScrimOpacity)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
                 .opacity(opaqueProgress)
+            }
         }
+    }
+
+    private var topScrimOpacity: Double {
+        artworkTheme.backgroundRGB.relativeLuminance > 0.26 ? 0.03 : 0.10
+    }
+
+    private var bottomScrimOpacity: Double {
+        artworkTheme.backgroundRGB.relativeLuminance > 0.26 ? 0.14 : 0.34
     }
 }
 

@@ -5,6 +5,7 @@ struct MiniPlayerLozengeView: View {
 
     var settings: OverplaySettings
     var expandedProgress: Double
+    var artworkTheme: AlbumArtworkTheme?
 
     var body: some View {
         ZStack {
@@ -54,7 +55,11 @@ struct MiniPlayerLozengeView: View {
     }
 
     private var expandedContent: some View {
-        PlaybackControlsView(settings: settings, controlSize: .regular)
+        PlaybackControlsView(
+            settings: settings,
+            controlSize: .regular,
+            artworkTheme: artworkTheme?.isFallback == false ? artworkTheme : nil
+        )
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 }
@@ -62,7 +67,8 @@ struct MiniPlayerLozengeView: View {
 #Preview {
     MiniPlayerLozengeView(
         settings: OverplaySettings(selectedPlaylistID: "preview-playlist", selectedPlaylistName: "Overplay"),
-        expandedProgress: 0
+        expandedProgress: 0,
+        artworkTheme: nil
     )
     .environment(PlaybackController())
     .frame(height: 96)

@@ -4,6 +4,7 @@ struct NowPlayingPaneView: View {
     @Environment(PlaybackController.self) private var playbackController
 
     var settings: OverplaySettings
+    var artworkTheme: AlbumArtworkTheme?
 
     var body: some View {
         GeometryReader { proxy in
@@ -17,6 +18,7 @@ struct NowPlayingPaneView: View {
                 playbackController: playbackController,
                 settings: settings
             )
+            let activeArtworkTheme = artworkTheme?.isFallback == false ? artworkTheme : nil
 
             VStack(spacing: compactLayout ? 12 : 18) {
                 NowPlayingArtworkView(
@@ -29,17 +31,22 @@ struct NowPlayingPaneView: View {
                 NowPlayingTrackTextView(
                     presentation: presentation,
                     titleLineLimit: 2,
-                    detailLineLimit: 1
+                    detailLineLimit: 1,
+                    artworkTheme: activeArtworkTheme
                 )
-                NowPlayingProgressView(presentation: presentation, tint: nil)
-                TrackHealthStatusView(presentation: presentation)
-                PlaybackModeControlsView()
-                TrackActionControlsView(settings: settings)
+                NowPlayingProgressView(
+                    presentation: presentation,
+                    tint: activeArtworkTheme?.trackTitle,
+                    foreground: activeArtworkTheme?.artistName
+                )
+                TrackHealthStatusView(presentation: presentation, artworkTheme: activeArtworkTheme)
+                PlaybackModeControlsView(artworkTheme: activeArtworkTheme)
+                TrackActionControlsView(settings: settings, artworkTheme: activeArtworkTheme)
 
                 if let statusMessage = playbackController.statusMessage {
                     Text(statusMessage)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(activeArtworkTheme?.albumName ?? .secondary)
                         .multilineTextAlignment(.center)
                 }
             }
@@ -53,7 +60,8 @@ struct NowPlayingPaneView: View {
 
 #Preview {
     NowPlayingPaneView(
-        settings: OverplaySettings(selectedPlaylistID: "preview-playlist", selectedPlaylistName: "Overplay")
+        settings: OverplaySettings(selectedPlaylistID: "preview-playlist", selectedPlaylistName: "Overplay"),
+        artworkTheme: nil
     )
     .environment(PlaybackController())
 }
