@@ -98,10 +98,9 @@ enum PlaybackQueueBuilder {
         _ musicTracks: [Track],
         tracksByID: [UUID: TrackRecord]
     ) -> [String: Track] {
-        Dictionary(
-            uniqueKeysWithValues: musicTracks.compactMap { musicTrack in
-                localTrackID(for: musicTrack, tracksByID: tracksByID).map { ($0, musicTrack) }
-            }
-        )
+        musicTracks.compactMap { musicTrack in
+            localTrackID(for: musicTrack, tracksByID: tracksByID).map { ($0, musicTrack) }
+        }
+        .firstValueDictionary(keyedBy: \.0, value: \.1)
     }
 }
