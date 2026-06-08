@@ -9,10 +9,7 @@ struct SettingsView: View {
     @Bindable var settings: OverplaySettings
     @State private var showResetConfirmation = false
     @State private var showNukeConfirmation = false
-    @State private var didNukeDatabase = false
-    @State private var isRunningMusicKitDiagnostics = false
-    @State private var musicKitDiagnosticsReport: String?
-    @State private var message: String?
+    @State private var viewModel = SettingsViewModel()
 
     var body: some View {
         Form {
@@ -69,20 +66,20 @@ struct SettingsView: View {
                     Task { await runMusicKitDiagnostics() }
                 } label: {
                     Label(
-                        isRunningMusicKitDiagnostics ? "Running MusicKit Diagnostics" : "Run MusicKit Diagnostics",
+                        viewModel.isRunningMusicKitDiagnostics ? "Running MusicKit Diagnostics" : "Run MusicKit Diagnostics",
                         systemImage: "waveform.path.ecg"
                     )
                 }
-                .disabled(isRunningMusicKitDiagnostics)
+                .disabled(viewModel.isRunningMusicKitDiagnostics)
 
-                if let musicKitDiagnosticsReport {
+                if let musicKitDiagnosticsReport = viewModel.musicKitDiagnosticsReport {
                     Text(musicKitDiagnosticsReport)
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
                 }
             }
 
-            if let message {
+            if let message = viewModel.message {
                 Section {
                     Text(message)
                         .foregroundStyle(.secondary)
@@ -92,8 +89,7 @@ struct SettingsView: View {
         .miniPlayerScrollContentInset()
         .navigationTitle("Settings")
         .onDisappear {
-            guard !didNukeDatabase else { return }
-            try? SettingsRepository.save(settings, in: modelContext)
+            viewModel.saveIfNeeded(settings: settings, context: modelContext, dependencies: dependencies)
         }
         .confirmationDialog("Reset all local stats?", isPresented: $showResetConfirmation, titleVisibility: .visible) {
             Button("Reset Local Stats", role: .destructive) {
@@ -114,35 +110,27 @@ struct SettingsView: View {
     }
 
     private func resetStats() {
-        do {
-            try TrackRecordRepository.resetPlaylistStats(in: modelContext)
-            message = "Local stats reset."
+        if viewModel.resetStats(context: modelContext, dependencies: dependencies) {
             dismiss()
-        } catch {
-            message = error.localizedDescription
         }
     }
 
     private func nukeDatabase() {
-        do {
-            try DatabaseResetService.nukeDatabase(in: modelContext)
-            didNukeDatabase = true
-            playbackController.clearLocalStateAfterDatabaseReset()
-            message = "Database nuked."
+        if viewModel.nukeDatabase(context: modelContext, dependencies: dependencies) {
             dismiss()
-        } catch {
-            message = error.localizedDescription
         }
     }
 
     private func runMusicKitDiagnostics() async {
-        isRunningMusicKitDiagnostics = true
-        defer { isRunningMusicKitDiagnostics = false }
-
-        musicKitDiagnosticsReport = await MusicKitDiagnosticsService().run(
+        await viewModel.runMusicKitDiagnostics(
             settings: settings,
-            context: modelContext
+            context: modelContext,
+            dependencies: dependencies
         )
+    }
+
+    private var dependencies: SettingsViewModel.Dependencies {
+        .live(playbackController: playbackController)
     }
 }
 
