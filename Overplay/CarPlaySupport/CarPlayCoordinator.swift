@@ -109,7 +109,7 @@ final class CarPlayCoordinator: NSObject {
     private func playlistItem(for summary: PlaylistSummaryPresentation) -> CPListItem {
         let item = CPListItem(text: summary.title, detailText: summary.playableTrackCountLabel)
         item.accessoryType = .disclosureIndicator
-        item.isPlaying = playbackController?.currentPlaylistID == summary.musicPlaylistID
+        item.isPlaying = isCurrentPlaylist(summary)
         item.handler = { [weak self] _, completion in
             Task { @MainActor in
                 self?.showPlaylist(summary)
@@ -129,6 +129,16 @@ final class CarPlayCoordinator: NSObject {
             }
         }
         return item
+    }
+
+    private func isCurrentPlaylist(_ summary: PlaylistSummaryPresentation) -> Bool {
+        guard let playbackController,
+              let musicPlaylistID = summary.musicPlaylistID,
+              playbackController.currentTrack != nil else {
+            return false
+        }
+
+        return playbackController.currentPlaylistID == musicPlaylistID
     }
 
     private func isCurrentTrack(_ summary: TrackSummaryPresentation, in playlist: PlaylistRecord) -> Bool {
@@ -207,13 +217,13 @@ final class CarPlayCoordinator: NSObject {
         do {
             guard let trackID = summary.trackID,
                   let track = try TrackRecordRepository.track(id: trackID, in: modelContext) else {
-                refreshVisiblePlaylistRows()
+                refreshLibraryLists()
                 return
             }
 
             let settings = try SettingsRepository.settings(in: modelContext)
             await playbackController.playPlaylist(playlist, startingAt: track, settings: settings, context: modelContext)
-            refreshVisiblePlaylistRows()
+            refreshLibraryLists()
             updateNowPlayingButtons(force: true)
             showNowPlaying()
         } catch {
@@ -240,20 +250,21 @@ final class CarPlayCoordinator: NSObject {
 
     private func startPlaybackObservation() {
         playbackObservationGeneration += 1
-        observePlaybackControllerForNowPlayingButtons(generation: playbackObservationGeneration)
+        observePlaybackController(generation: playbackObservationGeneration)
     }
 
     private func stopPlaybackObservation() {
         playbackObservationGeneration += 1
     }
 
-    private func observePlaybackControllerForNowPlayingButtons(generation: Int) {
+    private func observePlaybackController(generation: Int) {
         guard generation == playbackObservationGeneration,
               let playbackController else {
             return
         }
 
         withObservationTracking {
+            _ = playbackController.currentPlaylistID
             _ = playbackController.currentTrack?.id
             _ = playbackController.displayedSkipCount
             _ = playbackController.displayedIsProtected
@@ -264,7 +275,8 @@ final class CarPlayCoordinator: NSObject {
             Task { @MainActor [weak self] in
                 guard let self, generation == self.playbackObservationGeneration else { return }
                 self.updateNowPlayingButtons(force: false)
-                self.observePlaybackControllerForNowPlayingButtons(generation: generation)
+                self.refreshLibraryLists()
+                self.observePlaybackController(generation: generation)
             }
         }
     }
@@ -469,21 +481,31 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func refreshAfterHealthAction() {
-        refreshVisiblePlaylistRows()
+        refreshLibraryLists()
         updateNowPlayingButtons(force: true)
     }
 
-    private func refreshVisiblePlaylistRows() {
+    private func refreshLibraryLists() {
         guard let interfaceController,
-              let visiblePlaylistID,
+              let listTemplate = interfaceController.topTemplate as? CPListTemplate else {
+            return
+        }
+
+        if listTemplate.title == "Overplay" {
+            visiblePlaylistID = nil
+            listTemplate.updateSections(makeRootSections())
+            return
+        }
+
+        guard let visiblePlaylistID,
               let modelContext,
-              let playlistTemplate = interfaceController.topTemplate as? CPListTemplate,
               let playlist = try? PlaylistRepository.playlist(id: visiblePlaylistID, in: modelContext),
+              listTemplate.title == playlist.name,
               let sections = try? playlistSections(for: playlist) else {
             return
         }
 
-        playlistTemplate.updateSections(sections)
+        listTemplate.updateSections(sections)
     }
 
     private func dismissPresentedTemplate() {

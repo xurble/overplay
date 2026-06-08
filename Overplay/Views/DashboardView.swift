@@ -3,6 +3,7 @@ import SwiftUI
 
 struct DashboardView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(PlaybackController.self) private var playbackController
 
     @Query(filter: #Predicate<PlaylistRecord> { $0.isActive }, sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
     @State private var playlistItems: [PlaylistItemRecord] = []
@@ -17,12 +18,7 @@ struct DashboardView: View {
                     NavigationLink {
                         PlaylistManagementView(settings: settings, playlist: oneTruePlaylist)
                     } label: {
-                        PlaylistHomeRowView(
-                            title: oneTruePlaylist.name,
-                            detail: presentation(for: oneTruePlaylist).dashboardDetailText,
-                            artworkURLString: presentation(for: oneTruePlaylist).artworkURLString,
-                            playlistID: oneTruePlaylist.musicPlaylistID
-                        )
+                        playlistHomeRow(for: oneTruePlaylist)
                     }
                 } else {
                     NavigationLink {
@@ -32,7 +28,9 @@ struct DashboardView: View {
                             title: "Link One True Playlist",
                             detail: "Choose the main playlist Overplay manages.",
                             artworkURLString: nil,
-                            playlistID: nil
+                            playlistID: nil,
+                            systemImage: "star.fill",
+                            badgeTint: .pink
                         )
                     }
                 }
@@ -43,12 +41,7 @@ struct DashboardView: View {
                     NavigationLink {
                         PlaylistManagementView(settings: settings, playlist: playlist)
                     } label: {
-                        PlaylistHomeRowView(
-                            title: playlist.name,
-                            detail: presentation(for: playlist).dashboardDetailText,
-                            artworkURLString: presentation(for: playlist).artworkURLString,
-                            playlistID: playlist.musicPlaylistID
-                        )
+                        playlistHomeRow(for: playlist)
                     }
                 }
                 .onDelete(perform: deleteTriagePlaylists)
@@ -80,6 +73,26 @@ struct DashboardView: View {
         }
     }
 
+    private func playlistHomeRow(for playlist: PlaylistRecord) -> some View {
+        let summary = presentation(for: playlist)
+        return PlaylistHomeRowView(
+            title: playlist.name,
+            detail: summary.dashboardDetailText,
+            artworkURLString: summary.artworkURLString,
+            playlistID: playlist.musicPlaylistID,
+            systemImage: summary.iconIntent.systemImage,
+            badgeTint: badgeTint(for: summary, role: playlist.role)
+        )
+    }
+
+    private func badgeTint(for summary: PlaylistSummaryPresentation, role: PlaylistRole) -> Color {
+        if summary.isCurrentPlaybackPlaylist {
+            return .green
+        }
+
+        return role == .oneTruePlaylist ? .pink : .teal
+    }
+
     private var dashboardDataKey: String {
         playlists.map(\.id.uuidString).joined(separator: "-")
     }
@@ -106,6 +119,7 @@ struct DashboardView: View {
             playlists: playlists,
             items: playlistItems,
             tracks: tracks,
+            currentPlaylistID: playbackController.currentTrack != nil ? playbackController.currentPlaylistID : nil,
             evictAfterSkips: settings.evictAfterSkips
         )
     }
@@ -121,36 +135,6 @@ struct DashboardView: View {
             let playlist = triagePlaylists[index]
             try? PlaylistRepository.deactivateTriagePlaylist(playlist, in: modelContext)
         }
-    }
-}
-
-private struct PlaylistHomeRowView: View {
-    var title: String
-    var detail: String
-    var artworkURLString: String?
-    var playlistID: String?
-
-    var body: some View {
-        HStack(spacing: 12) {
-            ArtworkView(
-                urlString: artworkURLString,
-                pixelSize: 96,
-                playlistID: playlistID,
-                cornerRadius: 8
-            )
-            .frame(width: 48, height: 48)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.headline)
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-        }
-        .padding(.vertical, 6)
     }
 }
 

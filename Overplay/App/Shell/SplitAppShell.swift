@@ -2,6 +2,7 @@ import SwiftData
 import SwiftUI
 
 struct SplitAppShell: View {
+    @Environment(PlaybackController.self) private var playbackController
     @Query(sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
 
     var settings: OverplaySettings
@@ -78,11 +79,15 @@ struct SplitAppShell: View {
     }
 
     private func playlistIcon(for playlist: PlaylistRecord) -> String {
+        if playbackController.isCurrentPlaylist(playlist) {
+            return "play.fill"
+        }
+
         switch playlist.role {
         case .oneTruePlaylist:
-            "star.fill"
+            return "star.fill"
         case .triage:
-            "tray.fill"
+            return "tray.fill"
         }
     }
 

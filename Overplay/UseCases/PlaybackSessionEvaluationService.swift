@@ -62,7 +62,8 @@ enum PlaybackSessionEvaluationService {
         playlist: PlaylistRecord?,
         settings: OverplaySettings,
         naturalCompletion: Bool,
-        context: ModelContext
+        context: ModelContext,
+        fallbackLocalTrackID: String? = nil
     ) throws -> EvaluationOutcome? {
         guard var session = activeSession ?? bootstrapSession(
             trackID: currentTrackID,
@@ -82,6 +83,7 @@ enum PlaybackSessionEvaluationService {
               let item = try resolvedPlaylistItem(
                   for: session,
                   currentPlaylistItem: currentPlaylistItem,
+                  fallbackLocalTrackID: fallbackLocalTrackID,
                   playlist: playlist,
                   context: context
               ) else {
@@ -121,7 +123,8 @@ enum PlaybackSessionEvaluationService {
         currentPlaylistItem: PlaylistItemRecord?,
         playlist: PlaylistRecord?,
         settings: OverplaySettings,
-        context: ModelContext
+        context: ModelContext,
+        fallbackLocalTrackID: String? = nil
     ) throws -> EvaluationOutcome? {
         guard var session, !session.hasEvaluated else { return nil }
         guard let progress = session.progressPercentage else { return nil }
@@ -130,6 +133,7 @@ enum PlaybackSessionEvaluationService {
               let item = try resolvedPlaylistItem(
                   for: session,
                   currentPlaylistItem: currentPlaylistItem,
+                  fallbackLocalTrackID: fallbackLocalTrackID,
                   playlist: playlist,
                   context: context
               ),
@@ -159,14 +163,34 @@ enum PlaybackSessionEvaluationService {
     private static func resolvedPlaylistItem(
         for session: TrackPlaySession,
         currentPlaylistItem: PlaylistItemRecord?,
+        fallbackLocalTrackID: String?,
         playlist: PlaylistRecord,
         context: ModelContext
     ) throws -> PlaylistItemRecord? {
-        try PlaybackSessionSupport.resolvePlaylistItem(
+        if let item = try PlaybackSessionSupport.resolvePlaylistItem(
             forMusicItemID: session.trackID,
             currentPlaylistItem: currentPlaylistItem,
             playlist: playlist,
             in: context
-        )
+        ) {
+            return item
+        }
+
+        if let fallbackLocalTrackID,
+           let trackID = UUID(uuidString: fallbackLocalTrackID),
+           let item = try PlaylistItemRepository.item(
+               playlistID: playlist.id,
+               trackID: trackID,
+               in: context
+           ) {
+            return item
+        }
+
+        if let currentPlaylistItem,
+           currentPlaylistItem.playlistID == playlist.id {
+            return currentPlaylistItem
+        }
+
+        return nil
     }
 }

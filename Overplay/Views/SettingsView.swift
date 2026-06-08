@@ -13,60 +13,107 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Monitored Playlist") {
+            Section {
                 HStack {
-                    Text(settings.selectedPlaylistName ?? "None")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(settings.selectedPlaylistName ?? "None")
+                            .font(.body)
+                        SettingsSubtitle(
+                            "Your One True Playlist. Automatic eviction only applies to this playlist."
+                        )
+                    }
                     Spacer()
                     NavigationLink("Change") {
                         PlaylistSelectionView()
                     }
                 }
+            } header: {
+                Text("Monitored Playlist")
             }
 
-            Section("Eviction Rules") {
-                Stepper("Evict after \(settings.evictAfterSkips) skips", value: $settings.evictAfterSkips, in: 1...20)
+            Section {
+                SettingsLabeledStepper(
+                    title: "Evict after \(settings.evictAfterSkips) skips",
+                    subtitle: "Remove a track from the One True Playlist after it reaches this many counted skips.",
+                    value: $settings.evictAfterSkips,
+                    range: 1...20
+                )
 
-                VStack(alignment: .leading) {
-                    Text("Skip threshold: \(Int(settings.skipThresholdPercentage))%")
-                    Slider(value: $settings.skipThresholdPercentage, in: 1...99, step: 1)
-                }
+                SettingsSliderRow(
+                    title: "Skip threshold: \(Int(settings.skipThresholdPercentage))%",
+                    subtitle: "An early skip counts only if playback stops before this percentage of the track.",
+                    value: $settings.skipThresholdPercentage,
+                    range: 1...99,
+                    step: 1
+                )
 
-                VStack(alignment: .leading) {
-                    Text("Minimum listening time: \(Int(settings.minimumSkipListeningSeconds)) seconds")
-                    Slider(value: $settings.minimumSkipListeningSeconds, in: 0...60, step: 1)
-                }
+                SettingsSliderRow(
+                    title: "Minimum listening time: \(Int(settings.minimumSkipListeningSeconds)) seconds",
+                    subtitle: "Playback must reach this duration before an early skip can be counted.",
+                    value: $settings.minimumSkipListeningSeconds,
+                    range: 0...60,
+                    step: 1
+                )
 
-                VStack(alignment: .leading) {
-                    Text("Playthrough threshold: \(Int(settings.playthroughThresholdPercentage))%")
-                    Slider(value: $settings.playthroughThresholdPercentage, in: 1...100, step: 1)
-                }
+                SettingsSliderRow(
+                    title: "Playthrough threshold: \(Int(settings.playthroughThresholdPercentage))%",
+                    subtitle: "Listening past this percentage counts as a full playthrough instead of a skip.",
+                    value: $settings.playthroughThresholdPercentage,
+                    range: 1...100,
+                    step: 1
+                )
 
-                Toggle("Playthrough resets skip count", isOn: $settings.playthroughResetsSkipCount)
-                Toggle("Protect kept tracks from eviction", isOn: $settings.protectKeptTracks)
+                SettingsLabeledToggle(
+                    title: "Playthrough resets skip count",
+                    subtitle: "When enabled, a playthrough clears the track's skip count back to zero.",
+                    isOn: $settings.playthroughResetsSkipCount
+                )
+
+                SettingsLabeledToggle(
+                    title: "Protect kept tracks from eviction",
+                    subtitle: "Tracks you mark as kept safe are excluded from automatic eviction.",
+                    isOn: $settings.protectKeptTracks
+                )
+            } header: {
+                Text("Eviction Rules")
+            } footer: {
+                Text("Skip and playthrough counts are tracked for all linked playlists, but only the One True Playlist is evicted automatically.")
+                    .font(.caption)
             }
 
             Section {
                 Button(role: .destructive) {
                     showResetConfirmation = true
                 } label: {
-                    Label("Reset All Local Overplay Stats", systemImage: "arrow.counterclockwise")
+                    SettingsActionLabel(
+                        title: "Reset All Local Overplay Stats",
+                        subtitle: "Clears skip, playthrough, protection, and eviction state without changing Apple Music playlists.",
+                        systemImage: "arrow.counterclockwise"
+                    )
                 }
             }
 
-            Section("Database") {
+            Section {
                 Button(role: .destructive) {
                     showNukeConfirmation = true
                 } label: {
-                    Label("Nuke Database", systemImage: "trash")
+                    SettingsActionLabel(
+                        title: "Nuke Database",
+                        subtitle: "Deletes all Overplay records locally and syncs those deletions through iCloud.",
+                        systemImage: "trash"
+                    )
                 }
+            } header: {
+                Text("Database")
             }
 
-            Section("Diagnostics") {
+            Section {
                 Button {
                     Task { await runMusicKitDiagnostics() }
                 } label: {
-                    Label(
-                        viewModel.isRunningMusicKitDiagnostics ? "Running MusicKit Diagnostics" : "Run MusicKit Diagnostics",
+                    SettingsActionLabel(
+                        title: viewModel.isRunningMusicKitDiagnostics ? "Running MusicKit Diagnostics" : "Run MusicKit Diagnostics",
+                        subtitle: "Checks Apple Music authorization, playlist access, and playback readiness.",
                         systemImage: "waveform.path.ecg"
                     )
                 }
@@ -77,6 +124,8 @@ struct SettingsView: View {
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
                 }
+            } header: {
+                Text("Diagnostics")
             }
 
             if let message = viewModel.message {
@@ -131,6 +180,96 @@ struct SettingsView: View {
 
     private var dependencies: SettingsViewModel.Dependencies {
         .live(playbackController: playbackController)
+    }
+}
+
+private struct SettingsSubtitle: View {
+    var text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct SettingsLabeledStepper: View {
+    var title: String
+    var subtitle: String
+    @Binding var value: Int
+    var range: ClosedRange<Int>
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                SettingsSubtitle(subtitle)
+            }
+
+            HStack {
+                Spacer()
+                Stepper(value: $value, in: range) {
+                    EmptyView()
+                }
+                .accessibilityLabel(title)
+            }
+        }
+    }
+}
+
+private struct SettingsSliderRow: View {
+    var title: String
+    var subtitle: String
+    @Binding var value: Double
+    var range: ClosedRange<Double>
+    var step: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                SettingsSubtitle(subtitle)
+            }
+
+            Slider(value: $value, in: range, step: step)
+        }
+    }
+}
+
+private struct SettingsLabeledToggle: View {
+    var title: String
+    var subtitle: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                SettingsSubtitle(subtitle)
+            }
+        }
+    }
+}
+
+private struct SettingsActionLabel: View {
+    var title: String
+    var subtitle: String
+    var systemImage: String
+
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                SettingsSubtitle(subtitle)
+            }
+        } icon: {
+            Image(systemName: systemImage)
+        }
     }
 }
 

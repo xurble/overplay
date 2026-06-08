@@ -65,7 +65,17 @@ enum PlaybackQueueBuilder {
     }
 
     static func musicItemIDs(for track: TrackRecord) -> [String] {
-        [track.catalogID, track.libraryID].compactMap { $0 }
+        var ids = [track.catalogID, track.libraryID].compactMap { $0 }
+
+        if let playbackData = track.musicKitPlaybackData,
+           let musicTrack = try? JSONDecoder().decode(Track.self, from: playbackData) {
+            let playbackID = musicTrack.id.rawValue
+            if !ids.contains(playbackID) {
+                ids.append(playbackID)
+            }
+        }
+
+        return ids
     }
 
     static func localTrackID(

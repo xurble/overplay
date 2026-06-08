@@ -456,6 +456,7 @@ final class PlaybackController {
     }
 
     func next(settings: OverplaySettings, context: ModelContext) async {
+        prepareCurrentPlaylistItemForEvaluation(context: context)
         let skippedTrackID = activeSession?.trackID ?? currentTrack?.id
         await evaluateActiveSession(settings: settings, context: context, naturalCompletion: false)
         if let skippedTrackID,
@@ -696,7 +697,7 @@ final class PlaybackController {
         }
 
         if let newTrackID {
-            currentPlaylistItem = try? playlistItem(matching: newTrackID, context: context)
+            resolveCurrentPlaylistItem(for: newTrackID, context: context)
             updateActiveQueueCurrentTrackID(currentPlaylistItem?.trackID.uuidString)
             syncPlaybackMetadata(for: newTrackID, context: context)
             durationSeconds = currentTrack?.durationSeconds
@@ -755,7 +756,9 @@ final class PlaybackController {
                 currentPlaylistItem: currentPlaylistItem,
                 playlist: currentPlaylist(in: context),
                 settings: settings,
-                context: context
+                context: context,
+                fallbackLocalTrackID: currentPlaylistItem?.trackID.uuidString
+                    ?? activeQueueCurrentLocalTrackID
             )
             applyEvaluationOutcome(outcome, context: context)
         } catch {
@@ -787,6 +790,9 @@ final class PlaybackController {
     }
 
     private func evaluateActiveSession(settings: OverplaySettings, context: ModelContext, naturalCompletion: Bool) async {
+        elapsedSeconds = player.playbackTime
+        prepareCurrentPlaylistItemForEvaluation(context: context)
+
         do {
             let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
                 activeSession: activeSession,
@@ -797,7 +803,9 @@ final class PlaybackController {
                 playlist: currentPlaylist(in: context),
                 settings: settings,
                 naturalCompletion: naturalCompletion,
-                context: context
+                context: context,
+                fallbackLocalTrackID: currentPlaylistItem?.trackID.uuidString
+                    ?? activeQueueCurrentLocalTrackID
             )
             applyEvaluationOutcome(outcome, context: context)
 
@@ -814,9 +822,19 @@ final class PlaybackController {
         activeSession = outcome.session
         if let item = outcome.item {
             currentPlaylistItem = item
+            bumpPlaybackItemMetadataVersion()
         }
         if outcome.shouldSyncPlaybackMetadata {
             syncPlaybackMetadata(for: outcome.session.trackID, context: context)
+        }
+    }
+
+    private func prepareCurrentPlaylistItemForEvaluation(context: ModelContext) {
+        guard currentPlaylistItem == nil else { return }
+
+        if let localTrackID = activeQueueCurrentLocalTrackID,
+           let item = try? playlistItem(localTrackID: localTrackID, context: context) {
+            currentPlaylistItem = item
         }
     }
 
@@ -853,6 +871,29 @@ final class PlaybackController {
             queueItem: player.queue.currentEntry?.item,
             in: context
         )
+    }
+
+    private func resolveCurrentPlaylistItem(for musicItemID: String, context: ModelContext) {
+        if let matched = try? playlistItem(matching: musicItemID, context: context) {
+            currentPlaylistItem = matched
+            return
+        }
+
+        if let localTrackID = activeQueueCurrentLocalTrackID,
+           let matched = try? playlistItem(localTrackID: localTrackID, context: context) {
+            currentPlaylistItem = matched
+            return
+        }
+
+        if let currentPlaylistItem,
+           let playlist = try? currentPlaylist(in: context),
+           (try? PlaybackSessionSupport.itemMatchesMusicItemID(
+               currentPlaylistItem,
+               musicItemID: musicItemID,
+               in: context
+           )) == true {
+            return
+        }
     }
 
     private func syncPlaybackMetadata(for musicItemID: String, context: ModelContext) {

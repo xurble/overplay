@@ -121,6 +121,69 @@ struct PlaybackSessionEvaluationServiceTests {
         #expect(fixture.item.skipCount == 0)
     }
 
+    @Test("skip transition resolves playlist item from current item when music id mismatches")
+    func skipTransitionResolvesPlaylistItemFromCurrentItemWhenMusicIDMismatches() throws {
+        let fixture = try makeFixture(skipCount: 0)
+        let settings = OverplaySettings(
+            evictAfterSkips: 3,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 0
+        )
+
+        let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
+            activeSession: TrackPlaySession(
+                trackID: "queue-only-id",
+                sessionStartDate: .now,
+                lastObservedPlaybackTime: 15,
+                durationSeconds: 180,
+                hasEvaluated: false
+            ),
+            currentTrackID: "queue-only-id",
+            elapsedSeconds: 15,
+            durationSeconds: 180,
+            currentPlaylistItem: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings,
+            naturalCompletion: false,
+            context: fixture.context
+        )
+
+        #expect(outcome?.item?.id == fixture.item.id)
+        #expect(fixture.item.skipCount == 1)
+    }
+
+    @Test("skip transition resolves playlist item from fallback local track id")
+    func skipTransitionResolvesPlaylistItemFromFallbackLocalTrackID() throws {
+        let fixture = try makeFixture(skipCount: 0)
+        let settings = OverplaySettings(
+            evictAfterSkips: 3,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 0
+        )
+
+        let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
+            activeSession: TrackPlaySession(
+                trackID: "queue-only-id",
+                sessionStartDate: .now,
+                lastObservedPlaybackTime: 15,
+                durationSeconds: 180,
+                hasEvaluated: false
+            ),
+            currentTrackID: "queue-only-id",
+            elapsedSeconds: 15,
+            durationSeconds: 180,
+            currentPlaylistItem: nil,
+            playlist: fixture.playlist,
+            settings: settings,
+            naturalCompletion: false,
+            context: fixture.context,
+            fallbackLocalTrackID: fixture.track.id.uuidString
+        )
+
+        #expect(outcome?.item?.id == fixture.item.id)
+        #expect(fixture.item.skipCount == 1)
+    }
+
     @Test("protected track skips are ignored")
     func protectedTrackSkipsAreIgnored() throws {
         let fixture = try makeFixture(skipCount: 2, protected: true)

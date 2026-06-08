@@ -165,17 +165,21 @@ struct PlaylistManagementView: View {
             for: playlist,
             playlistItems: playlistItems,
             tracks: tracks,
-            currentPlaylistID: playbackController.currentPlaylistID,
+            currentPlaylistID: playbackController.currentTrack != nil ? playbackController.currentPlaylistID : nil,
             evictAfterSkips: settings.evictAfterSkips
         )
     }
 
     private var roleTint: Color {
+        if playlistPresentation.isCurrentPlaybackPlaylist {
+            return .green
+        }
+
         switch playlist.role {
         case .oneTruePlaylist:
-            .pink
+            return .pink
         case .triage:
-            .teal
+            return .teal
         }
     }
 
@@ -217,55 +221,6 @@ struct PlaylistManagementView: View {
     private var dependencies: PlaylistManagementViewModel.Dependencies {
         .live(playbackController: playbackController)
     }
-}
-
-private struct PlaylistTrackRowView: View {
-    var track: TrackRecord
-    var item: PlaylistItemRecord
-    var playlistID: String
-    var isCurrent: Bool
-
-    var body: some View {
-        HStack(spacing: 12) {
-            ArtworkView(
-                urlString: track.artworkURLTemplate,
-                pixelSize: 96,
-                playlistID: playlistID,
-                cornerRadius: 8
-            )
-            .frame(width: 48, height: 48)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(track.title)
-                    .font(.headline)
-                    .foregroundStyle(item.isPlayable ? .primary : .secondary)
-                Text(presentation.subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            if let skipCountLabel = presentation.skipCountLabel {
-                Text(skipCountLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .contentShape(Rectangle())
-        .padding(.vertical, 4)
-    }
-
-    private var presentation: TrackSummaryPresentation {
-        TrackSummaryPresentation(
-            id: item.id,
-            title: track.title,
-            artistName: track.artistName,
-            albumTitle: track.albumTitle,
-            skipCount: item.skipCount
-        )
-    }
-
 }
 
 #Preview {

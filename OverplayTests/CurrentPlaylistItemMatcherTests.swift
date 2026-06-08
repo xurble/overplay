@@ -10,8 +10,9 @@ struct CurrentPlaylistItemMatcherTests {
         let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main")
         let otherPlaylist = PlaylistRecord(musicPlaylistID: "other", name: "Other")
         let track = TrackRecord(catalogID: "catalog", libraryID: "library", title: "Track", artistName: "Artist")
+        let otherTrack = TrackRecord(catalogID: "other-catalog", libraryID: "other-library", title: "Other", artistName: "Artist")
         let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id)
-        let otherItem = PlaylistItemRecord(playlistID: playlist.id, trackID: UUID())
+        let otherItem = PlaylistItemRecord(playlistID: playlist.id, trackID: otherTrack.id)
 
         #expect(CurrentPlaylistItemMatcher.isCurrent(
             itemID: item.id,
@@ -23,10 +24,18 @@ struct CurrentPlaylistItemMatcherTests {
         ))
         #expect(!CurrentPlaylistItemMatcher.isCurrent(
             itemID: otherItem.id,
-            track: track,
+            track: otherTrack,
             playlist: playlist,
             currentPlaylistID: "main",
             currentPlaylistItem: item,
+            currentTrack: CurrentPlaybackTrack(id: "catalog", title: "Track", artistName: "Artist")
+        ))
+        #expect(CurrentPlaylistItemMatcher.isCurrent(
+            itemID: item.id,
+            track: track,
+            playlist: playlist,
+            currentPlaylistID: "main",
+            currentPlaylistItem: otherItem,
             currentTrack: CurrentPlaybackTrack(id: "catalog", title: "Track", artistName: "Artist")
         ))
         #expect(CurrentPlaylistItemMatcher.isCurrent(
@@ -44,6 +53,14 @@ struct CurrentPlaylistItemMatcherTests {
             currentPlaylistID: "main",
             currentPlaylistItem: nil,
             currentTrack: CurrentPlaybackTrack(id: "library", title: "Track", artistName: "Artist")
+        ))
+        #expect(!CurrentPlaylistItemMatcher.isCurrent(
+            itemID: item.id,
+            track: track,
+            playlist: playlist,
+            currentPlaylistID: "main",
+            currentPlaylistItem: item,
+            currentTrack: nil
         ))
         #expect(!CurrentPlaylistItemMatcher.isCurrent(
             itemID: item.id,
