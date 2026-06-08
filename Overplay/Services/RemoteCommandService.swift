@@ -1,5 +1,6 @@
 import Foundation
 import MediaPlayer
+import OSLog
 import SwiftData
 
 #if canImport(UIKit)
@@ -8,6 +9,11 @@ import UIKit
 
 @MainActor
 final class RemoteCommandService {
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "Overplay",
+        category: "RemoteCommands"
+    )
+
     private(set) var isActive = false
     private(set) var playbackController: PlaybackController?
     private(set) var context: ModelContext?
@@ -63,7 +69,11 @@ final class RemoteCommandService {
             }
             Task { @MainActor in
                 guard let settings = try? SettingsRepository.settings(in: context) else { return }
+                let previousTrackID = playbackController.currentTrack?.id
                 await playbackController.next(settings: settings, context: context)
+                Self.logger.info(
+                    "Remote next track command changed track from \(previousTrackID ?? "nil", privacy: .public) to \(playbackController.currentTrack?.id ?? "nil", privacy: .public)"
+                )
             }
             return .success
         })
@@ -71,7 +81,13 @@ final class RemoteCommandService {
             guard let self, let playbackController = self.playbackController, let context = self.context else {
                 return .commandFailed
             }
-            Task { await playbackController.previous(context: context) }
+            Task { @MainActor in
+                let previousTrackID = playbackController.currentTrack?.id
+                await playbackController.previous(context: context)
+                Self.logger.info(
+                    "Remote previous track command changed track from \(previousTrackID ?? "nil", privacy: .public) to \(playbackController.currentTrack?.id ?? "nil", privacy: .public)"
+                )
+            }
             return .success
         })
         targetTokens.append(commandCenter.changeShuffleModeCommand.addTarget { [weak self] event in

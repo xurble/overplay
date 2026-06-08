@@ -34,7 +34,7 @@ final class CarPlayCoordinator: NSObject {
         refreshTask = Task { [weak self] in
             await runtime.authorizationService.refresh()
             guard !Task.isCancelled else { return }
-            self?.setRootTemplate(animated: false)
+            self?.refreshVisibleTemplate()
         }
     }
 
@@ -414,33 +414,33 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func resetCurrentSkipCount() {
-        do {
-            let context = try currentCarPlayTrackContext()
-            try TrackHealthActionService.resetSkipCount(
-                context.item,
-                playlist: context.playlist,
-                message: "Skip count reset in CarPlay",
-                in: context.modelContext
+        guard let playbackController, let modelContext else { return }
+        guard playbackController.resetCurrentSkipCount(
+            context: modelContext,
+            message: "Skip count reset in CarPlay"
+        ) else {
+            showError(
+                title: "Health action failed",
+                message: playbackController.statusMessage ?? "Choose a linked playlist track first."
             )
-            refreshAfterHealthAction()
-        } catch {
-            showError(title: "Health action failed", message: error.localizedDescription)
+            return
         }
+        refreshAfterHealthAction()
     }
 
     private func protectCurrentTrack() {
-        do {
-            let context = try currentCarPlayTrackContext()
-            try TrackHealthActionService.protectTrack(
-                context.item,
-                playlist: context.playlist,
-                message: "Protected in CarPlay",
-                in: context.modelContext
+        guard let playbackController, let modelContext else { return }
+        guard playbackController.protectCurrentTrack(
+            context: modelContext,
+            message: "Protected in CarPlay"
+        ) else {
+            showError(
+                title: "Health action failed",
+                message: playbackController.statusMessage ?? "Choose a linked playlist track first."
             )
-            refreshAfterHealthAction()
-        } catch {
-            showError(title: "Health action failed", message: error.localizedDescription)
+            return
         }
+        refreshAfterHealthAction()
     }
 
     private func evictCurrentTrack() async {
@@ -453,31 +453,6 @@ final class CarPlayCoordinator: NSObject {
         } catch {
             showError(title: "Health action failed", message: error.localizedDescription)
         }
-    }
-
-    private func currentCarPlayTrackContext() throws -> (
-        modelContext: ModelContext,
-        playlist: PlaylistRecord,
-        item: PlaylistItemRecord
-    ) {
-        guard let modelContext, let playbackController, let musicItemID = playbackController.currentTrack?.id else {
-            throw CarPlayHealthActionError.noCurrentTrack
-        }
-        guard let musicPlaylistID = playbackController.currentPlaylistID,
-              let playlist = try PlaylistRepository.playlist(musicPlaylistID: musicPlaylistID, in: modelContext) else {
-            throw CarPlayHealthActionError.noCurrentPlaylist
-        }
-        guard let item = try PlaybackSessionSupport.resolvePlaylistItem(
-            forMusicItemID: musicItemID,
-            currentPlaylistItem: playbackController.currentPlaylistItem,
-            playlist: playlist,
-            in: modelContext
-        ) else {
-            throw CarPlayHealthActionError.noCurrentTrack
-        }
-
-        playbackController.currentPlaylistItem = item
-        return (modelContext, playlist, item)
     }
 
     private func refreshAfterHealthAction() {
@@ -508,6 +483,14 @@ final class CarPlayCoordinator: NSObject {
         listTemplate.updateSections(sections)
     }
 
+    private func refreshVisibleTemplate() {
+        guard interfaceController?.topTemplate is CPListTemplate else {
+            return
+        }
+
+        refreshLibraryLists()
+    }
+
     private func dismissPresentedTemplate() {
         interfaceController?.dismissTemplate(animated: true, completion: nil)
     }
@@ -530,19 +513,5 @@ final class CarPlayCoordinator: NSObject {
 extension CarPlayCoordinator: CPNowPlayingTemplateObserver {
     func nowPlayingTemplateUpNextButtonTapped(_ nowPlayingTemplate: CPNowPlayingTemplate) {
         setRootTemplate(animated: true)
-    }
-}
-
-private enum CarPlayHealthActionError: LocalizedError {
-    case noCurrentTrack
-    case noCurrentPlaylist
-
-    var errorDescription: String? {
-        switch self {
-        case .noCurrentTrack:
-            "Choose a linked playlist track first."
-        case .noCurrentPlaylist:
-            "The current playback queue is not linked to a playlist."
-        }
     }
 }

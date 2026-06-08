@@ -103,6 +103,56 @@ Prefer adaptive SwiftUI structure across targets:
 
 ------------------------------------------------------------------------
 
+## Shared Playback Surface Infrastructure
+
+All playback surfaces should use **common playback, persistence, presentation,
+and action infrastructure** so actions performed in one surface immediately
+affect the others.
+
+This applies to SwiftUI app views, CarPlay, Lock Screen controls, Control
+Center, Siri, AirPods/headset controls, remote commands, Dynamic Island,
+widgets, shortcuts, and any other place that can start, stop, skip, queue,
+shuffle, repeat, or mutate current-track state.
+
+Agents should:
+
+-   Route shared actions through common controllers, use cases, services, and
+    repositories rather than duplicating surface-specific logic.
+-   Treat CarPlay templates, SwiftUI views, remote command handlers, widgets,
+    and other surfaces as thin adapters over shared state and shared
+    presentation models.
+-   Ensure playback, queue, shuffle, repeat, and current-track health actions
+    update the same observable state regardless of which surface initiated the
+    action.
+-   Ensure surface-initiated actions update the state and command metadata used
+    by SwiftUI, CarPlay, Lock Screen, Control Center, Siri, AirPods, Dynamic
+    Island, and remote controls.
+-   Add tests at the shared-controller or use-case layer when possible, so both
+    app UI and external playback surfaces are protected by the same regression
+    coverage.
+
+How:
+
+-   Put durable behavior in shared types such as playback controllers, action
+    services, repositories, presentation factories, and command services.
+-   Route system playback events through the same command path used by the app,
+    typically `MPRemoteCommandCenter` handlers calling the shared playback
+    controller.
+-   After persistence writes that affect current playback UI, update the shared
+    observable playback state immediately rather than waiting for polling or a
+    later MusicKit refresh.
+-   After any surface-initiated playback change, reconcile local queue state and
+    now-playing metadata through the shared playback controller so SwiftUI rows,
+    now-playing views, Dynamic Island metadata, CarPlay controls, and system
+    playback surfaces stay in sync.
+-   When refreshing CarPlay templates, update the currently visible template
+    where practical instead of resetting the template stack, so browsing state
+    is not lost during playback or background refreshes.
+-   Keep surface-specific code limited to platform APIs, view/template
+    construction, navigation, presentation, and adapter glue.
+
+------------------------------------------------------------------------
+
 ## Keep Views Small
 
 Views should remain **composable and focused**.

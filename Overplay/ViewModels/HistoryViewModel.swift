@@ -8,8 +8,10 @@ final class HistoryViewModel {
     struct Dependencies {
         var restoreTrack: (PlaylistItemRecord, PlaylistRecord?, ModelContext) throws -> Void
 
-        static let live = Self { item, playlist, context in
-            try TrackHealthActionService.restoreTrack(item, playlist: playlist, in: context)
+        static func live(playbackController: PlaybackController) -> Self {
+            Self { item, playlist, context in
+                try playbackController.restoreTrack(item, playlist: playlist, context: context)
+            }
         }
     }
 
@@ -53,7 +55,7 @@ final class HistoryViewModel {
         playlistItems: [PlaylistItemRecord],
         playlists: [PlaylistRecord],
         context: ModelContext,
-        dependencies: Dependencies = .live
+        dependencies: Dependencies
     ) {
         guard let item = restorableItem(for: row, playlistItems: playlistItems) else { return }
 

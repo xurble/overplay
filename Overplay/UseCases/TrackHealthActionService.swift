@@ -1,7 +1,13 @@
 import Foundation
+import OSLog
 import SwiftData
 
 enum TrackHealthActionService {
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "Overplay",
+        category: "TrackHealth"
+    )
+
     static func keepCurrentTrack(
         _ item: PlaylistItemRecord,
         playlist: PlaylistRecord,
@@ -32,6 +38,7 @@ enum TrackHealthActionService {
         message: String,
         in context: ModelContext
     ) throws {
+        let previousSkipCount = item.skipCount
         item.skipCount = 0
         item.updatedAt = .now
         EventRepository.logHistory(
@@ -44,6 +51,9 @@ enum TrackHealthActionService {
             in: context
         )
         try context.save()
+        logger.info(
+            "Reset skip count for playlist \(playlist.musicPlaylistID, privacy: .public), item \(item.id.uuidString, privacy: .public), previous \(previousSkipCount, privacy: .public)"
+        )
     }
 
     static func protectTrack(

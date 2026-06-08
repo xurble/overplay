@@ -467,6 +467,7 @@ final class PlaybackController {
         do {
             try await player.skipToNextEntry()
             advanceActiveQueueIndex(by: 1)
+            updateDisplayedTrackFromActiveQueue(context: context)
             await refresh(context: context)
         } catch {
             if let skippedTrackID,
@@ -487,6 +488,7 @@ final class PlaybackController {
         do {
             try await player.skipToPreviousEntry()
             advanceActiveQueueIndex(by: -1)
+            updateDisplayedTrackFromActiveQueue(context: context)
             await refresh(context: context)
         } catch {
             statusMessage = error.localizedDescription
@@ -635,6 +637,80 @@ final class PlaybackController {
         }
         currentPlaylistItem = item
         syncPlaybackMetadata(for: musicItemID, context: context)
+    }
+
+    @discardableResult
+    func protectCurrentTrack(context: ModelContext, message: String = "Protected by user") -> Bool {
+        guard let musicItemID = currentTrack?.id,
+              let playlist = try? currentPlaylist(in: context),
+              let item = try? PlaybackSessionSupport.resolvePlaylistItem(
+                  forMusicItemID: musicItemID,
+                  currentPlaylistItem: currentPlaylistItem,
+                  playlist: playlist,
+                  in: context
+              ) else {
+            statusMessage = "Choose a linked playlist track to protect."
+            return false
+        }
+
+        do {
+            try TrackHealthActionService.protectTrack(
+                item,
+                playlist: playlist,
+                message: message,
+                in: context
+            )
+        } catch {
+            statusMessage = error.localizedDescription
+            return false
+        }
+        currentPlaylistItem = item
+        syncPlaybackMetadata(for: musicItemID, context: context)
+        return true
+    }
+
+    @discardableResult
+    func resetCurrentSkipCount(context: ModelContext, message: String = "Skip count reset by user") -> Bool {
+        guard let musicItemID = currentTrack?.id,
+              let playlist = try? currentPlaylist(in: context),
+              let item = try? PlaybackSessionSupport.resolvePlaylistItem(
+                  forMusicItemID: musicItemID,
+                  currentPlaylistItem: currentPlaylistItem,
+                  playlist: playlist,
+                  in: context
+              ) else {
+            statusMessage = "Choose a linked playlist track to reset."
+            return false
+        }
+
+        do {
+            try TrackHealthActionService.resetSkipCount(
+                item,
+                playlist: playlist,
+                message: message,
+                in: context
+            )
+        } catch {
+            statusMessage = error.localizedDescription
+            return false
+        }
+        currentPlaylistItem = item
+        syncPlaybackMetadata(for: musicItemID, context: context)
+        return true
+    }
+
+    func resetAllLocalStats(context: ModelContext) throws {
+        try PlaylistItemRepository.resetAllStats(in: context)
+        refreshCurrentPlaybackMetadata(context: context)
+    }
+
+    func restoreTrack(
+        _ item: PlaylistItemRecord,
+        playlist: PlaylistRecord?,
+        context: ModelContext
+    ) throws {
+        try TrackHealthActionService.restoreTrack(item, playlist: playlist, in: context)
+        refreshCurrentPlaybackMetadata(context: context)
     }
 
     func evictCurrent(settings: OverplaySettings, context: ModelContext) async {
@@ -886,7 +962,6 @@ final class PlaybackController {
         }
 
         if let currentPlaylistItem,
-           let playlist = try? currentPlaylist(in: context),
            (try? PlaybackSessionSupport.itemMatchesMusicItemID(
                currentPlaylistItem,
                musicItemID: musicItemID,
@@ -912,6 +987,11 @@ final class PlaybackController {
         }
     }
 
+    private func refreshCurrentPlaybackMetadata(context: ModelContext) {
+        guard let musicItemID = currentTrack?.id else { return }
+        syncPlaybackMetadata(for: musicItemID, context: context)
+    }
+
     private func markActiveSessionEvaluatedWithoutSkip() {
         activeSession = PlaybackSessionEvaluationService.markEvaluatedWithoutSkip(
             activeSession: activeSession,
@@ -925,12 +1005,37 @@ final class PlaybackController {
         playbackItemMetadataVersion += 1
     }
 
+    private func updateDisplayedTrackFromActiveQueue(context: ModelContext) {
+        guard let localTrackID = activeQueueCurrentLocalTrackID,
+              let item = try? playlistItem(localTrackID: localTrackID, context: context),
+              let track = try? TrackRecordRepository.track(id: item.trackID, in: context) else {
+            return
+        }
+
+        let musicItemID = track.catalogID ?? track.libraryID
+        guard let musicItemID else { return }
+
+        currentPlaylistItem = item
+        currentTrack = CurrentPlaybackTrack(track, musicItemID: musicItemID, item: item)
+        durationSeconds = currentTrack?.durationSeconds
+        bumpPlaybackItemMetadataVersion()
+        NowPlayingMetadataService.update(track: currentTrack, elapsed: elapsedSeconds, isPlaying: isPlaying)
+        persistLocalPlaybackState(musicItemID: musicItemID)
+    }
+
     private func resolvedCurrentMusicItemID(context: ModelContext) -> String? {
         if let queueReportedTrackID = player.queue.currentEntry?.item?.id.rawValue {
             if let localTrackID = try? PlaybackQueueCoordinator.localTrackID(matching: queueReportedTrackID, context: context) {
                 updateActiveQueueCurrentTrackID(localTrackID)
             }
             return queueReportedTrackID
+        }
+
+        if let localTrackID = activeQueueCurrentLocalTrackID,
+           let item = try? playlistItem(localTrackID: localTrackID, context: context),
+           let track = try? TrackRecordRepository.track(id: item.trackID, in: context),
+           let musicItemID = track.catalogID ?? track.libraryID {
+            return musicItemID
         }
 
         return activeSession?.trackID ?? currentTrack?.id

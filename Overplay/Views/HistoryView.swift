@@ -3,6 +3,7 @@ import SwiftUI
 
 struct HistoryView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(PlaybackController.self) private var playbackController
 
     @Query(sort: \HistoryEvent.createdAt, order: .reverse) private var events: [HistoryEvent]
     @State private var playlists: [PlaylistRecord] = []
@@ -33,7 +34,13 @@ struct HistoryView: View {
 
             ForEach(rows) { row in
                 HistoryEventRowView(row: row, canRestore: restorableItem(for: row) != nil) {
-                    viewModel.restore(row, playlistItems: playlistItems, playlists: playlists, context: modelContext)
+                    viewModel.restore(
+                        row,
+                        playlistItems: playlistItems,
+                        playlists: playlists,
+                        context: modelContext,
+                        dependencies: dependencies
+                    )
                 }
             }
 
@@ -79,6 +86,10 @@ struct HistoryView: View {
         }
         tracks = (try? TrackRecordRepository.tracks(ids: trackIDs, in: modelContext)) ?? []
         playlistItems = (try? PlaylistItemRepository.items(forPlaylistIDs: playlistIDs, in: modelContext)) ?? []
+    }
+
+    private var dependencies: HistoryViewModel.Dependencies {
+        .live(playbackController: playbackController)
     }
 }
 
@@ -176,5 +187,6 @@ private struct HistoryBadgeView: View {
     NavigationStack {
         HistoryView()
     }
+    .environment(PlaybackController())
     .modelContainer(PreviewContainer.make())
 }

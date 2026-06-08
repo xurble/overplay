@@ -49,7 +49,9 @@ struct TrackHealthActionServiceTests {
         )
 
         let history = try context.fetch(FetchDescriptor<HistoryEvent>())
+        let persistedItem = try #require(try PlaylistItemRepository.item(id: item.id, in: context))
         #expect(item.skipCount == 0)
+        #expect(persistedItem.skipCount == 0)
         #expect(history.first?.eventType == .skipIgnored)
         #expect(history.first?.message == "Skip count reset in CarPlay")
         #expect(history.first?.skipCountAtEvent == 0)
