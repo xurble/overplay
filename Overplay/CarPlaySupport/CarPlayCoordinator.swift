@@ -1,26 +1,38 @@
 import CarPlay
 import Foundation
+import Observation
 import SwiftData
 import UIKit
 
+struct CarPlayNowPlayingButtonSignature: Equatable {
+    var trackID: String?
+    var skipCount: Int
+    var isProtected: Bool
+    var isEvicted: Bool
+    var shuffleEnabled: Bool
+    var repeatEnabled: Bool
+
+    static func make(from playbackController: PlaybackController) -> Self {
+        Self(
+            trackID: playbackController.currentTrack?.id,
+            skipCount: playbackController.displayedSkipCount,
+            isProtected: playbackController.displayedIsProtected,
+            isEvicted: playbackController.displayedIsEvicted,
+            shuffleEnabled: playbackController.shuffleEnabled,
+            repeatEnabled: playbackController.repeatEnabled
+        )
+    }
+}
+
 @MainActor
 final class CarPlayCoordinator: NSObject {
-    private struct NowPlayingButtonSignature: Equatable {
-        var trackID: String?
-        var skipCount: Int
-        var isProtected: Bool
-        var isEvicted: Bool
-        var shuffleEnabled: Bool
-        var repeatEnabled: Bool
-    }
-
     private weak var interfaceController: CPInterfaceController?
     private var playbackController: PlaybackController?
     private var remoteCommandService: RemoteCommandService?
     private var modelContext: ModelContext?
     private var refreshTask: Task<Void, Never>?
-    private var nowPlayingRefreshTask: Task<Void, Never>?
-    private var lastNowPlayingButtonSignature: NowPlayingButtonSignature?
+    private var playbackObservationGeneration = 0
+    private var lastNowPlayingButtonSignature: CarPlayNowPlayingButtonSignature?
     private var visiblePlaylistID: UUID?
 
     func connect(interfaceController: CPInterfaceController, runtime: AppRuntime) {
@@ -35,7 +47,7 @@ final class CarPlayCoordinator: NSObject {
         }
 
         configureNowPlayingTemplate()
-        startNowPlayingRefresh()
+        startPlaybackObservation()
         setRootTemplate(animated: false)
 
         refreshTask?.cancel()
@@ -48,9 +60,8 @@ final class CarPlayCoordinator: NSObject {
 
     func disconnect() {
         refreshTask?.cancel()
-        nowPlayingRefreshTask?.cancel()
         refreshTask = nil
-        nowPlayingRefreshTask = nil
+        stopPlaybackObservation()
         interfaceController = nil
         modelContext = nil
         playbackController = nil
@@ -247,19 +258,40 @@ final class CarPlayCoordinator: NSObject {
         updateNowPlayingButtons(force: true)
     }
 
-    private func startNowPlayingRefresh() {
-        nowPlayingRefreshTask?.cancel()
-        nowPlayingRefreshTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled else { return }
-                self?.updateNowPlayingButtons(force: false)
+    private func startPlaybackObservation() {
+        playbackObservationGeneration += 1
+        observePlaybackControllerForNowPlayingButtons(generation: playbackObservationGeneration)
+    }
+
+    private func stopPlaybackObservation() {
+        playbackObservationGeneration += 1
+    }
+
+    private func observePlaybackControllerForNowPlayingButtons(generation: Int) {
+        guard generation == playbackObservationGeneration,
+              let playbackController else {
+            return
+        }
+
+        withObservationTracking {
+            _ = playbackController.currentTrack?.id
+            _ = playbackController.displayedSkipCount
+            _ = playbackController.displayedIsProtected
+            _ = playbackController.displayedIsEvicted
+            _ = playbackController.shuffleEnabled
+            _ = playbackController.repeatEnabled
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, generation == self.playbackObservationGeneration else { return }
+                self.updateNowPlayingButtons(force: false)
+                self.observePlaybackControllerForNowPlayingButtons(generation: generation)
             }
         }
     }
 
     private func updateNowPlayingButtons(force: Bool) {
-        let signature = nowPlayingButtonSignature()
+        guard let playbackController else { return }
+        let signature = CarPlayNowPlayingButtonSignature.make(from: playbackController)
         guard force || signature != lastNowPlayingButtonSignature else { return }
 
         lastNowPlayingButtonSignature = signature
@@ -268,17 +300,6 @@ final class CarPlayCoordinator: NSObject {
             makeRepeatButton(),
             makeTrackHealthButton()
         ])
-    }
-
-    private func nowPlayingButtonSignature() -> NowPlayingButtonSignature {
-        NowPlayingButtonSignature(
-            trackID: playbackController?.currentTrack?.id,
-            skipCount: playbackController?.displayedSkipCount ?? 0,
-            isProtected: playbackController?.displayedIsProtected == true,
-            isEvicted: playbackController?.displayedIsEvicted == true,
-            shuffleEnabled: playbackController?.shuffleEnabled == true,
-            repeatEnabled: playbackController?.repeatEnabled == true
-        )
     }
 
     private func makeShuffleButton() -> CPNowPlayingShuffleButton {
