@@ -1,8 +1,6 @@
 import SwiftData
 import SwiftUI
 
-typealias EvictionHistoryView = HistoryView
-
 struct HistoryView: View {
     @Environment(\.modelContext) private var modelContext
 
