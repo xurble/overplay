@@ -4,26 +4,6 @@ import Observation
 import SwiftData
 import UIKit
 
-struct CarPlayNowPlayingButtonSignature: Equatable {
-    var trackID: String?
-    var skipCount: Int
-    var isProtected: Bool
-    var isEvicted: Bool
-    var shuffleEnabled: Bool
-    var repeatEnabled: Bool
-
-    static func make(from playbackController: PlaybackController) -> Self {
-        Self(
-            trackID: playbackController.currentTrack?.id,
-            skipCount: playbackController.displayedSkipCount,
-            isProtected: playbackController.displayedIsProtected,
-            isEvicted: playbackController.displayedIsEvicted,
-            shuffleEnabled: playbackController.shuffleEnabled,
-            repeatEnabled: playbackController.repeatEnabled
-        )
-    }
-}
-
 @MainActor
 final class CarPlayCoordinator: NSObject {
     private weak var interfaceController: CPInterfaceController?
@@ -290,8 +270,11 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func updateNowPlayingButtons(force: Bool) {
-        guard let playbackController else { return }
-        let signature = CarPlayNowPlayingButtonSignature.make(from: playbackController)
+        guard let playbackController, let settings = currentSettings() else { return }
+        let signature = CarPlayNowPlayingButtonSignature.make(
+            playbackController: playbackController,
+            settings: settings
+        )
         guard force || signature != lastNowPlayingButtonSignature else { return }
 
         lastNowPlayingButtonSignature = signature
@@ -339,34 +322,34 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func healthButtonImage() -> UIImage {
-        let symbolName = switch currentHealthStatus() {
-        case .healthy:
-            "checkmark.circle.fill"
-        case .caution:
-            "exclamationmark.circle.fill"
-        case .critical:
-            "exclamationmark.triangle.fill"
-        }
-
+        let health = trackHealthPresentation() ?? TrackHealthPresentation(
+            status: .healthy,
+            isEvicted: false,
+            isProtected: false
+        )
         let configuration = UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold)
-        return (UIImage(systemName: symbolName, withConfiguration: configuration) ?? UIImage())
+        return (UIImage(systemName: health.systemImage, withConfiguration: configuration) ?? UIImage())
             .withRenderingMode(.alwaysTemplate)
     }
 
-    private func currentHealthStatus() -> TrackHealthStatus {
-        guard let playbackController else { return .healthy }
-        let evictAfterSkips: Int
-        if let modelContext, let settings = try? SettingsRepository.settings(in: modelContext) {
-            evictAfterSkips = settings.evictAfterSkips
-        } else {
-            evictAfterSkips = 3
-        }
+    private func currentSettings() -> OverplaySettings? {
+        guard let modelContext else { return nil }
+        return try? SettingsRepository.settings(in: modelContext)
+    }
 
-        return TrackHealthStatus.resolve(
-            skipCount: playbackController.displayedSkipCount,
-            evictAfterSkips: evictAfterSkips,
-            isEvicted: playbackController.displayedIsEvicted,
-            isProtected: playbackController.displayedIsProtected
+    private func nowPlayingPresentation() -> NowPlayingPresentation? {
+        guard let playbackController, let settings = currentSettings() else { return nil }
+        return NowPlayingPresentationFactory.presentation(
+            playbackController: playbackController,
+            settings: settings
+        )
+    }
+
+    private func trackHealthPresentation() -> TrackHealthPresentation? {
+        guard let playbackController, let settings = currentSettings() else { return nil }
+        return NowPlayingPresentationFactory.trackHealthPresentation(
+            playbackController: playbackController,
+            settings: settings
         )
     }
 
@@ -406,18 +389,16 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func trackHealthMessage() -> String {
-        guard let track = playbackController?.currentTrack else {
+        guard let nowPlaying = nowPlayingPresentation(), nowPlaying.trackID != nil else {
             return "No track is currently playing."
         }
 
-        return switch currentHealthStatus() {
-        case .healthy:
-            "\(track.title) is healthy."
-        case .caution:
-            "\(track.title) has accumulated skips."
-        case .critical:
-            "\(track.title) is one skip away from eviction."
-        }
+        let health = trackHealthPresentation() ?? TrackHealthPresentation(
+            status: .healthy,
+            isEvicted: false,
+            isProtected: false
+        )
+        return "\(nowPlaying.title): \(health.title)."
     }
 
     private func resetCurrentSkipCount() {

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 import Testing
 @testable import Overplay
 
@@ -150,5 +151,69 @@ struct NowPlayingPresentationTests {
         #expect(presentation.elapsedText == "2:05")
         #expect(presentation.durationText == "0:00")
         #expect(presentation.skipCountText == "Skips: 2 / 3")
+    }
+}
+
+@Suite("Now playing presentation factory")
+struct NowPlayingPresentationFactoryTests {
+    @Test("factory resolves protected evicted and at-risk health states")
+    @MainActor
+    func factoryHealthStates() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let settings = try SettingsRepository.settings(in: context)
+        settings.evictAfterSkips = 3
+        let controller = PlaybackController()
+        controller.currentTrack = CurrentPlaybackTrack(id: "music-1", title: "Track", artistName: "Artist")
+        let track = TrackRecord(title: "Track", artistName: "Artist")
+        context.insert(track)
+        let playlistID = UUID()
+
+        controller.currentPlaylistItem = PlaylistItemRecord(playlistID: playlistID, trackID: track.id, skipCount: 0)
+        let healthy = NowPlayingPresentationFactory.trackHealthPresentation(
+            playbackController: controller,
+            settings: settings
+        )
+        #expect(healthy.status == .healthy)
+
+        controller.currentPlaylistItem = PlaylistItemRecord(playlistID: playlistID, trackID: track.id, skipCount: 1)
+        let caution = NowPlayingPresentationFactory.trackHealthPresentation(
+            playbackController: controller,
+            settings: settings
+        )
+        #expect(caution.status == .caution)
+
+        controller.currentPlaylistItem = PlaylistItemRecord(playlistID: playlistID, trackID: track.id, skipCount: 2)
+        let critical = NowPlayingPresentationFactory.trackHealthPresentation(
+            playbackController: controller,
+            settings: settings
+        )
+        #expect(critical.status == .critical)
+
+        controller.currentPlaylistItem = PlaylistItemRecord(
+            playlistID: playlistID,
+            trackID: track.id,
+            skipCount: 0,
+            protected: true
+        )
+        let protected = NowPlayingPresentationFactory.trackHealthPresentation(
+            playbackController: controller,
+            settings: settings
+        )
+        #expect(protected.title == "Protected")
+    }
+
+    @Test("factory handles missing current track")
+    @MainActor
+    func factoryMissingTrack() {
+        let controller = PlaybackController()
+        let settings = OverplaySettings()
+
+        let presentation = NowPlayingPresentationFactory.presentation(
+            playbackController: controller,
+            settings: settings
+        )
+        #expect(presentation.trackID == nil)
+        #expect(presentation.title == "Nothing playing")
     }
 }

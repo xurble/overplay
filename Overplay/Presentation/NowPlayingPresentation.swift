@@ -1,17 +1,20 @@
 import Foundation
 
 struct NowPlayingPresentation: Equatable, Sendable {
+    let trackID: String?
     let title: String
     let artistName: String
     let albumTitle: String?
     let progress: Double
     let elapsedText: String
     let durationText: String
+    let skipCount: Int
     let skipCountText: String
     let isEvicted: Bool
     let isProtected: Bool
 
     init(
+        trackID: String? = nil,
         title: String?,
         artistName: String?,
         albumTitle: String?,
@@ -23,12 +26,14 @@ struct NowPlayingPresentation: Equatable, Sendable {
         isEvicted: Bool,
         isProtected: Bool
     ) {
+        self.trackID = trackID
         self.title = title ?? "Nothing playing"
         self.artistName = artistName ?? "Choose Play Overplay from the dashboard."
         self.albumTitle = albumTitle
         self.progress = progress
         self.elapsedText = Self.formatTime(elapsedSeconds)
         self.durationText = Self.formatTime(durationSeconds ?? 0)
+        self.skipCount = skipCount
         self.skipCountText = "Skips: \(skipCount) / \(evictAfterSkips)"
         self.isEvicted = isEvicted
         self.isProtected = isProtected

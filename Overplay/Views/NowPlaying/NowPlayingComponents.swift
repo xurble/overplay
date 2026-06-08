@@ -127,11 +127,7 @@ struct PlaybackModeControlsView: View {
     }
 
     private var controlsPresentation: PlaybackControlsPresentation {
-        PlaybackControlsPresentation(
-            isPlaying: playbackController.isPlaying,
-            shuffleEnabled: playbackController.shuffleEnabled,
-            repeatEnabled: playbackController.repeatEnabled
-        )
+        NowPlayingPresentationFactory.playbackControlsPresentation(playbackController: playbackController)
     }
 }
 
@@ -161,25 +157,4 @@ struct TrackActionControlsView: View {
         }
         .buttonStyle(.bordered)
     }
-}
-
-enum NowPlayingPresentationFactory {
-    static func presentation(
-        playbackController: PlaybackController,
-        settings: OverplaySettings
-    ) -> NowPlayingPresentation {
-        NowPlayingPresentation(
-            title: playbackController.currentTrack?.title,
-            artistName: playbackController.currentTrack?.artistName,
-            albumTitle: playbackController.currentTrack?.albumTitle,
-            progress: playbackController.progress,
-            elapsedSeconds: playbackController.elapsedSeconds,
-            durationSeconds: playbackController.durationSeconds,
-            skipCount: playbackController.displayedSkipCount,
-            evictAfterSkips: settings.evictAfterSkips,
-            isEvicted: playbackController.displayedIsEvicted,
-            isProtected: playbackController.displayedIsProtected
-        )
-    }
-
 }
