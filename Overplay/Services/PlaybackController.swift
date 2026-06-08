@@ -310,7 +310,7 @@ final class PlaybackController {
             let queueEntries = try orderedCachedQueueEntries(
                 for: playlist.musicPlaylistID,
                 startingTrackID: startingTrackID,
-                promoteStartingTrackInShuffle: trackRecord != nil,
+                promoteStartingTrackInShuffle: false,
                 context: context
             )
             guard !queueEntries.isEmpty else {

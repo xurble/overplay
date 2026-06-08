@@ -55,7 +55,14 @@ struct PlaylistManagementView: View {
                                 track: track,
                                 item: item,
                                 playlistID: playlist.musicPlaylistID,
-                                isCurrent: viewModel.isCurrentTrack(track, currentTrack: playbackController.currentTrack)
+                                isCurrent: viewModel.isCurrentItem(
+                                    item,
+                                    track: track,
+                                    playlist: playlist,
+                                    currentPlaylistID: playbackController.currentPlaylistID,
+                                    currentPlaylistItem: playbackController.currentPlaylistItem,
+                                    currentTrack: playbackController.currentTrack
+                                )
                             )
                         }
                         .buttonStyle(.plain)

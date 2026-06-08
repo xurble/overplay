@@ -130,7 +130,7 @@ final class CarPlayCoordinator: NSObject {
 
     private func trackItem(_ summary: TrackSummaryPresentation, playlist: PlaylistRecord) -> CPListItem {
         let item = CPListItem(text: summary.title, detailText: summary.detailText)
-        item.isPlaying = playbackController?.currentPlaylistItem?.id == summary.id
+        item.isPlaying = isCurrentTrack(summary, in: playlist)
         item.handler = { [weak self] _, completion in
             Task { @MainActor in
                 await self?.play(summary, in: playlist)
@@ -138,6 +138,24 @@ final class CarPlayCoordinator: NSObject {
             }
         }
         return item
+    }
+
+    private func isCurrentTrack(_ summary: TrackSummaryPresentation, in playlist: PlaylistRecord) -> Bool {
+        guard let playbackController,
+              let modelContext,
+              let trackID = summary.trackID,
+              let track = try? TrackRecordRepository.track(id: trackID, in: modelContext) else {
+            return false
+        }
+
+        return CurrentPlaylistItemMatcher.isCurrent(
+            itemID: summary.id,
+            track: track,
+            playlist: playlist,
+            currentPlaylistID: playbackController.currentPlaylistID,
+            currentPlaylistItem: playbackController.currentPlaylistItem,
+            currentTrack: playbackController.currentTrack
+        )
     }
 
     private func disabledItem(title: String, detail: String) -> CPListItem {
@@ -176,6 +194,7 @@ final class CarPlayCoordinator: NSObject {
         let settings = try SettingsRepository.settings(in: modelContext)
         let tracks = try CarPlayLibrarySnapshot.trackSummaries(
             forPlaylistID: playlist.id,
+            playbackModeState: playbackController?.playbackModeState(for: playlist.musicPlaylistID),
             evictAfterSkips: settings.evictAfterSkips,
             in: modelContext
         )

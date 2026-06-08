@@ -90,8 +90,22 @@ final class PlaylistManagementViewModel {
         isCurrentPlaylist ? "Playing" : "Play"
     }
 
-    func isCurrentTrack(_ track: TrackRecord, currentTrack: CurrentPlaybackTrack?) -> Bool {
-        currentTrack?.id == track.catalogID || currentTrack?.id == track.libraryID
+    func isCurrentItem(
+        _ item: PlaylistItemRecord,
+        track: TrackRecord,
+        playlist: PlaylistRecord,
+        currentPlaylistID: String?,
+        currentPlaylistItem: PlaylistItemRecord?,
+        currentTrack: CurrentPlaybackTrack?
+    ) -> Bool {
+        CurrentPlaylistItemMatcher.isCurrent(
+            itemID: item.id,
+            track: track,
+            playlist: playlist,
+            currentPlaylistID: currentPlaylistID,
+            currentPlaylistItem: currentPlaylistItem,
+            currentTrack: currentTrack
+        )
     }
 
     func play(

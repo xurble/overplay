@@ -82,4 +82,42 @@ struct CarPlayLibrarySnapshotTests {
         #expect(tracks.last?.detailText == "The Killers - 2 skips")
         #expect(tracks.last?.healthStatus == .critical)
     }
+
+    @Test func trackSummariesFollowStoredShuffleOrder() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = ModelContext(container)
+
+        let playlist = PlaylistRecord(musicPlaylistID: "one", name: "Overplay", role: .oneTruePlaylist)
+        context.insert(playlist)
+
+        let firstTrack = TrackRecord(title: "First", artistName: "Artist")
+        let secondTrack = TrackRecord(title: "Second", artistName: "Artist")
+        let thirdTrack = TrackRecord(title: "Third", artistName: "Artist")
+        context.insert(firstTrack)
+        context.insert(secondTrack)
+        context.insert(thirdTrack)
+
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: firstTrack.id, sortOrder: 1))
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: secondTrack.id, sortOrder: 2))
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: thirdTrack.id, sortOrder: 3))
+        try context.save()
+
+        let tracks = try CarPlayLibrarySnapshot.trackSummaries(
+            forPlaylistID: playlist.id,
+            playbackModeState: PlaybackModeState(
+                playerID: "main",
+                musicPlaylistID: playlist.musicPlaylistID,
+                shuffleEnabled: true,
+                orderedTrackIDs: [
+                    thirdTrack.id.uuidString,
+                    firstTrack.id.uuidString,
+                    secondTrack.id.uuidString
+                ]
+            ),
+            evictAfterSkips: 3,
+            in: context
+        )
+
+        #expect(tracks.map(\.title) == ["Third", "First", "Second"])
+    }
 }

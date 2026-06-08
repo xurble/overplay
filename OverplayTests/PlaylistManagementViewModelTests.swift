@@ -33,14 +33,21 @@ struct PlaylistManagementViewModelTests {
         #expect(orderedItems.map(\.id) == [secondItem.id, firstItem.id])
     }
 
-    @Test("current track matches catalog or library identifier")
-    func currentTrackMatchesKnownMusicIdentifiers() {
+    @Test("current item uses shared current playlist item matcher")
+    func currentItemUsesSharedCurrentPlaylistItemMatcher() {
         let viewModel = PlaylistManagementViewModel()
+        let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main")
         let track = TrackRecord(catalogID: "catalog", libraryID: "library", title: "Track", artistName: "Artist")
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id)
 
-        #expect(viewModel.isCurrentTrack(track, currentTrack: CurrentPlaybackTrack(id: "catalog", title: "Track", artistName: "Artist")))
-        #expect(viewModel.isCurrentTrack(track, currentTrack: CurrentPlaybackTrack(id: "library", title: "Track", artistName: "Artist")))
-        #expect(!viewModel.isCurrentTrack(track, currentTrack: CurrentPlaybackTrack(id: "other", title: "Track", artistName: "Artist")))
+        #expect(viewModel.isCurrentItem(
+            item,
+            track: track,
+            playlist: playlist,
+            currentPlaylistID: "main",
+            currentPlaylistItem: item,
+            currentTrack: CurrentPlaybackTrack(id: "other", title: "Track", artistName: "Artist")
+        ))
     }
 
     @Test("sync reports success and reconciles stored order")

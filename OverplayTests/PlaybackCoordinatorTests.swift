@@ -26,6 +26,41 @@ struct PlaybackCoordinatorTests {
         #expect(Set(state.orderedTrackIDs) == Set(trackIDs.map(\.uuidString)))
     }
 
+    @Test("starting playback at a track keeps the stored shuffled order")
+    func startingPlaybackAtTrackKeepsStoredShuffledOrder() throws {
+        let defaults = try #require(UserDefaults(suiteName: "OverplayTests.PlaybackCoordinator.\(UUID().uuidString)"))
+        let trackIDs = [UUID(), UUID(), UUID(), UUID()]
+        let orderTracks = playbackItems(trackIDs)
+        let storedOrder = [
+            trackIDs[2].uuidString,
+            trackIDs[0].uuidString,
+            trackIDs[3].uuidString,
+            trackIDs[1].uuidString
+        ]
+        PlaybackModeStore.save(
+            PlaybackModeState(
+                playerID: "main",
+                musicPlaylistID: "playlist-1",
+                shuffleEnabled: true,
+                orderedTrackIDs: storedOrder
+            ),
+            to: defaults
+        )
+
+        let orderedTrackIDs = PlaybackModeCoordinator.orderedTrackIDs(
+            orderTracks: orderTracks,
+            playerID: "main",
+            playlistID: "playlist-1",
+            startingTrackID: trackIDs[1].uuidString,
+            promoteStartingTrackInShuffle: false,
+            defaults: defaults
+        )
+
+        let state = PlaybackModeStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults)
+        #expect(orderedTrackIDs == storedOrder)
+        #expect(state.orderedTrackIDs == storedOrder)
+    }
+
     @Test("repeat restart keeps last played last for small shuffled queues")
     func repeatRestartKeepsLastPlayedLastForSmallShuffledQueues() throws {
         let defaults = try #require(UserDefaults(suiteName: "OverplayTests.PlaybackCoordinator.\(UUID().uuidString)"))
