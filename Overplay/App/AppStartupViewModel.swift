@@ -70,7 +70,7 @@ final class AppStartupViewModel {
         } refreshAuthorization: {
             await authorizationService.refresh()
         } installRemoteCommands: {
-            runtime.remoteCommandService.install(playbackController: playbackController, context: modelContext)
+            runtime.remoteCommandService.activate(playbackController: playbackController, context: modelContext)
         } restoreLocalPlaybackDisplay: {
             playbackController.restoreLocalPlaybackDisplay(context: modelContext)
         } startPeriodicPlaylistSync: {

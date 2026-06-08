@@ -8,11 +8,19 @@ import UIKit
 
 @MainActor
 final class RemoteCommandService {
-    private var isInstalled = false
+    private(set) var isActive = false
+    private(set) var playbackController: PlaybackController?
+    private(set) var context: ModelContext?
+    private var targetTokens = [Any]()
 
-    func install(playbackController: PlaybackController, context: ModelContext) {
-        guard !isInstalled else { return }
-        isInstalled = true
+    var registeredTargetCount: Int {
+        targetTokens.count
+    }
+
+    func activate(playbackController: PlaybackController, context: ModelContext) {
+        update(playbackController: playbackController, context: context)
+        guard !isActive else { return }
+        isActive = true
 
         #if canImport(UIKit)
         UIApplication.shared.beginReceivingRemoteControlEvents()
@@ -28,31 +36,49 @@ final class RemoteCommandService {
         commandCenter.changeRepeatModeCommand.isEnabled = true
         syncPlaybackModes(from: playbackController)
 
-        commandCenter.playCommand.addTarget { _ in
+        targetTokens.append(commandCenter.playCommand.addTarget { [weak self] _ in
+            guard let self, let playbackController = self.playbackController, let context = self.context else {
+                return .commandFailed
+            }
             Task { await playbackController.play(context: context) }
             return .success
-        }
-        commandCenter.pauseCommand.addTarget { _ in
+        })
+        targetTokens.append(commandCenter.pauseCommand.addTarget { [weak self] _ in
+            guard let playbackController = self?.playbackController else {
+                return .commandFailed
+            }
             Task { @MainActor in playbackController.pause() }
             return .success
-        }
-        commandCenter.togglePlayPauseCommand.addTarget { _ in
+        })
+        targetTokens.append(commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
+            guard let self, let playbackController = self.playbackController, let context = self.context else {
+                return .commandFailed
+            }
             Task { await playbackController.togglePlayPause(context: context) }
             return .success
-        }
-        commandCenter.nextTrackCommand.addTarget { _ in
+        })
+        targetTokens.append(commandCenter.nextTrackCommand.addTarget { [weak self] _ in
+            guard let self, let playbackController = self.playbackController, let context = self.context else {
+                return .commandFailed
+            }
             Task { @MainActor in
                 guard let settings = try? SettingsRepository.settings(in: context) else { return }
                 await playbackController.next(settings: settings, context: context)
             }
             return .success
-        }
-        commandCenter.previousTrackCommand.addTarget { _ in
+        })
+        targetTokens.append(commandCenter.previousTrackCommand.addTarget { [weak self] _ in
+            guard let self, let playbackController = self.playbackController, let context = self.context else {
+                return .commandFailed
+            }
             Task { await playbackController.previous(context: context) }
             return .success
-        }
-        commandCenter.changeShuffleModeCommand.addTarget { [weak self] event in
+        })
+        targetTokens.append(commandCenter.changeShuffleModeCommand.addTarget { [weak self] event in
             guard let event = event as? MPChangeShuffleModeCommandEvent else {
+                return .commandFailed
+            }
+            guard let self, let playbackController = self.playbackController, let context = self.context else {
                 return .commandFailed
             }
 
@@ -61,21 +87,54 @@ final class RemoteCommandService {
                     RemotePlaybackModeMapper.shuffleEnabled(for: event.shuffleType),
                     context: context
                 )
-                self?.syncPlaybackModes(from: playbackController)
+                self.syncPlaybackModes(from: playbackController)
             }
             return .success
-        }
-        commandCenter.changeRepeatModeCommand.addTarget { [weak self] event in
+        })
+        targetTokens.append(commandCenter.changeRepeatModeCommand.addTarget { [weak self] event in
             guard let event = event as? MPChangeRepeatModeCommandEvent else {
+                return .commandFailed
+            }
+            guard let self, let playbackController = self.playbackController else {
                 return .commandFailed
             }
 
             Task { @MainActor in
                 playbackController.setRepeatEnabled(RemotePlaybackModeMapper.repeatEnabled(for: event.repeatType))
-                self?.syncPlaybackModes(from: playbackController)
+                self.syncPlaybackModes(from: playbackController)
             }
             return .success
+        })
+    }
+
+    func update(playbackController: PlaybackController, context: ModelContext) {
+        self.playbackController = playbackController
+        self.context = context
+
+        if isActive {
+            syncPlaybackModes(from: playbackController)
         }
+    }
+
+    func deactivate() {
+        let commandCenter = MPRemoteCommandCenter.shared()
+        for token in targetTokens {
+            commandCenter.playCommand.removeTarget(token)
+            commandCenter.pauseCommand.removeTarget(token)
+            commandCenter.nextTrackCommand.removeTarget(token)
+            commandCenter.previousTrackCommand.removeTarget(token)
+            commandCenter.togglePlayPauseCommand.removeTarget(token)
+            commandCenter.changeShuffleModeCommand.removeTarget(token)
+            commandCenter.changeRepeatModeCommand.removeTarget(token)
+        }
+        targetTokens.removeAll()
+        playbackController = nil
+        context = nil
+        isActive = false
+
+        #if canImport(UIKit)
+        UIApplication.shared.endReceivingRemoteControlEvents()
+        #endif
     }
 
     func syncPlaybackModes(from playbackController: PlaybackController) {

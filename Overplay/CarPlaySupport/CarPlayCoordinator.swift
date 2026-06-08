@@ -31,7 +31,7 @@ final class CarPlayCoordinator: NSObject {
 
         if let modelContext {
             runtime.playbackController.startMonitoring(context: modelContext)
-            runtime.remoteCommandService.install(playbackController: runtime.playbackController, context: modelContext)
+            runtime.remoteCommandService.update(playbackController: runtime.playbackController, context: modelContext)
         }
 
         configureNowPlayingTemplate()
