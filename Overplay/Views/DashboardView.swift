@@ -167,9 +167,7 @@ struct PlaylistManagementView: View {
     var settings: OverplaySettings
     var playlist: PlaylistRecord
 
-    @State private var isSyncing = false
-    @State private var promotingItemIDs = Set<UUID>()
-    @State private var message: String?
+    @State private var viewModel = PlaylistManagementViewModel()
 
     var body: some View {
         List {
@@ -213,7 +211,7 @@ struct PlaylistManagementView: View {
                                 track: track,
                                 item: item,
                                 playlistID: playlist.musicPlaylistID,
-                                isCurrent: isCurrentTrack(track)
+                                isCurrent: viewModel.isCurrentTrack(track, currentTrack: playbackController.currentTrack)
                             )
                         }
                         .buttonStyle(.plain)
@@ -226,14 +224,14 @@ struct PlaylistManagementView: View {
                                     Label("Promote", systemImage: "star.fill")
                                 }
                                 .tint(.pink)
-                                .disabled(promotingItemIDs.contains(item.id))
+                                .disabled(viewModel.promotingItemIDs.contains(item.id))
                             }
                         }
                     }
                 }
             }
 
-            if let message {
+            if let message = viewModel.message {
                 Section {
                     Text(message)
                         .foregroundStyle(.secondary)
@@ -252,15 +250,15 @@ struct PlaylistManagementView: View {
                     Button {
                         Task { await playPlaylist() }
                     } label: {
-                        Label(playButtonTitle, systemImage: "play.fill")
+                        Label(viewModel.playButtonTitle(isCurrentPlaylist: playbackController.isCurrentPlaylist(playlist)), systemImage: "play.fill")
                     }
 
                     Button {
                         Task { await syncPlaylist() }
                     } label: {
-                        Label(isSyncing ? "Syncing" : "Sync", systemImage: "arrow.triangle.2.circlepath")
+                        Label(viewModel.isSyncing ? "Syncing" : "Sync", systemImage: "arrow.triangle.2.circlepath")
                     }
-                    .disabled(isSyncing)
+                    .disabled(viewModel.isSyncing)
 
                     Divider()
 
@@ -289,35 +287,32 @@ struct PlaylistManagementView: View {
         }
     }
 
-    private var visibleItems: [PlaylistItemRecord] {
-        playlistItems.filter { $0.playlistID == playlist.id }
-    }
-
     private var orderedItems: [PlaylistItemRecord] {
-        let state = playbackController.playbackModeState(for: playlist.musicPlaylistID)
-        return PlaylistDisplayOrder.orderedItems(visibleItems, state: state)
-    }
-
-    private var tracksByID: [UUID: TrackRecord] {
-        tracks.firstValueDictionary(keyedBy: \.id)
+        viewModel.orderedItems(
+            for: playlist,
+            playlistItems: playlistItems,
+            playbackModeState: playbackController.playbackModeState(for: playlist.musicPlaylistID)
+        )
     }
 
     private func track(for item: PlaylistItemRecord) -> TrackRecord? {
-        tracksByID[item.trackID]
+        viewModel.track(for: item, tracks: tracks)
     }
 
     private var summary: DashboardSummary {
-        presentationBuilder.dashboardSummary(forPlaylistID: playlist.id)
+        viewModel.summary(
+            for: playlist,
+            playlistItems: playlistItems,
+            tracks: tracks,
+            currentPlaylistID: playbackController.currentPlaylistID,
+            evictAfterSkips: settings.evictAfterSkips
+        )
     }
 
     private var playlistPresentation: PlaylistSummaryPresentation {
-        presentationBuilder.summary(for: playlist)
-    }
-
-    private var presentationBuilder: PlaylistPresentationBuilder {
-        PlaylistPresentationBuilder(
-            playlists: [playlist],
-            items: playlistItems,
+        viewModel.playlistPresentation(
+            for: playlist,
+            playlistItems: playlistItems,
             tracks: tracks,
             currentPlaylistID: playbackController.currentPlaylistID,
             evictAfterSkips: settings.evictAfterSkips
@@ -333,51 +328,43 @@ struct PlaylistManagementView: View {
         }
     }
 
-    private var playButtonTitle: String {
-        playbackController.isCurrentPlaylist(playlist) ? "Playing" : "Play"
-    }
-
-    private func isCurrentTrack(_ track: TrackRecord) -> Bool {
-        playbackController.currentTrack?.id == track.catalogID || playbackController.currentTrack?.id == track.libraryID
-    }
-
     private func play(_ item: PlaylistItemRecord, track: TrackRecord) async {
-        guard item.isPlayable else { return }
-        await playbackController.playPlaylist(playlist, startingAt: track, settings: settings, context: modelContext)
+        await viewModel.play(
+            item,
+            track: track,
+            playlist: playlist,
+            settings: settings,
+            context: modelContext,
+            dependencies: dependencies
+        )
     }
 
     private func playPlaylist() async {
-        if playbackController.isCurrentPlaylist(playlist) {
-            return
-        }
-
-        await playbackController.playPlaylist(playlist, settings: settings, context: modelContext)
+        await viewModel.playPlaylist(
+            playlist: playlist,
+            settings: settings,
+            isCurrentPlaylist: playbackController.isCurrentPlaylist(playlist),
+            context: modelContext,
+            dependencies: dependencies
+        )
     }
 
     private func syncPlaylist() async {
-        isSyncing = true
-        defer { isSyncing = false }
-
-        do {
-            let count = try await PlaylistSyncService().syncPlaylist(playlist, in: modelContext)
-            playbackController.reconcileStoredOrder(for: playlist, context: modelContext)
-            message = "Synced \(count) tracks from \(playlist.name)."
-        } catch {
-            message = error.localizedDescription
-        }
+        await viewModel.syncPlaylist(playlist, context: modelContext, dependencies: dependencies)
     }
 
     private func promote(_ item: PlaylistItemRecord, track: TrackRecord) async {
-        guard playlist.role == .triage else { return }
-        promotingItemIDs.insert(item.id)
-        defer { promotingItemIDs.remove(item.id) }
+        await viewModel.promote(
+            item,
+            track: track,
+            playlist: playlist,
+            context: modelContext,
+            dependencies: dependencies
+        )
+    }
 
-        do {
-            _ = try await PlaylistMutationService().promote(item: item, in: modelContext)
-            message = "Promoted \(track.title)."
-        } catch {
-            message = error.localizedDescription
-        }
+    private var dependencies: PlaylistManagementViewModel.Dependencies {
+        .live(playbackController: playbackController)
     }
 }
 
