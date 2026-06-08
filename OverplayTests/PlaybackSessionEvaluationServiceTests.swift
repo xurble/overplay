@@ -91,6 +91,36 @@ struct PlaybackSessionEvaluationServiceTests {
         #expect(history.first?.eventType == .playthrough)
     }
 
+    @Test("mark evaluated without skip prevents skip increment")
+    func markEvaluatedWithoutSkipPreventsSkipIncrement() throws {
+        let fixture = try makeFixture(skipCount: 0)
+        let settings = OverplaySettings(
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 0
+        )
+        let session = PlaybackSessionEvaluationService.markEvaluatedWithoutSkip(
+            activeSession: nil,
+            currentTrackID: "library-1",
+            elapsedSeconds: 15,
+            durationSeconds: 180
+        )
+
+        let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
+            activeSession: session,
+            currentTrackID: "library-1",
+            elapsedSeconds: 15,
+            durationSeconds: 180,
+            currentPlaylistItem: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings,
+            naturalCompletion: false,
+            context: fixture.context
+        )
+
+        #expect(outcome?.session.hasEvaluated == true)
+        #expect(fixture.item.skipCount == 0)
+    }
+
     @Test("protected track skips are ignored")
     func protectedTrackSkipsAreIgnored() throws {
         let fixture = try makeFixture(skipCount: 2, protected: true)
