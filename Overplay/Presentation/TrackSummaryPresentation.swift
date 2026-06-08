@@ -10,7 +10,6 @@ struct TrackSummaryPresentation: Equatable, Identifiable, Sendable {
     var artworkURLString: String?
     let skipCount: Int
     var isPlayable: Bool = true
-    var healthStatus: TrackHealthStatus?
 
     var subtitle: String {
         guard let albumTitle, !albumTitle.isEmpty else {

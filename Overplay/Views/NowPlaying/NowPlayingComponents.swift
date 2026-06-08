@@ -4,15 +4,13 @@ import SwiftUI
 struct NowPlayingArtworkView: View {
     var urlString: String?
     var playlistID: String?
-    var healthStatus: TrackHealthStatus?
     var cornerRadius: CGFloat = 18
 
     var body: some View {
         ArtworkView(
             urlString: urlString,
             playlistID: playlistID,
-            cornerRadius: cornerRadius,
-            healthStatus: healthStatus
+            cornerRadius: cornerRadius
         )
     }
 }
@@ -184,16 +182,4 @@ enum NowPlayingPresentationFactory {
         )
     }
 
-    static func healthStatus(
-        playbackController: PlaybackController,
-        settings: OverplaySettings
-    ) -> TrackHealthStatus? {
-        guard playbackController.currentTrack != nil else { return nil }
-        return TrackHealthStatus.resolve(
-            skipCount: playbackController.displayedSkipCount,
-            evictAfterSkips: settings.evictAfterSkips,
-            isEvicted: playbackController.displayedIsEvicted,
-            isProtected: playbackController.displayedIsProtected
-        )
-    }
 }

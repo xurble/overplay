@@ -101,10 +101,6 @@ struct MiniPlayerLozengeView: View {
             NowPlayingArtworkView(
                 urlString: playbackController.currentTrack?.artworkURLTemplate,
                 playlistID: playbackController.currentPlaylistID,
-                healthStatus: NowPlayingPresentationFactory.healthStatus(
-                    playbackController: playbackController,
-                    settings: settings
-                ),
                 cornerRadius: 10
             )
             .frame(width: 50, height: 50)
@@ -154,11 +150,7 @@ struct NowPlayingPaneView: View {
             VStack(spacing: compactLayout ? 12 : 18) {
                 NowPlayingArtworkView(
                     urlString: playbackController.currentTrack?.artworkURLTemplate,
-                    playlistID: playbackController.currentPlaylistID,
-                    healthStatus: NowPlayingPresentationFactory.healthStatus(
-                        playbackController: playbackController,
-                        settings: settings
-                    )
+                    playlistID: playbackController.currentPlaylistID
                 )
                 .frame(width: artworkSize, height: artworkSize)
                 .shadow(color: .black.opacity(0.28), radius: 22, y: 16)

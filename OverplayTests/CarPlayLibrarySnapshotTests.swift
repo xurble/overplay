@@ -44,7 +44,7 @@ struct CarPlayLibrarySnapshotTests {
         #expect(summaries.last?.playableTrackCount == 0)
     }
 
-    @Test func trackSummariesIncludePlayableTracksWithHealthInPlaylistOrder() throws {
+    @Test func trackSummariesIncludePlayableTracksInPlaylistOrder() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = ModelContext(container)
 
@@ -65,7 +65,6 @@ struct CarPlayLibrarySnapshotTests {
 
         let tracks = try CarPlayLibrarySnapshot.trackSummaries(
             forPlaylistID: playlist.id,
-            evictAfterSkips: 3,
             in: context
         )
         let sharedTracks = PlaylistPresentationBuilder(
@@ -80,7 +79,6 @@ struct CarPlayLibrarySnapshotTests {
         #expect(tracks == sharedTracks)
         #expect(tracks.first?.detailText == "The Killers")
         #expect(tracks.last?.detailText == "The Killers - 2 skips")
-        #expect(tracks.last?.healthStatus == .critical)
     }
 
     @Test func trackSummariesFollowStoredShuffleOrder() throws {
@@ -114,7 +112,6 @@ struct CarPlayLibrarySnapshotTests {
                     secondTrack.id.uuidString
                 ]
             ),
-            evictAfterSkips: 3,
             in: context
         )
 

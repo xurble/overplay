@@ -54,13 +54,7 @@ struct PlaylistPresentationBuilder {
                     albumTitle: track.albumTitle,
                     artworkURLString: track.artworkURLTemplate,
                     skipCount: item.skipCount,
-                    isPlayable: item.isPlayable,
-                    healthStatus: TrackHealthStatus.resolve(
-                        skipCount: item.skipCount,
-                        evictAfterSkips: evictAfterSkips,
-                        isEvicted: item.evictedAt != nil,
-                        isProtected: item.protected
-                    )
+                    isPlayable: item.isPlayable
                 )
             }
     }

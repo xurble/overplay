@@ -191,11 +191,9 @@ final class CarPlayCoordinator: NSObject {
 
     private func playlistSections(for playlist: PlaylistRecord) throws -> [CPListSection] {
         guard let modelContext else { return [] }
-        let settings = try SettingsRepository.settings(in: modelContext)
         let tracks = try CarPlayLibrarySnapshot.trackSummaries(
             forPlaylistID: playlist.id,
             playbackModeState: playbackController?.playbackModeState(for: playlist.musicPlaylistID),
-            evictAfterSkips: settings.evictAfterSkips,
             in: modelContext
         )
 

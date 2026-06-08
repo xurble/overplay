@@ -78,7 +78,6 @@ struct PlaylistPresentationBuilderTests {
         #expect(summaries.map(\.title) == ["First", "Second"])
         #expect(summaries.first?.subtitle == "Artist - Album")
         #expect(summaries.last?.skipCountLabel == "2 skips")
-        #expect(summaries.last?.healthStatus == .critical)
     }
 
     @Test("empty builder returns empty presentation state")

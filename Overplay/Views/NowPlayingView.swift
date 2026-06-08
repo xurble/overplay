@@ -14,11 +14,7 @@ struct NowPlayingView: View {
                 VStack(spacing: 24) {
                     NowPlayingArtworkView(
                         urlString: playbackController.currentTrack?.artworkURLTemplate,
-                        playlistID: playbackController.currentPlaylistID,
-                        healthStatus: NowPlayingPresentationFactory.healthStatus(
-                            playbackController: playbackController,
-                            settings: settings
-                        )
+                        playlistID: playbackController.currentPlaylistID
                     )
                         .aspectRatio(1, contentMode: .fit)
                         .shadow(color: .black.opacity(0.35), radius: 24, y: 18)

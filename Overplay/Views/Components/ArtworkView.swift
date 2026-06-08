@@ -35,7 +35,6 @@ struct ArtworkView: View {
     var pixelSize: Int = 512
     var playlistID: String?
     var cornerRadius: CGFloat = 22
-    var healthStatus: TrackHealthStatus?
 
     @State private var image: OverplayPlatformImage?
 
@@ -79,15 +78,7 @@ struct ArtworkView: View {
     }
 
     private var cacheIdentity: String {
-        let healthKey: String = {
-            guard let healthStatus else { return "none" }
-            switch healthStatus {
-            case .healthy: return "healthy"
-            case .caution: return "caution"
-            case .critical: return "critical"
-            }
-        }()
-        return "\(urlString ?? "")|\(pixelSize)|\(playlistID ?? "")|\(healthKey)"
+        "\(urlString ?? "")|\(pixelSize)|\(playlistID ?? "")"
     }
 
     @MainActor
@@ -103,16 +94,7 @@ struct ArtworkView: View {
         guard !Task.isCancelled, let fileURL else { return }
 
         guard let baseImage = platformImage(contentsOf: fileURL) else { return }
-
-        if let healthStatus {
-            image = ArtworkHealthCompositor.compositedImage(
-                base: baseImage,
-                health: healthStatus,
-                pixelSize: pixelSize
-            )
-        } else {
-            image = baseImage
-        }
+        image = baseImage
     }
 }
 

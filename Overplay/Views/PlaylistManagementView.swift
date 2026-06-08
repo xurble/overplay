@@ -227,23 +227,13 @@ private struct PlaylistTrackRowView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ZStack(alignment: .bottomTrailing) {
-                ArtworkView(
-                    urlString: track.artworkURLTemplate,
-                    pixelSize: 96,
-                    playlistID: playlistID,
-                    cornerRadius: 8
-                )
-                .frame(width: 48, height: 48)
-
-                if let rowImage {
-                    Image(systemName: rowImage)
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.white)
-                        .padding(4)
-                        .background(rowTint, in: Circle())
-                }
-            }
+            ArtworkView(
+                urlString: track.artworkURLTemplate,
+                pixelSize: 96,
+                playlistID: playlistID,
+                cornerRadius: 8
+            )
+            .frame(width: 48, height: 48)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(track.title)
@@ -276,25 +266,6 @@ private struct PlaylistTrackRowView: View {
         )
     }
 
-    private var rowImage: String? {
-        if isCurrent {
-            return "play.fill"
-        }
-        if item.evictedAt != nil {
-            return "trash.fill"
-        }
-        return nil
-    }
-
-    private var rowTint: Color {
-        if isCurrent {
-            return .green
-        }
-        if item.isPlayable {
-            return .pink
-        }
-        return .secondary
-    }
 }
 
 #Preview {

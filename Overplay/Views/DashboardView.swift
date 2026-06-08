@@ -21,9 +21,7 @@ struct DashboardView: View {
                             title: oneTruePlaylist.name,
                             detail: presentation(for: oneTruePlaylist).dashboardDetailText,
                             artworkURLString: presentation(for: oneTruePlaylist).artworkURLString,
-                            playlistID: oneTruePlaylist.musicPlaylistID,
-                            systemImage: presentation(for: oneTruePlaylist).iconIntent.systemImage,
-                            tint: .pink
+                            playlistID: oneTruePlaylist.musicPlaylistID
                         )
                     }
                 } else {
@@ -34,9 +32,7 @@ struct DashboardView: View {
                             title: "Link One True Playlist",
                             detail: "Choose the main playlist Overplay manages.",
                             artworkURLString: nil,
-                            playlistID: nil,
-                            systemImage: "star",
-                            tint: .pink
+                            playlistID: nil
                         )
                     }
                 }
@@ -51,9 +47,7 @@ struct DashboardView: View {
                             title: playlist.name,
                             detail: presentation(for: playlist).dashboardDetailText,
                             artworkURLString: presentation(for: playlist).artworkURLString,
-                            playlistID: playlist.musicPlaylistID,
-                            systemImage: presentation(for: playlist).iconIntent.systemImage,
-                            tint: .teal
+                            playlistID: playlist.musicPlaylistID
                         )
                     }
                 }
@@ -122,26 +116,16 @@ private struct PlaylistHomeRowView: View {
     var detail: String
     var artworkURLString: String?
     var playlistID: String?
-    var systemImage: String
-    var tint: Color
 
     var body: some View {
         HStack(spacing: 12) {
-            ZStack(alignment: .bottomTrailing) {
-                ArtworkView(
-                    urlString: artworkURLString,
-                    pixelSize: 96,
-                    playlistID: playlistID,
-                    cornerRadius: 8
-                )
-                .frame(width: 48, height: 48)
-
-                Image(systemName: systemImage)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.white)
-                    .padding(4)
-                    .background(tint, in: Circle())
-            }
+            ArtworkView(
+                urlString: artworkURLString,
+                pixelSize: 96,
+                playlistID: playlistID,
+                cornerRadius: 8
+            )
+            .frame(width: 48, height: 48)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
