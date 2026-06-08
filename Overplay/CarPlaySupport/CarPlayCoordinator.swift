@@ -88,10 +88,10 @@ final class CarPlayCoordinator: NSObject {
         do {
             let summaries = try playlistSummaries()
             let mainItems = summaries
-                .filter(\.isOneTruePlaylist)
+                .filter { $0.role == .oneTruePlaylist }
                 .map(playlistItem(for:))
             let triageItems = summaries
-                .filter { !$0.isOneTruePlaylist }
+                .filter { $0.role != .oneTruePlaylist }
                 .map(playlistItem(for:))
 
             var sections = [CPListSection]()
@@ -115,8 +115,8 @@ final class CarPlayCoordinator: NSObject {
         }
     }
 
-    private func playlistItem(for summary: CarPlayPlaylistSummary) -> CPListItem {
-        let item = CPListItem(text: summary.title, detailText: summary.detailText)
+    private func playlistItem(for summary: PlaylistSummaryPresentation) -> CPListItem {
+        let item = CPListItem(text: summary.title, detailText: summary.playableTrackCountLabel)
         item.accessoryType = .disclosureIndicator
         item.isPlaying = playbackController?.currentPlaylistID == summary.musicPlaylistID
         item.handler = { [weak self] _, completion in
@@ -128,7 +128,7 @@ final class CarPlayCoordinator: NSObject {
         return item
     }
 
-    private func trackItem(_ summary: CarPlayTrackSummary, playlist: PlaylistRecord) -> CPListItem {
+    private func trackItem(_ summary: TrackSummaryPresentation, playlist: PlaylistRecord) -> CPListItem {
         let item = CPListItem(text: summary.title, detailText: summary.detailText)
         item.isPlaying = playbackController?.currentPlaylistItem?.id == summary.id
         item.handler = { [weak self] _, completion in
@@ -146,12 +146,12 @@ final class CarPlayCoordinator: NSObject {
         return item
     }
 
-    private func playlistSummaries() throws -> [CarPlayPlaylistSummary] {
+    private func playlistSummaries() throws -> [PlaylistSummaryPresentation] {
         guard let modelContext else { return [] }
         return try CarPlayLibrarySnapshot.playlistSummaries(in: modelContext)
     }
 
-    private func showPlaylist(_ summary: CarPlayPlaylistSummary) {
+    private func showPlaylist(_ summary: PlaylistSummaryPresentation) {
         guard let interfaceController, let modelContext else { return }
 
         do {
@@ -193,11 +193,12 @@ final class CarPlayCoordinator: NSObject {
         ]
     }
 
-    private func play(_ summary: CarPlayTrackSummary, in playlist: PlaylistRecord) async {
+    private func play(_ summary: TrackSummaryPresentation, in playlist: PlaylistRecord) async {
         guard let playbackController, let modelContext else { return }
 
         do {
-            guard let track = try TrackRecordRepository.track(id: summary.trackID, in: modelContext) else {
+            guard let trackID = summary.trackID,
+                  let track = try TrackRecordRepository.track(id: trackID, in: modelContext) else {
                 refreshVisiblePlaylistRows()
                 return
             }

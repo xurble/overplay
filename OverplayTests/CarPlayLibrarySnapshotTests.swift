@@ -29,9 +29,17 @@ struct CarPlayLibrarySnapshotTests {
         try context.save()
 
         let summaries = try CarPlayLibrarySnapshot.playlistSummaries(in: context)
+        let sharedSummaries = PlaylistPresentationBuilder(
+            playlists: [oneTrue, triage],
+            items: try PlaylistItemRepository.allItems(in: context),
+            tracks: [playableTrack, evictedTrack, inactiveTrack],
+            evictAfterSkips: 0
+        )
+        .activePlaylistSummaries()
 
         #expect(summaries.map(\.title) == ["Keepers", "Inbox"])
-        #expect(summaries.first?.isOneTruePlaylist == true)
+        #expect(summaries == sharedSummaries)
+        #expect(summaries.first?.role == .oneTruePlaylist)
         #expect(summaries.first?.playableTrackCount == 1)
         #expect(summaries.last?.playableTrackCount == 0)
     }
@@ -60,8 +68,16 @@ struct CarPlayLibrarySnapshotTests {
             evictAfterSkips: 3,
             in: context
         )
+        let sharedTracks = PlaylistPresentationBuilder(
+            playlists: [playlist],
+            items: try PlaylistItemRepository.playableItems(forPlaylistID: playlist.id, in: context),
+            tracks: [firstTrack, secondTrack, evictedTrack],
+            evictAfterSkips: 3
+        )
+        .trackSummaries(forPlaylistID: playlist.id)
 
         #expect(tracks.map(\.title) == ["Mr Brightside", "Somebody Told Me"])
+        #expect(tracks == sharedTracks)
         #expect(tracks.first?.detailText == "The Killers")
         #expect(tracks.last?.detailText == "The Killers - 2 skips")
         #expect(tracks.last?.healthStatus == .critical)
