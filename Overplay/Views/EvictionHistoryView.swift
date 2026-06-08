@@ -11,13 +11,12 @@ struct HistoryView: View {
     @Query(sort: \PlaylistItemRecord.createdAt) private var playlistItems: [PlaylistItemRecord]
     @Query(sort: \TrackRecord.title) private var tracks: [TrackRecord]
 
-    @State private var selectedFilter = HistoryEventFilter.all
-    @State private var message: String?
+    @State private var viewModel = HistoryViewModel()
 
     var body: some View {
         List {
             Section {
-                Picker("History Filter", selection: $selectedFilter) {
+                Picker("History Filter", selection: $viewModel.selectedFilter) {
                     ForEach(HistoryEventFilter.allCases) { filter in
                         Text(filter.title)
                             .tag(filter)
@@ -36,11 +35,11 @@ struct HistoryView: View {
 
             ForEach(rows) { row in
                 HistoryEventRowView(row: row, canRestore: restorableItem(for: row) != nil) {
-                    restore(row)
+                    viewModel.restore(row, playlistItems: playlistItems, playlists: playlists, context: modelContext)
                 }
             }
 
-            if let message {
+            if let message = viewModel.message {
                 Text(message)
                     .foregroundStyle(.secondary)
             }
@@ -50,47 +49,19 @@ struct HistoryView: View {
     }
 
     private var rows: [HistoryEventRowModel] {
-        HistoryTimeline.rows(
+        viewModel.rows(
             events: events,
             playlists: playlists,
-            tracks: tracks,
-            filter: selectedFilter
+            tracks: tracks
         )
     }
 
     private var emptyTitle: String {
-        selectedFilter == .all ? "No History" : "No \(selectedFilter.title)"
+        viewModel.emptyTitle
     }
 
     private func restorableItem(for row: HistoryEventRowModel) -> PlaylistItemRecord? {
-        guard let playlistID = row.playlistID, let trackID = row.trackID else {
-            return nil
-        }
-
-        return playlistItems.first {
-            $0.playlistID == playlistID
-                && $0.trackID == trackID
-                && $0.evictedAt != nil
-        }
-    }
-
-    private func playlist(for item: PlaylistItemRecord) -> PlaylistRecord? {
-        playlists.first { $0.id == item.playlistID }
-    }
-
-    private func restore(_ row: HistoryEventRowModel) {
-        guard let item = restorableItem(for: row) else { return }
-
-        do {
-            try TrackHealthActionService.restoreTrack(
-                item,
-                playlist: playlist(for: item),
-                in: modelContext
-            )
-            message = "Restored \(row.trackTitle)."
-        } catch {
-            message = error.localizedDescription
-        }
+        viewModel.restorableItem(for: row, playlistItems: playlistItems)
     }
 }
 
