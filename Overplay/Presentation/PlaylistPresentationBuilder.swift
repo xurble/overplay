@@ -38,25 +38,30 @@ struct PlaylistPresentationBuilder {
         DashboardSummary(items: itemsForPlaylist(playlistID), evictAfterSkips: evictAfterSkips)
     }
 
-    func trackSummaries(forPlaylistID playlistID: UUID) -> [TrackSummaryPresentation] {
-        itemsForPlaylist(playlistID)
-            .filter(\.isPlayable)
-            .sorted(by: areItemsInPlaylistOrder)
-            .compactMap { item in
-                guard let track = tracksByID[item.trackID] else { return nil }
+    func trackSummaries(
+        forPlaylistID playlistID: UUID,
+        playbackModeState: PlaybackModeState? = nil
+    ) -> [TrackSummaryPresentation] {
+        let playableItems = itemsForPlaylist(playlistID).filter(\.isPlayable)
+        let orderedItems = playbackModeState.map {
+            PlaylistDisplayOrder.orderedItems(playableItems, state: $0)
+        } ?? playableItems.sorted(by: areItemsInPlaylistOrder)
 
-                return TrackSummaryPresentation(
-                    id: item.id,
-                    playlistID: item.playlistID,
-                    trackID: track.id,
-                    title: track.title,
-                    artistName: track.artistName,
-                    albumTitle: track.albumTitle,
-                    artworkURLString: track.artworkURLTemplate,
-                    skipCount: item.skipCount,
-                    isPlayable: item.isPlayable
-                )
-            }
+        return orderedItems.compactMap { item in
+            guard let track = tracksByID[item.trackID] else { return nil }
+
+            return TrackSummaryPresentation(
+                id: item.id,
+                playlistID: item.playlistID,
+                trackID: track.id,
+                title: track.title,
+                artistName: track.artistName,
+                albumTitle: track.albumTitle,
+                artworkURLString: track.artworkURLTemplate,
+                skipCount: item.skipCount,
+                isPlayable: item.isPlayable
+            )
+        }
     }
 
     func representativeArtworkURL(for playlist: PlaylistRecord) -> String? {

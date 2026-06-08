@@ -80,6 +80,36 @@ struct PlaylistPresentationBuilderTests {
         #expect(summaries.last?.skipCountLabel == "2 skips")
     }
 
+    @Test("track summaries follow stored shuffle order")
+    func trackSummariesFollowStoredShuffleOrder() {
+        let playlistID = UUID()
+        let firstTrack = TrackRecord(title: "First", artistName: "Artist")
+        let secondTrack = TrackRecord(title: "Second", artistName: "Artist")
+        let thirdTrack = TrackRecord(title: "Third", artistName: "Artist")
+        let items = [
+            PlaylistItemRecord(playlistID: playlistID, trackID: firstTrack.id, sortOrder: 1),
+            PlaylistItemRecord(playlistID: playlistID, trackID: secondTrack.id, sortOrder: 2),
+            PlaylistItemRecord(playlistID: playlistID, trackID: thirdTrack.id, sortOrder: 3)
+        ]
+
+        let summaries = builder(items: items, tracks: [firstTrack, secondTrack, thirdTrack])
+            .trackSummaries(
+                forPlaylistID: playlistID,
+                playbackModeState: PlaybackModeState(
+                    playerID: "main",
+                    musicPlaylistID: "one",
+                    shuffleEnabled: true,
+                    orderedTrackIDs: [
+                        thirdTrack.id.uuidString,
+                        firstTrack.id.uuidString,
+                        secondTrack.id.uuidString
+                    ]
+                )
+            )
+
+        #expect(summaries.map(\.title) == ["Third", "First", "Second"])
+    }
+
     @Test("empty builder returns empty presentation state")
     func emptyState() {
         let builder = builder()
