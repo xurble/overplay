@@ -18,7 +18,7 @@ final class SettingsViewModel {
                     try SettingsRepository.save(settings, in: context)
                 },
                 resetStats: { context in
-                    try TrackRecordRepository.resetPlaylistStats(in: context)
+                    try PlaylistItemRepository.resetAllStats(in: context)
                 },
                 nukeDatabase: { context in
                     _ = try DatabaseResetService.nukeDatabase(in: context)

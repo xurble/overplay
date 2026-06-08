@@ -4,7 +4,7 @@ import SwiftData
 enum CarPlayLibrarySnapshot {
     static func playlistSummaries(in context: ModelContext) throws -> [PlaylistSummaryPresentation] {
         let playlists = try PlaylistRepository.activePlaylists(in: context)
-        let items = try PlaylistItemRepository.allItems(in: context)
+        let items = try PlaylistItemRepository.items(forPlaylistIDs: playlists.map(\.id), in: context)
         let tracks = try TrackRecordRepository.tracks(ids: items.map(\.trackID), in: context)
         let builder = PlaylistPresentationBuilder(
             playlists: playlists,

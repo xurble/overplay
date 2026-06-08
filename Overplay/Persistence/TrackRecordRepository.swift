@@ -118,21 +118,4 @@ enum TrackRecordRepository {
         track.updatedAt = updatedAt
         return track
     }
-
-    static func resetPlaylistStats(in context: ModelContext) throws {
-        let items = try context.fetch(FetchDescriptor<PlaylistItemRecord>())
-        for item in items {
-            item.skipCount = 0
-            item.playthroughCount = 0
-            item.lastPlayedAt = nil
-            item.lastSkippedAt = nil
-            item.evictedAt = nil
-            item.evictionReason = nil
-            item.evictionSource = nil
-            item.protected = false
-            item.updatedAt = .now
-        }
-
-        try context.save()
-    }
 }

@@ -9,6 +9,34 @@ enum PlaylistItemRepository {
         return try context.fetch(descriptor)
     }
 
+    static func items(forPlaylistIDs playlistIDs: [UUID], in context: ModelContext) throws -> [PlaylistItemRecord] {
+        guard !playlistIDs.isEmpty else { return [] }
+
+        var result: [PlaylistItemRecord] = []
+        result.reserveCapacity(playlistIDs.count)
+        for playlistID in playlistIDs {
+            result.append(contentsOf: try items(forPlaylistID: playlistID, in: context))
+        }
+        return result
+    }
+
+    static func resetAllStats(in context: ModelContext) throws {
+        let items = try allItems(in: context)
+        for item in items {
+            item.skipCount = 0
+            item.playthroughCount = 0
+            item.lastPlayedAt = nil
+            item.lastSkippedAt = nil
+            item.evictedAt = nil
+            item.evictionReason = nil
+            item.evictionSource = nil
+            item.protected = false
+            item.updatedAt = .now
+        }
+
+        try context.save()
+    }
+
     static func item(id: UUID, in context: ModelContext) throws -> PlaylistItemRecord? {
         var descriptor = FetchDescriptor<PlaylistItemRecord>(
             predicate: #Predicate { $0.id == id },

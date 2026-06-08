@@ -336,6 +336,29 @@ struct NewModelRepositoryTests {
         #expect(try TrackRecordRepository.tracks(ids: [], in: context).isEmpty)
     }
 
+    @Test("playlist items can be fetched for multiple playlist IDs")
+    func playlistItemsCanBeFetchedForMultiplePlaylistIDs() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let firstPlaylistID = UUID()
+        let secondPlaylistID = UUID()
+        let thirdPlaylistID = UUID()
+        let firstItem = PlaylistItemRecord(playlistID: firstPlaylistID, trackID: UUID())
+        let secondItem = PlaylistItemRecord(playlistID: secondPlaylistID, trackID: UUID())
+        let unrelatedItem = PlaylistItemRecord(playlistID: thirdPlaylistID, trackID: UUID())
+        context.insert(firstItem)
+        context.insert(secondItem)
+        context.insert(unrelatedItem)
+
+        let items = try PlaylistItemRepository.items(
+            forPlaylistIDs: [firstPlaylistID, secondPlaylistID],
+            in: context
+        )
+
+        #expect(Set(items.map(\.id)) == [firstItem.id, secondItem.id])
+        #expect(try PlaylistItemRepository.items(forPlaylistIDs: [], in: context).isEmpty)
+    }
+
     @Test("reset playlist stats clears item counters and eviction state")
     func resetPlaylistStatsClearsItemCountersAndEvictionState() throws {
         let container = try OverplayTestSupport.makeModelContainer()
@@ -354,7 +377,7 @@ struct NewModelRepositoryTests {
         )
         context.insert(item)
 
-        try TrackRecordRepository.resetPlaylistStats(in: context)
+        try PlaylistItemRepository.resetAllStats(in: context)
 
         #expect(item.skipCount == 0)
         #expect(item.playthroughCount == 0)

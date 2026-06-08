@@ -4,9 +4,9 @@ import SwiftUI
 struct DashboardView: View {
     @Environment(\.modelContext) private var modelContext
 
-    @Query(sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
-    @Query(sort: \PlaylistItemRecord.createdAt) private var playlistItems: [PlaylistItemRecord]
-    @Query(sort: \TrackRecord.title) private var tracks: [TrackRecord]
+    @Query(filter: #Predicate<PlaylistRecord> { $0.isActive }, sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
+    @State private var playlistItems: [PlaylistItemRecord] = []
+    @State private var tracks: [TrackRecord] = []
 
     var settings: OverplaySettings
 
@@ -75,6 +75,13 @@ struct DashboardView: View {
                 .accessibilityLabel("Settings")
             }
         }
+        .task(id: dashboardDataKey) {
+            reloadDashboardData()
+        }
+    }
+
+    private var dashboardDataKey: String {
+        playlists.map(\.id.uuidString).joined(separator: "-")
     }
 
     private var oneTruePlaylist: PlaylistRecord? {
@@ -101,6 +108,12 @@ struct DashboardView: View {
             tracks: tracks,
             evictAfterSkips: settings.evictAfterSkips
         )
+    }
+
+    private func reloadDashboardData() {
+        let playlistIDs = playlists.map(\.id)
+        playlistItems = (try? PlaylistItemRepository.items(forPlaylistIDs: playlistIDs, in: modelContext)) ?? []
+        tracks = (try? TrackRecordRepository.tracks(ids: playlistItems.map(\.trackID), in: modelContext)) ?? []
     }
 
     private func deleteTriagePlaylists(at offsets: IndexSet) {
