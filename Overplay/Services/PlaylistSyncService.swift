@@ -26,22 +26,21 @@ struct PlaylistSyncService {
         subsystem: Bundle.main.bundleIdentifier ?? "Overplay",
         category: "PlaylistSync"
     )
+    private let playlistFetcher: any MusicLibraryPlaylistFetching
+
+    init(playlistFetcher: any MusicLibraryPlaylistFetching = MusicKitLibraryPlaylistFetcher()) {
+        self.playlistFetcher = playlistFetcher
+    }
 
     func fetchLibraryPlaylists() async throws -> [AppleMusicPlaylist] {
-        try await fetchAllLibraryPlaylists()
+        AppleMusicPlaylistDisplayOrder.sorted(try await fetchAllLibraryPlaylists()
             .map { playlist in
                 AppleMusicPlaylist(
                     id: playlist.id.rawValue,
                     name: playlist.name,
                     trackCount: playlist.tracks?.count
                 )
-            }
-            .sorted { left, right in
-                if left.isPreferredOverplayPlaylist != right.isPreferredOverplayPlaylist {
-                    return left.isPreferredOverplayPlaylist
-                }
-                return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
-            }
+            })
     }
 
     func syncPlaylist(id playlistID: String, in context: ModelContext) async throws -> Int {
@@ -355,10 +354,7 @@ struct PlaylistSyncService {
     }
 
     private func fetchAllLibraryPlaylists() async throws -> [Playlist] {
-        var request = MusicLibraryRequest<Playlist>()
-        request.limit = 100
-        request.sort(by: \.name, ascending: true)
-        return Array(try await request.response().items)
+        try await playlistFetcher.fetchAllPlaylists(pageLimit: 100)
     }
 
     private func applyHealedMusicPlaylistID(
