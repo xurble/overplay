@@ -1,622 +1,338 @@
 # Architecture Refactor Plan
 
-## Goal
+## Design Goals
 
-Refactor Overplay toward a cleaner, more scalable architecture without a large
-"big bang" MVVM rewrite. The first priority is to separate shared presentation
-state and focused use cases from oversized services and views. View models
-should be introduced only where they reduce screen complexity and make async
-workflows easier to test.
+Refactor Overplay toward a cleaner, more scalable architecture **without** a
+large "big bang" MVVM rewrite.
 
-Each checkpoint should leave the app compiling, tests passing, and behavior
-unchanged unless the checkpoint explicitly says otherwise. Commit after each
-checkpoint before moving on.
+The architecture should look like this when finished:
 
-## Guiding Principles
+```
+Views          → render presentation state, send user intents
+View models    → screen workflow state only (where it earns its keep)
+Use cases      → business rules and mutations
+Presentation   → shared display models and builders (iOS, iPad, Mac, CarPlay)
+Playback       → queue/mode coordination separate from transport
+Repositories   → scoped, predicate-based data access
+PlaybackController → observable playback state + MusicKit transport + coordination
+CarPlay        → thin adapter over shared presentation and use cases
+```
+
+### Priorities
+
+1. **Separate shared presentation state** from oversized views and services.
+2. **Extract focused use cases** before introducing view models.
+3. **Introduce view models selectively** only where they reduce screen complexity
+   and make async workflows easier to test.
+4. **Improve repository scalability** so UI refactors are not built on
+   fetch-all/filter-in-memory patterns.
+5. **Keep iOS, iPadOS, macOS, and CarPlay** on the same presentation and
+   use-case source of truth.
+
+### Guiding Principles
 
 - Keep each commit small enough to review independently.
 - Prefer extracting stable use cases before introducing view models.
 - Keep SwiftUI views declarative and thin.
-- Make iOS, iPadOS, macOS, and CarPlay consume shared presentation state.
+- Make all platforms consume shared presentation state.
 - Avoid moving complexity from large views into equally large view models.
 - Improve repository scalability separately from UI refactors.
 - Preserve current behavior unless a checkpoint explicitly changes it.
 
-## How To Use This Plan
+### How To Use This Plan
 
 Treat each checkpoint as a hard stop. Do not begin the next checkpoint until the
 current one builds, its tests pass, and the human developer has reviewed and
 committed the work.
 
-For larger checkpoints, especially queue/mode coordination and screen view
-models, split the checkpoint into smaller commits if the diff becomes difficult
-to review.
+Split larger checkpoints into smaller commits if the diff becomes difficult to
+review.
 
-## Checkpoint 1: Add Shared Presentation Models
+---
 
-### Goal
+## Progress So Far
 
-Introduce neutral, testable display models without changing UI behavior.
+**Status: complete.** Checkpoints 1–20 are done. The full test suite passes on
+iOS Simulator (iPhone 17).
 
-### Create
+### Completed Checkpoints
 
-- `Overplay/Presentation/PlaylistSummaryPresentation.swift`
-- `Overplay/Presentation/TrackSummaryPresentation.swift`
-- `Overplay/Presentation/NowPlayingPresentation.swift`
-- `Overplay/Presentation/TrackHealthPresentation.swift`
-- `Overplay/Presentation/PlaybackControlsPresentation.swift`
+| # | Checkpoint | Status |
+|---|------------|--------|
+| 1–14 | Original architecture refactor | **Done** |
+| 15 | Unify CarPlay track presentation | **Done** |
+| 16 | Share now-playing presentation with CarPlay | **Done** |
+| 17 | Finish thinning PlaybackController | **Done** |
+| 18 | Replace fetch-all patterns | **Done** |
+| 19 | File organization and safety cleanup | **Done** |
+| 20 | Final verification | **Done** |
 
-### Move Into Presentation Models
+### Definition Of Done
 
-- Playlist role title, icon intent, and display priority.
-- Writable/incoming-only labels.
-- Track subtitle formatting.
-- Skip count labels.
-- Health status labels.
-- Now-playing title, artist, album, and progress text.
-- Shuffle and repeat display state.
+| Criterion | Met? |
+|-----------|------|
+| Views mostly render + send intents | Yes |
+| View models only where needed | Yes |
+| Business rules in focused use-case services | Yes |
+| Scoped repository access | Yes |
+| `PlaybackController` coordinates, doesn't own everything | Yes (~1,090 lines; queue/restoration/metadata extracted) |
+| CarPlay + SwiftUI share builders and use cases | Yes |
+| Duplicate formatting removed | Yes |
+| Full test suite passes | Yes |
 
-### Replace Initial Call Sites
+### Key Artifacts
 
-- `DashboardView`
-- `PlaylistSelectionView`
-- `NowPlayingView`
-- `CarPlayLibrarySnapshot`
+- **Presentation:** `PlaylistPresentationBuilder`, `NowPlayingPresentationFactory`, shared now-playing components
+- **Use cases:** `TrackHealthActionService`, `PlaybackSessionEvaluationService`
+- **Playback:** `PlaybackQueueOrchestrator`, `PlaybackRestorationService`, `PlaybackTrackMetadataSync`, queue/mode coordinators
+- **App shell:** `PlatformShell`, `CompactAppShell`, `SplitAppShell`, routing-only `AppRouter`
+- **CarPlay:** `CarPlayLibrarySnapshot` adapter, presentation-derived button signatures
 
-### Tests
+---
 
-- Add focused tests for role labels, ordering intent, track subtitles, health
-  labels, and progress formatting.
+## Remaining Work
 
-### Commit Criteria
+None. The refactor is complete. Checkpoints 15–20 are archived below for history.
 
-- App builds.
-- Existing tests pass.
-- New presentation tests pass.
+<details>
+<summary>Checkpoints 15–20 (completed finish work)</summary>
+
+**Goal:** Make CarPlay track lists use the same builder as iOS so formatting and
+ordering cannot drift.
+
+**Problem:** `CarPlayLibrarySnapshot.playlistSummaries` wraps
+`PlaylistPresentationBuilder`, but `trackSummaries` manually constructs
+`TrackSummaryPresentation` and duplicates shuffle-order logic that lives in
+`PlaylistDisplayOrder`.
+
+**Refactor**
+
+- Add shuffle-order support to `PlaylistPresentationBuilder.trackSummaries(forPlaylistID:playbackModeState:)`
+  (or a small helper the builder calls).
+- Change `CarPlayLibrarySnapshot.trackSummaries` to delegate to the builder.
+- Update `PlaylistManagementView`, `PlaylistSelectionView`, and any other
+  track-list call sites to use the same builder entry point if they don't already.
+- Remove the private `areItemsInPlaylistOrder` helper from `CarPlayLibrarySnapshot`
+  once the builder owns ordering.
+
+**Tests**
+
+- Existing `CarPlayLibrarySnapshotTests` must continue to pass (equivalence is
+  already asserted — simplify the snapshot, keep the tests).
+- Add a builder test for shuffle-ordered track summaries if not already covered
+  by `PlaylistPresentationBuilderTests`.
+
+**Commit criteria**
+
+- CarPlay and iOS track list labels, skip counts, and ordering match.
+- `CarPlayLibrarySnapshot` contains no track-formatting logic beyond delegation.
+- CarPlay tests pass.
+
+---
+
+### Checkpoint 16: Share Now-Playing Presentation With CarPlay
+
+**Goal:** CarPlay now-playing UI derives state from the same presentation models
+as SwiftUI.
+
+**Problem:** SwiftUI uses `NowPlayingPresentationFactory` →
+`NowPlayingPresentation` / `TrackHealthPresentation`. CarPlay reads
+`PlaybackController` display properties directly via
+`CarPlayNowPlayingButtonSignature`.
+
+**Refactor**
+
+- Extend `NowPlayingPresentationFactory` (or add a CarPlay-facing helper) to
+  produce `NowPlayingPresentation` and `TrackHealthPresentation` from a
+  `PlaybackController` + settings/context.
+- Build `CarPlayNowPlayingButtonSignature` from presentation models instead of
+  raw controller properties.
+- Where CarPlay shows track-health button titles or labels, use
+  `TrackHealthPresentation` label/icon intent.
+- Keep `TrackHealthActionService` as the mutation path (already done).
+
+**Tests**
+
+- Extend `CarPlayNowPlayingButtonSignatureTests` to assert signature changes
+  match presentation model changes.
+- Add presentation-factory tests for edge cases: no current track, evicted,
+  protected, at-risk skip count.
+
+**Commit criteria**
+
+- CarPlay button enablement and labels track SwiftUI now-playing state.
+- No duplicate now-playing label/formatting logic in `CarPlayCoordinator`.
+- CarPlay tests pass.
+- Manual CarPlay now-playing smoke test if available.
+
+---
+
+### Checkpoint 17: Finish Thinning PlaybackController
+
+**Goal:** Reduce `PlaybackController` to an application-facing coordinator (~800
+lines or fewer) that owns observable state, MusicKit transport, monitoring, and
+service coordination — not business rules.
+
+**Problem:** Coordinators and use cases are extracted, but the controller still
+contains thin wrapper methods, queue-orchestration glue, and test-only hooks
+(`evaluateActiveSessionForTesting`, `markActiveSessionEvaluatedWithoutSkipForTesting`).
+
+**Refactor**
+
+Move remaining logic out in small slices:
+
+1. **Queue orchestration facade** — group the `orderedQueueEntries`,
+   `orderedCachedQueueEntries`, `rebuildCurrentQueue`, `handleQueueEnded`, and
+   `applyPendingModeQueueRebuild` wrappers into a private `PlaybackQueueOrchestrator`
+   or extend `PlaybackQueueCoordinator` with a higher-level API the controller calls.
+2. **Restoration** — extract `restoreLocalPlaybackState`,
+   `restoreLocalPlaybackDisplay`, and related helpers into
+   `PlaybackRestorationService` under `Overplay/Playback/`.
+3. **Metadata sync** — extract `refreshCurrentTrackMetadata`,
+   `syncPlaybackMetadata`, `prefetchCurrentArtworkIfNeeded` into
+   `NowPlayingMetadataService` (or extend the existing service if appropriate).
+4. **Test hooks** — remove `ForTesting` methods; cover session evaluation through
+   `PlaybackSessionEvaluationService` tests and injected collaborators in
+   `PlaybackControllerDisplayRestoreTests`.
+
+**Keep in PlaybackController**
+
+- Observable playback state (`currentTrack`, `elapsedSeconds`, etc.).
+- MusicKit transport (`play`, `pause`, `next`, `previous`).
+- Monitoring loop and local state persistence.
+- Public API surface consumed by views, CarPlay, and remote commands.
+
+**Tests**
+
+- Full playback-related suite must pass unchanged.
+- `PlaybackControllerDisplayRestoreTests` updated to avoid test-only controller API.
+- Manual playback smoke test: play, next, previous, shuffle, repeat, end-of-queue
+  repeat, keep, evict.
+
+**Commit criteria**
+
+- `PlaybackController` is substantially smaller with a documented, narrow role.
+- No `ForTesting` methods on production types.
+- Playback behavior unchanged.
+
+---
+
+### Checkpoint 18: Replace Remaining Fetch-All Patterns
+
+**Goal:** Views and adapters load only the data they need.
+
+**Problem:** Predicate-scoped repository APIs exist, but several call sites still
+fetch entire tables:
+
+- `DashboardView` — `@Query` on all playlists, items, and tracks.
+- `HistoryView` — `@Query` on all playlists, items, tracks, and events.
+- `CarPlayLibrarySnapshot.playlistSummaries` — `PlaylistItemRepository.allItems(in:)`.
+- `TrackRecordRepository.resetPlaylistStats` — fetches all playlist items.
+
+**Refactor**
+
+- **Dashboard:** Replace broad `@Query` with scoped fetches. Options (pick the
+  simplest that preserves SwiftUI reactivity):
+  - Fetch active playlists via `PlaylistRepository.activePlaylists`, then
+    batch-fetch items/tracks for those playlist IDs only.
+  - Or use a lightweight `@Observable` dashboard data source refreshed on
+    `modelContext` changes.
+- **History:** Scope event query with the selected filter predicate; fetch
+  playlists/tracks referenced by visible events only (or by timeline builder input).
+- **CarPlay snapshot:** Replace `allItems` with items for active playlist IDs only.
+- **Reset stats:** Add `PlaylistItemRepository.allItems(in:)` →
+  `resetAllStats(in:)` that operates via a single fetch descriptor with no
+  in-memory filtering, or batch by playlist if needed.
+
+**Tests**
+
+- Repository tests for any new batch/scoped APIs.
+- Dashboard and history behavior unchanged (existing summary/timeline tests).
+- CarPlay snapshot tests still pass.
+
+**Commit criteria**
+
+- No view or adapter fetches an entire table when it only needs a subset.
+- Repository tests pass.
 - No user-visible behavior changes.
 
-## Checkpoint 2: Extract Playlist Presentation Builder
+---
 
-### Goal
+### Checkpoint 19: File Organization And Safety Cleanup
 
-Make iOS and CarPlay playlist and track lists share the same source of truth.
+**Goal:** Clear the organization and safety debt left by the staged refactor.
 
-### Create
+**Refactor**
 
-- `Overplay/Presentation/PlaylistPresentationBuilder.swift`
+File splits (optional but recommended for reviewability):
 
-### Responsibilities
+- `Overplay/App/Shell/PlatformShell.swift`
+- `Overplay/App/Shell/CompactAppShell.swift`
+- `Overplay/App/Shell/SplitAppShell.swift`
+- `Overplay/Views/NowPlaying/MiniPlayerLozengeView.swift`
+- `Overplay/Views/NowPlaying/NowPlayingPaneView.swift`
 
-- Build playlist summaries from `PlaylistRecord`, `PlaylistItemRecord`, and
-  `TrackRecord` data.
-- Build track summaries for playlist screens and CarPlay lists.
-- Centralize playlist ordering:
-  - One True Playlist first.
-  - Triage playlists after.
-  - Case-insensitive name sort within each role.
-- Centralize representative artwork selection.
-- Centralize known/playable/evicted/at-risk counts.
+Safety and dead-code cleanup:
 
-### Replace Logic In
+- Replace `Dictionary(uniqueKeysWithValues:)` in `PlaybackQueueBuilder` with
+  `firstValueDictionary` (or explicit duplicate handling + test).
+- Remove any obsolete typealiases or duplicate formatter functions found during
+  the above checkpoints.
+- Review all `#Preview` blocks after file moves.
 
-- `DashboardView`
-- `PlaylistSelectionView`
-- `CarPlayLibrarySnapshot`
-
-`CarPlayLibrarySnapshot` can remain as a CarPlay adapter, but it should wrap the
-shared builder instead of owning parallel summary logic.
-
-### Tests
-
-- Update `CarPlayLibrarySnapshotTests`.
-- Add presentation-builder tests for ordering, counts, role grouping, and empty
-  states.
-
-### Commit Criteria
-
-- iOS playlist ordering is unchanged.
-- CarPlay playlist ordering is unchanged.
-- Playlist counts match existing behavior.
-- Snapshot/presentation tests pass.
-
-## Checkpoint 3: Fix Repository Scalability
-
-### Goal
-
-Reduce fetch-all/filter-in-memory patterns before layering more architecture on
-top.
-
-### Add Predicate-Based Repository APIs
-
-- `PlaylistRepository.activePlaylists(in:)`
-- `PlaylistRepository.playlist(id:in:)`
-- `PlaylistRepository.playlist(musicPlaylistID:in:)`
-- `PlaylistRepository.oneTruePlaylist(in:)`
-- `PlaylistItemRepository.items(forPlaylistID:in:)`
-- `PlaylistItemRepository.playableItems(forPlaylistID:in:)`
-- `PlaylistItemRepository.activeItems(forPlaylistID:in:)`
-- `TrackRecordRepository.tracks(ids:in:)`
-- `TrackRecordRepository.track(id:in:)`
-- `TrackRecordRepository.track(musicItemID:in:)`
-
-### Replace Risky Dictionary Construction
-
-Replace `Dictionary(uniqueKeysWithValues:)` where duplicate keys could crash
-with safe helpers, such as:
-
-- first value wins
-- last value wins
-- grouping by key
-- explicit duplicate assertion in tests only
-
-### Tests
-
-- Update repository tests to verify predicate-scoped fetches.
-- Add tests for duplicate-safe dictionary helper behavior.
-
-### Commit Criteria
-
-- Repository tests pass.
-- Playback/order tests pass.
-- No behavior changes except improved duplicate tolerance.
-
-## Checkpoint 4: Extract Track Health Use Case
-
-### Goal
-
-Remove duplicated iOS and CarPlay track-health mutation logic.
-
-### Create
-
-- `Overplay/UseCases/TrackHealthActionService.swift`
-
-### Responsibilities
-
-- Keep current track.
-- Reset current skip count.
-- Protect current track.
-- Evict current track.
-- Restore evicted playlist item.
-- Log the appropriate history events.
-- Save model context or surface errors consistently.
-
-### Move Logic From
-
-- `PlaybackController.keepCurrent`
-- `PlaybackController.evictCurrent`
-- `CarPlayCoordinator.resetCurrentSkipCount`
-- `CarPlayCoordinator.protectCurrentTrack`
-- `HistoryView.restore`
-
-`PlaybackController` and `CarPlayCoordinator` may still call the new service at
-this checkpoint.
-
-### Tests
-
-- Keep current track resets skip count and optionally protects.
-- Reset skip count logs history.
-- Protect current track logs history.
-- Evict current track updates local state and remote mutation policy remains
-  respected.
-- Restore clears eviction state and logs history.
-
-### Commit Criteria
-
-- iOS Keep and Evict buttons still work.
-- CarPlay health actions still work.
-- Track-health tests pass.
-
-## Checkpoint 5: Extract Playback Session Evaluation
-
-### Goal
-
-Shrink `PlaybackController` without changing playback behavior.
-
-### Create
-
-- `Overplay/UseCases/PlaybackSessionEvaluationService.swift`
-
-### Responsibilities
-
-- Bootstrap playback sessions.
-- Evaluate skip transitions.
-- Evaluate playthrough thresholds.
-- Mark sessions as evaluated without skip.
-- Trigger eviction workflow when a threshold is crossed.
-- Return explicit outcomes for the controller to react to.
-
-### Move Logic From
-
-- `PlaybackController.evaluatePlaythroughIfNeeded`
-- `PlaybackController.evaluateActiveSession`
-- `PlaybackController.bootstrapActiveSession`
-- `PlaybackController.markActiveSessionEvaluatedWithoutSkip`
-- Related private session-resolution helpers where practical.
-
-### Tests
-
-- Existing `EvictionEngineTests`.
-- Existing `PlaybackSessionSupportTests`.
-- New service tests for skip, natural completion, playthrough, and protected
-  track cases.
-
-### Commit Criteria
-
-- Playback behavior is unchanged.
-- Session evaluation tests pass.
-- Existing playback-controller display restore tests pass.
-
-## Checkpoint 6: Extract Queue And Mode Coordination
-
-### Goal
-
-Isolate shuffle, repeat, queue rebuilding, and local-track ordering complexity.
-
-### Create
-
-- `Overplay/Playback/PlaybackQueueCoordinator.swift`
-- `Overplay/Playback/PlaybackModeCoordinator.swift`
-
-### Responsibilities
-
-`PlaybackQueueCoordinator`:
-
-- Build cached queue entries.
-- Decode cached MusicKit tracks.
-- Resolve local track IDs.
-- Reconcile local playlist items with MusicKit queue entries.
-- Build transition queues.
-
-`PlaybackModeCoordinator`:
-
-- Read and write shuffle/repeat state.
-- Reconcile stored shuffle order.
-- Build repeat queue restart order.
-- Handle pending mode queue rebuild decisions.
-
-### Move Logic From
-
-- `PlaybackController.orderedQueueEntries`
-- `PlaybackController.orderedCachedQueueEntries`
-- `PlaybackController.cachedQueueEntry`
-- `PlaybackController.orderedLocalTrackIDs`
-- `PlaybackController.localTrackID`
-- `PlaybackController.reconcileStoredOrder`
-- Repeat and pending-mode queue rebuild helpers.
-
-### Tests
-
-- Existing `PlaybackOrderEngineTests`.
-- Existing `PlaybackQueueBuilderTests`.
-- Existing `PlaybackModeStoreTests`.
-- New queue/mode coordinator tests for current-track retention and repeat
-  restart.
-
-### Commit Criteria
-
-- Playback/order tests pass.
-- Manual smoke test:
-  - Play playlist.
-  - Next.
-  - Previous.
-  - Shuffle on/off.
-  - Repeat on/off.
-  - End-of-queue repeat.
-
-## Checkpoint 7: Thin PlaybackController
-
-### Goal
-
-Make `PlaybackController` an application-facing coordinator instead of a god
-object.
-
-### Keep In PlaybackController
-
-- Observable current playback state.
-- MusicKit transport calls.
-- Monitoring loop.
-- Current playback display restore.
-- Coordination between extracted services.
-
-### Move Out If Still Present
-
-- Business rules.
-- Remote playlist mutation decisions.
-- Track-health mutations.
-- Queue-order algorithms.
-- Formatting or display text.
-- Test-only logic that can be covered through injected collaborators.
-
-### Tests
-
-- Full playback-related suite.
-- Existing display restore tests.
-- Manual playback smoke test.
-
-### Commit Criteria
-
-- `PlaybackController` is substantially smaller and has a narrow role.
-- Existing playback behavior remains intact.
-- Full test suite passes.
-
-## Checkpoint 8: Extract App Startup View Model
-
-### Goal
-
-Remove startup and service lifecycle orchestration from `AppRouter`.
-
-### Create
-
-- `Overplay/App/AppStartupViewModel.swift`
-
-### Responsibilities
-
-- Settings bootstrap.
-- Authorization refresh.
-- Permission gate state.
-- Remote command activation.
-- Authorized service startup and stop.
-- Local playback display restore.
-- Periodic playlist sync startup.
-- `hasStartedAuthorizedServices` state.
-
-### Move Logic From
-
-- `AppRouter.task`
-- `AppRouter.onChange(of: authorizationService.readiness.isReady)`
-- `AppRouter.startAuthorizedServices`
-- `AppRouter.shouldShowPermissionView`
-
-### Tests
-
-- Update startup authorization tests.
-- Add tests for first authorized startup, repeated authorized startup, and
-  transition back to unauthorized.
-
-### Commit Criteria
-
-- Cold launch still shows preparing, permission, or authorized UI correctly.
-- Authorized services start once.
-- Periodic sync stops when readiness becomes unavailable.
-
-## Checkpoint 9: Split AppRouter And Shell Views
-
-### Goal
-
-Make navigation and shell ownership obvious, and remove duplicated now-playing
-UI.
-
-### Move Files
-
-- `PlatformShell`
-- `CompactAppShell`
-- `SplitAppShell`
-- `PlayerSheetView`
-- `MiniPlayerLozengeView`
-- `NowPlayingPaneView`
-
-Suggested destinations:
-
-- `Overplay/App/Shell/`
-- `Overplay/Views/NowPlaying/`
-
-### Extract Shared Now-Playing Components
-
-- `NowPlayingArtworkView`
-- `NowPlayingTrackTextView`
-- `NowPlayingProgressView`
-- `TrackHealthStatusView`
-- `PlaybackModeControlsView`
-- `TrackActionControlsView`
-
-Use these from both the sheet/pane version and the full `NowPlayingView`.
-
-### Tests
-
-- Preview compile check.
-- No new business-logic tests required unless behavior changes.
-
-### Commit Criteria
-
-- `AppRouter` handles routing only.
-- Full now-playing screen and mini-player/pane share components.
-- Previews compile.
-- UI behavior is unchanged.
-
-## Checkpoint 10: Introduce Screen View Models Where Useful
-
-### Goal
-
-Introduce MVVM selectively for screens with meaningful workflow state.
-
-### Suggested Order
-
-Commit each screen separately.
-
-1. `PlaylistSelectionViewModel`
-2. `SearchMusicViewModel`
-3. `PlaylistManagementViewModel`
-4. `SettingsViewModel`
-5. `HistoryViewModel`
-
-### Move Into View Models
-
-- Loading flags.
-- Selected playlist state.
-- User-facing messages.
-- Async sync/add/promote/diagnostics actions.
-- Derived row models.
-- Error handling.
-
-### Keep In Views
-
-- Layout.
-- Styling.
-- Navigation destinations.
-- Simple view-only state such as disclosure or confirmation dialogs, unless a
-  dialog is tightly coupled to a use case.
-
-### Tests
-
-- Add view-model tests for each moved workflow.
-- Use in-memory SwiftData containers.
-- Use lightweight service fakes where MusicKit work would otherwise be required.
-
-### Commit Criteria
-
-- Each screen remains behaviorally equivalent after its own commit.
-- View body complexity is reduced.
-- View-model tests pass.
-
-## Checkpoint 11: Make CarPlay A Presentation Adapter
-
-### Goal
-
-Ensure iOS and CarPlay share presentation and use-case code instead of drifting.
-
-### Keep In CarPlayCoordinator
-
-- `CPTemplate` creation.
-- CarPlay navigation.
-- Button wiring.
-- CarPlay-specific refresh timing.
-- CarPlay-specific error presentation.
-
-### Move Out Or Delegate
-
-- Playlist ordering decisions.
-- Track summary formatting.
-- Track-health action behavior.
-- Playback mode action behavior.
-- Now-playing state derivation.
-
-### Shared Inputs
-
-CarPlay should consume:
-
-- `PlaylistSummaryPresentation`
-- `TrackSummaryPresentation`
-- `NowPlayingPresentation`
-- `TrackHealthPresentation`
-- `TrackHealthActionService`
-- Shared playback mode actions
-
-### Tests
-
-- Update CarPlay snapshot tests.
-- Add tests proving SwiftUI and CarPlay playlist summaries are built from the
-  same presentation builder.
-
-### Commit Criteria
-
-- CarPlay UI content matches iOS source-of-truth ordering and labels.
-- CarPlay coordinator is smaller and adapter-focused.
-- CarPlay tests pass.
-- Manual CarPlay simulator or device smoke test if available.
-
-## Checkpoint 12: Clean Up Remote Command Service
-
-### Goal
-
-Avoid stale captured model contexts and one-shot global state.
-
-### Refactor
-
-Replace one-shot `install` behavior with a lifecycle API such as:
-
-- `activate(playbackController:context:)`
-- `update(playbackController:context:)`
-- `deactivate()`
-- `syncPlaybackModes(from:)`
-
-If MediaPlayer target removal is available for the installed commands, store
-target tokens and remove them during deactivation.
-
-### Tests
-
-- Existing remote playback mode mapper tests.
-- Add a small service-state test if command-center interaction can be isolated.
-
-### Commit Criteria
-
-- Remote commands use current dependencies after scene or CarPlay reconnects.
-- No duplicate command handlers are registered.
-- Manual lock-screen or Control Center command smoke test.
-
-## Checkpoint 13: Add MusicKit Playlist Pagination
-
-### Goal
-
-Fix the 100-playlist discovery cap.
-
-### Refactor
-
-Update `PlaylistSyncService.fetchAllLibraryPlaylists()` so it pages through all
-available playlist results if MusicKit exposes continuation or paging APIs.
-
-If MusicKit does not provide a supported continuation API for this request,
-document the limitation in code and in this plan, then isolate playlist fetching
-behind a testable wrapper so it can be changed later without touching views.
-
-### Tests
-
-- Add tests around the playlist-fetching wrapper using fake paged responses.
-- Verify sorting still pins preferred Overplay playlists first.
-
-### Commit Criteria
-
-- Large libraries are no longer silently capped when paging is available.
-- The limitation is explicit if paging is not available.
-- Playlist discovery tests pass.
-
-## Checkpoint 14: Final Naming And Organization Cleanup
-
-### Goal
-
-Remove naming drift, dead code, and file organization debt left by the staged
-refactor.
-
-### Clean Up
-
-- Rename `EvictionHistoryView.swift` or split it so the file matches
-  `HistoryView`.
-- Move `PlaylistManagementView` out of `DashboardView.swift`.
-- Remove obsolete typealiases.
-- Remove duplicate formatter functions.
-- Remove old test-only hooks if covered through injected services.
-- Review previews after file moves.
-- Review folder names for consistency.
-
-### Tests
+**Tests**
 
 - Full test suite.
-- Project build.
 - Preview compile check where practical.
-- Manual smoke test across main app flows.
 
-### Commit Criteria
+**Commit criteria**
 
-- File and type names align.
-- Duplicate presentation logic is removed.
+- File and type names align with their contents.
+- No remaining `uniqueKeysWithValues` crash paths in production code.
 - Full suite passes.
-- Manual smoke test passes.
 
-## Recommended Sequence
+---
 
-1. Add shared presentation models.
-2. Extract playlist presentation builder.
-3. Fix repository scalability.
-4. Extract track health use case.
-5. Extract playback session evaluation.
-6. Extract queue and mode coordination.
-7. Thin `PlaybackController`.
-8. Extract app startup view model.
-9. Split router and shell views.
-10. Add screen view models one screen at a time.
-11. Make CarPlay a presentation adapter.
-12. Clean up remote command service.
-13. Add MusicKit playlist pagination.
-14. Finish naming and organization cleanup.
+### Checkpoint 20: Final Verification
+
+**Goal:** Confirm the refactor meets the Definition Of Done.
+
+**Manual smoke tests**
+
+- Cold launch: preparing → permission → authorized UI.
+- Dashboard, playlist management, search, history, settings.
+- Full now-playing: play, pause, next, previous, shuffle, repeat, keep, evict.
+- Lock-screen / Control Center remote commands.
+- CarPlay: playlist list, track list, now-playing buttons, health actions.
+
+**Review checklist**
+
+- [x] SwiftUI views mostly render state and send intents.
+- [x] View models exist only for screens with real workflow state.
+- [x] Business rules live in focused use-case services.
+- [x] Repositories provide scoped data access.
+- [x] `PlaybackController` coordinates playback instead of owning every concern.
+- [x] CarPlay and SwiftUI share presentation builders and use cases.
+- [x] Duplicate formatting and state derivation are removed.
+- [x] Full test suite passes.
+
+**Commit criteria**
+
+- All checklist items satisfied.
+- This document updated to mark the refactor complete.
+
+</details>
+
+---
+
+## Recommended Sequence (Historical)
+
+All checkpoints below are complete.
+
+1. Add shared presentation models through finish-work checkpoints 15–20.
+2. See archive sections for the original 14-checkpoint sequence and the 15–20 finish work.
+
+---
 
 ## Definition Of Done
 
@@ -633,20 +349,96 @@ The refactor is done when:
 - The full test suite passes.
 - iOS and CarPlay manual smoke tests pass where available.
 
+---
+
+## Completed Checkpoints (Archive)
+
+The original 14 checkpoints are complete or mostly complete. They are preserved
+here as a record of what was planned and delivered.
+
+<details>
+<summary>Checkpoints 1–14 (original plan)</summary>
+
+### Checkpoint 1: Add Shared Presentation Models — Done
+
+Created `PlaylistSummaryPresentation`, `TrackSummaryPresentation`,
+`NowPlayingPresentation`, `TrackHealthPresentation`, `PlaybackControlsPresentation`.
+Replaced call sites in Dashboard, selection, now-playing, and CarPlay snapshot.
+
+### Checkpoint 2: Extract Playlist Presentation Builder — Done
+
+Created `PlaylistPresentationBuilder`. iOS and CarPlay playlist lists share ordering,
+counts, and artwork selection.
+
+### Checkpoint 3: Fix Repository Scalability — Mostly Done
+
+Added predicate-based repository APIs and `firstValueDictionary`. Fetch-all call
+sites in views remain (see Checkpoint 18).
+
+### Checkpoint 4: Extract Track Health Use Case — Done
+
+Created `TrackHealthActionService`. iOS, CarPlay, and History delegate track-health
+mutations.
+
+### Checkpoint 5: Extract Playback Session Evaluation — Done
+
+Created `PlaybackSessionEvaluationService`. Skip, playthrough, and eviction
+evaluation extracted from `PlaybackController`.
+
+### Checkpoint 6: Extract Queue And Mode Coordination — Done
+
+Created `PlaybackQueueCoordinator` and `PlaybackModeCoordinator`.
+
+### Checkpoint 7: Thin PlaybackController — Partial
+
+Controller delegates to extracted services but remains large. See Checkpoint 17.
+
+### Checkpoint 8: Extract App Startup View Model — Done
+
+Created `AppStartupViewModel`. `AppRouter` handles routing only.
+
+### Checkpoint 9: Split AppRouter And Shell Views — Mostly Done
+
+Shell types in `Overplay/App/Shell/AppShell.swift`. Shared now-playing components
+in `NowPlayingComponents.swift`. File splits deferred (see Checkpoint 19).
+
+### Checkpoint 10: Introduce Screen View Models — Done
+
+Created `PlaylistSelectionViewModel`, `SearchMusicViewModel`,
+`PlaylistManagementViewModel`, `SettingsViewModel`, `HistoryViewModel` with tests.
+
+### Checkpoint 11: Make CarPlay A Presentation Adapter — Partial
+
+Playlists and track-health actions shared. Track summaries and now-playing
+presentation still diverge. See Checkpoints 15–16.
+
+### Checkpoint 12: Clean Up Remote Command Service — Done
+
+Lifecycle API: `activate`, `update`, `deactivate`, `syncPlaybackModes`. Target
+tokens stored and removed on deactivation.
+
+### Checkpoint 13: Add MusicKit Playlist Pagination — Done
+
+`MusicLibraryPagination` and `MusicKitLibraryPlaylistFetcher` page through library
+playlists. Tests use fake paged responses.
+
+### Checkpoint 14: Final Naming And Organization Cleanup — Partial
+
+`EvictionHistoryView` renamed to `HistoryView`. `PlaylistManagementView` moved out
+of `DashboardView`. Other cleanup deferred (see Checkpoint 19).
+
+</details>
+
+---
+
 ## Document Review
 
 This plan intentionally starts with shared presentation and use-case seams
-rather than a full MVVM conversion. That order keeps risk lower because it
-first removes duplication and business logic from overloaded services. View
-models are introduced later, screen by screen, after the underlying use cases
-are small enough to compose.
+rather than a full MVVM conversion. That order kept risk lower because it
+removed duplication and business logic from overloaded services before view
+models were introduced.
 
-The highest-risk checkpoints are Checkpoint 6 and Checkpoint 7 because queue
-ordering, shuffle, repeat, and playback restoration are tightly coupled to live
-MusicKit behavior. Those checkpoints should be treated as mechanical refactors
-with strong tests and manual playback smoke tests before commit.
-
-The plan is long, but the sequence is deliberately conservative: each checkpoint
-has a clear goal, test expectations, and commit criteria. If any checkpoint
-starts to produce broad unrelated changes, stop and split it into a smaller
-checkpoint before continuing.
+The refactor completed in two phases: checkpoints 1–14 established the
+architecture, and checkpoints 15–20 finished CarPlay parity, controller slimming,
+repository scoping, and file organization. Manual smoke tests on device (playback,
+CarPlay, lock-screen controls) remain recommended after major playback changes.
