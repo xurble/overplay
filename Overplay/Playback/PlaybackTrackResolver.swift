@@ -74,6 +74,11 @@ enum PlaybackTrackResolver {
         in context: ModelContext
     ) -> CurrentPlaybackTrack? {
         if let playlistItem,
+           (try? PlaybackSessionSupport.itemMatchesMusicItemID(
+               playlistItem,
+               musicItemID: musicItemID,
+               in: context
+           )) == true,
            let trackRecord = try? TrackRecordRepository.track(id: playlistItem.trackID, in: context) {
             return CurrentPlaybackTrack(trackRecord, musicItemID: musicItemID, item: playlistItem)
         }

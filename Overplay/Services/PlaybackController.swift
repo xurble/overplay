@@ -956,7 +956,12 @@ final class PlaybackController {
         }
 
         if let localTrackID = activeQueueCurrentLocalTrackID,
-           let matched = try? playlistItem(localTrackID: localTrackID, context: context) {
+           let matched = try? playlistItem(localTrackID: localTrackID, context: context),
+           (try? PlaybackSessionSupport.itemMatchesMusicItemID(
+               matched,
+               musicItemID: musicItemID,
+               in: context
+           )) == true {
             currentPlaylistItem = matched
             return
         }
@@ -969,6 +974,8 @@ final class PlaybackController {
            )) == true {
             return
         }
+
+        currentPlaylistItem = nil
     }
 
     private func syncPlaybackMetadata(for musicItemID: String, context: ModelContext) {
@@ -980,7 +987,7 @@ final class PlaybackController {
             queueItem: player.queue.currentEntry?.item,
             in: context
         )
-        currentPlaylistItem = update.playlistItem ?? currentPlaylistItem
+        currentPlaylistItem = update.playlistItem
         if let track = update.track {
             currentTrack = track
             bumpPlaybackItemMetadataVersion()

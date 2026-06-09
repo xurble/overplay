@@ -17,7 +17,7 @@ enum PlaybackTrackMetadataSync {
         queueItem: MusicPlayer.Queue.Entry.Item?,
         in context: ModelContext
     ) -> MetadataUpdate {
-        var playlistItem = currentPlaylistItem
+        var playlistItem: PlaylistItemRecord?
         if let playlist = try? PlaybackTrackResolver.currentPlaylist(musicPlaylistID: currentPlaylistID, in: context),
            let resolvedItem = try? PlaybackSessionSupport.resolvePlaylistItem(
                forMusicItemID: musicItemID,

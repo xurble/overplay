@@ -67,13 +67,17 @@ struct NowPlayingTrackTextView: View {
 
 struct NowPlayingProgressView: View {
     var presentation: NowPlayingPresentation
-    var tint: Color?
     var foreground: Color? = nil
 
     var body: some View {
         VStack(spacing: 6) {
-            ProgressView(value: presentation.progress)
-                .tint(tint)
+            NowPlayingProgressBar(
+                progress: presentation.progress,
+                phase: presentation.progressPhase,
+                durationSeconds: presentation.durationSeconds,
+                isPlaying: presentation.isPlaying,
+                trackID: presentation.trackID
+            )
 
             HStack {
                 Text(presentation.elapsedText)
@@ -82,6 +86,119 @@ struct NowPlayingProgressView: View {
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(foreground ?? .secondary)
+        }
+    }
+}
+
+private struct NowPlayingProgressBar: View {
+    var progress: Double
+    var phase: NowPlayingProgressPhase
+    var durationSeconds: Double?
+    var isPlaying: Bool
+    var trackID: String?
+
+    @State private var sampledProgress = 0.0
+    @State private var sampleDate = Date()
+    @State private var sampledTrackID: String?
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !shouldInterpolateProgress)) { timeline in
+            GeometryReader { proxy in
+                let clampedProgress = displayedProgress(at: timeline.date)
+                let innerWidth = max(proxy.size.width - 4, 0)
+                let fillWidth = max(innerWidth * clampedProgress, clampedProgress > 0 ? 6 : 0)
+
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(.ultraThinMaterial)
+                        .overlay {
+                            Capsule()
+                                .fill(.white.opacity(0.08))
+                        }
+                        .overlay {
+                            Capsule()
+                                .strokeBorder(.white.opacity(0.34), lineWidth: 1)
+                        }
+                        .overlay {
+                            Capsule()
+                                .strokeBorder(.black.opacity(0.18), lineWidth: 0.5)
+                                .padding(1)
+                        }
+
+                    Capsule()
+                        .fill(fillColor)
+                        .overlay {
+                            Capsule()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [
+                                            .white.opacity(0.24),
+                                            .clear
+                                        ],
+                                        startPoint: .top,
+                                        endPoint: .bottom
+                                    )
+                                )
+                        }
+                        .frame(width: fillWidth)
+                        .padding(2)
+                        .animation(.smooth(duration: 0.45), value: phase)
+                }
+            }
+        }
+        .frame(height: 12)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Playback progress")
+        .accessibilityValue("\(Int(displayedProgress(at: Date()) * 100)) percent")
+        .onAppear {
+            sampleCurrentProgress()
+        }
+        .onChange(of: progress) {
+            sampleCurrentProgress()
+        }
+        .onChange(of: trackID) {
+            sampleCurrentProgress()
+        }
+        .onChange(of: isPlaying) {
+            sampleCurrentProgress()
+        }
+    }
+
+    private var shouldInterpolateProgress: Bool {
+        guard isPlaying, let durationSeconds, durationSeconds > 0 else {
+            return false
+        }
+        return progress < 1
+    }
+
+    private func displayedProgress(at date: Date) -> Double {
+        let baseProgress = sampledTrackID == trackID ? sampledProgress : clamped(progress)
+        guard shouldInterpolateProgress, let durationSeconds else {
+            return clamped(progress)
+        }
+
+        let elapsedSinceSample = max(date.timeIntervalSince(sampleDate), 0)
+        return clamped(baseProgress + elapsedSinceSample / durationSeconds)
+    }
+
+    private func sampleCurrentProgress() {
+        sampledProgress = clamped(progress)
+        sampleDate = Date()
+        sampledTrackID = trackID
+    }
+
+    private func clamped(_ progress: Double) -> Double {
+        min(max(progress, 0), 1)
+    }
+
+    private var fillColor: Color {
+        switch phase {
+        case .normal:
+            Color(red: 0.62, green: 0.64, blue: 0.68)
+        case .danger:
+            Color(red: 0.96, green: 0.12, blue: 0.16)
+        case .safe:
+            Color(red: 0.10, green: 0.72, blue: 0.30)
         }
     }
 }
@@ -327,6 +444,8 @@ struct FullScreenPlayerGlassButtonStyle: ButtonStyle {
     private var foregroundColor: Color {
         guard isEnabled else { return palette.disabledForeground }
         switch prominence {
+        case .selected:
+            return palette.backgroundRGB.color
         case .secondary:
             return palette.secondaryForeground
         default:
@@ -372,46 +491,90 @@ private struct FullScreenPlayerGlassBackdropModifier<S: InsettableShape>: ViewMo
 
     func body(content: Content) -> some View {
         if let palette {
-            content
-                .background {
-                    shape
-                        .fill(.ultraThinMaterial)
-                        .overlay {
-                            shape.fill(palette.tint.opacity(isPressed ? prominence.pressedFillOpacity : prominence.fillOpacity))
-                        }
-                        .overlay {
-                            shape.fill(
-                                LinearGradient(
-                                    colors: [
-                                        .white.opacity(palette.isLightBackground ? 0.34 : 0.22),
-                                        .white.opacity(0.04),
-                                        .clear
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .blendMode(.screen)
-                        }
-                }
-                .overlay {
-                    shape
-                        .strokeBorder(
-                            palette.tint.opacity(isPressed ? prominence.strokeOpacity + 0.14 : prominence.strokeOpacity),
-                            lineWidth: 1
-                        )
-                        .overlay {
-                            shape
-                                .strokeBorder(.white.opacity(palette.isLightBackground ? 0.18 : 0.12), lineWidth: 0.5)
-                        }
-                }
-                .shadow(
-                    color: .black.opacity(palette.shadowOpacity),
-                    radius: prominence == .primary ? 18 : 12,
-                    y: prominence == .primary ? 10 : 7
-                )
+            content.fullScreenPlayerGlassBackdropContent(
+                palette,
+                shape: shape,
+                prominence: prominence,
+                isPressed: isPressed
+            )
         } else {
             content.background(.thinMaterial, in: shape)
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func fullScreenPlayerGlassBackdropContent<S: InsettableShape>(
+        _ palette: FullScreenPlayerControlPalette,
+        shape: S,
+        prominence: FullScreenPlayerControlProminence,
+        isPressed: Bool
+    ) -> some View {
+        if prominence == .selected {
+            background {
+                shape
+                    .fill(palette.foreground.opacity(isPressed ? 0.78 : 0.94))
+                    .overlay {
+                        shape.fill(
+                            LinearGradient(
+                                colors: [
+                                    .white.opacity(isPressed ? 0.08 : 0.18),
+                                    .clear
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                    }
+            }
+            .overlay {
+                shape
+                    .strokeBorder(palette.backgroundRGB.color.opacity(isPressed ? 0.56 : 0.72), lineWidth: 1)
+            }
+            .shadow(
+                color: .black.opacity(palette.shadowOpacity),
+                radius: 12,
+                y: 7
+            )
+        } else {
+            background {
+                shape
+                    .fill(.ultraThinMaterial)
+                    .overlay {
+                        shape.fill(palette.tint.opacity(isPressed ? prominence.pressedFillOpacity : prominence.fillOpacity))
+                    }
+                    .overlay {
+                        shape.fill(
+                            LinearGradient(
+                                colors: [
+                                    .white.opacity(palette.isLightBackground ? 0.34 : 0.22),
+                                    .white.opacity(0.04),
+                                    .clear
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .blendMode(.screen)
+                    }
+            }
+            .overlay {
+                shape
+                    .strokeBorder(
+                        palette.tint.opacity(isPressed ? prominence.strokeOpacity + 0.14 : prominence.strokeOpacity),
+                        lineWidth: 1
+                    )
+                    .overlay {
+                        shape
+                            .strokeBorder(.white.opacity(palette.isLightBackground ? 0.18 : 0.12), lineWidth: 0.5)
+                    }
+            }
+            .shadow(
+                color: .black.opacity(palette.shadowOpacity),
+                radius: prominence == .primary ? 18 : 12,
+                y: prominence == .primary ? 10 : 7
+            )
         }
     }
 }

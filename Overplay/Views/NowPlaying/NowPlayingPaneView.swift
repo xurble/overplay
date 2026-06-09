@@ -36,7 +36,6 @@ struct NowPlayingPaneView: View {
                 )
                 NowPlayingProgressView(
                     presentation: presentation,
-                    tint: activeArtworkTheme?.trackTitle,
                     foreground: activeArtworkTheme?.artistName
                 )
                 TrackHealthStatusView(presentation: presentation, artworkTheme: activeArtworkTheme)

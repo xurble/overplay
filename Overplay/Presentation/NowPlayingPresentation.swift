@@ -1,11 +1,21 @@
 import Foundation
 
+enum NowPlayingProgressPhase: Equatable, Sendable {
+    case normal
+    case danger
+    case safe
+}
+
 struct NowPlayingPresentation: Equatable, Sendable {
     let trackID: String?
     let title: String
     let artistName: String
     let albumTitle: String?
     let progress: Double
+    let progressPhase: NowPlayingProgressPhase
+    let elapsedSeconds: Double
+    let durationSeconds: Double?
+    let isPlaying: Bool
     let elapsedText: String
     let durationText: String
     let skipCount: Int
@@ -21,6 +31,11 @@ struct NowPlayingPresentation: Equatable, Sendable {
         progress: Double,
         elapsedSeconds: Double,
         durationSeconds: Double?,
+        isPlaying: Bool = false,
+        skipThresholdPercentage: Double = 50,
+        minimumSkipListeningSeconds: Double = 10,
+        playthroughThresholdPercentage: Double = 90,
+        playthroughResetsSkipCount: Bool = true,
         skipCount: Int,
         evictAfterSkips: Int,
         isEvicted: Bool,
@@ -31,6 +46,17 @@ struct NowPlayingPresentation: Equatable, Sendable {
         self.artistName = artistName ?? "Choose Play Overplay from the dashboard."
         self.albumTitle = albumTitle
         self.progress = progress
+        self.elapsedSeconds = elapsedSeconds
+        self.durationSeconds = durationSeconds
+        self.isPlaying = isPlaying
+        self.progressPhase = Self.progressPhase(
+            elapsedSeconds: elapsedSeconds,
+            durationSeconds: durationSeconds,
+            skipThresholdPercentage: skipThresholdPercentage,
+            minimumSkipListeningSeconds: minimumSkipListeningSeconds,
+            playthroughThresholdPercentage: playthroughThresholdPercentage,
+            playthroughResetsSkipCount: playthroughResetsSkipCount
+        )
         self.elapsedText = Self.formatTime(elapsedSeconds)
         self.durationText = Self.formatTime(durationSeconds ?? 0)
         self.skipCount = skipCount
@@ -43,5 +69,27 @@ struct NowPlayingPresentation: Equatable, Sendable {
         guard seconds.isFinite else { return "0:00" }
         let totalSeconds = max(Int(seconds), 0)
         return "\(totalSeconds / 60):\(String(format: "%02d", totalSeconds % 60))"
+    }
+
+    static func progressPhase(
+        elapsedSeconds: Double,
+        durationSeconds: Double?,
+        skipThresholdPercentage: Double,
+        minimumSkipListeningSeconds: Double,
+        playthroughThresholdPercentage: Double,
+        playthroughResetsSkipCount: Bool
+    ) -> NowPlayingProgressPhase {
+        guard let durationSeconds, durationSeconds > 0 else {
+            return .normal
+        }
+
+        let progressPercentage = min(max((elapsedSeconds / durationSeconds) * 100, 0), 100)
+        if playthroughResetsSkipCount, progressPercentage >= playthroughThresholdPercentage {
+            return .safe
+        }
+        if elapsedSeconds >= minimumSkipListeningSeconds, progressPercentage < skipThresholdPercentage {
+            return .danger
+        }
+        return .normal
     }
 }

@@ -20,7 +20,7 @@ struct NowPlayingView: View {
                         .shadow(color: .black.opacity(0.35), radius: 24, y: 18)
 
                     NowPlayingTrackTextView(presentation: nowPlayingPresentation)
-                    NowPlayingProgressView(presentation: nowPlayingPresentation, tint: .white)
+                    NowPlayingProgressView(presentation: nowPlayingPresentation)
                     TrackHealthStatusView(presentation: nowPlayingPresentation)
                     PlaybackControlsView(settings: settings)
                     secondaryControls(settings: settings)

@@ -152,6 +152,54 @@ struct NowPlayingPresentationTests {
         #expect(presentation.durationText == "0:00")
         #expect(presentation.skipCountText == "Skips: 2 / 3")
     }
+
+    @Test("progress phase follows skip and playthrough thresholds")
+    func progressPhaseFollowsSkipAndPlaythroughThresholds() {
+        #expect(NowPlayingPresentation.progressPhase(
+            elapsedSeconds: 4,
+            durationSeconds: 100,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 10,
+            playthroughThresholdPercentage: 90,
+            playthroughResetsSkipCount: true
+        ) == .normal)
+
+        #expect(NowPlayingPresentation.progressPhase(
+            elapsedSeconds: 12,
+            durationSeconds: 100,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 10,
+            playthroughThresholdPercentage: 90,
+            playthroughResetsSkipCount: true
+        ) == .danger)
+
+        #expect(NowPlayingPresentation.progressPhase(
+            elapsedSeconds: 55,
+            durationSeconds: 100,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 10,
+            playthroughThresholdPercentage: 90,
+            playthroughResetsSkipCount: true
+        ) == .normal)
+
+        #expect(NowPlayingPresentation.progressPhase(
+            elapsedSeconds: 92,
+            durationSeconds: 100,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 10,
+            playthroughThresholdPercentage: 90,
+            playthroughResetsSkipCount: true
+        ) == .safe)
+
+        #expect(NowPlayingPresentation.progressPhase(
+            elapsedSeconds: 92,
+            durationSeconds: 100,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 10,
+            playthroughThresholdPercentage: 90,
+            playthroughResetsSkipCount: false
+        ) == .normal)
+    }
 }
 
 @Suite("Now playing presentation factory")
@@ -215,5 +263,24 @@ struct NowPlayingPresentationFactoryTests {
         )
         #expect(presentation.trackID == nil)
         #expect(presentation.title == "Nothing playing")
+    }
+
+    @Test("factory includes playback timing state")
+    @MainActor
+    func factoryIncludesPlaybackTimingState() {
+        let controller = PlaybackController()
+        controller.elapsedSeconds = 30
+        controller.durationSeconds = 120
+        controller.isPlaying = true
+        let settings = OverplaySettings()
+
+        let presentation = NowPlayingPresentationFactory.presentation(
+            playbackController: controller,
+            settings: settings
+        )
+
+        #expect(presentation.elapsedSeconds == 30)
+        #expect(presentation.durationSeconds == 120)
+        #expect(presentation.isPlaying)
     }
 }
