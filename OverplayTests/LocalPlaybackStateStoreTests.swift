@@ -21,11 +21,54 @@ struct LocalPlaybackStateStoreTests {
             localTrackID: "local-track-1"
         )
 
-        LocalPlaybackStateStore.save(state, to: defaults)
+        LocalPlaybackStateStore.save(state, to: defaults, flushImmediately: true)
         #expect(LocalPlaybackStateStore.load(from: defaults) == state)
 
-        LocalPlaybackStateStore.clear(from: defaults)
+        LocalPlaybackStateStore.clear(from: defaults, flushImmediately: true)
         #expect(LocalPlaybackStateStore.load(from: defaults) == nil)
+    }
+
+    @Test("flush policy writes through on transitions and throttles playback ticks")
+    func flushPolicyWritesThroughOnTransitionsAndThrottlesPlaybackTicks() {
+        let now = Date(timeIntervalSince1970: 100)
+        let recentFlush = Date(timeIntervalSince1970: 86)
+        let oldFlush = Date(timeIntervalSince1970: 85)
+
+        #expect(LocalPlaybackStateFlushPolicy.shouldFlush(
+            now: now,
+            lastFlushAt: recentFlush,
+            isPlaying: true,
+            didChangePlaybackIdentity: false,
+            force: true
+        ))
+        #expect(LocalPlaybackStateFlushPolicy.shouldFlush(
+            now: now,
+            lastFlushAt: recentFlush,
+            isPlaying: true,
+            didChangePlaybackIdentity: true,
+            force: false
+        ))
+        #expect(!LocalPlaybackStateFlushPolicy.shouldFlush(
+            now: now,
+            lastFlushAt: recentFlush,
+            isPlaying: true,
+            didChangePlaybackIdentity: false,
+            force: false
+        ))
+        #expect(LocalPlaybackStateFlushPolicy.shouldFlush(
+            now: now,
+            lastFlushAt: oldFlush,
+            isPlaying: true,
+            didChangePlaybackIdentity: false,
+            force: false
+        ))
+        #expect(!LocalPlaybackStateFlushPolicy.shouldFlush(
+            now: now,
+            lastFlushAt: nil,
+            isPlaying: false,
+            didChangePlaybackIdentity: false,
+            force: false
+        ))
     }
 
     @Test("loads legacy playback state without local track ID")

@@ -20,7 +20,12 @@ struct PlayerSheetView: View {
                     artworkTheme: artworkTheme
                 )
 
-                NowPlayingPaneView(settings: settings, artworkTheme: artworkTheme)
+                NowPlayingPaneView(
+                    settings: settings,
+                    artworkTheme: artworkTheme
+                ) { refreshedTheme in
+                    applyArtworkTheme(refreshedTheme, source: "debug-refresh")
+                }
                     .padding(.bottom, collapsedHeight + proxy.safeAreaInsets.bottom)
                     .opacity(contentOpacity)
                     .allowsHitTesting(contentOpacity > 0.5)
@@ -142,48 +147,18 @@ private struct PlayerSheetBackground: View {
 
     var body: some View {
         ZStack {
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .opacity(0.42 + (0.58 * opaqueProgress))
-
-            LinearGradient(
-                colors: [
-                    .white.opacity(0.12),
-                    .white.opacity(0.04),
-                    .clear
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .opacity(1 - opaqueProgress)
-
             if artworkTheme.isFallback {
                 Rectangle()
                     .fill(.background)
-                    .opacity(opaqueProgress)
             } else {
+                Rectangle()
+                    .fill(.background)
+                    .opacity(1 - opaqueProgress)
+
                 artworkTheme.background
                     .opacity(opaqueProgress)
-
-                LinearGradient(
-                    colors: [
-                        .black.opacity(topScrimOpacity),
-                        .black.opacity(bottomScrimOpacity)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .opacity(opaqueProgress)
             }
         }
-    }
-
-    private var topScrimOpacity: Double {
-        artworkTheme.backgroundRGB.relativeLuminance > 0.26 ? 0.03 : 0.10
-    }
-
-    private var bottomScrimOpacity: Double {
-        artworkTheme.backgroundRGB.relativeLuminance > 0.26 ? 0.14 : 0.34
     }
 }
 

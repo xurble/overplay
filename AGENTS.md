@@ -113,7 +113,7 @@ This applies to SwiftUI app views, CarPlay, Lock Screen controls, Control
 Center, Siri, AirPods/headset controls, remote commands, Dynamic Island,
 widgets, shortcuts, and any other place that can start, stop, skip, queue,
 shuffle, repeat, or mutate current-track state.
-
+    
 Agents should:
 
 -   Route shared actions through common controllers, use cases, services, and

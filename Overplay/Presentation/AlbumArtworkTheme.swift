@@ -256,6 +256,14 @@ nonisolated struct AlbumArtworkRecognizedText: Equatable, Sendable {
         case trackTitle = 0
         case artistName = 1
         case albumTitle = 2
+
+        var debugLabel: String {
+            switch self {
+            case .trackTitle: "track title"
+            case .artistName: "artist name"
+            case .albumTitle: "album name"
+            }
+        }
     }
 
     var text: String
@@ -268,8 +276,103 @@ nonisolated struct AlbumArtworkTextMatch: Equatable, Sendable {
     var observation: AlbumArtworkRecognizedText
 }
 
+nonisolated struct AlbumArtworkThemeDebugPaletteEntry: Equatable, Sendable {
+    var color: AlbumArtworkRGBColor
+    var population: Int
+}
+
+nonisolated struct AlbumArtworkThemeDebugImageSize: Equatable, Sendable {
+    var width: Int
+    var height: Int
+}
+
+nonisolated struct AlbumArtworkThemeDebugTarget: Equatable, Sendable {
+    var label: String
+    var original: String?
+    var normalized: String
+}
+
+nonisolated struct AlbumArtworkThemeDebugMonochromeAnalysis: Equatable, Sendable {
+    var averageSaturation: CGFloat
+    var neutralShare: CGFloat
+    var chromaticShare: CGFloat
+    var isMonochrome: Bool
+}
+
+nonisolated struct AlbumArtworkThemeDebugOCR: Equatable, Sendable {
+    var observations: [AlbumArtworkRecognizedText]
+    var matchedKind: AlbumArtworkRecognizedText.MatchKind?
+    var matchedText: String?
+    var matchedConfidence: CGFloat?
+    var sampledTextColor: AlbumArtworkRGBColor?
+    var localBackgroundColor: AlbumArtworkRGBColor?
+    var localPalette: [AlbumArtworkThemeDebugPaletteEntry]
+    var status: String
+}
+
+nonisolated struct AlbumArtworkThemeDebugReport: Equatable, Sendable {
+    var generatedAt: Date
+    var normalizedArtworkURL: String?
+    var artworkByteCount: Int
+    var artworkDataHash: String?
+    var downsampledSize: AlbumArtworkThemeDebugImageSize?
+    var croppedSize: AlbumArtworkThemeDebugImageSize?
+    var rawPalette: [AlbumArtworkThemeDebugPaletteEntry]
+    var cleanedPalette: [AlbumArtworkThemeDebugPaletteEntry]
+    var textCandidates: [AlbumArtworkThemeDebugPaletteEntry]
+    var normalizedTargets: [AlbumArtworkThemeDebugTarget]
+    var monochrome: AlbumArtworkThemeDebugMonochromeAnalysis?
+    var backgroundCandidate: AlbumArtworkRGBColor?
+    var background: AlbumArtworkRGBColor?
+    var selectedAccent: AlbumArtworkRGBColor?
+    var preferredAccent: AlbumArtworkRGBColor?
+    var ocr: AlbumArtworkThemeDebugOCR
+    var decisions: [String]
+    var theme: AlbumArtworkTheme
+    var errorMessage: String?
+
+    static func failure(
+        normalizedArtworkURL: String?,
+        artworkByteCount: Int,
+        artworkDataHash: String?,
+        errorMessage: String
+    ) -> AlbumArtworkThemeDebugReport {
+        AlbumArtworkThemeDebugReport(
+            generatedAt: .now,
+            normalizedArtworkURL: normalizedArtworkURL,
+            artworkByteCount: artworkByteCount,
+            artworkDataHash: artworkDataHash,
+            downsampledSize: nil,
+            croppedSize: nil,
+            rawPalette: [],
+            cleanedPalette: [],
+            textCandidates: [],
+            normalizedTargets: [],
+            monochrome: nil,
+            backgroundCandidate: nil,
+            background: nil,
+            selectedAccent: nil,
+            preferredAccent: nil,
+            ocr: AlbumArtworkThemeDebugOCR(
+                observations: [],
+                matchedKind: nil,
+                matchedText: nil,
+                matchedConfidence: nil,
+                sampledTextColor: nil,
+                localBackgroundColor: nil,
+                localPalette: [],
+                status: "OCR not run because artwork could not be analysed."
+            ),
+            decisions: [errorMessage],
+            theme: .fallback,
+            errorMessage: errorMessage
+        )
+    }
+}
+
 nonisolated enum AlbumArtworkThemeBuilder {
-    static let algorithmVersion = 3
+    static let algorithmVersion = 14
+    private static let paletteAccentMaximumAdjustmentDistance: CGFloat = 0.30
 
     struct Options: Equatable, Sendable {
         var requiresIncreasedContrast = false
@@ -299,15 +402,423 @@ nonisolated enum AlbumArtworkThemeBuilder {
         )
         let palette = extractPalette(from: croppedImage, maxColors: 8)
         logPalette("builder raw palette", palette)
-        let recognizedText = recognizeText(in: croppedImage)
+        let textImage = downsampledImage(from: input.artworkData, maxDimension: 512) ?? image
+        AlbumArtworkThemeDiagnostics.log("builder ocr image: \(textImage.width)x\(textImage.height) uncropped")
+        let recognizedText = recognizeText(in: textImage)
         return theme(
             from: palette,
-            croppedImage: croppedImage,
+            croppedImage: textImage,
             recognizedText: recognizedText,
             trackTitle: input.trackTitle,
             artistName: input.artistName,
             albumTitle: input.albumTitle,
             options: input.options
+        )
+    }
+
+    static func debugReport(from input: AlbumArtworkThemeInput, artworkDataHash: String? = nil) -> AlbumArtworkThemeDebugReport {
+        let targets = debugTargets(
+            trackTitle: input.trackTitle,
+            artistName: input.artistName,
+            albumTitle: input.albumTitle
+        )
+        guard let image = downsampledImage(from: input.artworkData, maxDimension: 100),
+              let croppedImage = cropped(image, removingOuterPercent: 0.08) else {
+            return .failure(
+                normalizedArtworkURL: input.artworkURLTemplate,
+                artworkByteCount: input.artworkData.count,
+                artworkDataHash: artworkDataHash,
+                errorMessage: "Could not decode or downsample artwork data."
+            )
+        }
+
+        let rawPalette = extractPalette(from: croppedImage, maxColors: 8)
+        let textImage = downsampledImage(from: input.artworkData, maxDimension: 512) ?? image
+        let recognizedText = recognizeText(in: textImage)
+        let cleanedPalette = cleaned(rawPalette)
+        guard !cleanedPalette.isEmpty else {
+            return .failure(
+                normalizedArtworkURL: input.artworkURLTemplate,
+                artworkByteCount: input.artworkData.count,
+                artworkDataHash: artworkDataHash,
+                errorMessage: "Palette extraction returned no usable colours after cleaning."
+            )
+        }
+
+        let monochromeAnalysis = monochromeAnalysis(for: cleanedPalette)
+        var decisions = [
+            "Downsampled artwork to \(image.width)x\(image.height) and cropped outer 8% to \(croppedImage.width)x\(croppedImage.height).",
+            "Ran OCR on uncropped \(textImage.width)x\(textImage.height) artwork so edge text and small type survive analysis.",
+            "Extracted \(rawPalette.count) raw palette colours; \(cleanedPalette.count) remained after duplicate/noise cleanup."
+        ]
+
+        if monochromeAnalysis.isMonochrome {
+            decisions.append("Classified artwork as monochrome; checking OCR before using the neutral fallback.")
+            let provisionalBackground = monochromeBackground(from: cleanedPalette)
+            let ocr = debugOCR(
+                croppedImage: textImage,
+                recognizedText: recognizedText,
+                background: provisionalBackground,
+                trackTitle: input.trackTitle,
+                artistName: input.artistName,
+                albumTitle: input.albumTitle,
+                options: input.options
+            )
+            let theme: AlbumArtworkTheme
+            if let sampledTextColor = ocr.sampledTextColor {
+                let background = monochromeBackground(
+                    from: cleanedPalette,
+                    for: sampledTextColor,
+                    minimumContrast: input.options.titleMinimumContrast
+                )
+                decisions.append("OCR matched \(ocr.matchedKind?.debugLabel ?? "metadata") text in monochrome artwork and selected sampled glyph colour \(debugColorSummary(sampledTextColor)).")
+                decisions.append("Selected monochrome palette background \(debugColorSummary(background)) for the OCR text colour.")
+                theme = self.theme(
+                    background: background,
+                    titleAccent: sampledTextColor,
+                    options: input.options,
+                    source: "ocr"
+                )
+            } else {
+                decisions.append("OCR did not provide a usable colour for monochrome artwork; used neutral background plus readable title-derived detail colours.")
+                theme = monochromeTheme(from: cleanedPalette, options: input.options)
+            }
+            return AlbumArtworkThemeDebugReport(
+                generatedAt: .now,
+                normalizedArtworkURL: input.artworkURLTemplate,
+                artworkByteCount: input.artworkData.count,
+                artworkDataHash: artworkDataHash,
+                downsampledSize: AlbumArtworkThemeDebugImageSize(width: image.width, height: image.height),
+                croppedSize: AlbumArtworkThemeDebugImageSize(width: croppedImage.width, height: croppedImage.height),
+                rawPalette: debugPalette(rawPalette),
+                cleanedPalette: debugPalette(cleanedPalette),
+                textCandidates: debugPalette(textCandidates(from: cleanedPalette, background: theme.backgroundRGB)),
+                normalizedTargets: targets,
+                monochrome: monochromeAnalysis,
+                backgroundCandidate: provisionalBackground,
+                background: theme.backgroundRGB,
+                selectedAccent: theme.trackTitleRGB,
+                preferredAccent: accentColor(from: cleanedPalette),
+                ocr: ocr,
+                decisions: decisions,
+                theme: theme,
+                errorMessage: nil
+            )
+        }
+
+        decisions.append("Artwork was not monochrome; choosing a chromatic background and foreground accent.")
+        let backgroundCandidate = chooseBackgroundColor(from: cleanedPalette)
+        let background = adjustBackground(backgroundCandidate)
+        let preferredAccent = accentColor(from: cleanedPalette, avoiding: backgroundCandidate)
+        let textCandidates = textCandidates(from: cleanedPalette, background: background, avoiding: [backgroundCandidate])
+        let ocr = debugOCR(
+            croppedImage: textImage,
+            recognizedText: recognizedText,
+            background: background,
+            trackTitle: input.trackTitle,
+            artistName: input.artistName,
+            albumTitle: input.albumTitle,
+            options: input.options
+        )
+        decisions.append("Background candidate \(debugColorSummary(backgroundCandidate)) adjusted to \(debugColorSummary(background)).")
+
+        let selectedAccent: AlbumArtworkRGBColor
+        let theme: AlbumArtworkTheme
+        if let sampledTextColor = ocr.sampledTextColor {
+            selectedAccent = sampledTextColor
+            decisions.append("OCR matched \(ocr.matchedKind?.debugLabel ?? "metadata") text and selected sampled glyph colour \(debugColorSummary(sampledTextColor)).")
+            let themeBackground = ocrBackground(
+                from: cleanedPalette,
+                raw: backgroundCandidate,
+                adjusted: background,
+                accent: sampledTextColor,
+                minimumContrast: input.options.titleMinimumContrast
+            )
+            if themeBackground != background {
+                decisions.append("Selected palette background \(debugColorSummary(themeBackground)) for the OCR text colour instead of synthesizing a contrast colour.")
+            }
+            theme = self.theme(
+                background: themeBackground,
+                titleAccent: sampledTextColor,
+                options: input.options,
+                source: "ocr"
+            )
+        } else if let paletteAccent = strongestForegroundAccent(
+            from: textCandidates,
+            background: background,
+            avoiding: [backgroundCandidate]
+        ) ?? preferredAccent {
+            selectedAccent = paletteAccent
+            decisions.append("OCR did not provide a usable accent; selected strongest palette foreground accent \(debugColorSummary(paletteAccent)).")
+            let themeBackground = preferredBackground(
+                raw: backgroundCandidate,
+                adjusted: background,
+                accent: paletteAccent,
+                minimumContrast: input.options.titleMinimumContrast
+            )
+            if themeBackground == backgroundCandidate, backgroundCandidate != background {
+                decisions.append("Kept the original background candidate because it already gives the selected accent readable contrast.")
+            }
+            theme = self.theme(
+                background: themeBackground,
+                titleAccent: paletteAccent,
+                fallbackTitleAccent: directlyReadablePaletteColor(
+                    from: textCandidates,
+                    against: themeBackground,
+                    minimumContrast: input.options.titleMinimumContrast
+                ),
+                maximumTitleAdjustmentDistance: paletteAccentMaximumAdjustmentDistance,
+                options: input.options,
+                source: "palette-accent"
+            )
+            if theme.trackTitleRGB.distance(to: paletteAccent) > paletteAccentMaximumAdjustmentDistance {
+                decisions.append("The strongest palette accent needed too much colour shifting for readable text; used a directly readable palette colour \(debugColorSummary(theme.trackTitleRGB)) instead.")
+            }
+        } else {
+            let fallbackAccent = chooseReadableColor(
+                from: textCandidates,
+                against: background,
+                minimumContrast: input.options.titleMinimumContrast,
+                fallback: preferredForeground(for: background, accent: preferredAccent)
+            )
+            selectedAccent = fallbackAccent
+            decisions.append("No strong accent survived filtering; selected readable fallback foreground \(debugColorSummary(fallbackAccent)).")
+            theme = self.theme(
+                background: background,
+                titleAccent: fallbackAccent,
+                options: input.options,
+                source: "palette"
+            )
+        }
+        if theme.backgroundRGB != background {
+            if theme.trackTitleRGB.distance(to: selectedAccent) > paletteAccentMaximumAdjustmentDistance {
+                decisions.append("Adjusted background again to \(debugColorSummary(theme.backgroundRGB)) during final contrast balancing.")
+            } else {
+                decisions.append("Adjusted background again to \(debugColorSummary(theme.backgroundRGB)) so the selected accent could remain closer to its artwork colour.")
+            }
+        }
+        decisions.append("Derived artist and album colours as softened shades of the selected title colour.")
+
+        return AlbumArtworkThemeDebugReport(
+            generatedAt: .now,
+            normalizedArtworkURL: input.artworkURLTemplate,
+            artworkByteCount: input.artworkData.count,
+            artworkDataHash: artworkDataHash,
+            downsampledSize: AlbumArtworkThemeDebugImageSize(width: image.width, height: image.height),
+            croppedSize: AlbumArtworkThemeDebugImageSize(width: croppedImage.width, height: croppedImage.height),
+            rawPalette: debugPalette(rawPalette),
+            cleanedPalette: debugPalette(cleanedPalette),
+            textCandidates: debugPalette(textCandidates),
+            normalizedTargets: targets,
+            monochrome: monochromeAnalysis,
+            backgroundCandidate: backgroundCandidate,
+            background: theme.backgroundRGB,
+            selectedAccent: selectedAccent,
+            preferredAccent: preferredAccent,
+            ocr: ocr,
+            decisions: decisions,
+            theme: theme,
+            errorMessage: nil
+        )
+    }
+
+    static func debugReport(
+        from palette: [AlbumArtworkPaletteColor],
+        croppedImage: CGImage? = nil,
+        recognizedText: [AlbumArtworkRecognizedText] = [],
+        trackTitle: String? = nil,
+        artistName: String? = nil,
+        albumTitle: String? = nil,
+        options: Options = Options()
+    ) -> AlbumArtworkThemeDebugReport {
+        let targets = debugTargets(
+            trackTitle: trackTitle,
+            artistName: artistName,
+            albumTitle: albumTitle
+        )
+        let cleanedPalette = cleaned(palette)
+        guard !cleanedPalette.isEmpty else {
+            return .failure(
+                normalizedArtworkURL: nil,
+                artworkByteCount: 0,
+                artworkDataHash: nil,
+                errorMessage: "Palette extraction returned no usable colours after cleaning."
+            )
+        }
+
+        let monochromeAnalysis = monochromeAnalysis(for: cleanedPalette)
+        var decisions = [
+            "Using supplied palette for diagnostics.",
+            "Extracted \(palette.count) raw palette colours; \(cleanedPalette.count) remained after duplicate/noise cleanup."
+        ]
+
+        if monochromeAnalysis.isMonochrome {
+            decisions.append("Classified artwork as monochrome; checking OCR before using the neutral fallback.")
+            let provisionalBackground = monochromeBackground(from: cleanedPalette)
+            let ocr = debugOCR(
+                croppedImage: croppedImage,
+                recognizedText: recognizedText,
+                background: provisionalBackground,
+                trackTitle: trackTitle,
+                artistName: artistName,
+                albumTitle: albumTitle,
+                options: options
+            )
+            let theme: AlbumArtworkTheme
+            if let sampledTextColor = ocr.sampledTextColor {
+                let background = monochromeBackground(
+                    from: cleanedPalette,
+                    for: sampledTextColor,
+                    minimumContrast: options.titleMinimumContrast
+                )
+                decisions.append("OCR matched \(ocr.matchedKind?.debugLabel ?? "metadata") text in monochrome artwork and selected sampled glyph colour \(debugColorSummary(sampledTextColor)).")
+                decisions.append("Selected monochrome palette background \(debugColorSummary(background)) for the OCR text colour.")
+                theme = self.theme(
+                    background: background,
+                    titleAccent: sampledTextColor,
+                    options: options,
+                    source: "ocr"
+                )
+            } else {
+                decisions.append("OCR did not provide a usable colour for monochrome artwork; used neutral background plus readable title-derived detail colours.")
+                theme = monochromeTheme(from: cleanedPalette, options: options)
+            }
+            return AlbumArtworkThemeDebugReport(
+                generatedAt: .now,
+                normalizedArtworkURL: nil,
+                artworkByteCount: 0,
+                artworkDataHash: nil,
+                downsampledSize: nil,
+                croppedSize: croppedImage.map { AlbumArtworkThemeDebugImageSize(width: $0.width, height: $0.height) },
+                rawPalette: debugPalette(palette),
+                cleanedPalette: debugPalette(cleanedPalette),
+                textCandidates: debugPalette(textCandidates(from: cleanedPalette, background: theme.backgroundRGB)),
+                normalizedTargets: targets,
+                monochrome: monochromeAnalysis,
+                backgroundCandidate: provisionalBackground,
+                background: theme.backgroundRGB,
+                selectedAccent: theme.trackTitleRGB,
+                preferredAccent: accentColor(from: cleanedPalette),
+                ocr: ocr,
+                decisions: decisions,
+                theme: theme,
+                errorMessage: nil
+            )
+        }
+
+        decisions.append("Artwork was not monochrome; choosing a chromatic background and foreground accent.")
+        let backgroundCandidate = chooseBackgroundColor(from: cleanedPalette)
+        let background = adjustBackground(backgroundCandidate)
+        let preferredAccent = accentColor(from: cleanedPalette, avoiding: backgroundCandidate)
+        let textCandidates = textCandidates(from: cleanedPalette, background: background, avoiding: [backgroundCandidate])
+        let ocr = debugOCR(
+            croppedImage: croppedImage,
+            recognizedText: recognizedText,
+            background: background,
+            trackTitle: trackTitle,
+            artistName: artistName,
+            albumTitle: albumTitle,
+            options: options
+        )
+        decisions.append("Background candidate \(debugColorSummary(backgroundCandidate)) adjusted to \(debugColorSummary(background)).")
+
+        let selectedAccent: AlbumArtworkRGBColor
+        let theme: AlbumArtworkTheme
+        if let sampledTextColor = ocr.sampledTextColor {
+            selectedAccent = sampledTextColor
+            decisions.append("OCR matched \(ocr.matchedKind?.debugLabel ?? "metadata") text and selected sampled glyph colour \(debugColorSummary(sampledTextColor)).")
+            let themeBackground = ocrBackground(
+                from: cleanedPalette,
+                raw: backgroundCandidate,
+                adjusted: background,
+                accent: sampledTextColor,
+                minimumContrast: options.titleMinimumContrast
+            )
+            if themeBackground != background {
+                decisions.append("Selected palette background \(debugColorSummary(themeBackground)) for the OCR text colour instead of synthesizing a contrast colour.")
+            }
+            theme = self.theme(
+                background: themeBackground,
+                titleAccent: sampledTextColor,
+                options: options,
+                source: "ocr"
+            )
+        } else if let paletteAccent = strongestForegroundAccent(
+            from: textCandidates,
+            background: background,
+            avoiding: [backgroundCandidate]
+        ) ?? preferredAccent {
+            selectedAccent = paletteAccent
+            decisions.append("OCR did not provide a usable accent; selected strongest palette foreground accent \(debugColorSummary(paletteAccent)).")
+            let themeBackground = preferredBackground(
+                raw: backgroundCandidate,
+                adjusted: background,
+                accent: paletteAccent,
+                minimumContrast: options.titleMinimumContrast
+            )
+            if themeBackground == backgroundCandidate, backgroundCandidate != background {
+                decisions.append("Kept the original background candidate because it already gives the selected accent readable contrast.")
+            }
+            theme = self.theme(
+                background: themeBackground,
+                titleAccent: paletteAccent,
+                fallbackTitleAccent: directlyReadablePaletteColor(
+                    from: textCandidates,
+                    against: themeBackground,
+                    minimumContrast: options.titleMinimumContrast
+                ),
+                maximumTitleAdjustmentDistance: paletteAccentMaximumAdjustmentDistance,
+                options: options,
+                source: "palette-accent"
+            )
+            if theme.trackTitleRGB.distance(to: paletteAccent) > paletteAccentMaximumAdjustmentDistance {
+                decisions.append("The strongest palette accent needed too much colour shifting for readable text; used a directly readable palette colour \(debugColorSummary(theme.trackTitleRGB)) instead.")
+            }
+        } else {
+            let fallbackAccent = chooseReadableColor(
+                from: textCandidates,
+                against: background,
+                minimumContrast: options.titleMinimumContrast,
+                fallback: preferredForeground(for: background, accent: preferredAccent)
+            )
+            selectedAccent = fallbackAccent
+            decisions.append("No strong accent survived filtering; selected readable fallback foreground \(debugColorSummary(fallbackAccent)).")
+            theme = self.theme(
+                background: background,
+                titleAccent: fallbackAccent,
+                options: options,
+                source: "palette"
+            )
+        }
+        if theme.backgroundRGB != background {
+            if theme.trackTitleRGB.distance(to: selectedAccent) > paletteAccentMaximumAdjustmentDistance {
+                decisions.append("Adjusted background again to \(debugColorSummary(theme.backgroundRGB)) during final contrast balancing.")
+            } else {
+                decisions.append("Adjusted background again to \(debugColorSummary(theme.backgroundRGB)) so the selected accent could remain closer to its artwork colour.")
+            }
+        }
+        decisions.append("Derived artist and album colours as softened shades of the selected title colour.")
+
+        return AlbumArtworkThemeDebugReport(
+            generatedAt: .now,
+            normalizedArtworkURL: nil,
+            artworkByteCount: 0,
+            artworkDataHash: nil,
+            downsampledSize: nil,
+            croppedSize: croppedImage.map { AlbumArtworkThemeDebugImageSize(width: $0.width, height: $0.height) },
+            rawPalette: debugPalette(palette),
+            cleanedPalette: debugPalette(cleanedPalette),
+            textCandidates: debugPalette(textCandidates),
+            normalizedTargets: targets,
+            monochrome: monochromeAnalysis,
+            backgroundCandidate: backgroundCandidate,
+            background: theme.backgroundRGB,
+            selectedAccent: selectedAccent,
+            preferredAccent: preferredAccent,
+            ocr: ocr,
+            decisions: decisions,
+            theme: theme,
+            errorMessage: nil
         )
     }
 
@@ -361,18 +872,35 @@ nonisolated enum AlbumArtworkThemeBuilder {
         in image: CGImage,
         boundingBox: CGRect,
         background: AlbumArtworkRGBColor,
-        minimumContrast: CGFloat
+        minimumContrast: CGFloat,
+        requireScreenContrast: Bool = true
     ) -> AlbumArtworkRGBColor? {
         let rect = pixelRect(forNormalizedBoundingBox: boundingBox, image: image).insetBy(dx: -2, dy: -2)
         let palette = extractPalette(from: image, in: rect, maxColors: 6)
-        guard let localBackground = palette.first?.color else { return nil }
+        guard !palette.isEmpty else { return nil }
 
-        return palette
-            .filter { $0.color.distance(to: localBackground) > 0.18 || $0.color.contrastRatio(against: localBackground) > 1.8 }
-            .filter { $0.color.distance(to: background) > 0.16 }
+        let surroundingPalette = extractPalette(from: image, in: surroundingRects(for: rect, image: image), maxColors: 4)
+        let localBackground = surroundingPalette.first?.color ?? palette.first?.color ?? background
+
+        var candidates = palette
+            .filter { $0.color.distance(to: localBackground) > 0.14 || $0.color.contrastRatio(against: localBackground) > 1.45 }
+
+        if requireScreenContrast {
+            candidates = candidates.filter { $0.color.distance(to: background) > 0.16 }
+        }
+
+        return candidates
             .max { left, right in
-                let leftScore = textSampleScore(left, localBackground: localBackground, screenBackground: background)
-                let rightScore = textSampleScore(right, localBackground: localBackground, screenBackground: background)
+                let leftScore = textSampleScore(
+                    left,
+                    localBackground: localBackground,
+                    screenBackground: requireScreenContrast ? background : nil
+                )
+                let rightScore = textSampleScore(
+                    right,
+                    localBackground: localBackground,
+                    screenBackground: requireScreenContrast ? background : nil
+                )
                 return leftScore < rightScore
             }?
             .color
@@ -396,6 +924,17 @@ nonisolated enum AlbumArtworkThemeBuilder {
 
         if isMonochrome(cleanedPalette) {
             AlbumArtworkThemeDiagnostics.log("builder path: monochrome")
+            if let ocrTheme = monochromeOCRTheme(
+                from: cleanedPalette,
+                croppedImage: croppedImage,
+                recognizedText: recognizedText,
+                trackTitle: trackTitle,
+                artistName: artistName,
+                albumTitle: albumTitle,
+                options: options
+            ) {
+                return ocrTheme
+            }
             return monochromeTheme(from: cleanedPalette, options: options)
         }
 
@@ -404,9 +943,9 @@ nonisolated enum AlbumArtworkThemeBuilder {
         AlbumArtworkThemeDiagnostics.log(
             "builder background: candidate=\(AlbumArtworkThemeDiagnostics.describe(backgroundCandidate)) adjusted=\(AlbumArtworkThemeDiagnostics.describe(background))"
         )
-        let accent = accentColor(from: cleanedPalette)
+        let accent = accentColor(from: cleanedPalette, avoiding: backgroundCandidate)
         let preferredForeground = preferredForeground(for: background, accent: accent)
-        let textCandidates = textCandidates(from: cleanedPalette, background: background)
+        let textCandidates = textCandidates(from: cleanedPalette, background: background, avoiding: [backgroundCandidate])
         logPalette("builder text candidates", textCandidates)
 
         if let textAccent = ocrAccent(
@@ -421,8 +960,15 @@ nonisolated enum AlbumArtworkThemeBuilder {
             AlbumArtworkThemeDiagnostics.log(
                 "builder ocr accent: color=\(AlbumArtworkThemeDiagnostics.describe(textAccent))"
             )
+            let themeBackground = ocrBackground(
+                from: cleanedPalette,
+                raw: backgroundCandidate,
+                adjusted: background,
+                accent: textAccent,
+                minimumContrast: options.titleMinimumContrast
+            )
             return theme(
-                background: background,
+                background: themeBackground,
                 titleAccent: textAccent,
                 options: options,
                 source: "ocr"
@@ -431,14 +977,27 @@ nonisolated enum AlbumArtworkThemeBuilder {
 
         if let paletteAccent = strongestForegroundAccent(
             from: textCandidates,
-            background: background
+            background: background,
+            avoiding: [backgroundCandidate]
         ) ?? accent {
+            let themeBackground = preferredBackground(
+                raw: backgroundCandidate,
+                adjusted: background,
+                accent: paletteAccent,
+                minimumContrast: options.titleMinimumContrast
+            )
             AlbumArtworkThemeDiagnostics.log(
                 "builder palette accent: color=\(AlbumArtworkThemeDiagnostics.describe(paletteAccent))"
             )
             return theme(
-                background: background,
+                background: themeBackground,
                 titleAccent: paletteAccent,
+                fallbackTitleAccent: directlyReadablePaletteColor(
+                    from: textCandidates,
+                    against: themeBackground,
+                    minimumContrast: options.titleMinimumContrast
+                ),
+                maximumTitleAdjustmentDistance: paletteAccentMaximumAdjustmentDistance,
                 options: options,
                 source: "palette-accent"
             )
@@ -495,6 +1054,10 @@ nonisolated enum AlbumArtworkThemeBuilder {
     }
 
     private static func extractPalette(from image: CGImage, in rect: CGRect, maxColors: Int) -> [AlbumArtworkPaletteColor] {
+        extractPalette(from: image, in: [rect], maxColors: maxColors)
+    }
+
+    private static func extractPalette(from image: CGImage, in rects: [CGRect], maxColors: Int) -> [AlbumArtworkPaletteColor] {
         let width = image.width
         let height = image.height
         let bytesPerPixel = 4
@@ -516,33 +1079,36 @@ nonisolated enum AlbumArtworkThemeBuilder {
 
         var buckets: [Int: (red: Int, green: Int, blue: Int, count: Int)] = [:]
         let step = max(1, Int(sqrt(CGFloat(width * height) / 4096)))
-        let sampleRect = rect
-            .intersection(CGRect(x: 0, y: 0, width: width, height: height))
-            .integral
-        guard !sampleRect.isNull, sampleRect.width > 0, sampleRect.height > 0 else { return [] }
+        let imageRect = CGRect(x: 0, y: 0, width: width, height: height)
+        let sampleRects = rects
+            .map { $0.intersection(imageRect).integral }
+            .filter { !$0.isNull && $0.width > 0 && $0.height > 0 }
+        guard !sampleRects.isEmpty else { return [] }
 
-        let minX = max(0, Int(sampleRect.minX))
-        let maxX = min(width, Int(sampleRect.maxX))
-        let minY = max(0, Int(sampleRect.minY))
-        let maxY = min(height, Int(sampleRect.maxY))
+        for sampleRect in sampleRects {
+            let minX = max(0, Int(sampleRect.minX))
+            let maxX = min(width, Int(sampleRect.maxX))
+            let minY = max(0, Int(sampleRect.minY))
+            let maxY = min(height, Int(sampleRect.maxY))
 
-        for y in stride(from: minY, to: maxY, by: step) {
-            for x in stride(from: minX, to: maxX, by: step) {
-                let index = (y * bytesPerRow) + (x * bytesPerPixel)
-                let alpha = pixels[index + 3]
-                guard alpha > 24 else { continue }
+            for y in stride(from: minY, to: maxY, by: step) {
+                for x in stride(from: minX, to: maxX, by: step) {
+                    let index = (y * bytesPerRow) + (x * bytesPerPixel)
+                    let alpha = pixels[index + 3]
+                    guard alpha > 24 else { continue }
 
-                let red = Int(pixels[index])
-                let green = Int(pixels[index + 1])
-                let blue = Int(pixels[index + 2])
-                let key = ((red >> 3) << 10) | ((green >> 3) << 5) | (blue >> 3)
-                let current = buckets[key] ?? (0, 0, 0, 0)
-                buckets[key] = (
-                    current.red + red,
-                    current.green + green,
-                    current.blue + blue,
-                    current.count + 1
-                )
+                    let red = Int(pixels[index])
+                    let green = Int(pixels[index + 1])
+                    let blue = Int(pixels[index + 2])
+                    let key = ((red >> 3) << 10) | ((green >> 3) << 5) | (blue >> 3)
+                    let current = buckets[key] ?? (0, 0, 0, 0)
+                    buckets[key] = (
+                        current.red + red,
+                        current.green + green,
+                        current.blue + blue,
+                        current.count + 1
+                    )
+                }
             }
         }
 
@@ -628,6 +1194,10 @@ nonisolated enum AlbumArtworkThemeBuilder {
     }
 
     private static func isMonochrome(_ palette: [AlbumArtworkPaletteColor]) -> Bool {
+        monochromeAnalysis(for: palette).isMonochrome
+    }
+
+    private static func monochromeAnalysis(for palette: [AlbumArtworkPaletteColor]) -> AlbumArtworkThemeDebugMonochromeAnalysis {
         let totalPopulation = max(palette.reduce(0) { $0 + $1.population }, 1)
         let averageSaturation = palette.reduce(CGFloat.zero) {
             $0 + ($1.color.saturation * CGFloat($1.population))
@@ -647,7 +1217,12 @@ nonisolated enum AlbumArtworkThemeBuilder {
         AlbumArtworkThemeDiagnostics.log(
             "builder monochrome check: count=\(palette.count) avgSat=\(AlbumArtworkThemeDiagnostics.format(averageSaturation)) neutralShare=\(AlbumArtworkThemeDiagnostics.format(neutralShare)) chromaticShare=\(AlbumArtworkThemeDiagnostics.format(chromaticShare)) result=\(result)"
         )
-        return result
+        return AlbumArtworkThemeDebugMonochromeAnalysis(
+            averageSaturation: averageSaturation,
+            neutralShare: neutralShare,
+            chromaticShare: chromaticShare,
+            isMonochrome: result
+        )
     }
 
     private static func monochromeTheme(
@@ -655,17 +1230,7 @@ nonisolated enum AlbumArtworkThemeBuilder {
         options: Options
     ) -> AlbumArtworkTheme {
         let dominant = palette.max { $0.population < $1.population }?.color ?? .defaultPlayerBackground
-        let background: AlbumArtworkRGBColor
-
-        if dominant.relativeLuminance > 0.78 {
-            background = dominant.adjustedToward(.black, targetLuminance: 0.52, maxAmount: 0.36)
-        } else if dominant.relativeLuminance > 0.42 {
-            background = dominant.adjustedToward(.black, targetLuminance: 0.38, maxAmount: 0.20)
-        } else {
-            background = dominant.relativeLuminance > 0.18
-                ? dominant.adjustedToward(.black, targetLuminance: 0.14, maxAmount: 0.22)
-                : dominant
-        }
+        let background = monochromeBackground(from: palette)
 
         let accent = accentColor(from: palette) ?? dominant
         let textCandidates = textCandidates(from: palette, background: background)
@@ -688,8 +1253,103 @@ nonisolated enum AlbumArtworkThemeBuilder {
         return theme
     }
 
-    private static func accentColor(from palette: [AlbumArtworkPaletteColor]) -> AlbumArtworkRGBColor? {
-        palette
+    private static func monochromeOCRTheme(
+        from palette: [AlbumArtworkPaletteColor],
+        croppedImage: CGImage?,
+        recognizedText: [AlbumArtworkRecognizedText],
+        trackTitle: String?,
+        artistName: String?,
+        albumTitle: String?,
+        options: Options
+    ) -> AlbumArtworkTheme? {
+        let provisionalBackground = monochromeBackground(from: palette)
+        guard let textAccent = ocrAccent(
+            croppedImage: croppedImage,
+            recognizedText: recognizedText,
+            background: provisionalBackground,
+            trackTitle: trackTitle,
+            artistName: artistName,
+            albumTitle: albumTitle,
+            options: options
+        ) else {
+            return nil
+        }
+
+        let background = monochromeBackground(
+            from: palette,
+            for: textAccent,
+            minimumContrast: options.titleMinimumContrast
+        )
+        AlbumArtworkThemeDiagnostics.log(
+            "builder monochrome ocr accent: background=\(AlbumArtworkThemeDiagnostics.describe(background)) color=\(AlbumArtworkThemeDiagnostics.describe(textAccent))"
+        )
+        return theme(
+            background: background,
+            titleAccent: textAccent,
+            options: options,
+            source: "ocr"
+        )
+    }
+
+    private static func monochromeBackground(from palette: [AlbumArtworkPaletteColor]) -> AlbumArtworkRGBColor {
+        let dominant = palette.max { $0.population < $1.population }?.color ?? .defaultPlayerBackground
+        if dominant.relativeLuminance > 0.78 {
+            return dominant.adjustedToward(.black, targetLuminance: 0.52, maxAmount: 0.36)
+        }
+        if dominant.relativeLuminance > 0.42 {
+            return dominant.adjustedToward(.black, targetLuminance: 0.38, maxAmount: 0.20)
+        }
+        return dominant.relativeLuminance > 0.18
+            ? dominant.adjustedToward(.black, targetLuminance: 0.14, maxAmount: 0.22)
+            : dominant
+    }
+
+    private static func monochromeBackground(
+        from palette: [AlbumArtworkPaletteColor],
+        for accent: AlbumArtworkRGBColor,
+        minimumContrast: CGFloat
+    ) -> AlbumArtworkRGBColor {
+        if let paletteBackground = palette
+            .filter({ $0.color.distance(to: accent) > 0.16 })
+            .filter({ $0.color.contrastRatio(against: accent) >= minimumContrast })
+            .max(by: { left, right in
+                let leftScore = monochromeBackgroundScore(left, accent: accent)
+                let rightScore = monochromeBackgroundScore(right, accent: accent)
+                return leftScore < rightScore
+            })?
+            .color {
+            return paletteBackground
+        }
+
+        return backgroundPreservingAccent(
+            monochromeBackground(from: palette),
+            accent: accent,
+            minimumContrast: minimumContrast,
+            preserveAccent: true
+        )
+    }
+
+    private static func monochromeBackgroundScore(
+        _ entry: AlbumArtworkPaletteColor,
+        accent: AlbumArtworkRGBColor
+    ) -> CGFloat {
+        let contrast = min(entry.color.contrastRatio(against: accent), 12) / 12
+        let extremityPenalty: CGFloat = entry.color.isNearWhite || entry.color.isNearBlack ? 0.82 : 1
+        return CGFloat(entry.population) * (0.8 + contrast) * extremityPenalty
+    }
+
+    private static func accentColor(
+        from palette: [AlbumArtworkPaletteColor],
+        avoiding avoidedColor: AlbumArtworkRGBColor? = nil
+    ) -> AlbumArtworkRGBColor? {
+        let filteredPalette = palette
+            .filter { !$0.color.isNearWhite && !$0.color.isNearBlack && $0.color.saturation > 0.08 }
+            .filter { entry in
+                guard let avoidedColor else { return true }
+                return entry.color.distance(to: avoidedColor) > 0.24
+            }
+
+        return (filteredPalette.isEmpty ? palette : filteredPalette)
             .filter { !$0.color.isNearWhite && !$0.color.isNearBlack && $0.color.saturation > 0.08 }
             .max { lhs, rhs in
                 let lhsScore = CGFloat(lhs.population) * (0.6 + lhs.color.saturation)
@@ -701,10 +1361,14 @@ nonisolated enum AlbumArtworkThemeBuilder {
 
     private static func strongestForegroundAccent(
         from candidates: [AlbumArtworkPaletteColor],
-        background: AlbumArtworkRGBColor
+        background: AlbumArtworkRGBColor,
+        avoiding avoidedColors: [AlbumArtworkRGBColor] = []
     ) -> AlbumArtworkRGBColor? {
         candidates
             .filter { $0.color.distance(to: background) > 0.22 }
+            .filter { entry in
+                avoidedColors.allSatisfy { entry.color.distance(to: $0) > 0.24 }
+            }
             .filter { !$0.color.isNearWhite && !$0.color.isNearBlack }
             .max { left, right in
                 let leftScore = foregroundAccentScore(left, background: background)
@@ -712,6 +1376,16 @@ nonisolated enum AlbumArtworkThemeBuilder {
                 return leftScore < rightScore
             }?
             .color
+    }
+
+    private static func directlyReadablePaletteColor(
+        from candidates: [AlbumArtworkPaletteColor],
+        against background: AlbumArtworkRGBColor,
+        minimumContrast: CGFloat
+    ) -> AlbumArtworkRGBColor? {
+        candidates.first { candidate in
+            candidate.color.contrastRatio(against: background) >= minimumContrast
+        }?.color
     }
 
     private static func foregroundAccentScore(
@@ -725,10 +1399,14 @@ nonisolated enum AlbumArtworkThemeBuilder {
 
     private static func textCandidates(
         from palette: [AlbumArtworkPaletteColor],
-        background: AlbumArtworkRGBColor
+        background: AlbumArtworkRGBColor,
+        avoiding avoidedColors: [AlbumArtworkRGBColor] = []
     ) -> [AlbumArtworkPaletteColor] {
         palette
             .filter { $0.color.distance(to: background) > 0.18 }
+            .filter { entry in
+                avoidedColors.allSatisfy { entry.color.distance(to: $0) > 0.24 }
+            }
             .sorted { lhs, rhs in
                 let lhsChromatic = isChromaticTextCandidate(lhs.color)
                 let rhsChromatic = isChromaticTextCandidate(rhs.color)
@@ -747,6 +1425,46 @@ nonisolated enum AlbumArtworkThemeBuilder {
     }
 
     private static func chooseBackgroundColor(from palette: [AlbumArtworkPaletteColor]) -> AlbumArtworkRGBColor {
+        let totalPopulation = max(palette.reduce(0) { $0 + $1.population }, 1)
+        if let dominant = palette.first {
+            let dominantShare = CGFloat(dominant.population) / CGFloat(totalPopulation)
+            let darkInkShare = CGFloat(
+                palette
+                    .filter { $0.color.relativeLuminance < 0.08 }
+                    .reduce(0) { $0 + $1.population }
+            ) / CGFloat(totalPopulation)
+            let lightGroundShare = CGFloat(
+                palette
+                    .filter { $0.color.relativeLuminance > 0.68 && $0.color.saturation < 0.14 }
+                    .reduce(0) { $0 + $1.population }
+            ) / CGFloat(totalPopulation)
+
+            if dominant.color.relativeLuminance > 0.72,
+               dominantShare > 0.36,
+               lightGroundShare > 0.42,
+               darkInkShare > 0.12 {
+                return dominant.color
+            }
+
+            let vividAlternatives = palette
+                .filter { $0.color.relativeLuminance > 0.06 }
+                .filter { $0.color.relativeLuminance < 0.58 }
+                .filter { $0.color.saturation > 0.44 }
+                .filter { !$0.color.isNearWhite && !$0.color.isNearBlack }
+            let vividShare = CGFloat(vividAlternatives.reduce(0) { $0 + $1.population }) / CGFloat(totalPopulation)
+
+            if dominant.color.relativeLuminance < 0.08,
+               dominant.color.saturation < 0.40,
+               dominantShare < 0.86 || vividShare > 0.10,
+               let vivid = vividAlternatives.max(by: { left, right in
+                   let leftScore = CGFloat(left.population) * (0.65 + left.color.saturation)
+                   let rightScore = CGFloat(right.population) * (0.65 + right.color.saturation)
+                   return leftScore < rightScore
+               }) {
+                return vivid.color
+            }
+        }
+
         if let chromatic = palette
             .filter({ !$0.color.isNearWhite && !$0.color.isNearBlack && !$0.color.isNeutral })
             .max(by: { left, right in
@@ -762,29 +1480,92 @@ nonisolated enum AlbumArtworkThemeBuilder {
 
     private static func adjustBackground(_ color: AlbumArtworkRGBColor) -> AlbumArtworkRGBColor {
         let luminance = color.relativeLuminance
-        var adjusted: AlbumArtworkRGBColor
 
         if luminance > 0.70 {
-            adjusted = color.adjustedToward(.black, targetLuminance: 0.58, maxAmount: 0.24)
-        } else if luminance > 0.50 {
-            adjusted = color.adjustedToward(.black, targetLuminance: 0.46, maxAmount: 0.18)
-        } else if luminance > 0.32 {
-            adjusted = color.adjustedToward(.black, targetLuminance: 0.34, maxAmount: 0.10)
-        } else if luminance > 0.20 {
-            adjusted = color
-        } else if luminance < 0.06, color.saturation > 0.24 {
-            adjusted = color.adjustedToward(.white, targetLuminance: 0.12, maxAmount: 0.25)
-        } else if luminance < 0.16 {
-            adjusted = color
-        } else {
-            adjusted = color
+            return color.adjustedToward(.black, targetLuminance: 0.62, maxAmount: 0.16)
         }
-
-        if adjusted.saturation > 0.86 {
-            adjusted = adjusted.desaturated(0.10)
+        if luminance > 0.52 {
+            return color.adjustedToward(.black, targetLuminance: 0.50, maxAmount: 0.10)
         }
+        if luminance < 0.05, color.saturation > 0.24 {
+            return color.adjustedToward(.white, targetLuminance: 0.10, maxAmount: 0.18)
+        }
+        return color
+    }
 
+    private static func preferredBackground(
+        raw: AlbumArtworkRGBColor,
+        adjusted: AlbumArtworkRGBColor,
+        accent: AlbumArtworkRGBColor,
+        minimumContrast: CGFloat
+    ) -> AlbumArtworkRGBColor {
+        if raw.relativeLuminance < adjusted.relativeLuminance,
+           accent.contrastRatio(against: raw) >= minimumContrast {
+            return raw
+        }
         return adjusted
+    }
+
+    private static func ocrBackground(
+        from palette: [AlbumArtworkPaletteColor],
+        raw: AlbumArtworkRGBColor,
+        adjusted: AlbumArtworkRGBColor,
+        accent: AlbumArtworkRGBColor,
+        minimumContrast: CGFloat
+    ) -> AlbumArtworkRGBColor {
+        if raw.contrastRatio(against: accent) >= minimumContrast {
+            return raw
+        }
+        if adjusted.contrastRatio(against: accent) >= minimumContrast,
+           adjusted.distance(to: raw) < 0.18 {
+            return adjusted
+        }
+
+        if let paletteBackground = palette
+            .filter({ $0.color.distance(to: accent) > 0.16 })
+            .filter({ $0.color.contrastRatio(against: accent) >= minimumContrast })
+            .max(by: { left, right in
+                let leftScore = ocrBackgroundScore(left, accent: accent)
+                let rightScore = ocrBackgroundScore(right, accent: accent)
+                return leftScore < rightScore
+            })?
+            .color {
+            return paletteBackground
+        }
+
+        if let nearReadablePaletteBackground = palette
+            .filter({ $0.color.distance(to: accent) > 0.16 })
+            .filter({
+                adjustedForeground(
+                    accent,
+                    against: $0.color,
+                    minimumContrast: minimumContrast
+                ).distance(to: accent) <= 0.22
+            })
+            .max(by: { left, right in
+                let leftScore = ocrBackgroundScore(left, accent: accent)
+                let rightScore = ocrBackgroundScore(right, accent: accent)
+                return leftScore < rightScore
+            })?
+            .color {
+            return nearReadablePaletteBackground
+        }
+
+        return backgroundPreservingAccent(
+            adjusted,
+            accent: accent,
+            minimumContrast: minimumContrast,
+            preserveAccent: true
+        )
+    }
+
+    private static func ocrBackgroundScore(
+        _ entry: AlbumArtworkPaletteColor,
+        accent: AlbumArtworkRGBColor
+    ) -> CGFloat {
+        let contrast = min(entry.color.contrastRatio(against: accent), 12) / 12
+        let extremityPenalty: CGFloat = entry.color.isNearWhite || entry.color.isNearBlack ? 0.82 : 1
+        return CGFloat(entry.population) * (0.9 + contrast) * extremityPenalty
     }
 
     private static func ocrAccent(
@@ -810,7 +1591,8 @@ nonisolated enum AlbumArtworkThemeBuilder {
             in: croppedImage,
             boundingBox: match.observation.boundingBox,
             background: background,
-            minimumContrast: options.titleMinimumContrast
+            minimumContrast: options.titleMinimumContrast,
+            requireScreenContrast: false
         ) else {
             AlbumArtworkThemeDiagnostics.log("builder ocr match without usable color: \(match.observation.text)")
             return nil
@@ -822,9 +1604,24 @@ nonisolated enum AlbumArtworkThemeBuilder {
     private static func theme(
         background: AlbumArtworkRGBColor,
         titleAccent: AlbumArtworkRGBColor,
+        fallbackTitleAccent: AlbumArtworkRGBColor? = nil,
+        maximumTitleAdjustmentDistance: CGFloat? = nil,
         options: Options,
         source: String
     ) -> AlbumArtworkTheme {
+        let titleAccent = resolvedTitleAccent(
+            titleAccent,
+            against: background,
+            minimumContrast: options.titleMinimumContrast,
+            fallback: fallbackTitleAccent,
+            maximumAdjustmentDistance: maximumTitleAdjustmentDistance
+        )
+        let background = backgroundPreservingAccent(
+            background,
+            accent: titleAccent,
+            minimumContrast: options.titleMinimumContrast,
+            preserveAccent: source == "ocr"
+        )
         let title = readableAccent(
             titleAccent,
             against: background,
@@ -857,6 +1654,43 @@ nonisolated enum AlbumArtworkThemeBuilder {
         return theme
     }
 
+    private static func backgroundPreservingAccent(
+        _ background: AlbumArtworkRGBColor,
+        accent: AlbumArtworkRGBColor,
+        minimumContrast: CGFloat,
+        preserveAccent: Bool = false
+    ) -> AlbumArtworkRGBColor {
+        guard accent.contrastRatio(against: background) < minimumContrast else {
+            return background
+        }
+
+        let preferDarkerBackground = accent.relativeLuminance >= background.relativeLuminance
+        let target = preferDarkerBackground ? AlbumArtworkRGBColor.black : .white
+        let hasStrongColourPair = background.saturation > 0.45 && accent.saturation > 0.45
+        let maxAmount: CGFloat
+        if preserveAccent {
+            maxAmount = 0.62
+        } else if hasStrongColourPair {
+            maxAmount = 0.36
+        } else if background.relativeLuminance > 0.32 {
+            maxAmount = 0.22
+        } else {
+            maxAmount = 0.16
+        }
+        var best = background
+        for step in 1...16 {
+            let amount = CGFloat(step) / 16 * maxAmount
+            let candidate = background.mixed(with: target, amount: amount)
+            if accent.contrastRatio(against: candidate) >= minimumContrast {
+                return candidate
+            }
+            if accent.contrastRatio(against: candidate) > accent.contrastRatio(against: best) {
+                best = candidate
+            }
+        }
+        return best
+    }
+
     private static func themeSource(for source: String) -> AlbumArtworkThemeSource {
         switch source {
         case "ocr":
@@ -879,6 +1713,30 @@ nonisolated enum AlbumArtworkThemeBuilder {
             return accent
         }
         return adjustedForeground(accent, against: background, minimumContrast: minimumContrast)
+    }
+
+    private static func resolvedTitleAccent(
+        _ accent: AlbumArtworkRGBColor,
+        against background: AlbumArtworkRGBColor,
+        minimumContrast: CGFloat,
+        fallback: AlbumArtworkRGBColor?,
+        maximumAdjustmentDistance: CGFloat?
+    ) -> AlbumArtworkRGBColor {
+        guard accent.contrastRatio(against: background) < minimumContrast,
+              let maximumAdjustmentDistance else {
+            return accent
+        }
+
+        let adjusted = adjustedForeground(accent, against: background, minimumContrast: minimumContrast)
+        guard adjusted.distance(to: accent) > maximumAdjustmentDistance else {
+            return accent
+        }
+
+        if let fallback,
+           fallback.contrastRatio(against: background) >= minimumContrast {
+            return fallback
+        }
+        return accent
     }
 
     private static func chooseReadableColor(
@@ -1013,8 +1871,11 @@ nonisolated enum AlbumArtworkThemeBuilder {
         guard !normalizedTarget.isEmpty else { return nil }
         let targetTokens = normalizedTarget.split(separator: " ").map(String.init)
         let isShortTarget = normalizedTarget.count <= 4 || (targetTokens.count == 1 && (targetTokens.first?.count ?? 0) <= 4)
+        let matchCandidates = isShortTarget
+            ? observations
+            : observations + combinedObservationCandidates(from: observations)
 
-        let scored = observations.compactMap { observation -> (AlbumArtworkRecognizedText, CGFloat)? in
+        let scored = matchCandidates.compactMap { observation -> (AlbumArtworkRecognizedText, CGFloat)? in
             guard observation.confidence >= 0.35 else { return nil }
             let normalizedObservation = normalizedText(observation.text)
             guard !normalizedObservation.isEmpty else { return nil }
@@ -1027,8 +1888,12 @@ nonisolated enum AlbumArtworkThemeBuilder {
                 return (observation, observation.confidence + 2)
             }
 
-            if normalizedObservation == normalizedTarget || normalizedObservation.contains(normalizedTarget) {
-                return (observation, observation.confidence + 2)
+            if normalizedObservation == normalizedTarget {
+                return (observation, observation.confidence + 4)
+            }
+
+            if normalizedObservation.contains(normalizedTarget) {
+                return (observation, observation.confidence + 1)
             }
 
             let matchingTokens = targetTokens.filter { observationTokens.contains($0) }.count
@@ -1044,6 +1909,46 @@ nonisolated enum AlbumArtworkThemeBuilder {
             .map { AlbumArtworkTextMatch(kind: kind, observation: $0.0) }
     }
 
+    private static func combinedObservationCandidates(
+        from observations: [AlbumArtworkRecognizedText]
+    ) -> [AlbumArtworkRecognizedText] {
+        let ordered = observations
+            .filter { $0.confidence >= 0.35 && !normalizedText($0.text).isEmpty }
+            .sorted { lhs, rhs in
+                let rowDelta = abs(lhs.boundingBox.midY - rhs.boundingBox.midY)
+                if rowDelta > 0.08 {
+                    return lhs.boundingBox.midY > rhs.boundingBox.midY
+                }
+                return lhs.boundingBox.minX < rhs.boundingBox.minX
+            }
+        guard ordered.count >= 2 else { return [] }
+
+        var combined: [AlbumArtworkRecognizedText] = []
+        let maxWindowSize = min(4, ordered.count)
+        for startIndex in ordered.indices {
+            for windowSize in 2...maxWindowSize {
+                let endIndex = startIndex + windowSize
+                guard endIndex <= ordered.count else { continue }
+                let window = Array(ordered[startIndex..<endIndex])
+                let text = window.map(\.text).joined(separator: " ")
+                let confidence = window.map(\.confidence).reduce(0, +) / CGFloat(window.count)
+                let boundingBox = window
+                    .map(\.boundingBox)
+                    .dropFirst()
+                    .reduce(window[0].boundingBox) { partialResult, rect in
+                        partialResult.union(rect)
+                    }
+                combined.append(AlbumArtworkRecognizedText(
+                    text: text,
+                    confidence: confidence,
+                    boundingBox: boundingBox
+                ))
+            }
+        }
+
+        return combined
+    }
+
     private static func pixelRect(forNormalizedBoundingBox boundingBox: CGRect, image: CGImage) -> CGRect {
         CGRect(
             x: boundingBox.minX * CGFloat(image.width),
@@ -1053,15 +1958,40 @@ nonisolated enum AlbumArtworkThemeBuilder {
         )
     }
 
+    private static func surroundingRects(for rect: CGRect, image: CGImage) -> [CGRect] {
+        let imageRect = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        let inner = rect.intersection(imageRect).integral
+        guard !inner.isNull, inner.width > 0, inner.height > 0 else { return [] }
+
+        let xInset = -max(6, inner.width * 0.22)
+        let yInset = -max(6, inner.height * 0.45)
+        let outer = inner
+            .insetBy(dx: xInset, dy: yInset)
+            .intersection(imageRect)
+            .integral
+        guard !outer.isNull, outer.width > 0, outer.height > 0 else { return [] }
+
+        return [
+            CGRect(x: outer.minX, y: outer.minY, width: outer.width, height: max(0, inner.minY - outer.minY)),
+            CGRect(x: outer.minX, y: inner.maxY, width: outer.width, height: max(0, outer.maxY - inner.maxY)),
+            CGRect(x: outer.minX, y: inner.minY, width: max(0, inner.minX - outer.minX), height: inner.height),
+            CGRect(x: inner.maxX, y: inner.minY, width: max(0, outer.maxX - inner.maxX), height: inner.height)
+        ]
+    }
+
     private static func textSampleScore(
         _ entry: AlbumArtworkPaletteColor,
         localBackground: AlbumArtworkRGBColor,
-        screenBackground: AlbumArtworkRGBColor
+        screenBackground: AlbumArtworkRGBColor?
     ) -> CGFloat {
         let localContrast = min(entry.color.contrastRatio(against: localBackground), 8) / 8
+        let populationScore = sqrt(CGFloat(entry.population))
+        let localScore = populationScore * (0.45 + (localContrast * 1.6))
+        guard let screenBackground else {
+            return localScore
+        }
         let screenContrast = min(entry.color.contrastRatio(against: screenBackground), 8) / 8
-        let chromaBoost: CGFloat = entry.color.isNeutral ? 0.7 : 1.2
-        return CGFloat(entry.population) * (0.5 + localContrast) * (0.5 + screenContrast) * (0.65 + entry.color.saturation) * chromaBoost
+        return localScore * (0.55 + screenContrast)
     }
 
     private static func soften(
@@ -1084,5 +2014,110 @@ nonisolated enum AlbumArtworkThemeBuilder {
             }
             .joined(separator: " | ")
         AlbumArtworkThemeDiagnostics.log("\(label): count=\(palette.count) \(summary)")
+    }
+
+    private static func debugTargets(
+        trackTitle: String?,
+        artistName: String?,
+        albumTitle: String?
+    ) -> [AlbumArtworkThemeDebugTarget] {
+        [
+            ("Track title", trackTitle),
+            ("Artist", artistName),
+            ("Album", albumTitle)
+        ].map { label, value in
+            AlbumArtworkThemeDebugTarget(
+                label: label,
+                original: value,
+                normalized: value.map(normalizedText) ?? ""
+            )
+        }
+    }
+
+    private static func debugPalette(_ palette: [AlbumArtworkPaletteColor]) -> [AlbumArtworkThemeDebugPaletteEntry] {
+        palette.map { AlbumArtworkThemeDebugPaletteEntry(color: $0.color, population: $0.population) }
+    }
+
+    private static func debugOCR(
+        croppedImage: CGImage?,
+        recognizedText: [AlbumArtworkRecognizedText],
+        background: AlbumArtworkRGBColor,
+        trackTitle: String?,
+        artistName: String?,
+        albumTitle: String?,
+        options: Options
+    ) -> AlbumArtworkThemeDebugOCR {
+        guard let match = bestTextMatch(
+            in: recognizedText,
+            trackTitle: trackTitle,
+            artistName: artistName,
+            albumTitle: albumTitle
+        ) else {
+            return AlbumArtworkThemeDebugOCR(
+                observations: recognizedText,
+                matchedKind: nil,
+                matchedText: nil,
+                matchedConfidence: nil,
+                sampledTextColor: nil,
+                localBackgroundColor: nil,
+                localPalette: [],
+                status: recognizedText.isEmpty
+                    ? "Vision OCR returned no text observations."
+                    : "Vision OCR found text, but none matched track, artist, or album metadata."
+            )
+        }
+
+        guard let croppedImage else {
+            return AlbumArtworkThemeDebugOCR(
+                observations: recognizedText,
+                matchedKind: match.kind,
+                matchedText: match.observation.text,
+                matchedConfidence: match.observation.confidence,
+                sampledTextColor: nil,
+                localBackgroundColor: nil,
+                localPalette: [],
+                status: "OCR matched \(match.kind.debugLabel), but no cropped image was available for colour sampling."
+            )
+        }
+
+        let rect = pixelRect(forNormalizedBoundingBox: match.observation.boundingBox, image: croppedImage)
+            .insetBy(dx: -2, dy: -2)
+        let localPalette = extractPalette(from: croppedImage, in: rect, maxColors: 6)
+        let surroundingPalette = extractPalette(from: croppedImage, in: surroundingRects(for: rect, image: croppedImage), maxColors: 4)
+        let localBackground = surroundingPalette.first?.color ?? localPalette.first?.color
+        let sampled = sampledTextColor(
+            in: croppedImage,
+            boundingBox: match.observation.boundingBox,
+            background: background,
+            minimumContrast: options.titleMinimumContrast,
+            requireScreenContrast: false
+        )
+        let suffix = sampled.map {
+            " Sampled glyph/accent colour \($0.debugDescription)."
+        } ?? " No usable glyph colour survived local-background contrast filtering."
+
+        return AlbumArtworkThemeDebugOCR(
+            observations: recognizedText,
+            matchedKind: match.kind,
+            matchedText: match.observation.text,
+            matchedConfidence: match.observation.confidence,
+            sampledTextColor: sampled,
+            localBackgroundColor: localBackground,
+            localPalette: debugPalette(localPalette),
+            status: "OCR matched \(match.kind.debugLabel)." + suffix
+        )
+    }
+
+    private static func debugColorSummary(_ color: AlbumArtworkRGBColor) -> String {
+        color.debugDescription
+    }
+}
+
+private extension AlbumArtworkRGBColor {
+    nonisolated var debugDescription: String {
+        let red = Int((r * 255).rounded())
+        let green = Int((g * 255).rounded())
+        let blue = Int((b * 255).rounded())
+        return "rgb(\(red),\(green),\(blue)), luminance \(AlbumArtworkThemeDiagnostics.format(relativeLuminance)), saturation \(AlbumArtworkThemeDiagnostics.format(saturation))"
     }
 }

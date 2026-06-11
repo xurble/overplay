@@ -21,7 +21,8 @@ struct PlaybackModeStoreTests {
                 orderedTrackIDs: ["a", "b"],
                 updatedAt: Date(timeIntervalSince1970: 100)
             ),
-            to: defaults
+            to: defaults,
+            flushImmediately: true
         )
 
         let saved = PlaybackModeStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults)
@@ -47,14 +48,24 @@ struct PlaybackModeStoreTests {
             defaults.removePersistentDomain(forName: suiteName)
         }
 
-        PlaybackModeStore.update(playerID: "main", musicPlaylistID: "playlist-1", in: defaults) { state in
+        PlaybackModeStore.update(
+            playerID: "main",
+            musicPlaylistID: "playlist-1",
+            in: defaults,
+            flushImmediately: true
+        ) { state in
             state.shuffleEnabled = true
             state.orderedTrackIDs = ["track-1"]
         }
 
         #expect(PlaybackModeStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults).shuffleEnabled)
 
-        PlaybackModeStore.clear(playerID: "main", musicPlaylistID: "playlist-1", from: defaults)
+        PlaybackModeStore.clear(
+            playerID: "main",
+            musicPlaylistID: "playlist-1",
+            from: defaults,
+            flushImmediately: true
+        )
 
         #expect(!PlaybackModeStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults).shuffleEnabled)
     }
@@ -72,7 +83,7 @@ struct PlaybackModeStoreTests {
             state.orderedTrackIDs = ["track-1"]
         }
 
-        PlaybackModeStore.rekeyMusicPlaylistID(from: "p.old", to: "p.new", from: defaults)
+        PlaybackModeStore.rekeyMusicPlaylistID(from: "p.old", to: "p.new", from: defaults, flushImmediately: true)
 
         #expect(PlaybackModeStore.state(playerID: "main", musicPlaylistID: "p.new", from: defaults).shuffleEnabled)
         #expect(PlaybackModeStore.state(playerID: "main", musicPlaylistID: "p.new", from: defaults).orderedTrackIDs == ["track-1"])

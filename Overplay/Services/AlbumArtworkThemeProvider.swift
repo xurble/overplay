@@ -103,6 +103,84 @@ actor AlbumArtworkThemeProvider: AlbumArtworkThemeProviding {
         )
     }
 
+    func debugReport(
+        forArtworkURLTemplate artworkURLTemplate: String?,
+        playlistID: String?,
+        trackTitle: String?,
+        artistName: String?,
+        albumTitle: String?,
+        requiresIncreasedContrast: Bool,
+        persistGeneratedTheme: Bool = false
+    ) async -> AlbumArtworkThemeDebugReport {
+        guard let normalizedURL = normalizedArtworkURL(artworkURLTemplate) else {
+            return .failure(
+                normalizedArtworkURL: nil,
+                artworkByteCount: 0,
+                artworkDataHash: nil,
+                errorMessage: "Current track has no artwork URL."
+            )
+        }
+
+        guard let fileURL = await ArtworkCacheService.shared.artworkFileURL(
+            for: normalizedURL,
+            pixelSize: Self.artworkPixelSize,
+            playlistID: playlistID,
+            priority: .userInitiated
+        ) else {
+            return .failure(
+                normalizedArtworkURL: normalizedURL,
+                artworkByteCount: 0,
+                artworkDataHash: nil,
+                errorMessage: "Artwork cache could not provide image data for this URL."
+            )
+        }
+
+        let options = AlbumArtworkThemeBuilder.Options(
+            requiresIncreasedContrast: requiresIncreasedContrast
+        )
+        let report = await Task.detached(priority: .userInitiated) {
+            guard let data = try? Data(contentsOf: fileURL) else {
+                return AlbumArtworkThemeDebugReport.failure(
+                    normalizedArtworkURL: normalizedURL,
+                    artworkByteCount: 0,
+                    artworkDataHash: nil,
+                    errorMessage: "Could not read cached artwork file at \(fileURL.lastPathComponent)."
+                )
+            }
+
+            let dataHash = AlbumArtworkThemeStore.artworkDataHash(data)
+            return AlbumArtworkThemeBuilder.debugReport(
+                from: AlbumArtworkThemeInput(
+                    artworkData: data,
+                    artworkURLTemplate: normalizedURL,
+                    trackTitle: trackTitle,
+                    artistName: artistName,
+                    albumTitle: albumTitle,
+                    options: options
+                ),
+                artworkDataHash: dataHash
+            )
+        }.value
+
+        if persistGeneratedTheme, report.errorMessage == nil {
+            let key = themeCacheKey(
+                normalizedArtworkURL: normalizedURL,
+                requiresIncreasedContrast: requiresIncreasedContrast
+            )
+            await store.setTheme(
+                report.theme,
+                for: key,
+                normalizedArtworkURL: normalizedURL,
+                artworkDataHash: report.artworkDataHash,
+                requiresIncreasedContrast: requiresIncreasedContrast,
+                usedOCR: report.theme.source == .ocr
+            )
+            AlbumArtworkThemeDiagnostics.log("provider debug persisted theme: key=\(key) fallback=\(report.theme.isFallback) source=\(report.theme.source.rawValue)")
+        }
+
+        return report
+    }
+
     private func generateTheme(
         normalizedArtworkURL: String,
         cacheKey: String,

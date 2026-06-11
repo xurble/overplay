@@ -329,28 +329,59 @@ struct FullScreenPlayerControlPalette: Equatable {
     let backgroundRGB: AlbumArtworkRGBColor
     let accentRGB: AlbumArtworkRGBColor
     let foregroundRGB: AlbumArtworkRGBColor
+    let surfaceRGB: AlbumArtworkRGBColor
+    let surfaceForegroundRGB: AlbumArtworkRGBColor
+    let selectedForegroundRGB: AlbumArtworkRGBColor
 
     init?(theme: AlbumArtworkTheme?) {
         guard let theme, !theme.isFallback else { return nil }
-        self.backgroundRGB = theme.backgroundRGB
-        self.accentRGB = theme.trackTitleRGB
-        self.foregroundRGB = theme.trackTitleRGB
+        let backgroundRGB = theme.backgroundRGB
+        let accentRGB = theme.trackTitleRGB
+        let surfaceAmount: CGFloat = backgroundRGB.relativeLuminance < 0.34 ? 0.18 : 0.12
+        let surfaceRGB = accentRGB.mixed(with: backgroundRGB, amount: surfaceAmount)
+
+        self.backgroundRGB = backgroundRGB
+        self.accentRGB = accentRGB
+        self.foregroundRGB = Self.readableForeground(
+            preferred: accentRGB,
+            against: surfaceRGB,
+            minimumContrast: 4.5
+        )
+        self.surfaceRGB = surfaceRGB
+        self.surfaceForegroundRGB = Self.readableForeground(
+            preferred: backgroundRGB,
+            against: surfaceRGB,
+            minimumContrast: 4.5
+        )
+        self.selectedForegroundRGB = Self.readableForeground(
+            preferred: backgroundRGB,
+            against: accentRGB,
+            minimumContrast: 4.5
+        )
     }
 
     var foreground: Color {
-        foregroundRGB.color
+        surfaceForegroundRGB.color
     }
 
     var secondaryForeground: Color {
-        subduedForeground(amount: 0.18).color
+        surfaceForegroundRGB.color
     }
 
     var disabledForeground: Color {
-        subduedForeground(amount: 0.42).color
+        surfaceForegroundRGB.mixed(with: surfaceRGB, amount: 0.44).color
     }
 
     var tint: Color {
         accentRGB.color
+    }
+
+    var surface: Color {
+        surfaceRGB.color
+    }
+
+    var selectedForeground: Color {
+        selectedForegroundRGB.color
     }
 
     var isLightBackground: Bool {
@@ -368,6 +399,19 @@ struct FullScreenPlayerControlPalette: Equatable {
         }
         return foregroundRGB
     }
+
+    private static func readableForeground(
+        preferred: AlbumArtworkRGBColor,
+        against background: AlbumArtworkRGBColor,
+        minimumContrast: CGFloat
+    ) -> AlbumArtworkRGBColor {
+        if preferred.contrastRatio(against: background) >= minimumContrast {
+            return preferred
+        }
+        let whiteContrast = AlbumArtworkRGBColor.white.contrastRatio(against: background)
+        let blackContrast = AlbumArtworkRGBColor.black.contrastRatio(against: background)
+        return whiteContrast >= blackContrast ? .white : .black
+    }
 }
 
 enum FullScreenPlayerControlProminence {
@@ -379,39 +423,39 @@ enum FullScreenPlayerControlProminence {
     var fillOpacity: Double {
         switch self {
         case .primary:
-            0.30
+            0.40
         case .selected:
-            0.26
+            0.34
         case .destructive:
-            0.18
+            0.24
         case .secondary:
-            0.14
+            0.24
         }
     }
 
     var pressedFillOpacity: Double {
         switch self {
         case .primary:
-            0.40
+            0.48
         case .selected:
-            0.34
+            0.42
         case .destructive:
-            0.26
+            0.32
         case .secondary:
-            0.20
+            0.30
         }
     }
 
     var strokeOpacity: Double {
         switch self {
         case .primary:
-            0.58
+            0.68
         case .selected:
-            0.48
+            0.58
         case .destructive:
-            0.38
+            0.48
         case .secondary:
-            0.30
+            0.44
         }
     }
 }
@@ -445,7 +489,7 @@ struct FullScreenPlayerGlassButtonStyle: ButtonStyle {
         guard isEnabled else { return palette.disabledForeground }
         switch prominence {
         case .selected:
-            return palette.backgroundRGB.color
+            return palette.selectedForeground
         case .secondary:
             return palette.secondaryForeground
         default:
@@ -514,12 +558,12 @@ private extension View {
         if prominence == .selected {
             background {
                 shape
-                    .fill(palette.foreground.opacity(isPressed ? 0.78 : 0.94))
+                    .fill(palette.tint.opacity(isPressed ? 0.78 : 0.92))
                     .overlay {
                         shape.fill(
                             LinearGradient(
                                 colors: [
-                                    .white.opacity(isPressed ? 0.08 : 0.18),
+                                    .white.opacity(isPressed ? 0.10 : 0.22),
                                     .clear
                                 ],
                                 startPoint: .topLeading,
@@ -530,7 +574,7 @@ private extension View {
             }
             .overlay {
                 shape
-                    .strokeBorder(palette.backgroundRGB.color.opacity(isPressed ? 0.56 : 0.72), lineWidth: 1)
+                    .strokeBorder(palette.selectedForeground.opacity(isPressed ? 0.42 : 0.58), lineWidth: 1)
             }
             .shadow(
                 color: .black.opacity(palette.shadowOpacity),
@@ -542,14 +586,14 @@ private extension View {
                 shape
                     .fill(.ultraThinMaterial)
                     .overlay {
-                        shape.fill(palette.tint.opacity(isPressed ? prominence.pressedFillOpacity : prominence.fillOpacity))
+                        shape.fill(palette.surface.opacity(isPressed ? 0.86 : 0.76))
                     }
                     .overlay {
                         shape.fill(
                             LinearGradient(
                                 colors: [
-                                    .white.opacity(palette.isLightBackground ? 0.34 : 0.22),
-                                    .white.opacity(0.04),
+                                    .white.opacity(palette.isLightBackground ? 0.12 : 0.22),
+                                    .white.opacity(palette.isLightBackground ? 0.03 : 0.08),
                                     .clear
                                 ],
                                 startPoint: .topLeading,
@@ -562,12 +606,12 @@ private extension View {
             .overlay {
                 shape
                     .strokeBorder(
-                        palette.tint.opacity(isPressed ? prominence.strokeOpacity + 0.14 : prominence.strokeOpacity),
+                        palette.tint.opacity(isPressed ? min(prominence.strokeOpacity + 0.20, 0.90) : max(prominence.strokeOpacity, 0.62)),
                         lineWidth: 1
                     )
                     .overlay {
                         shape
-                            .strokeBorder(.white.opacity(palette.isLightBackground ? 0.18 : 0.12), lineWidth: 0.5)
+                            .strokeBorder(palette.surfaceForegroundRGB.color.opacity(0.16), lineWidth: 0.5)
                     }
             }
             .shadow(

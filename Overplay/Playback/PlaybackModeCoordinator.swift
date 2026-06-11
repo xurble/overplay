@@ -27,7 +27,7 @@ enum PlaybackModeCoordinator {
                 )
             }
             state.orderedTrackIDs = orderedTrackIDs
-            PlaybackModeStore.save(state, to: defaults)
+            PlaybackModeStore.save(state, to: defaults, flushImmediately: true)
             return orderedTrackIDs
         }
 
@@ -43,9 +43,15 @@ enum PlaybackModeCoordinator {
         playlistID: String,
         orderTracks: [PlaybackOrderTrack],
         currentLocalTrackID: String?,
+        flushImmediately: Bool = true,
         defaults: UserDefaults = .standard
     ) {
-        PlaybackModeStore.update(playerID: playerID, musicPlaylistID: playlistID, in: defaults) { state in
+        PlaybackModeStore.update(
+            playerID: playerID,
+            musicPlaylistID: playlistID,
+            in: defaults,
+            flushImmediately: flushImmediately
+        ) { state in
             state.shuffleEnabled = isEnabled
             state.orderedTrackIDs = if isEnabled {
                 PlaybackOrderEngine.shuffleOrder(
@@ -62,9 +68,15 @@ enum PlaybackModeCoordinator {
         _ isEnabled: Bool,
         playerID: String,
         playlistID: String,
+        flushImmediately: Bool = true,
         defaults: UserDefaults = .standard
     ) {
-        PlaybackModeStore.update(playerID: playerID, musicPlaylistID: playlistID, in: defaults) { state in
+        PlaybackModeStore.update(
+            playerID: playerID,
+            musicPlaylistID: playlistID,
+            in: defaults,
+            flushImmediately: flushImmediately
+        ) { state in
             state.repeatEnabled = isEnabled
         }
     }
@@ -88,7 +100,7 @@ enum PlaybackModeCoordinator {
                 PlaybackOrderEngine.shuffleOrder(for: orderTracks, currentTrackID: nil)
             }
             state.orderedTrackIDs = orderedTrackIDs
-            PlaybackModeStore.save(state, to: defaults)
+            PlaybackModeStore.save(state, to: defaults, flushImmediately: true)
             return (orderedTrackIDs, true)
         }
 

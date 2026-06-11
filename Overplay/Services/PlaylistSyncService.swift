@@ -378,8 +378,8 @@ struct PlaylistSyncService {
             settings.updatedAt = .now
         }
 
-        PlaybackModeStore.rekeyMusicPlaylistID(from: oldID, to: newID)
-        LocalPlaybackStateStore.rekeyMusicPlaylistID(from: oldID, to: newID)
+        PlaybackModeStore.rekeyMusicPlaylistID(from: oldID, to: newID, flushImmediately: true)
+        LocalPlaybackStateStore.rekeyMusicPlaylistID(from: oldID, to: newID, flushImmediately: true)
         try context.save()
     }
 

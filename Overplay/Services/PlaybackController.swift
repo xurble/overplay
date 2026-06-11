@@ -12,6 +12,12 @@ final class PlaybackController {
         var currentLocalTrackID: String?
     }
 
+    private struct LocalPlaybackStateIdentity: Equatable {
+        var playlistID: String
+        var musicItemID: String
+        var localTrackID: String?
+    }
+
     let playerID: String
     var currentTrack: CurrentPlaybackTrack?
     var currentPlaylistItem: PlaylistItemRecord?
@@ -33,6 +39,8 @@ final class PlaybackController {
     @ObservationIgnored private var prefetchedArtworkTrackID: String?
     @ObservationIgnored private var isRestartingQueue = false
     @ObservationIgnored private var pendingModeQueueRebuild: PendingModeQueueRebuild?
+    @ObservationIgnored private var lastLocalPlaybackStateFlushAt: Date?
+    @ObservationIgnored private var lastLocalPlaybackStateIdentity: LocalPlaybackStateIdentity?
 
     init(playerID: String = "main") {
         self.playerID = playerID
@@ -144,9 +152,11 @@ final class PlaybackController {
         activeQueueIndex = nil
         prefetchedArtworkTrackID = nil
         pendingModeQueueRebuild = nil
+        lastLocalPlaybackStateFlushAt = nil
+        lastLocalPlaybackStateIdentity = nil
         statusMessage = "Overplay data reset."
         hasRestoredLocalPlaybackState = false
-        LocalPlaybackStateStore.clear()
+        LocalPlaybackStateStore.clear(flushImmediately: true)
         NowPlayingMetadataService.update(track: nil, elapsed: 0, isPlaying: false)
     }
 
@@ -451,7 +461,7 @@ final class PlaybackController {
         player.pause()
         isPlaying = false
         if let musicItemID = currentTrack?.id {
-            persistLocalPlaybackState(musicItemID: musicItemID)
+            persistLocalPlaybackState(musicItemID: musicItemID, forceFlush: true)
         }
     }
 
@@ -1067,19 +1077,43 @@ final class PlaybackController {
     }
 
     private func persistLocalPlaybackState(musicItemID: String) {
+        persistLocalPlaybackState(musicItemID: musicItemID, forceFlush: false)
+    }
+
+    private func persistLocalPlaybackState(musicItemID: String, forceFlush: Bool) {
         guard let currentPlaylistID else {
             return
         }
+
+        let now = Date()
+        let localTrackID = currentPlaylistItem?.trackID.uuidString
+            ?? activeQueueCurrentLocalTrackID
+        let identity = LocalPlaybackStateIdentity(
+            playlistID: currentPlaylistID,
+            musicItemID: musicItemID,
+            localTrackID: localTrackID
+        )
+        let shouldFlush = LocalPlaybackStateFlushPolicy.shouldFlush(
+            now: now,
+            lastFlushAt: lastLocalPlaybackStateFlushAt,
+            isPlaying: isPlaying,
+            didChangePlaybackIdentity: identity != lastLocalPlaybackStateIdentity,
+            force: forceFlush
+        )
 
         LocalPlaybackStateStore.save(LocalPlaybackState(
             playlistID: currentPlaylistID,
             musicItemID: musicItemID,
             elapsedSeconds: elapsedSeconds,
             wasPlaying: isPlaying,
-            updatedAt: .now,
-            localTrackID: currentPlaylistItem?.trackID.uuidString
-                ?? activeQueueCurrentLocalTrackID
-        ))
+            updatedAt: now,
+            localTrackID: localTrackID
+        ), flushImmediately: shouldFlush)
+
+        lastLocalPlaybackStateIdentity = identity
+        if shouldFlush {
+            lastLocalPlaybackStateFlushAt = now
+        }
     }
 
     private func handleQueueEnded(lastMusicItemID: String, context: ModelContext) async -> Bool {
@@ -1226,7 +1260,7 @@ final class PlaybackController {
             )
             if state.orderedTrackIDs != reconciledOrder {
                 state.orderedTrackIDs = reconciledOrder
-                PlaybackModeStore.save(state)
+                PlaybackModeStore.save(state, flushImmediately: true)
                 playbackModeVersion += 1
             }
         } catch {

@@ -39,39 +39,50 @@ enum PlaybackModeStore {
         )
     }
 
-    static func save(_ state: PlaybackModeState, to defaults: UserDefaults = .standard) {
+    static func save(
+        _ state: PlaybackModeState,
+        to defaults: UserDefaults = .standard,
+        flushImmediately: Bool = false
+    ) {
         var states = states(from: defaults)
         var state = state
         state.updatedAt = .now
         states[storageKey(playerID: state.playerID, musicPlaylistID: state.musicPlaylistID)] = state
-        save(states, to: defaults)
+        save(states, to: defaults, flushImmediately: flushImmediately)
     }
 
     static func update(
         playerID: String,
         musicPlaylistID: String,
         in defaults: UserDefaults = .standard,
+        flushImmediately: Bool = false,
         transform: (inout PlaybackModeState) -> Void
     ) {
         var state = state(playerID: playerID, musicPlaylistID: musicPlaylistID, from: defaults)
         transform(&state)
-        save(state, to: defaults)
+        save(state, to: defaults, flushImmediately: flushImmediately)
     }
 
-    static func clear(playerID: String, musicPlaylistID: String, from defaults: UserDefaults = .standard) {
+    static func clear(
+        playerID: String,
+        musicPlaylistID: String,
+        from defaults: UserDefaults = .standard,
+        flushImmediately: Bool = false
+    ) {
         var states = states(from: defaults)
         states.removeValue(forKey: storageKey(playerID: playerID, musicPlaylistID: musicPlaylistID))
-        save(states, to: defaults)
+        save(states, to: defaults, flushImmediately: flushImmediately)
     }
 
     static func rekeyMusicPlaylistID(
         from oldID: String,
         to newID: String,
-        from defaults: UserDefaults = .standard
+        from defaults: UserDefaults = .standard,
+        flushImmediately: Bool = false
     ) {
         guard oldID != newID else { return }
 
-        var storedStates = states(from: defaults)
+        let storedStates = states(from: defaults)
         var updatedStates = storedStates
 
         for (key, var state) in storedStates where state.musicPlaylistID == oldID {
@@ -80,7 +91,7 @@ enum PlaybackModeStore {
             updatedStates[storageKey(playerID: state.playerID, musicPlaylistID: newID)] = state
         }
 
-        save(updatedStates, to: defaults)
+        save(updatedStates, to: defaults, flushImmediately: flushImmediately)
     }
 
     private static func storageKey(playerID: String, musicPlaylistID: String) -> String {
@@ -95,11 +106,18 @@ enum PlaybackModeStore {
         return (try? JSONDecoder().decode([String: PlaybackModeState].self, from: data)) ?? [:]
     }
 
-    private static func save(_ states: [String: PlaybackModeState], to defaults: UserDefaults) {
+    private static func save(
+        _ states: [String: PlaybackModeState],
+        to defaults: UserDefaults,
+        flushImmediately: Bool
+    ) {
         guard let data = try? JSONEncoder().encode(states) else {
             return
         }
 
         defaults.set(data, forKey: key)
+        if flushImmediately {
+            defaults.synchronize()
+        }
     }
 }

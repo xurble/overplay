@@ -1,10 +1,17 @@
 import SwiftUI
 
 struct NowPlayingPaneView: View {
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Environment(PlaybackController.self) private var playbackController
 
     var settings: OverplaySettings
     var artworkTheme: AlbumArtworkTheme?
+    var onArtworkThemeUpdated: (AlbumArtworkTheme) -> Void = { _ in }
+
+    @State private var isShowingThemeDiagnostics = false
+    @State private var isThemeDiagnosticsLoading = false
+    @State private var themeDebugReport: AlbumArtworkThemeDebugReport?
+    @State private var themeDebugErrorMessage: String?
 
     var body: some View {
         GeometryReader { proxy in
@@ -41,6 +48,16 @@ struct NowPlayingPaneView: View {
                 TrackHealthStatusView(presentation: presentation, artworkTheme: activeArtworkTheme)
                 PlaybackModeControlsView(artworkTheme: activeArtworkTheme)
                 TrackActionControlsView(settings: settings, artworkTheme: activeArtworkTheme)
+                AlbumArtworkThemeDebugButton(
+                    artworkTheme: activeArtworkTheme,
+                    isLoading: isThemeDiagnosticsLoading
+                ) {
+                    isShowingThemeDiagnostics = true
+                    Task {
+                        await rerunThemeDiagnostics()
+                    }
+                }
+                .disabled(playbackController.currentTrack?.artworkURLTemplate == nil)
 
                 if let statusMessage = playbackController.statusMessage {
                     Text(statusMessage)
@@ -54,6 +71,45 @@ struct NowPlayingPaneView: View {
             .padding(.bottom, compactLayout ? 12 : 20)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
+        .sheet(isPresented: $isShowingThemeDiagnostics) {
+            AlbumArtworkThemeDebugSheet(
+                report: themeDebugReport,
+                isLoading: isThemeDiagnosticsLoading,
+                errorMessage: themeDebugErrorMessage
+            ) {
+                Task {
+                    await rerunThemeDiagnostics()
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func rerunThemeDiagnostics() async {
+        let track = playbackController.currentTrack
+        guard let artworkURLTemplate = track?.artworkURLTemplate else {
+            themeDebugReport = nil
+            themeDebugErrorMessage = "Current track has no artwork URL."
+            return
+        }
+
+        isThemeDiagnosticsLoading = true
+        themeDebugErrorMessage = nil
+        let report = await AlbumArtworkThemeProvider.shared.debugReport(
+            forArtworkURLTemplate: artworkURLTemplate,
+            playlistID: playbackController.currentPlaylistID,
+            trackTitle: track?.title,
+            artistName: track?.artistName,
+            albumTitle: track?.albumTitle,
+            requiresIncreasedContrast: colorSchemeContrast == .increased,
+            persistGeneratedTheme: true
+        )
+        themeDebugReport = report
+        themeDebugErrorMessage = report.errorMessage
+        if report.errorMessage == nil {
+            onArtworkThemeUpdated(report.theme)
+        }
+        isThemeDiagnosticsLoading = false
     }
 }
 
