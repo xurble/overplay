@@ -6,12 +6,13 @@ final class OverplaySettings {
     var id: UUID = UUID()
     var selectedPlaylistID: String?
     var selectedPlaylistName: String?
-    var evictAfterSkips: Int = 3
+    var evictAfterSkips: Int = 6
     var skipThresholdPercentage: Double = 50
     var minimumSkipListeningSeconds: Double = 10
     var playthroughThresholdPercentage: Double = 90
     var playthroughResetsSkipCount: Bool = true
     var protectKeptTracks: Bool = false
+    var triageAutoEvictsOnSkipCount: Bool = false
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
@@ -19,12 +20,13 @@ final class OverplaySettings {
         id: UUID = UUID(),
         selectedPlaylistID: String? = nil,
         selectedPlaylistName: String? = nil,
-        evictAfterSkips: Int = 3,
+        evictAfterSkips: Int = 6,
         skipThresholdPercentage: Double = 50,
         minimumSkipListeningSeconds: Double = 10,
         playthroughThresholdPercentage: Double = 90,
         playthroughResetsSkipCount: Bool = true,
         protectKeptTracks: Bool = false,
+        triageAutoEvictsOnSkipCount: Bool = false,
         createdAt: Date = .now,
         updatedAt: Date = .now
     ) {
@@ -37,6 +39,7 @@ final class OverplaySettings {
         self.playthroughThresholdPercentage = playthroughThresholdPercentage
         self.playthroughResetsSkipCount = playthroughResetsSkipCount
         self.protectKeptTracks = protectKeptTracks
+        self.triageAutoEvictsOnSkipCount = triageAutoEvictsOnSkipCount
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

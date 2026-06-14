@@ -173,8 +173,8 @@ struct EvictionEngineTests {
         #expect(history.contains { $0.eventType == .playthrough })
     }
 
-    @Test("triage playlist item counts skip but does not auto evict")
-    func triagePlaylistItemCountsSkipButDoesNotAutoEvict() throws {
+    @Test("triage playlist item counts skip but does not auto evict by default")
+    func triagePlaylistItemCountsSkipButDoesNotAutoEvictByDefault() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let settings = OverplaySettings(evictAfterSkips: 3)
@@ -215,8 +215,56 @@ struct EvictionEngineTests {
         #expect(history.contains { $0.eventType == .skipCounted })
         #expect(history.contains {
             $0.eventType == .skipIgnored
-                && $0.message == "Automatic eviction is limited to the One True Playlist"
+                && $0.message == "Triage auto-eviction is off"
         })
+    }
+
+    @Test("triage playlist item auto evicts when enabled")
+    func triagePlaylistItemAutoEvictsWhenEnabled() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let settings = OverplaySettings(
+            evictAfterSkips: 3,
+            triageAutoEvictsOnSkipCount: true
+        )
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "playlist-2",
+            name: "Triage",
+            role: .triage
+        )
+        let item = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: UUID(),
+            skipCount: 2
+        )
+        context.insert(settings)
+        context.insert(playlist)
+        context.insert(item)
+
+        let session = TrackPlaySession(
+            trackID: "track-1",
+            sessionStartDate: .now,
+            lastObservedPlaybackTime: 20,
+            durationSeconds: 100,
+            hasEvaluated: false
+        )
+
+        EvictionEngine.evaluateSkip(
+            item: item,
+            playlist: playlist,
+            session: session,
+            transitionWasNaturalCompletion: false,
+            settings: settings,
+            context: context
+        )
+
+        let history = try context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(item.skipCount == 3)
+        #expect(item.evictedAt != nil)
+        #expect(item.evictionReason == .skipCount)
+        #expect(item.evictionSource == .playbackRule)
+        #expect(history.contains { $0.eventType == .skipCounted })
+        #expect(history.contains { $0.eventType == .evicted })
     }
 
     @Test("manual eviction works for triage playlist item")

@@ -15,12 +15,13 @@ struct SettingsRepositoryTests {
 
         #expect(settings.id == fetchedAgain.id)
         #expect(settings.selectedPlaylistID == nil)
-        #expect(settings.evictAfterSkips == 3)
+        #expect(settings.evictAfterSkips == 6)
         #expect(settings.skipThresholdPercentage == 50)
         #expect(settings.minimumSkipListeningSeconds == 10)
         #expect(settings.playthroughThresholdPercentage == 90)
         #expect(settings.playthroughResetsSkipCount)
         #expect(!settings.protectKeptTracks)
+        #expect(!settings.triageAutoEvictsOnSkipCount)
     }
 
     @Test("clamps saved settings into supported ranges")

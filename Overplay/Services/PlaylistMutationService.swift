@@ -110,6 +110,17 @@ struct PlaylistMutationService {
             in: context
         )
 
+        if sourceItem.evictedAt == nil {
+            EvictionEngine.evict(
+                sourceItem,
+                playlist: sourcePlaylist,
+                reason: .manual,
+                source: .user,
+                message: "Promoted to \(oneTruePlaylist.name)",
+                context: context
+            )
+        }
+
         return promotedItem
     }
 

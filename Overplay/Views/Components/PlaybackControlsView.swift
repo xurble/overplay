@@ -5,8 +5,6 @@ struct PlaybackControlsView: View {
     @Environment(PlaybackController.self) private var playbackController
     @Environment(\.modelContext) private var modelContext
 
-    @Query(sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
-
     var settings: OverplaySettings
     var controlSize: PlaybackControlSize = .regular
     var artworkTheme: AlbumArtworkTheme? = nil
@@ -55,7 +53,17 @@ struct PlaybackControlsView: View {
     }
 
     private var canUsePrimaryPlaybackAction: Bool {
-        playbackController.canControlPlayback || restoredPlaybackTarget != nil || defaultPlaybackPlaylist != nil
+        playbackController.canControlPlayback
+            || (try? PlaybackTrackResolver.restoredPlaybackTarget(
+                currentPlaylistID: playbackController.currentPlaylistID,
+                currentPlaylistItem: playbackController.currentPlaylistItem,
+                currentTrack: playbackController.currentTrack,
+                in: modelContext
+            )) != nil
+            || (try? PlaybackTrackResolver.defaultPlaybackPlaylist(
+                settings: settings,
+                in: modelContext
+            )) != nil
     }
 
     private var controlsPresentation: PlaybackControlsPresentation {
@@ -66,52 +74,8 @@ struct PlaybackControlsView: View {
         )
     }
 
-    private var defaultPlaybackPlaylist: PlaylistRecord? {
-        if let selectedPlaylistID = settings.selectedPlaylistID,
-           let playlist = playlists.first(where: { $0.musicPlaylistID == selectedPlaylistID && $0.isActive }) {
-            return playlist
-        }
-
-        return playlists.first { $0.role == .oneTruePlaylist && $0.isActive }
-    }
-
     private func primaryPlaybackAction() async {
-        if playbackController.canControlPlayback {
-            await playbackController.togglePlayPause(context: modelContext)
-            return
-        }
-
-        if let restoredPlayback = restoredPlaybackTarget {
-            await playbackController.playPlaylist(
-                restoredPlayback.playlist,
-                startingAt: restoredPlayback.track,
-                settings: settings,
-                context: modelContext
-            )
-            return
-        }
-
-        guard let playlist = defaultPlaybackPlaylist else { return }
-        await playbackController.playPlaylist(playlist, settings: settings, context: modelContext)
-    }
-
-    private var restoredPlaybackTarget: (playlist: PlaylistRecord, track: TrackRecord)? {
-        guard let currentPlaylistID = playbackController.currentPlaylistID,
-              let playlist = playlists.first(where: { $0.musicPlaylistID == currentPlaylistID && $0.isActive }) else {
-            return nil
-        }
-
-        if let item = playbackController.currentPlaylistItem,
-           let track = try? TrackRecordRepository.track(id: item.trackID, in: modelContext) {
-            return (playlist, track)
-        }
-
-        if let musicItemID = playbackController.currentTrack?.id,
-           let track = try? TrackRecordRepository.track(musicItemID: musicItemID, in: modelContext) {
-            return (playlist, track)
-        }
-
-        return nil
+        await playbackController.performPrimaryPlaybackAction(settings: settings, context: modelContext)
     }
 }
 

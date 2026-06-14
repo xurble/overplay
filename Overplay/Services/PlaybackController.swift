@@ -178,7 +178,11 @@ final class PlaybackController {
                 preferFreshTracks: state.wasPlaying,
                 context: context
             )
-            let restoredLocalTrackID = state.localTrackID ?? (try? PlaybackQueueCoordinator.localTrackID(matching: state.musicItemID, context: context))
+            let restoredLocalTrackID = state.localTrackID ?? localTrackID(
+                matching: state.musicItemID,
+                playlistID: state.playlistID,
+                context: context
+            )
             let restorationItems = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
             let restorationTracks = try TrackRecordRepository.tracks(ids: restorationItems.map(\.trackID), in: context)
             let tracksByID = restorationTracks.firstValueDictionary(keyedBy: \.id)
@@ -447,6 +451,47 @@ final class PlaybackController {
         }
     }
 
+    func performPrimaryPlaybackAction(settings: OverplaySettings, context: ModelContext) async {
+        if canControlPlayback {
+            await togglePlayPause(context: context)
+            return
+        }
+
+        await playCurrentOrDefault(settings: settings, context: context)
+    }
+
+    func playCurrentOrDefault(settings: OverplaySettings, context: ModelContext) async {
+        if canControlPlayback {
+            await play(context: context)
+            return
+        }
+
+        if let restoredPlayback = try? PlaybackTrackResolver.restoredPlaybackTarget(
+            currentPlaylistID: currentPlaylistID,
+            currentPlaylistItem: currentPlaylistItem,
+            currentTrack: currentTrack,
+            in: context
+        ) {
+            await playPlaylist(
+                restoredPlayback.playlist,
+                startingAt: restoredPlayback.track,
+                settings: settings,
+                context: context
+            )
+            return
+        }
+
+        guard let playlist = try? PlaybackTrackResolver.defaultPlaybackPlaylist(
+            settings: settings,
+            in: context
+        ) else {
+            statusMessage = "Choose a playlist first."
+            return
+        }
+
+        await playPlaylist(playlist, settings: settings, context: context)
+    }
+
     func play(context: ModelContext) async {
         do {
             try await player.play()
@@ -459,10 +504,12 @@ final class PlaybackController {
 
     func pause() {
         player.pause()
+        elapsedSeconds = player.playbackTime
         isPlaying = false
         if let musicItemID = currentTrack?.id {
             persistLocalPlaybackState(musicItemID: musicItemID, forceFlush: true)
         }
+        NowPlayingMetadataService.update(track: currentTrack, elapsed: elapsedSeconds, isPlaying: false)
     }
 
     func next(settings: OverplaySettings, context: ModelContext) async {
@@ -520,7 +567,7 @@ final class PlaybackController {
             let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: inputs.items)
             let currentLocalTrackID = currentPlaylistItem?.trackID.uuidString
                 ?? activeQueueCurrentLocalTrackID
-                ?? currentTrack.flatMap { try? PlaybackQueueCoordinator.localTrackID(matching: $0.id, context: context) }
+                ?? currentTrack.flatMap { localTrackID(matching: $0.id, context: context) }
             PlaybackModeCoordinator.setShuffleEnabled(
                 isEnabled,
                 playerID: playerID,
@@ -568,6 +615,10 @@ final class PlaybackController {
         setRepeatEnabled(repeatMode != .none)
     }
 
+    func currentPlaylistRole(context: ModelContext) -> PlaylistRole? {
+        try? currentPlaylist(in: context)?.role
+    }
+
     private func rebuildCurrentQueue(context: ModelContext) async {
         guard let currentPlaylistID,
               (try? currentPlaylist(in: context)) != nil else {
@@ -581,7 +632,7 @@ final class PlaybackController {
         do {
             let currentLocalTrackID = currentPlaylistItem?.trackID.uuidString
                 ?? activeQueueCurrentLocalTrackID
-                ?? currentMusicItemID.flatMap { try? PlaybackQueueCoordinator.localTrackID(matching: $0, context: context) }
+                ?? currentMusicItemID.flatMap { localTrackID(matching: $0, context: context) }
             let queueEntries = try PlaybackQueueOrchestrator.orderedCachedQueueEntries(
                 for: currentPlaylistID,
                 playerID: playerID,
@@ -647,6 +698,31 @@ final class PlaybackController {
         }
         currentPlaylistItem = item
         syncPlaybackMetadata(for: musicItemID, context: context)
+    }
+
+    func promoteCurrent(settings: OverplaySettings, context: ModelContext) async {
+        guard let musicItemID = currentTrack?.id,
+              let playlist = try? currentPlaylist(in: context),
+              let item = try? PlaybackSessionSupport.resolvePlaylistItem(
+                  forMusicItemID: musicItemID,
+                  currentPlaylistItem: currentPlaylistItem,
+                  playlist: playlist,
+                  in: context
+              ) else {
+            statusMessage = "Choose a linked triage track to promote."
+            return
+        }
+
+        do {
+            _ = try await PlaylistMutationService().promote(item: item, in: context)
+        } catch {
+            statusMessage = error.localizedDescription
+            return
+        }
+        currentPlaylistItem = item
+        syncPlaybackMetadata(for: musicItemID, context: context)
+        statusMessage = "Promoted \(currentTrack?.title ?? "track") to the One True Playlist."
+        await next(settings: settings, context: context)
     }
 
     @discardableResult
@@ -945,6 +1021,28 @@ final class PlaybackController {
         )
     }
 
+    private func localTrackID(
+        matching musicItemID: String,
+        playlistID: String? = nil,
+        context: ModelContext
+    ) -> String? {
+        if let playlistID = playlistID ?? currentPlaylistID {
+            do {
+                if let scopedLocalTrackID = try PlaybackQueueOrchestrator.localTrackID(
+                    matching: musicItemID,
+                    playlistID: playlistID,
+                    in: context
+                ) {
+                    return scopedLocalTrackID
+                }
+            } catch {
+                return try? PlaybackQueueCoordinator.localTrackID(matching: musicItemID, context: context)
+            }
+        }
+
+        return try? PlaybackQueueCoordinator.localTrackID(matching: musicItemID, context: context)
+    }
+
     private func currentPlaybackTrack(
         musicItemID: String,
         playlistItem: PlaylistItemRecord?,
@@ -1042,7 +1140,7 @@ final class PlaybackController {
 
     private func resolvedCurrentMusicItemID(context: ModelContext) -> String? {
         if let queueReportedTrackID = player.queue.currentEntry?.item?.id.rawValue {
-            if let localTrackID = try? PlaybackQueueCoordinator.localTrackID(matching: queueReportedTrackID, context: context) {
+            if let localTrackID = localTrackID(matching: queueReportedTrackID, context: context) {
                 updateActiveQueueCurrentTrackID(localTrackID)
             }
             return queueReportedTrackID
@@ -1168,8 +1266,16 @@ final class PlaybackController {
 
         do {
             let anchorLocalTrackID = pendingModeQueueRebuild.currentLocalTrackID
-                ?? (try? PlaybackQueueCoordinator.localTrackID(matching: pendingModeQueueRebuild.currentMusicItemID, context: context))
-                ?? (try? PlaybackQueueCoordinator.localTrackID(matching: lastMusicItemID, context: context))
+                ?? localTrackID(
+                    matching: pendingModeQueueRebuild.currentMusicItemID,
+                    playlistID: pendingModeQueueRebuild.playlistID,
+                    context: context
+                )
+                ?? localTrackID(
+                    matching: lastMusicItemID,
+                    playlistID: pendingModeQueueRebuild.playlistID,
+                    context: context
+                )
             guard let anchorLocalTrackID else {
                 return false
             }

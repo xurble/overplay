@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 import Testing
 @testable import Overplay
 
@@ -110,6 +111,48 @@ struct PlaybackCoordinatorTests {
             activeQueueLocalTrackIDs: ids,
             currentIndex: 2
         ) == 0)
+    }
+
+    @Test("playlist scoped local track lookup ignores matching tracks in other playlists")
+    func playlistScopedLocalTrackLookupIgnoresOtherPlaylists() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let targetPlaylist = PlaylistRecord(
+            musicPlaylistID: "target-playlist",
+            name: "Target",
+            role: .oneTruePlaylist
+        )
+        let otherPlaylist = PlaylistRecord(
+            musicPlaylistID: "other-playlist",
+            name: "Other",
+            role: .triage
+        )
+        let targetTrack = TrackRecord(
+            catalogID: "shared-music-id",
+            libraryID: "shared-music-id",
+            title: "Z Target",
+            artistName: "Artist"
+        )
+        let otherTrack = TrackRecord(
+            catalogID: "shared-music-id",
+            libraryID: "shared-music-id",
+            title: "A Other",
+            artistName: "Artist"
+        )
+        context.insert(targetPlaylist)
+        context.insert(otherPlaylist)
+        context.insert(targetTrack)
+        context.insert(otherTrack)
+        context.insert(PlaylistItemRecord(playlistID: targetPlaylist.id, trackID: targetTrack.id))
+        context.insert(PlaylistItemRecord(playlistID: otherPlaylist.id, trackID: otherTrack.id))
+
+        let scopedID = try PlaybackQueueOrchestrator.localTrackID(
+            matching: "shared-music-id",
+            playlistID: targetPlaylist.musicPlaylistID,
+            in: context
+        )
+
+        #expect(scopedID == targetTrack.id.uuidString)
     }
 
     private func playbackItems(_ trackIDs: [UUID]) -> [PlaybackOrderTrack] {

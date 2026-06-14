@@ -66,6 +66,51 @@ enum PlaybackTrackResolver {
         return (track, item)
     }
 
+    static func restoredPlaybackTarget(
+        currentPlaylistID: String?,
+        currentPlaylistItem: PlaylistItemRecord?,
+        currentTrack: CurrentPlaybackTrack?,
+        in context: ModelContext
+    ) throws -> (playlist: PlaylistRecord, track: TrackRecord)? {
+        guard let playlist = try currentPlaylist(musicPlaylistID: currentPlaylistID, in: context),
+              playlist.isActive else {
+            return nil
+        }
+
+        if let currentPlaylistItem,
+           currentPlaylistItem.playlistID == playlist.id,
+           let track = try TrackRecordRepository.track(id: currentPlaylistItem.trackID, in: context) {
+            return (playlist, track)
+        }
+
+        if let musicItemID = currentTrack?.id,
+           let item = try PlaybackSessionSupport.resolvePlaylistItem(
+               forMusicItemID: musicItemID,
+               currentPlaylistItem: currentPlaylistItem,
+               playlist: playlist,
+               in: context
+           ),
+           let track = try TrackRecordRepository.track(id: item.trackID, in: context) {
+            return (playlist, track)
+        }
+
+        return nil
+    }
+
+    static func defaultPlaybackPlaylist(
+        settings: OverplaySettings,
+        in context: ModelContext
+    ) throws -> PlaylistRecord? {
+        if let selectedPlaylistID = settings.selectedPlaylistID,
+           let playlist = try PlaylistRepository.playlist(musicPlaylistID: selectedPlaylistID, in: context),
+           playlist.isActive {
+            return playlist
+        }
+
+        let playlists = try PlaylistRepository.activePlaylists(in: context)
+        return playlists.first { $0.role == .oneTruePlaylist } ?? playlists.first
+    }
+
     static func currentPlaybackTrack(
         musicItemID: String,
         playlistItem: PlaylistItemRecord?,

@@ -48,16 +48,18 @@ struct NowPlayingPaneView: View {
                 TrackHealthStatusView(presentation: presentation, artworkTheme: activeArtworkTheme)
                 PlaybackModeControlsView(artworkTheme: activeArtworkTheme)
                 TrackActionControlsView(settings: settings, artworkTheme: activeArtworkTheme)
-                AlbumArtworkThemeDebugButton(
-                    artworkTheme: activeArtworkTheme,
-                    isLoading: isThemeDiagnosticsLoading
-                ) {
-                    isShowingThemeDiagnostics = true
-                    Task {
-                        await rerunThemeDiagnostics()
+                if showsArtworkThemeDebugButton {
+                    AlbumArtworkThemeDebugButton(
+                        artworkTheme: activeArtworkTheme,
+                        isLoading: isThemeDiagnosticsLoading
+                    ) {
+                        isShowingThemeDiagnostics = true
+                        Task {
+                            await rerunThemeDiagnostics()
+                        }
                     }
+                    .disabled(playbackController.currentTrack?.artworkURLTemplate == nil)
                 }
-                .disabled(playbackController.currentTrack?.artworkURLTemplate == nil)
 
                 if let statusMessage = playbackController.statusMessage {
                     Text(statusMessage)
@@ -82,6 +84,10 @@ struct NowPlayingPaneView: View {
                 }
             }
         }
+    }
+
+    private var showsArtworkThemeDebugButton: Bool {
+        false
     }
 
     @MainActor

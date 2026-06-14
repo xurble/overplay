@@ -33,4 +33,24 @@ struct RemoteCommandServiceTests {
         #expect(service.context == nil)
         #expect(service.playbackController == nil)
     }
+
+    @Test("repeated activation updates context without duplicate remote targets")
+    func repeatedActivationUpdatesContextWithoutDuplicateRemoteTargets() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let firstContext = ModelContext(container)
+        let carPlayContext = ModelContext(container)
+        let playbackController = PlaybackController()
+        let service = RemoteCommandService()
+
+        service.activate(playbackController: playbackController, context: firstContext)
+        let initialTargetCount = service.registeredTargetCount
+
+        service.activate(playbackController: playbackController, context: carPlayContext)
+
+        #expect(service.isActive)
+        #expect(service.registeredTargetCount == initialTargetCount)
+        #expect(service.context === carPlayContext)
+
+        service.deactivate()
+    }
 }

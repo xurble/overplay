@@ -19,7 +19,7 @@ struct SettingsView: View {
                         Text(settings.selectedPlaylistName ?? "None")
                             .font(.body)
                         SettingsSubtitle(
-                            "Your One True Playlist. Automatic eviction only applies to this playlist."
+                            "Your One True Playlist. Triage auto-eviction can be enabled below."
                         )
                     }
                     Spacer()
@@ -34,7 +34,7 @@ struct SettingsView: View {
             Section {
                 SettingsLabeledStepper(
                     title: "Evict after \(settings.evictAfterSkips) skips",
-                    subtitle: "Remove a track from the One True Playlist after it reaches this many counted skips.",
+                    subtitle: "Remove a track from eligible linked playlists after it reaches this many counted skips.",
                     value: $settings.evictAfterSkips,
                     range: 1...20
                 )
@@ -74,10 +74,16 @@ struct SettingsView: View {
                     subtitle: "Tracks you mark as kept safe are excluded from automatic eviction.",
                     isOn: $settings.protectKeptTracks
                 )
+
+                SettingsLabeledToggle(
+                    title: "Auto-evict triage playlists",
+                    subtitle: "When enabled, triage playlists use the same global skip limit as the One True Playlist.",
+                    isOn: $settings.triageAutoEvictsOnSkipCount
+                )
             } header: {
                 Text("Eviction Rules")
             } footer: {
-                Text("Skip and playthrough counts are tracked for all linked playlists, but only the One True Playlist is evicted automatically.")
+                Text("Skip and playthrough counts are tracked for all linked playlists. Triage auto-eviction is off by default.")
                     .font(.caption)
             }
 

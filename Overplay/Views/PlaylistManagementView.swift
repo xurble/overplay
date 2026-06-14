@@ -69,6 +69,13 @@ struct PlaylistManagementView: View {
                         .disabled(!item.isPlayable)
                         .swipeActions(edge: .trailing) {
                             if playlist.role == .triage, item.isPlayable {
+                                Button(role: .destructive) {
+                                    Task { await evict(item, track: track) }
+                                } label: {
+                                    Label("Evict Now", systemImage: "trash.fill")
+                                }
+                                .disabled(viewModel.evictingItemIDs.contains(item.id))
+
                                 Button {
                                     Task { await promote(item, track: track) }
                                 } label: {
@@ -210,6 +217,16 @@ struct PlaylistManagementView: View {
 
     private func promote(_ item: PlaylistItemRecord, track: TrackRecord) async {
         await viewModel.promote(
+            item,
+            track: track,
+            playlist: playlist,
+            context: modelContext,
+            dependencies: dependencies
+        )
+    }
+
+    private func evict(_ item: PlaylistItemRecord, track: TrackRecord) async {
+        await viewModel.evict(
             item,
             track: track,
             playlist: playlist,

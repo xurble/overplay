@@ -162,4 +162,67 @@ struct PlaybackTrackResolverTests {
         #expect(restored.track.id == localTrack.id)
         #expect(restored.item?.id == item.id)
     }
+
+    @Test("restored playback target resolves through the active playlist item")
+    func restoredPlaybackTargetResolvesThroughActivePlaylistItem() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(musicPlaylistID: "playlist-1", name: "Main", role: .oneTruePlaylist)
+        let targetTrack = TrackRecord(
+            catalogID: "shared",
+            libraryID: "shared",
+            title: "Target",
+            artistName: "Artist"
+        )
+        let otherTrack = TrackRecord(
+            catalogID: "shared",
+            libraryID: "shared",
+            title: "Other",
+            artistName: "Artist"
+        )
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: targetTrack.id)
+        context.insert(playlist)
+        context.insert(targetTrack)
+        context.insert(otherTrack)
+        context.insert(item)
+
+        let target = try PlaybackTrackResolver.restoredPlaybackTarget(
+            currentPlaylistID: playlist.musicPlaylistID,
+            currentPlaylistItem: item,
+            currentTrack: CurrentPlaybackTrack(id: "shared", title: "Target", artistName: "Artist"),
+            in: context
+        )
+
+        #expect(target?.playlist.id == playlist.id)
+        #expect(target?.track.id == targetTrack.id)
+    }
+
+    @Test("default playback playlist prefers selected active playlist then main playlist")
+    func defaultPlaybackPlaylistPrefersSelectedThenMain() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let main = PlaylistRecord(musicPlaylistID: "main", name: "Main", role: .oneTruePlaylist)
+        let triage = PlaylistRecord(musicPlaylistID: "triage", name: "Triage", role: .triage)
+        let inactiveSelected = PlaylistRecord(
+            musicPlaylistID: "inactive",
+            name: "Inactive",
+            role: .triage,
+            isActive: false
+        )
+        context.insert(main)
+        context.insert(triage)
+        context.insert(inactiveSelected)
+
+        let selected = try PlaybackTrackResolver.defaultPlaybackPlaylist(
+            settings: OverplaySettings(selectedPlaylistID: triage.musicPlaylistID),
+            in: context
+        )
+        let fallback = try PlaybackTrackResolver.defaultPlaybackPlaylist(
+            settings: OverplaySettings(selectedPlaylistID: inactiveSelected.musicPlaylistID),
+            in: context
+        )
+
+        #expect(selected?.id == triage.id)
+        #expect(fallback?.id == main.id)
+    }
 }

@@ -11,6 +11,7 @@ final class PlaylistManagementViewModel {
         var syncPlaylist: (PlaylistRecord, ModelContext) async throws -> Int
         var reconcileStoredOrder: (PlaylistRecord, ModelContext) -> Void
         var promote: (PlaylistItemRecord, ModelContext) async throws -> Void
+        var evict: (PlaylistItemRecord, PlaylistRecord, ModelContext) throws -> Void
 
         static func live(playbackController: PlaybackController) -> Self {
             Self(
@@ -28,6 +29,14 @@ final class PlaylistManagementViewModel {
                 },
                 promote: { item, context in
                     _ = try await PlaylistMutationService().promote(item: item, in: context)
+                },
+                evict: { item, playlist, context in
+                    try TrackHealthActionService.evictTrack(
+                        item,
+                        playlist: playlist,
+                        message: "Evicted manually",
+                        in: context
+                    )
                 }
             )
         }
@@ -35,6 +44,7 @@ final class PlaylistManagementViewModel {
 
     var isSyncing = false
     var promotingItemIDs = Set<UUID>()
+    var evictingItemIDs = Set<UUID>()
     var message: String?
 
     func orderedItems(
@@ -162,6 +172,25 @@ final class PlaylistManagementViewModel {
         do {
             try await dependencies.promote(item, context)
             message = "Promoted \(track.title)."
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    func evict(
+        _ item: PlaylistItemRecord,
+        track: TrackRecord,
+        playlist: PlaylistRecord,
+        context: ModelContext,
+        dependencies: Dependencies
+    ) async {
+        guard item.isPlayable else { return }
+        evictingItemIDs.insert(item.id)
+        defer { evictingItemIDs.remove(item.id) }
+
+        do {
+            try dependencies.evict(item, playlist, context)
+            message = "Evicted \(track.title)."
         } catch {
             message = error.localizedDescription
         }

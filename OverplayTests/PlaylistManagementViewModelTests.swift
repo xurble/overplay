@@ -160,19 +160,52 @@ struct PlaylistManagementViewModelTests {
         #expect(viewModel.message == nil)
     }
 
+    @Test("evict playable item reports success and clears progress state")
+    func evictPlayableItemReportsSuccessAndClearsProgressState() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(musicPlaylistID: "triage", name: "Triage", role: .triage)
+        let track = TrackRecord(catalogID: "track", title: "Track", artistName: "Artist")
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id)
+        let viewModel = PlaylistManagementViewModel()
+        var evictedItemID: UUID?
+        var evictedPlaylistID: UUID?
+        let dependencies = makeDependencies(
+            evict: { item, playlist, _ in
+                evictedItemID = item.id
+                evictedPlaylistID = playlist.id
+            }
+        )
+
+        await viewModel.evict(
+            item,
+            track: track,
+            playlist: playlist,
+            context: context,
+            dependencies: dependencies
+        )
+
+        #expect(evictedItemID == item.id)
+        #expect(evictedPlaylistID == playlist.id)
+        #expect(viewModel.evictingItemIDs.isEmpty)
+        #expect(viewModel.message == "Evicted Track.")
+    }
+
     private func makeDependencies(
         playPlaylistFromTrack: @escaping (PlaylistRecord, TrackRecord, OverplaySettings, ModelContext) async -> Void = { _, _, _, _ in },
         playPlaylist: @escaping (PlaylistRecord, OverplaySettings, ModelContext) async -> Void = { _, _, _ in },
         syncPlaylist: @escaping (PlaylistRecord, ModelContext) async throws -> Int = { _, _ in 0 },
         reconcileStoredOrder: @escaping (PlaylistRecord, ModelContext) -> Void = { _, _ in },
-        promote: @escaping (PlaylistItemRecord, ModelContext) async throws -> Void = { _, _ in }
+        promote: @escaping (PlaylistItemRecord, ModelContext) async throws -> Void = { _, _ in },
+        evict: @escaping (PlaylistItemRecord, PlaylistRecord, ModelContext) throws -> Void = { _, _, _ in }
     ) -> PlaylistManagementViewModel.Dependencies {
         PlaylistManagementViewModel.Dependencies(
             playPlaylistFromTrack: playPlaylistFromTrack,
             playPlaylist: playPlaylist,
             syncPlaylist: syncPlaylist,
             reconcileStoredOrder: reconcileStoredOrder,
-            promote: promote
+            promote: promote,
+            evict: evict
         )
     }
 }

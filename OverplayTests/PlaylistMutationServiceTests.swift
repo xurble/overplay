@@ -6,8 +6,8 @@ import Testing
 @MainActor
 @Suite("Playlist mutation service")
 struct PlaylistMutationServiceTests {
-    @Test("successful promotion creates active one true playlist item")
-    func successfulPromotionCreatesActiveOneTruePlaylistItem() throws {
+    @Test("successful promotion creates active one true playlist item and evicts source")
+    func successfulPromotionCreatesActiveOneTruePlaylistItemAndEvictsSource() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let sourcePlaylist = PlaylistRecord(
@@ -57,11 +57,22 @@ struct PlaylistMutationServiceTests {
         #expect(promotedItem.lastSeenInPlaylistAt == Date(timeIntervalSince1970: 100))
         #expect(sourceItem.skipCount == 2)
         #expect(sourceItem.playthroughCount == 1)
-        #expect(history.count == 1)
-        #expect(history.first?.playlistID == sourcePlaylist.id)
-        #expect(history.first?.trackID == track.id)
-        #expect(history.first?.eventType == .promoted)
-        #expect(history.first?.remoteMutationStatus == .succeeded)
+        #expect(sourceItem.evictedAt != nil)
+        #expect(sourceItem.evictionReason == .manual)
+        #expect(sourceItem.evictionSource == .user)
+        #expect(history.count == 2)
+        #expect(history.contains {
+            $0.playlistID == sourcePlaylist.id
+                && $0.trackID == track.id
+                && $0.eventType == .promoted
+                && $0.remoteMutationStatus == .succeeded
+        })
+        #expect(history.contains {
+            $0.playlistID == sourcePlaylist.id
+                && $0.trackID == track.id
+                && $0.eventType == .evicted
+                && $0.source == .user
+        })
     }
 
     @Test("successful promotion reactivates existing one true playlist item")

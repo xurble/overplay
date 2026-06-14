@@ -292,18 +292,33 @@ struct TrackActionControlsView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Button {
-                playbackController.keepCurrent(settings: settings, context: modelContext)
-            } label: {
-                Label("Keep", systemImage: "heart.fill")
-                    .frame(maxWidth: .infinity)
+            if currentPlaylistRole == .triage {
+                Button {
+                    Task { await playbackController.promoteCurrent(settings: settings, context: modelContext) }
+                } label: {
+                    Label("Promote", systemImage: "star.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .disabled(playbackController.currentTrack == nil)
+                .fullScreenPlayerControlStyle(
+                    palette: controlPalette,
+                    prominence: .secondary,
+                    fallbackStyle: .bordered
+                )
+            } else {
+                Button {
+                    playbackController.keepCurrent(settings: settings, context: modelContext)
+                } label: {
+                    Label("Keep", systemImage: "heart.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .disabled(playbackController.currentTrack == nil)
+                .fullScreenPlayerControlStyle(
+                    palette: controlPalette,
+                    prominence: .secondary,
+                    fallbackStyle: .bordered
+                )
             }
-            .disabled(playbackController.currentTrack == nil)
-            .fullScreenPlayerControlStyle(
-                palette: controlPalette,
-                prominence: .secondary,
-                fallbackStyle: .bordered
-            )
 
             Button(role: .destructive) {
                 Task { await playbackController.evictCurrent(settings: settings, context: modelContext) }
@@ -322,6 +337,10 @@ struct TrackActionControlsView: View {
 
     private var controlPalette: FullScreenPlayerControlPalette? {
         artworkTheme.flatMap(FullScreenPlayerControlPalette.init(theme:))
+    }
+
+    private var currentPlaylistRole: PlaylistRole? {
+        playbackController.currentPlaylistRole(context: modelContext)
     }
 }
 

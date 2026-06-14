@@ -23,7 +23,7 @@ final class CarPlayCoordinator: NSObject {
 
         if let modelContext {
             runtime.playbackController.startMonitoring(context: modelContext)
-            runtime.remoteCommandService.update(playbackController: runtime.playbackController, context: modelContext)
+            runtime.remoteCommandService.activate(playbackController: runtime.playbackController, context: modelContext)
         }
 
         configureNowPlayingTemplate()
@@ -283,6 +283,7 @@ final class CarPlayCoordinator: NSObject {
 
     private func updateNowPlayingButtons(force: Bool) {
         guard let playbackController, let settings = currentSettings() else { return }
+        syncPlaybackModes()
         let signature = CarPlayNowPlayingButtonSignature.make(
             playbackController: playbackController,
             settings: settings
@@ -368,6 +369,16 @@ final class CarPlayCoordinator: NSObject {
     private func showTrackHealthMenu() {
         guard let interfaceController, playbackController?.currentTrack != nil else { return }
 
+        let isTriagePlaylist = modelContext.flatMap { context in
+            playbackController?.currentPlaylistRole(context: context)
+        } == .triage
+
+        let promoteAction = CPAlertAction(title: "Promote", style: .default) { [weak self] _ in
+            Task { @MainActor in
+                await self?.promoteCurrentTrack()
+                self?.dismissPresentedTemplate()
+            }
+        }
         let resetAction = CPAlertAction(title: "Reset Skip Count", style: .default) { [weak self] _ in
             Task { @MainActor in
                 self?.resetCurrentSkipCount()
@@ -395,7 +406,9 @@ final class CarPlayCoordinator: NSObject {
         let template = CPActionSheetTemplate(
             title: "Track Health",
             message: trackHealthMessage(),
-            actions: [resetAction, keepSafeAction, evictAction, cancelAction]
+            actions: isTriagePlaylist
+                ? [promoteAction, evictAction, cancelAction]
+                : [resetAction, keepSafeAction, evictAction, cancelAction]
         )
         interfaceController.presentTemplate(template, animated: true, completion: nil)
     }
@@ -449,6 +462,18 @@ final class CarPlayCoordinator: NSObject {
         do {
             let settings = try SettingsRepository.settings(in: modelContext)
             await playbackController.evictCurrent(settings: settings, context: modelContext)
+            refreshAfterHealthAction()
+        } catch {
+            showError(title: "Health action failed", message: error.localizedDescription)
+        }
+    }
+
+    private func promoteCurrentTrack() async {
+        guard let playbackController, let modelContext else { return }
+
+        do {
+            let settings = try SettingsRepository.settings(in: modelContext)
+            await playbackController.promoteCurrent(settings: settings, context: modelContext)
             refreshAfterHealthAction()
         } catch {
             showError(title: "Health action failed", message: error.localizedDescription)

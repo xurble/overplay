@@ -75,7 +75,9 @@ enum EvictionEngine {
             )
 
             if item.skipCount >= settings.evictAfterSkips {
-                if playlist.role == .oneTruePlaylist {
+                let shouldAutoEvict = playlist.role == .oneTruePlaylist
+                    || settings.triageAutoEvictsOnSkipCount
+                if shouldAutoEvict {
                     evict(
                         item,
                         playlist: playlist,
@@ -91,7 +93,7 @@ enum EvictionEngine {
                         eventType: .skipIgnored,
                         source: .playback,
                         session: session,
-                        message: "Automatic eviction is limited to the One True Playlist",
+                        message: "Triage auto-eviction is off",
                         context: context
                     )
                 }

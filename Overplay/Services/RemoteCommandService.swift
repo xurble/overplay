@@ -1,5 +1,6 @@
 import Foundation
 import MediaPlayer
+import Observation
 import OSLog
 import SwiftData
 
@@ -18,6 +19,7 @@ final class RemoteCommandService {
     private(set) var playbackController: PlaybackController?
     private(set) var context: ModelContext?
     private var targetTokens = [Any]()
+    private var playbackModeObservationGeneration = 0
 
     var registeredTargetCount: Int {
         targetTokens.count
@@ -38,6 +40,10 @@ final class RemoteCommandService {
         commandCenter.nextTrackCommand.isEnabled = true
         commandCenter.previousTrackCommand.isEnabled = true
         commandCenter.togglePlayPauseCommand.isEnabled = true
+        commandCenter.skipForwardCommand.isEnabled = false
+        commandCenter.skipBackwardCommand.isEnabled = false
+        commandCenter.seekForwardCommand.isEnabled = false
+        commandCenter.seekBackwardCommand.isEnabled = false
         commandCenter.changeShuffleModeCommand.isEnabled = true
         commandCenter.changeRepeatModeCommand.isEnabled = true
         syncPlaybackModes(from: playbackController)
@@ -46,7 +52,13 @@ final class RemoteCommandService {
             guard let self, let playbackController = self.playbackController, let context = self.context else {
                 return .commandFailed
             }
-            Task { await playbackController.play(context: context) }
+            Task { @MainActor in
+                if let settings = try? SettingsRepository.settings(in: context) {
+                    await playbackController.playCurrentOrDefault(settings: settings, context: context)
+                } else {
+                    await playbackController.play(context: context)
+                }
+            }
             return .success
         })
         targetTokens.append(commandCenter.pauseCommand.addTarget { [weak self] _ in
@@ -60,7 +72,18 @@ final class RemoteCommandService {
             guard let self, let playbackController = self.playbackController, let context = self.context else {
                 return .commandFailed
             }
-            Task { await playbackController.togglePlayPause(context: context) }
+            Task { @MainActor in
+                if playbackController.canControlPlayback {
+                    await playbackController.togglePlayPause(context: context)
+                    return
+                }
+
+                if let settings = try? SettingsRepository.settings(in: context) {
+                    await playbackController.performPrimaryPlaybackAction(settings: settings, context: context)
+                } else {
+                    await playbackController.togglePlayPause(context: context)
+                }
+            }
             return .success
         })
         targetTokens.append(commandCenter.nextTrackCommand.addTarget { [weak self] _ in
@@ -121,6 +144,7 @@ final class RemoteCommandService {
             }
             return .success
         })
+        startPlaybackModeObservation()
     }
 
     func update(playbackController: PlaybackController, context: ModelContext) {
@@ -129,10 +153,12 @@ final class RemoteCommandService {
 
         if isActive {
             syncPlaybackModes(from: playbackController)
+            startPlaybackModeObservation()
         }
     }
 
     func deactivate() {
+        stopPlaybackModeObservation()
         let commandCenter = MPRemoteCommandCenter.shared()
         for token in targetTokens {
             commandCenter.playCommand.removeTarget(token)
@@ -161,5 +187,35 @@ final class RemoteCommandService {
         commandCenter.changeRepeatModeCommand.currentRepeatType = RemotePlaybackModeMapper.repeatType(
             for: playbackController.repeatEnabled
         )
+    }
+
+    private func startPlaybackModeObservation() {
+        playbackModeObservationGeneration += 1
+        observePlaybackModes(generation: playbackModeObservationGeneration)
+    }
+
+    private func stopPlaybackModeObservation() {
+        playbackModeObservationGeneration += 1
+    }
+
+    private func observePlaybackModes(generation: Int) {
+        guard generation == playbackModeObservationGeneration,
+              let playbackController else {
+            return
+        }
+
+        withObservationTracking {
+            _ = playbackController.currentPlaylistID
+            _ = playbackController.shuffleEnabled
+            _ = playbackController.repeatEnabled
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, generation == self.playbackModeObservationGeneration else { return }
+                if let playbackController = self.playbackController {
+                    self.syncPlaybackModes(from: playbackController)
+                }
+                self.observePlaybackModes(generation: generation)
+            }
+        }
     }
 }

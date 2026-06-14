@@ -43,7 +43,15 @@ enum PlaybackQueueCoordinator {
     }
 
     static func localTrackID(matching musicItemID: String, context: ModelContext) throws -> String? {
-        try TrackRecordRepository.track(musicItemID: musicItemID, in: context)?.id.uuidString
+        if let trackID = try TrackRecordRepository.track(musicItemID: musicItemID, in: context)?.id.uuidString {
+            return trackID
+        }
+
+        let tracks = try TrackRecordRepository.allTracks(in: context)
+        return PlaybackQueueBuilder.localTrackID(
+            matching: musicItemID,
+            tracksByID: tracks.firstValueDictionary(keyedBy: \.id)
+        )
     }
 
     static func transitionEntries(
