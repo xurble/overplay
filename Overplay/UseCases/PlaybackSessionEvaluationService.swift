@@ -53,6 +53,76 @@ enum PlaybackSessionEvaluationService {
         return session
     }
 
+    static func skipForwardIntent(
+        session: TrackPlaySession?,
+        item: PlaylistItemRecord?,
+        playlist: PlaylistRecord?,
+        settings: OverplaySettings
+    ) -> PlaybackSkipForwardIntent {
+        guard let session,
+              !session.hasEvaluated,
+              let item,
+              let playlist,
+              item.evictedAt == nil else {
+            return .standard
+        }
+
+        if playthroughWouldResetSkipCount(session: session, item: item, settings: settings) {
+            return .skipCountReset
+        }
+
+        guard !item.protected,
+              skipWouldCount(session: session, settings: settings) else {
+            return .standard
+        }
+
+        let wouldReachEvictionThreshold = item.skipCount + 1 >= settings.evictAfterSkips
+        let shouldAutoEvict = playlist.role == .oneTruePlaylist
+            || settings.triageAutoEvictsOnSkipCount
+        return wouldReachEvictionThreshold && shouldAutoEvict ? .eviction : .countedSkip
+    }
+
+    static func skipWouldCount(session: TrackPlaySession, settings: OverplaySettings) -> Bool {
+        skipWouldCount(
+            elapsedSeconds: session.lastObservedPlaybackTime,
+            durationSeconds: session.durationSeconds,
+            skipThresholdPercentage: settings.skipThresholdPercentage,
+            minimumSkipListeningSeconds: settings.minimumSkipListeningSeconds
+        )
+    }
+
+    static func skipWouldCount(
+        elapsedSeconds: Double,
+        durationSeconds: Double?,
+        skipThresholdPercentage: Double,
+        minimumSkipListeningSeconds: Double
+    ) -> Bool {
+        elapsedSeconds >= minimumSkipListeningSeconds
+            && progressPercentage(elapsedSeconds: elapsedSeconds, durationSeconds: durationSeconds) < skipThresholdPercentage
+    }
+
+    static func playthroughWouldResetSkipCount(
+        session: TrackPlaySession,
+        item: PlaylistItemRecord,
+        settings: OverplaySettings
+    ) -> Bool {
+        settings.playthroughResetsSkipCount
+            && item.skipCount > 0
+            && playthroughThresholdReached(session: session, settings: settings)
+    }
+
+    static func playthroughThresholdReached(session: TrackPlaySession, settings: OverplaySettings) -> Bool {
+        progressPercentage(
+            elapsedSeconds: session.lastObservedPlaybackTime,
+            durationSeconds: session.durationSeconds
+        ) >= settings.playthroughThresholdPercentage
+    }
+
+    static func progressPercentage(elapsedSeconds: Double, durationSeconds: Double?) -> Double {
+        guard let durationSeconds, durationSeconds > 0 else { return 0 }
+        return min(max((elapsedSeconds / durationSeconds) * 100, 0), 100)
+    }
+
     static func evaluateActiveSession(
         activeSession: TrackPlaySession?,
         currentTrackID: String?,
@@ -98,14 +168,25 @@ enum PlaybackSessionEvaluationService {
         }
 
         let wasEvicted = item.evictedAt != nil
-        EvictionEngine.evaluateSkip(
-            item: item,
-            playlist: playlist,
-            session: session,
-            transitionWasNaturalCompletion: naturalCompletion,
-            settings: settings,
-            context: context
-        )
+        let canCountPlaythrough = item.evictedAt == nil && !item.protected
+        if canCountPlaythrough && (naturalCompletion || playthroughThresholdReached(session: session, settings: settings)) {
+            EvictionEngine.countPlaythrough(
+                item,
+                playlist: playlist,
+                session: session,
+                settings: settings,
+                context: context
+            )
+        } else {
+            EvictionEngine.evaluateSkip(
+                item: item,
+                playlist: playlist,
+                session: session,
+                transitionWasNaturalCompletion: naturalCompletion,
+                settings: settings,
+                context: context
+            )
+        }
         session.hasEvaluated = true
         try context.save()
 

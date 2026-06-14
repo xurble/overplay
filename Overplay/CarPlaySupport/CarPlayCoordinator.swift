@@ -266,6 +266,8 @@ final class CarPlayCoordinator: NSObject {
         withObservationTracking {
             _ = playbackController.currentPlaylistID
             _ = playbackController.currentTrack?.id
+            _ = playbackController.elapsedSeconds
+            _ = playbackController.durationSeconds
             _ = playbackController.displayedSkipCount
             _ = playbackController.displayedIsProtected
             _ = playbackController.displayedIsEvicted
@@ -274,28 +276,33 @@ final class CarPlayCoordinator: NSObject {
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, generation == self.playbackObservationGeneration else { return }
-                self.updateNowPlayingButtons(force: false)
-                self.refreshLibraryLists()
+                if self.updateNowPlayingButtons(force: false) {
+                    self.refreshLibraryLists()
+                }
                 self.observePlaybackController(generation: generation)
             }
         }
     }
 
-    private func updateNowPlayingButtons(force: Bool) {
-        guard let playbackController, let settings = currentSettings() else { return }
+    @discardableResult
+    private func updateNowPlayingButtons(force: Bool) -> Bool {
+        guard let playbackController, let modelContext, let settings = currentSettings() else { return false }
         syncPlaybackModes()
         let signature = CarPlayNowPlayingButtonSignature.make(
             playbackController: playbackController,
-            settings: settings
+            settings: settings,
+            context: modelContext
         )
-        guard force || signature != lastNowPlayingButtonSignature else { return }
+        guard force || signature != lastNowPlayingButtonSignature else { return false }
 
         lastNowPlayingButtonSignature = signature
         CPNowPlayingTemplate.shared.updateNowPlayingButtons([
             makeShuffleButton(),
             makeRepeatButton(),
+            makeSkipForwardButton(),
             makeTrackHealthButton()
         ])
+        return true
     }
 
     private func makeShuffleButton() -> CPNowPlayingShuffleButton {
@@ -324,6 +331,16 @@ final class CarPlayCoordinator: NSObject {
         return button
     }
 
+    private func makeSkipForwardButton() -> CPNowPlayingImageButton {
+        let button = CPNowPlayingImageButton(image: skipForwardButtonImage()) { [weak self] _ in
+            Task { @MainActor in
+                await self?.skipForwardCurrentTrack()
+            }
+        }
+        button.isEnabled = playbackController?.canControlPlayback == true
+        return button
+    }
+
     private func makeTrackHealthButton() -> CPNowPlayingImageButton {
         let button = CPNowPlayingImageButton(image: healthButtonImage()) { [weak self] _ in
             Task { @MainActor in
@@ -332,6 +349,14 @@ final class CarPlayCoordinator: NSObject {
         }
         button.isEnabled = playbackController?.currentTrack != nil
         return button
+    }
+
+    private func skipForwardButtonImage() -> UIImage {
+        let systemImage = playbackControlsPresentation()?.skipForwardSystemImage
+            ?? PlaybackSkipForwardIntent.standard.systemImage
+        let configuration = UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold)
+        return (UIImage(systemName: systemImage, withConfiguration: configuration) ?? UIImage())
+            .withRenderingMode(.alwaysTemplate)
     }
 
     private func healthButtonImage() -> UIImage {
@@ -350,19 +375,30 @@ final class CarPlayCoordinator: NSObject {
         return try? SettingsRepository.settings(in: modelContext)
     }
 
+    private func playbackControlsPresentation() -> PlaybackControlsPresentation? {
+        guard let playbackController, let modelContext, let settings = currentSettings() else { return nil }
+        return NowPlayingPresentationFactory.playbackControlsPresentation(
+            playbackController: playbackController,
+            settings: settings,
+            context: modelContext
+        )
+    }
+
     private func nowPlayingPresentation() -> NowPlayingPresentation? {
-        guard let playbackController, let settings = currentSettings() else { return nil }
+        guard let playbackController, let modelContext, let settings = currentSettings() else { return nil }
         return NowPlayingPresentationFactory.presentation(
             playbackController: playbackController,
-            settings: settings
+            settings: settings,
+            context: modelContext
         )
     }
 
     private func trackHealthPresentation() -> TrackHealthPresentation? {
-        guard let playbackController, let settings = currentSettings() else { return nil }
+        guard let playbackController, let modelContext, let settings = currentSettings() else { return nil }
         return NowPlayingPresentationFactory.trackHealthPresentation(
             playbackController: playbackController,
-            settings: settings
+            settings: settings,
+            context: modelContext
         )
     }
 
@@ -454,6 +490,19 @@ final class CarPlayCoordinator: NSObject {
             return
         }
         refreshAfterHealthAction()
+    }
+
+    private func skipForwardCurrentTrack() async {
+        guard let playbackController, let modelContext else { return }
+
+        do {
+            let settings = try SettingsRepository.settings(in: modelContext)
+            await playbackController.next(settings: settings, context: modelContext)
+            refreshLibraryLists()
+            updateNowPlayingButtons(force: true)
+        } catch {
+            showError(title: "Skip failed", message: error.localizedDescription)
+        }
     }
 
     private func evictCurrentTrack() async {

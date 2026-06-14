@@ -40,9 +40,9 @@ struct PlaybackControlsView: View {
             Button {
                 Task { await playbackController.next(settings: settings, context: modelContext) }
             } label: {
-                Image(systemName: "forward.fill")
+                Image(systemName: controlsPresentation.skipForwardSystemImage)
             }
-            .accessibilityLabel("Next track")
+            .accessibilityLabel(controlsPresentation.skipForwardAccessibilityLabel)
             .disabled(!playbackController.canControlPlayback)
             .buttonStyle(PlaybackControlButtonStyle(
                 controlSize: controlSize,
@@ -67,10 +67,10 @@ struct PlaybackControlsView: View {
     }
 
     private var controlsPresentation: PlaybackControlsPresentation {
-        PlaybackControlsPresentation(
-            isPlaying: playbackController.isPlaying,
-            shuffleEnabled: playbackController.shuffleEnabled,
-            repeatEnabled: playbackController.repeatEnabled
+        NowPlayingPresentationFactory.playbackControlsPresentation(
+            playbackController: playbackController,
+            settings: settings,
+            context: modelContext
         )
     }
 

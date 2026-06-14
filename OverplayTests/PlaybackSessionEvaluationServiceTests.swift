@@ -91,6 +91,33 @@ struct PlaybackSessionEvaluationServiceTests {
         #expect(history.first?.eventType == .playthrough)
     }
 
+    @Test("manual next after playthrough threshold resets skip count")
+    func manualNextAfterPlaythroughThresholdResetsSkipCount() throws {
+        let fixture = try makeFixture(skipCount: 2)
+        let settings = OverplaySettings(
+            playthroughThresholdPercentage: 80,
+            playthroughResetsSkipCount: true
+        )
+
+        let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
+            activeSession: nil,
+            currentTrackID: "library-1",
+            elapsedSeconds: 170,
+            durationSeconds: 180,
+            currentPlaylistItem: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings,
+            naturalCompletion: false,
+            context: fixture.context
+        )
+
+        let history = try fixture.context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(outcome?.session.hasEvaluated == true)
+        #expect(fixture.item.playthroughCount == 1)
+        #expect(fixture.item.skipCount == 0)
+        #expect(history.first?.eventType == .playthrough)
+    }
+
     @Test("mark evaluated without skip prevents skip increment")
     func markEvaluatedWithoutSkipPreventsSkipIncrement() throws {
         let fixture = try makeFixture(skipCount: 0)
@@ -214,9 +241,182 @@ struct PlaybackSessionEvaluationServiceTests {
         #expect(history.first?.message == "Protected")
     }
 
+    @Test("skip forward intent warns when skip would count")
+    func skipForwardIntentWarnsWhenSkipWouldCount() throws {
+        let fixture = try makeFixture(skipCount: 0)
+        let settings = OverplaySettings(
+            evictAfterSkips: 3,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 10
+        )
+
+        let intent = PlaybackSessionEvaluationService.skipForwardIntent(
+            session: session(elapsedSeconds: 15, durationSeconds: 100),
+            item: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings
+        )
+
+        #expect(intent == .countedSkip)
+
+        fixture.item.skipCount = 1
+        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
+            session: session(elapsedSeconds: 15, durationSeconds: 100),
+            item: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings
+        ) == .countedSkip)
+    }
+
+    @Test("skip forward intent uses trash when skip would evict")
+    func skipForwardIntentUsesTrashWhenSkipWouldEvict() throws {
+        let fixture = try makeFixture(skipCount: 2)
+        let settings = OverplaySettings(
+            evictAfterSkips: 3,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 10
+        )
+
+        let intent = PlaybackSessionEvaluationService.skipForwardIntent(
+            session: session(elapsedSeconds: 15, durationSeconds: 100),
+            item: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings
+        )
+
+        #expect(intent == .eviction)
+    }
+
+    @Test("skip forward intent uses reset icon when skip would reset count")
+    func skipForwardIntentUsesResetIconWhenSkipWouldResetCount() throws {
+        let fixture = try makeFixture(skipCount: 2)
+        let settings = OverplaySettings(
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 10,
+            playthroughThresholdPercentage: 90,
+            playthroughResetsSkipCount: true
+        )
+
+        let intent = PlaybackSessionEvaluationService.skipForwardIntent(
+            session: session(elapsedSeconds: 92, durationSeconds: 100),
+            item: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings
+        )
+
+        #expect(intent == .skipCountReset)
+        #expect(intent.systemImage == "cross.case.fill")
+    }
+
+    @Test("skip forward intent keeps standard icon for playthroughs without reset")
+    func skipForwardIntentKeepsStandardIconForPlaythroughsWithoutReset() throws {
+        let fixture = try makeFixture(skipCount: 0)
+        let settings = OverplaySettings(
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 10,
+            playthroughThresholdPercentage: 90,
+            playthroughResetsSkipCount: true
+        )
+
+        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
+            session: session(elapsedSeconds: 92, durationSeconds: 100),
+            item: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings
+        ) == .standard)
+
+        fixture.item.skipCount = 2
+        settings.playthroughResetsSkipCount = false
+        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
+            session: session(elapsedSeconds: 92, durationSeconds: 100),
+            item: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings
+        ) == .standard)
+    }
+
+    @Test("skip forward intent keeps standard icon for uncounted skips")
+    func skipForwardIntentKeepsStandardIconForUncountedSkips() throws {
+        let fixture = try makeFixture(skipCount: 2)
+        let settings = OverplaySettings(
+            evictAfterSkips: 3,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 10
+        )
+
+        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
+            session: session(elapsedSeconds: 4, durationSeconds: 100),
+            item: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings
+        ) == .standard)
+        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
+            session: session(elapsedSeconds: 60, durationSeconds: 100),
+            item: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings
+        ) == .standard)
+        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
+            session: session(elapsedSeconds: 15, durationSeconds: 100, hasEvaluated: true),
+            item: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings
+        ) == .standard)
+        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
+            session: nil,
+            item: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings
+        ) == .standard)
+
+        fixture.item.protected = true
+        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
+            session: session(elapsedSeconds: 15, durationSeconds: 100),
+            item: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings
+        ) == .standard)
+
+        fixture.item.protected = false
+        fixture.item.evictedAt = .now
+        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
+            session: session(elapsedSeconds: 15, durationSeconds: 100),
+            item: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings
+        ) == .standard)
+    }
+
+    @Test("skip forward intent respects triage auto-eviction setting")
+    func skipForwardIntentRespectsTriageAutoEvictionSetting() throws {
+        let fixture = try makeFixture(skipCount: 2, role: .triage)
+        let settings = OverplaySettings(
+            evictAfterSkips: 3,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 10,
+            triageAutoEvictsOnSkipCount: false
+        )
+
+        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
+            session: session(elapsedSeconds: 15, durationSeconds: 100),
+            item: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings
+        ) == .countedSkip)
+
+        settings.triageAutoEvictsOnSkipCount = true
+        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
+            session: session(elapsedSeconds: 15, durationSeconds: 100),
+            item: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings
+        ) == .eviction)
+    }
+
     private func makeFixture(
         skipCount: Int,
-        protected: Bool = false
+        protected: Bool = false,
+        role: PlaylistRole = .oneTruePlaylist
     ) throws -> (
         container: ModelContainer,
         context: ModelContext,
@@ -229,7 +429,7 @@ struct PlaybackSessionEvaluationServiceTests {
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-1",
             name: "Main",
-            role: .oneTruePlaylist
+            role: role
         )
         let track = TrackRecord(
             catalogID: "catalog-1",
@@ -248,5 +448,19 @@ struct PlaybackSessionEvaluationServiceTests {
         context.insert(track)
         context.insert(item)
         return (container, context, playlist, track, item)
+    }
+
+    private func session(
+        elapsedSeconds: Double,
+        durationSeconds: Double,
+        hasEvaluated: Bool = false
+    ) -> TrackPlaySession {
+        TrackPlaySession(
+            trackID: "library-1",
+            sessionStartDate: Date(timeIntervalSince1970: 0),
+            lastObservedPlaybackTime: elapsedSeconds,
+            durationSeconds: durationSeconds,
+            hasEvaluated: hasEvaluated
+        )
     }
 }

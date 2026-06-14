@@ -83,11 +83,19 @@ struct NowPlayingPresentation: Equatable, Sendable {
             return .normal
         }
 
-        let progressPercentage = min(max((elapsedSeconds / durationSeconds) * 100, 0), 100)
+        let progressPercentage = PlaybackSessionEvaluationService.progressPercentage(
+            elapsedSeconds: elapsedSeconds,
+            durationSeconds: durationSeconds
+        )
         if playthroughResetsSkipCount, progressPercentage >= playthroughThresholdPercentage {
             return .safe
         }
-        if elapsedSeconds >= minimumSkipListeningSeconds, progressPercentage < skipThresholdPercentage {
+        if PlaybackSessionEvaluationService.skipWouldCount(
+            elapsedSeconds: elapsedSeconds,
+            durationSeconds: durationSeconds,
+            skipThresholdPercentage: skipThresholdPercentage,
+            minimumSkipListeningSeconds: minimumSkipListeningSeconds
+        ) {
             return .danger
         }
         return .normal

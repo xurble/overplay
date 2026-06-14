@@ -44,18 +44,23 @@ struct CarPlayNowPlayingButtonSignatureTests {
 
         let signature = CarPlayNowPlayingButtonSignature.make(
             playbackController: controller,
-            settings: settings
+            settings: settings,
+            context: context
         )
         let nowPlaying = NowPlayingPresentationFactory.presentation(
             playbackController: controller,
-            settings: settings
+            settings: settings,
+            context: context
         )
         let health = NowPlayingPresentationFactory.trackHealthPresentation(
             playbackController: controller,
-            settings: settings
+            settings: settings,
+            context: context
         )
         let controls = NowPlayingPresentationFactory.playbackControlsPresentation(
-            playbackController: controller
+            playbackController: controller,
+            settings: settings,
+            context: context
         )
 
         #expect(signature.trackID == nowPlaying.trackID)
@@ -64,6 +69,7 @@ struct CarPlayNowPlayingButtonSignatureTests {
         #expect(signature.isEvicted == nowPlaying.isEvicted)
         #expect(signature.shuffleEnabled == controls.shuffleEnabled)
         #expect(signature.repeatEnabled == controls.repeatEnabled)
+        #expect(signature.skipForwardIntent == controls.skipForwardIntent)
         #expect(health.title == "Protected")
     }
 
@@ -74,20 +80,34 @@ struct CarPlayNowPlayingButtonSignatureTests {
         let settings = try SettingsRepository.settings(in: context)
         settings.evictAfterSkips = 3
         let controller = PlaybackController()
-        let track = TrackRecord(title: "Track", artistName: "Artist")
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "playlist-1",
+            name: "Main",
+            role: .oneTruePlaylist
+        )
+        let track = TrackRecord(
+            catalogID: "music-1",
+            libraryID: "music-1",
+            title: "Track",
+            artistName: "Artist"
+        )
+        context.insert(playlist)
         context.insert(track)
-        let item = PlaylistItemRecord(playlistID: UUID(), trackID: track.id, skipCount: 2)
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id, skipCount: 2)
         context.insert(item)
+        controller.currentPlaylistID = playlist.musicPlaylistID
         controller.currentTrack = CurrentPlaybackTrack(id: "music-1", title: "Track", artistName: "Artist")
         controller.currentPlaylistItem = item
 
         let atRisk = CarPlayNowPlayingButtonSignature.make(
             playbackController: controller,
-            settings: settings
+            settings: settings,
+            context: context
         )
         let atRiskHealth = NowPlayingPresentationFactory.trackHealthPresentation(
             playbackController: controller,
-            settings: settings
+            settings: settings,
+            context: context
         )
         #expect(atRiskHealth.status == .critical)
         #expect(!atRisk.isEvicted)
@@ -97,11 +117,13 @@ struct CarPlayNowPlayingButtonSignatureTests {
 
         let evicted = CarPlayNowPlayingButtonSignature.make(
             playbackController: controller,
-            settings: settings
+            settings: settings,
+            context: context
         )
         let evictedHealth = NowPlayingPresentationFactory.trackHealthPresentation(
             playbackController: controller,
-            settings: settings
+            settings: settings,
+            context: context
         )
         #expect(evicted.isEvicted)
         #expect(evictedHealth.title == "Evicted")

@@ -283,4 +283,45 @@ struct NowPlayingPresentationFactoryTests {
         #expect(presentation.durationSeconds == 120)
         #expect(presentation.isPlaying)
     }
+
+    @Test("context factory uses live playlist item skip count")
+    @MainActor
+    func contextFactoryUsesLivePlaylistItemSkipCount() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let settings = try SettingsRepository.settings(in: context)
+        settings.evictAfterSkips = 3
+        let controller = PlaybackController()
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "playlist-1",
+            name: "Main",
+            role: .oneTruePlaylist
+        )
+        let track = TrackRecord(
+            catalogID: "music-1",
+            libraryID: "music-1",
+            title: "Track",
+            artistName: "Artist"
+        )
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id, skipCount: 1)
+        context.insert(playlist)
+        context.insert(track)
+        context.insert(item)
+        controller.currentPlaylistID = playlist.musicPlaylistID
+        controller.currentTrack = CurrentPlaybackTrack(
+            id: "music-1",
+            title: "Track",
+            artistName: "Artist",
+            skipCount: 0
+        )
+
+        let presentation = NowPlayingPresentationFactory.presentation(
+            playbackController: controller,
+            settings: settings,
+            context: context
+        )
+
+        #expect(presentation.skipCount == 1)
+        #expect(presentation.skipCountText == "Skips: 1 / 3")
+    }
 }

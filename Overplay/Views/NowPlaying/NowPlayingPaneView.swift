@@ -1,7 +1,9 @@
+import SwiftData
 import SwiftUI
 
 struct NowPlayingPaneView: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackController.self) private var playbackController
 
     var settings: OverplaySettings
@@ -23,7 +25,8 @@ struct NowPlayingPaneView: View {
             )
             let presentation = NowPlayingPresentationFactory.presentation(
                 playbackController: playbackController,
-                settings: settings
+                settings: settings,
+                context: modelContext
             )
             let activeArtworkTheme = artworkTheme?.isFallback == false ? artworkTheme : nil
 
@@ -125,4 +128,5 @@ struct NowPlayingPaneView: View {
         artworkTheme: nil
     )
     .environment(PlaybackController())
+    .modelContainer(PreviewContainer.make())
 }

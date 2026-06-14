@@ -60,9 +60,19 @@ final class PlaybackController {
         return currentPlaylistItem?.skipCount ?? currentTrack?.skipCount ?? 0
     }
 
+    func displayedSkipCount(context: ModelContext) -> Int {
+        _ = playbackItemMetadataVersion
+        return displayedPlaylistItem(context: context)?.skipCount ?? currentTrack?.skipCount ?? 0
+    }
+
     var displayedPlaythroughCount: Int {
         _ = playbackItemMetadataVersion
         return currentPlaylistItem?.playthroughCount ?? currentTrack?.playthroughCount ?? 0
+    }
+
+    func displayedPlaythroughCount(context: ModelContext) -> Int {
+        _ = playbackItemMetadataVersion
+        return displayedPlaylistItem(context: context)?.playthroughCount ?? currentTrack?.playthroughCount ?? 0
     }
 
     var displayedIsProtected: Bool {
@@ -70,9 +80,19 @@ final class PlaybackController {
         return currentPlaylistItem?.protected == true || currentTrack?.protected == true
     }
 
+    func displayedIsProtected(context: ModelContext) -> Bool {
+        _ = playbackItemMetadataVersion
+        return displayedPlaylistItem(context: context)?.protected == true || currentTrack?.protected == true
+    }
+
     var displayedIsEvicted: Bool {
         _ = playbackItemMetadataVersion
         return currentPlaylistItem?.evictedAt != nil || currentTrack?.isEvicted == true
+    }
+
+    func displayedIsEvicted(context: ModelContext) -> Bool {
+        _ = playbackItemMetadataVersion
+        return displayedPlaylistItem(context: context)?.evictedAt != nil || currentTrack?.isEvicted == true
     }
 
     var shuffleEnabled: Bool {
@@ -619,6 +639,51 @@ final class PlaybackController {
         try? currentPlaylist(in: context)?.role
     }
 
+    func skipForwardIntent(settings: OverplaySettings, context: ModelContext) -> PlaybackSkipForwardIntent {
+        _ = playbackItemMetadataVersion
+        guard canControlPlayback else { return .standard }
+
+        let currentTrackID = activeSession?.trackID ?? currentTrack?.id
+        let baseSession: TrackPlaySession?
+        if let activeSession {
+            baseSession = activeSession
+        } else {
+            baseSession = PlaybackSessionEvaluationService.bootstrapSession(
+                trackID: currentTrackID,
+                elapsedSeconds: elapsedSeconds,
+                durationSeconds: durationSeconds ?? currentTrack?.durationSeconds
+            )
+        }
+        let session = baseSession.map {
+            PlaybackSessionEvaluationService.updateObservedProgress(
+                $0,
+                elapsedSeconds: elapsedSeconds,
+                durationSeconds: durationSeconds ?? currentTrack?.durationSeconds
+            )
+        }
+        let playlist = try? currentPlaylist(in: context)
+        return PlaybackSessionEvaluationService.skipForwardIntent(
+            session: session,
+            item: session.flatMap { playlistItemForSkipForwardIntent(session: $0, playlist: playlist, context: context) },
+            playlist: playlist,
+            settings: settings
+        )
+    }
+
+    func displayedPlaylistItem(context: ModelContext) -> PlaylistItemRecord? {
+        guard let musicItemID = currentTrack?.id,
+              let playlist = try? currentPlaylist(in: context) else {
+            return nil
+        }
+
+        return try? PlaybackSessionSupport.resolvePlaylistItem(
+            forMusicItemID: musicItemID,
+            currentPlaylistItem: currentPlaylistItem,
+            playlist: playlist,
+            in: context
+        )
+    }
+
     private func rebuildCurrentQueue(context: ModelContext) async {
         guard let currentPlaylistID,
               (try? currentPlaylist(in: context)) != nil else {
@@ -1084,6 +1149,36 @@ final class PlaybackController {
         }
 
         currentPlaylistItem = nil
+    }
+
+    private func playlistItemForSkipForwardIntent(
+        session: TrackPlaySession,
+        playlist: PlaylistRecord?,
+        context: ModelContext
+    ) -> PlaylistItemRecord? {
+        guard let playlist else { return nil }
+
+        if let item = try? PlaybackSessionSupport.resolvePlaylistItem(
+            forMusicItemID: session.trackID,
+            currentPlaylistItem: currentPlaylistItem,
+            playlist: playlist,
+            in: context
+        ) {
+            return item
+        }
+
+        if let localTrackID = activeQueueCurrentLocalTrackID,
+           let item = try? playlistItem(localTrackID: localTrackID, context: context),
+           item.playlistID == playlist.id,
+           (try? PlaybackSessionSupport.itemMatchesMusicItemID(
+               item,
+               musicItemID: session.trackID,
+               in: context
+           )) == true {
+            return item
+        }
+
+        return nil
     }
 
     private func syncPlaybackMetadata(for musicItemID: String, context: ModelContext) {

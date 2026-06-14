@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 struct CarPlayNowPlayingButtonSignature: Equatable {
     var trackID: String?
@@ -7,14 +8,17 @@ struct CarPlayNowPlayingButtonSignature: Equatable {
     var isEvicted: Bool
     var shuffleEnabled: Bool
     var repeatEnabled: Bool
+    var skipForwardIntent: PlaybackSkipForwardIntent
 
     static func make(
         playbackController: PlaybackController,
-        settings: OverplaySettings
+        settings: OverplaySettings,
+        context: ModelContext
     ) -> Self {
         NowPlayingPresentationFactory.carPlayButtonSignature(
             playbackController: playbackController,
-            settings: settings
+            settings: settings,
+            context: context
         )
     }
 }

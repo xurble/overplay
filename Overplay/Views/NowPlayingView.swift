@@ -3,6 +3,7 @@ import SwiftUI
 
 struct NowPlayingView: View {
     @Environment(PlaybackController.self) private var playbackController
+    @Environment(\.modelContext) private var modelContext
 
     var settings: OverplaySettings
 
@@ -57,7 +58,11 @@ struct NowPlayingView: View {
     }
 
     private var nowPlayingPresentation: NowPlayingPresentation {
-        NowPlayingPresentationFactory.presentation(playbackController: playbackController, settings: settings)
+        NowPlayingPresentationFactory.presentation(
+            playbackController: playbackController,
+            settings: settings,
+            context: modelContext
+        )
     }
 }
 
