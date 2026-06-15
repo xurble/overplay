@@ -2,8 +2,19 @@ import Foundation
 import SwiftData
 
 enum PreviewContainer {
+    struct Fixture {
+        var container: ModelContainer
+        var settings: OverplaySettings
+        var playlist: PlaylistRecord
+    }
+
     @MainActor
     static func make() -> ModelContainer {
+        makeFixture().container
+    }
+
+    @MainActor
+    static func makeFixture() -> Fixture {
         let schema = Schema([
             OverplaySettings.self,
             PlaylistRecord.self,
@@ -49,12 +60,14 @@ enum PreviewContainer {
         context.insert(PlaylistItemRecord(
             playlistID: playlist.id,
             trackID: playableTrack.id,
+            sortOrder: 0,
             skipCount: 2,
             lastSeenInPlaylistAt: .now
         ))
         context.insert(PlaylistItemRecord(
             playlistID: playlist.id,
             trackID: evictedTrack.id,
+            sortOrder: 1,
             skipCount: 3,
             lastSeenInPlaylistAt: .now,
             evictedAt: .now,
@@ -62,6 +75,6 @@ enum PreviewContainer {
             evictionSource: .playbackRule
         ))
         try? context.save()
-        return container
+        return Fixture(container: container, settings: settings, playlist: playlist)
     }
 }

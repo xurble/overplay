@@ -17,7 +17,7 @@ struct PlaylistSyncReconciliationTests {
         )
         context.insert(playlist)
 
-        let count = try PlaylistSyncService().reconcile(
+        let summary = try PlaylistSyncService().reconcile(
             snapshots: [
                 snapshot(id: "track-1", title: "First"),
                 snapshot(id: "track-2", title: "Second")
@@ -27,7 +27,10 @@ struct PlaylistSyncReconciliationTests {
             in: context
         )
 
-        #expect(count == 2)
+        #expect(summary.fetchedCount == 2)
+        #expect(summary.insertedCount == 2)
+        #expect(summary.updatedCount == 0)
+        #expect(summary.unchangedCount == 0)
         #expect(try TrackRecordRepository.allTracks(in: context).count == 2)
         let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
         #expect(items.count == 2)
@@ -50,22 +53,125 @@ struct PlaylistSyncReconciliationTests {
             snapshot(id: "track-2", title: "Second")
         ]
 
-        try PlaylistSyncService().reconcile(
+        let firstSummary = try PlaylistSyncService().reconcile(
             snapshots: snapshots,
             playlistRecord: playlist,
             syncedAt: Date(timeIntervalSince1970: 100),
             in: context
         )
-        try PlaylistSyncService().reconcile(
+        let firstTrack = try #require(try TrackRecordRepository.track(musicItemID: "track-1", in: context))
+        let firstItem = try #require(try PlaylistItemRepository.item(
+            playlistID: playlist.id,
+            trackID: firstTrack.id,
+            in: context
+        ))
+        let trackUpdatedAt = firstTrack.updatedAt
+        let itemUpdatedAt = firstItem.updatedAt
+        let itemLastSeenInPlaylistAt = firstItem.lastSeenInPlaylistAt
+
+        let secondSummary = try PlaylistSyncService().reconcile(
             snapshots: snapshots,
             playlistRecord: playlist,
             syncedAt: Date(timeIntervalSince1970: 200),
             in: context
         )
 
+        #expect(firstSummary.insertedCount == 2)
+        #expect(secondSummary.fetchedCount == 2)
+        #expect(secondSummary.insertedCount == 0)
+        #expect(secondSummary.updatedCount == 0)
+        #expect(secondSummary.unchangedCount == 2)
         #expect(try TrackRecordRepository.allTracks(in: context).count == 2)
         #expect(try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context).count == 2)
+        #expect(firstTrack.updatedAt == trackUpdatedAt)
+        #expect(firstItem.updatedAt == itemUpdatedAt)
+        #expect(firstItem.lastSeenInPlaylistAt == itemLastSeenInPlaylistAt)
         #expect(playlist.lastSyncedAt == Date(timeIntervalSince1970: 200))
+    }
+
+    @Test("reconcile reports changed metadata and newly inserted tracks")
+    func reconcileReportsChangedMetadataAndNewlyInsertedTracks() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "playlist-1",
+            name: "Main",
+            role: .oneTruePlaylist
+        )
+        context.insert(playlist)
+        try PlaylistSyncService().reconcile(
+            snapshots: [
+                snapshot(id: "track-1", title: "First")
+            ],
+            playlistRecord: playlist,
+            syncedAt: Date(timeIntervalSince1970: 100),
+            in: context
+        )
+        let track = try #require(try TrackRecordRepository.track(musicItemID: "track-1", in: context))
+        let item = try #require(try PlaylistItemRepository.item(
+            playlistID: playlist.id,
+            trackID: track.id,
+            in: context
+        ))
+        let itemLastSeenInPlaylistAt = item.lastSeenInPlaylistAt
+
+        let summary = try PlaylistSyncService().reconcile(
+            snapshots: [
+                snapshot(id: "track-1", title: "First Updated"),
+                snapshot(id: "track-2", title: "Second")
+            ],
+            playlistRecord: playlist,
+            syncedAt: Date(timeIntervalSince1970: 200),
+            in: context
+        )
+
+        let updatedTrack = try #require(try TrackRecordRepository.track(musicItemID: "track-1", in: context))
+        #expect(summary.fetchedCount == 2)
+        #expect(summary.insertedCount == 1)
+        #expect(summary.updatedCount == 1)
+        #expect(summary.unchangedCount == 0)
+        #expect(summary.artworkWarmupSnapshots.map(\.id) == ["track-1", "track-2"])
+        #expect(updatedTrack.title == "First Updated")
+        #expect(item.lastSeenInPlaylistAt == itemLastSeenInPlaylistAt)
+    }
+
+    @Test("reconcile reports changed sort order")
+    func reconcileReportsChangedSortOrder() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "playlist-1",
+            name: "Main",
+            role: .oneTruePlaylist
+        )
+        context.insert(playlist)
+        try PlaylistSyncService().reconcile(
+            snapshots: [
+                snapshot(id: "track-1", title: "First"),
+                snapshot(id: "track-2", title: "Second")
+            ],
+            playlistRecord: playlist,
+            syncedAt: Date(timeIntervalSince1970: 100),
+            in: context
+        )
+
+        let summary = try PlaylistSyncService().reconcile(
+            snapshots: [
+                snapshot(id: "track-2", title: "Second"),
+                snapshot(id: "track-1", title: "First")
+            ],
+            playlistRecord: playlist,
+            syncedAt: Date(timeIntervalSince1970: 200),
+            in: context
+        )
+
+        let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
+        #expect(summary.fetchedCount == 2)
+        #expect(summary.insertedCount == 0)
+        #expect(summary.updatedCount == 2)
+        #expect(summary.unchangedCount == 0)
+        #expect(items.map(\.sortOrder) == [0, 1])
+        #expect(items.allSatisfy { $0.lastSeenInPlaylistAt == Date(timeIntervalSince1970: 200) })
     }
 
     @Test("reconcile remote removals keeps local item playable")

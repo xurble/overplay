@@ -324,4 +324,52 @@ struct NowPlayingPresentationFactoryTests {
         #expect(presentation.skipCount == 1)
         #expect(presentation.skipCountText == "Skips: 1 / 3")
     }
+
+    @Test("context factory refreshes stale cached playlist item before presenting skip count")
+    @MainActor
+    func contextFactoryRefreshesStaleCachedPlaylistItemBeforePresentingSkipCount() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let settings = try SettingsRepository.settings(in: context)
+        settings.evictAfterSkips = 3
+        let controller = PlaybackController()
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "playlist-1",
+            name: "Main",
+            role: .oneTruePlaylist
+        )
+        let track = TrackRecord(
+            catalogID: "music-1",
+            libraryID: "music-1",
+            title: "Track",
+            artistName: "Artist"
+        )
+        let liveItem = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id, skipCount: 1)
+        let staleCachedItem = PlaylistItemRecord(
+            id: liveItem.id,
+            playlistID: playlist.id,
+            trackID: track.id,
+            skipCount: 0
+        )
+        context.insert(playlist)
+        context.insert(track)
+        context.insert(liveItem)
+        controller.currentPlaylistID = playlist.musicPlaylistID
+        controller.currentPlaylistItem = staleCachedItem
+        controller.currentTrack = CurrentPlaybackTrack(
+            id: "music-1",
+            title: "Track",
+            artistName: "Artist",
+            skipCount: 0
+        )
+
+        let presentation = NowPlayingPresentationFactory.presentation(
+            playbackController: controller,
+            settings: settings,
+            context: context
+        )
+
+        #expect(presentation.skipCount == 1)
+        #expect(presentation.skipCountText == "Skips: 1 / 3")
+    }
 }

@@ -230,12 +230,14 @@ struct PlaylistManagementView: View {
 }
 
 #Preview {
+    let fixture = PreviewContainer.makeFixture()
+
     NavigationStack {
         PlaylistManagementView(
-            settings: OverplaySettings(selectedPlaylistID: "preview-playlist", selectedPlaylistName: "Overplay"),
-            playlist: PlaylistRecord(musicPlaylistID: "preview-playlist", name: "Overplay", role: .oneTruePlaylist)
+            settings: fixture.settings,
+            playlist: fixture.playlist
         )
     }
     .environment(PlaybackController())
-    .modelContainer(PreviewContainer.make())
+    .modelContainer(fixture.container)
 }

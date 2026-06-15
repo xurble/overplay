@@ -20,6 +20,16 @@ enum PlaylistSyncError: LocalizedError {
     }
 }
 
+struct PlaylistSyncSummary: Equatable {
+    var fetchedCount = 0
+    var insertedCount = 0
+    var updatedCount = 0
+    var unchangedCount = 0
+    var skippedCount = 0
+    var skippedReason: String?
+    var artworkWarmupSnapshots: [TrackSnapshot] = []
+}
+
 @MainActor
 struct PlaylistSyncService {
     private static let logger = Logger(
@@ -69,19 +79,17 @@ struct PlaylistSyncService {
         )
         let tracks = try await loadTracks(for: playlist)
         let snapshots = tracks.map { snapshot(from: $0, playlistID: playlistRecord.musicPlaylistID) }
-        Self.logger.info(
-            "Fetched \(tracks.count, privacy: .public) remote tracks for playlist '\(playlistRecord.name, privacy: .public)' (\(playlistRecord.musicPlaylistID, privacy: .public))"
-        )
 
-        try reconcile(
+        let summary = try reconcile(
             snapshots: snapshots,
             playlistRecord: playlistRecord,
             syncedAt: .now,
             in: context
         )
         try context.save()
-        warmUpArtworkThemes(for: snapshots)
-        return tracks.count
+        logSyncSummary(summary, playlistRecord: playlistRecord)
+        warmUpArtworkThemes(for: summary.artworkWarmupSnapshots)
+        return summary.fetchedCount
     }
 
     func syncAllLinkedPlaylists(in context: ModelContext) async throws -> Int {
@@ -147,14 +155,16 @@ struct PlaylistSyncService {
             writePolicy: .managed,
             in: context
         )
-        try reconcile(
-            snapshots: sourceTracks.map { snapshot(from: $0, playlistID: record.musicPlaylistID) },
+        let snapshots = sourceTracks.map { snapshot(from: $0, playlistID: record.musicPlaylistID) }
+        let summary = try reconcile(
+            snapshots: snapshots,
             playlistRecord: record,
             syncedAt: .now,
             in: context
         )
         try context.save()
-        warmUpArtworkThemes(for: sourceTracks.map { snapshot(from: $0, playlistID: record.musicPlaylistID) })
+        logSyncSummary(summary, playlistRecord: record)
+        warmUpArtworkThemes(for: summary.artworkWarmupSnapshots)
         return record
     }
 
@@ -164,7 +174,9 @@ struct PlaylistSyncService {
         playlistRecord: PlaylistRecord,
         syncedAt: Date,
         in context: ModelContext
-    ) throws -> Int {
+    ) throws -> PlaylistSyncSummary {
+        var summary = PlaylistSyncSummary(fetchedCount: snapshots.count)
+
         for (sortOrder, snapshot) in snapshots.enumerated() {
             let existingTrack = try TrackRecordRepository.track(
                 catalogID: snapshot.catalogID ?? snapshot.id,
@@ -187,21 +199,34 @@ struct PlaylistSyncService {
             )
 
             do {
-                let track = try TrackRecordRepository.upsert(snapshot, in: context)
-                let item = try PlaylistItemRepository.upsert(
+                let trackResult = try TrackRecordRepository.upsertWithResult(snapshot, in: context)
+                let itemResult = try PlaylistItemRepository.upsertWithResult(
                     playlistID: playlistRecord.id,
-                    trackID: track.id,
+                    trackID: trackResult.record.id,
                     musicPlaylistEntryID: snapshot.playlistEntryID,
                     sortOrder: sortOrder,
                     in: context
                 )
-                item.lastSeenInPlaylistAt = syncedAt
-                logLocalAddSucceeded(
+
+                if itemResult.mutation.didChange {
+                    itemResult.record.lastSeenInPlaylistAt = syncedAt
+                }
+
+                let mutation = combinedMutation(
+                    trackMutation: trackResult.mutation,
+                    itemMutation: itemResult.mutation
+                )
+                record(mutation, in: &summary)
+                if mutation == .inserted || trackResult.shouldWarmUpArtworkTheme {
+                    summary.artworkWarmupSnapshots.append(snapshot)
+                }
+
+                logLocalReconcileSucceeded(
                     snapshot,
                     playlistRecord: playlistRecord,
-                    track: track,
-                    item: item,
-                    existedBeforeSync: existingItem != nil
+                    track: trackResult.record,
+                    item: itemResult.record,
+                    mutation: mutation
                 )
             } catch {
                 logLocalAddFailed(
@@ -216,7 +241,7 @@ struct PlaylistSyncService {
         playlistRecord.lastSyncedAt = syncedAt
         playlistRecord.lastSyncError = nil
         playlistRecord.updatedAt = syncedAt
-        return snapshots.count
+        return summary
     }
 
     private func logFoundRemoteTrack(
@@ -226,7 +251,7 @@ struct PlaylistSyncService {
         existingTrack: TrackRecord?,
         existingItem: PlaylistItemRecord?
     ) {
-        Self.logger.info(
+        Self.logger.debug(
             """
             Found remote track \(sortOrder, privacy: .public) in '\(playlistRecord.name, privacy: .public)': \
             '\(snapshot.title, privacy: .public)' by '\(snapshot.artistName, privacy: .public)' \
@@ -240,17 +265,16 @@ struct PlaylistSyncService {
         )
     }
 
-    private func logLocalAddSucceeded(
+    private func logLocalReconcileSucceeded(
         _ snapshot: TrackSnapshot,
         playlistRecord: PlaylistRecord,
         track: TrackRecord,
         item: PlaylistItemRecord,
-        existedBeforeSync: Bool
+        mutation: PersistenceMutation
     ) {
-        let action = existedBeforeSync ? "updated" : "inserted"
-        Self.logger.info(
+        Self.logger.debug(
             """
-            Local sync \(action, privacy: .public) playlist item for '\(snapshot.title, privacy: .public)' \
+            Local sync \(mutation.logName, privacy: .public) playlist item for '\(snapshot.title, privacy: .public)' \
             in '\(playlistRecord.name, privacy: .public)' \
             localTrackID=\(track.id.uuidString, privacy: .public) \
             localPlaylistItemID=\(item.id.uuidString, privacy: .public) \
@@ -258,6 +282,33 @@ struct PlaylistSyncService {
             evictedAt=\(item.evictedAt?.description ?? "nil", privacy: .public)
             """
         )
+    }
+
+    private func logSyncSummary(_ summary: PlaylistSyncSummary, playlistRecord: PlaylistRecord) {
+        if let skippedReason = summary.skippedReason {
+            Self.logger.info(
+                """
+                Skipped playlist sync for '\(playlistRecord.name, privacy: .public)' \
+                reason=\(skippedReason, privacy: .public) \
+                fetched=\(summary.fetchedCount, privacy: .public) \
+                inserted=\(summary.insertedCount, privacy: .public) \
+                updated=\(summary.updatedCount, privacy: .public) \
+                unchanged=\(summary.unchangedCount, privacy: .public) \
+                skipped=\(summary.skippedCount, privacy: .public)
+                """
+            )
+        } else {
+            Self.logger.info(
+                """
+                Synced playlist '\(playlistRecord.name, privacy: .public)' \
+                fetched=\(summary.fetchedCount, privacy: .public) \
+                inserted=\(summary.insertedCount, privacy: .public) \
+                updated=\(summary.updatedCount, privacy: .public) \
+                unchanged=\(summary.unchangedCount, privacy: .public) \
+                skipped=\(summary.skippedCount, privacy: .public)
+                """
+            )
+        }
     }
 
     private func logLocalAddFailed(
@@ -272,6 +323,30 @@ struct PlaylistSyncService {
             musicItemID=\(snapshot.id, privacy: .public): \(error.localizedDescription, privacy: .public)
             """
         )
+    }
+
+    private func combinedMutation(
+        trackMutation: PersistenceMutation,
+        itemMutation: PersistenceMutation
+    ) -> PersistenceMutation {
+        if trackMutation == .inserted || itemMutation == .inserted {
+            .inserted
+        } else if trackMutation == .updated || itemMutation == .updated {
+            .updated
+        } else {
+            .unchanged
+        }
+    }
+
+    private func record(_ mutation: PersistenceMutation, in summary: inout PlaylistSyncSummary) {
+        switch mutation {
+        case .inserted:
+            summary.insertedCount += 1
+        case .updated:
+            summary.updatedCount += 1
+        case .unchanged:
+            summary.unchangedCount += 1
+        }
     }
 
     func playableMusicTracks(for playlistID: String, in context: ModelContext) async throws -> [Track] {

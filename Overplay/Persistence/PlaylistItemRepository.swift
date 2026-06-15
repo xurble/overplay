@@ -91,20 +91,50 @@ enum PlaylistItemRepository {
         sortOrder: Int? = nil,
         in context: ModelContext
     ) throws -> PlaylistItemRecord {
-        let item = try item(playlistID: playlistID, trackID: trackID, in: context) ?? PlaylistItemRecord(
+        try upsertWithResult(
             playlistID: playlistID,
-            trackID: trackID
-        )
+            trackID: trackID,
+            musicPlaylistEntryID: musicPlaylistEntryID,
+            sortOrder: sortOrder,
+            in: context
+        ).record
+    }
 
-        if item.modelContext == nil {
-            context.insert(item)
+    @discardableResult
+    static func upsertWithResult(
+        playlistID: UUID,
+        trackID: UUID,
+        musicPlaylistEntryID: String? = nil,
+        sortOrder: Int? = nil,
+        in context: ModelContext
+    ) throws -> PlaylistItemUpsertResult {
+        guard let item = try item(playlistID: playlistID, trackID: trackID, in: context) else {
+            let insertedItem = PlaylistItemRecord(
+                playlistID: playlistID,
+                trackID: trackID,
+                musicPlaylistEntryID: musicPlaylistEntryID,
+                sortOrder: sortOrder ?? 0
+            )
+            context.insert(insertedItem)
+            return PlaylistItemUpsertResult(record: insertedItem, mutation: .inserted)
         }
 
-        item.musicPlaylistEntryID = musicPlaylistEntryID
-        if let sortOrder {
+        var didChange = false
+        if item.musicPlaylistEntryID != musicPlaylistEntryID {
+            item.musicPlaylistEntryID = musicPlaylistEntryID
+            didChange = true
+        }
+        if let sortOrder, item.sortOrder != sortOrder {
             item.sortOrder = sortOrder
+            didChange = true
         }
-        item.updatedAt = .now
-        return item
+        if didChange {
+            item.updatedAt = .now
+        }
+
+        return PlaylistItemUpsertResult(
+            record: item,
+            mutation: didChange ? .updated : .unchanged
+        )
     }
 }

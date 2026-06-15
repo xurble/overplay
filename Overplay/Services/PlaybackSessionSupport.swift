@@ -39,7 +39,20 @@ enum PlaybackSessionSupport {
         if let currentPlaylistItem,
            currentPlaylistItem.playlistID == playlist.id,
            try itemMatchesMusicItemID(currentPlaylistItem, musicItemID: musicItemID, in: context) {
-            return currentPlaylistItem
+            if let liveItem = try PlaylistItemRepository.item(id: currentPlaylistItem.id, in: context),
+               liveItem.playlistID == playlist.id,
+               try itemMatchesMusicItemID(liveItem, musicItemID: musicItemID, in: context) {
+                return liveItem
+            }
+
+            if let liveItem = try PlaylistItemRepository.item(
+                playlistID: playlist.id,
+                trackID: currentPlaylistItem.trackID,
+                in: context
+            ),
+               try itemMatchesMusicItemID(liveItem, musicItemID: musicItemID, in: context) {
+                return liveItem
+            }
         }
 
         let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
