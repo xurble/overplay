@@ -299,8 +299,7 @@ final class CarPlayCoordinator: NSObject {
         CPNowPlayingTemplate.shared.updateNowPlayingButtons([
             makeShuffleButton(),
             makeRepeatButton(),
-            makeSkipForwardButton(),
-            makeTrackHealthButton()
+            makeTrackHealthButton(systemImage: signature.trackActionMenuSystemImage)
         ])
         return true
     }
@@ -331,18 +330,8 @@ final class CarPlayCoordinator: NSObject {
         return button
     }
 
-    private func makeSkipForwardButton() -> CPNowPlayingImageButton {
-        let button = CPNowPlayingImageButton(image: skipForwardButtonImage()) { [weak self] _ in
-            Task { @MainActor in
-                await self?.skipForwardCurrentTrack()
-            }
-        }
-        button.isEnabled = playbackController?.canControlPlayback == true
-        return button
-    }
-
-    private func makeTrackHealthButton() -> CPNowPlayingImageButton {
-        let button = CPNowPlayingImageButton(image: healthButtonImage()) { [weak self] _ in
+    private func makeTrackHealthButton(systemImage: String) -> CPNowPlayingImageButton {
+        let button = CPNowPlayingImageButton(image: healthButtonImage(systemImage: systemImage)) { [weak self] _ in
             Task { @MainActor in
                 self?.showTrackHealthMenu()
             }
@@ -351,37 +340,15 @@ final class CarPlayCoordinator: NSObject {
         return button
     }
 
-    private func skipForwardButtonImage() -> UIImage {
-        let systemImage = playbackControlsPresentation()?.skipForwardSystemImage
-            ?? PlaybackSkipForwardIntent.standard.systemImage
+    private func healthButtonImage(systemImage: String) -> UIImage {
         let configuration = UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold)
         return (UIImage(systemName: systemImage, withConfiguration: configuration) ?? UIImage())
-            .withRenderingMode(.alwaysTemplate)
-    }
-
-    private func healthButtonImage() -> UIImage {
-        let health = trackHealthPresentation() ?? TrackHealthPresentation(
-            status: .healthy,
-            isEvicted: false,
-            isProtected: false
-        )
-        let configuration = UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold)
-        return (UIImage(systemName: health.systemImage, withConfiguration: configuration) ?? UIImage())
             .withRenderingMode(.alwaysTemplate)
     }
 
     private func currentSettings() -> OverplaySettings? {
         guard let modelContext else { return nil }
         return try? SettingsRepository.settings(in: modelContext)
-    }
-
-    private func playbackControlsPresentation() -> PlaybackControlsPresentation? {
-        guard let playbackController, let modelContext, let settings = currentSettings() else { return nil }
-        return NowPlayingPresentationFactory.playbackControlsPresentation(
-            playbackController: playbackController,
-            settings: settings,
-            context: modelContext
-        )
     }
 
     private func nowPlayingPresentation() -> NowPlayingPresentation? {
@@ -409,7 +376,7 @@ final class CarPlayCoordinator: NSObject {
             playbackController?.currentPlaylistRole(context: context)
         } == .triage
 
-        let promoteAction = CPAlertAction(title: "Promote", style: .default) { [weak self] _ in
+        let promoteAction = CPAlertAction(title: "Promote Now", style: .default) { [weak self] _ in
             Task { @MainActor in
                 await self?.promoteCurrentTrack()
                 self?.dismissPresentedTemplate()
@@ -421,9 +388,9 @@ final class CarPlayCoordinator: NSObject {
                 self?.dismissPresentedTemplate()
             }
         }
-        let keepSafeAction = CPAlertAction(title: "Keep Safe", style: .default) { [weak self] _ in
+        let toggleKeepAction = CPAlertAction(title: toggleKeepTitle(), style: .default) { [weak self] _ in
             Task { @MainActor in
-                self?.protectCurrentTrack()
+                self?.toggleCurrentKeep()
                 self?.dismissPresentedTemplate()
             }
         }
@@ -444,9 +411,13 @@ final class CarPlayCoordinator: NSObject {
             message: trackHealthMessage(),
             actions: isTriagePlaylist
                 ? [promoteAction, evictAction, cancelAction]
-                : [resetAction, keepSafeAction, evictAction, cancelAction]
+                : [toggleKeepAction, resetAction, evictAction, cancelAction]
         )
         interfaceController.presentTemplate(template, animated: true, completion: nil)
+    }
+
+    private func toggleKeepTitle() -> String {
+        trackHealthPresentation()?.isProtected == true ? "Turn Keep Off" : "Turn Keep On"
     }
 
     private func trackHealthMessage() -> String {
@@ -477,11 +448,12 @@ final class CarPlayCoordinator: NSObject {
         refreshAfterHealthAction()
     }
 
-    private func protectCurrentTrack() {
+    private func toggleCurrentKeep() {
         guard let playbackController, let modelContext else { return }
-        guard playbackController.protectCurrentTrack(
+        guard playbackController.toggleCurrentKeep(
             context: modelContext,
-            message: "Protected in CarPlay"
+            enabledMessage: "Keep turned on in CarPlay",
+            disabledMessage: "Keep turned off in CarPlay"
         ) else {
             showError(
                 title: "Health action failed",
@@ -490,19 +462,6 @@ final class CarPlayCoordinator: NSObject {
             return
         }
         refreshAfterHealthAction()
-    }
-
-    private func skipForwardCurrentTrack() async {
-        guard let playbackController, let modelContext else { return }
-
-        do {
-            let settings = try SettingsRepository.settings(in: modelContext)
-            await playbackController.next(settings: settings, context: modelContext)
-            refreshLibraryLists()
-            updateNowPlayingButtons(force: true)
-        } catch {
-            showError(title: "Skip failed", message: error.localizedDescription)
-        }
     }
 
     private func evictCurrentTrack() async {

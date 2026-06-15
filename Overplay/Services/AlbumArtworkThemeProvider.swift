@@ -65,6 +65,10 @@ actor AlbumArtworkThemeProvider: AlbumArtworkThemeProviding {
             requiresIncreasedContrast: requiresIncreasedContrast
         )
         let cachedRecord = await store.record(for: key)
+        if let cachedTheme = cachedRecord?.theme {
+            AlbumArtworkThemeDiagnostics.log("provider cached theme reused: key=\(key)")
+            return cachedTheme
+        }
 
         if let task = inFlightTasks[key] {
             return await task.value

@@ -110,7 +110,9 @@ enum TrackRecordRepository {
         track.title = title
         track.artistName = artistName
         track.albumTitle = albumTitle
-        track.artworkURLTemplate = artworkURLTemplate
+        if track.artworkURLTemplate == nil {
+            track.artworkURLTemplate = artworkURLTemplate
+        }
         track.durationSeconds = durationSeconds
         if let musicKitPlaybackData {
             track.musicKitPlaybackData = musicKitPlaybackData

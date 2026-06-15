@@ -114,6 +114,36 @@ actor ArtworkCacheService {
         }
     }
 
+    func cachedArtworkFileURL(
+        for sourceURL: String?,
+        pixelSize: Int
+    ) async -> URL? {
+        guard let sourceURL else { return nil }
+        let normalizedSourceURL = Self.normalizedSourceURL(sourceURL)
+        guard !normalizedSourceURL.isEmpty, URL(string: normalizedSourceURL) != nil else {
+            return nil
+        }
+
+        do {
+            try ensureCacheDirectoryExists()
+            var manifest = try loadManifest()
+            let key = Self.cacheKey(sourceURL: normalizedSourceURL, pixelSize: pixelSize)
+            guard let entry = manifest.entries[key] else { return nil }
+            let url = fileURL(for: entry)
+
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                manifest.entries[key] = nil
+                try saveManifest(manifest)
+                self.manifest = manifest
+                return nil
+            }
+
+            return url
+        } catch {
+            return nil
+        }
+    }
+
     func touchPlaylistUsage(_ playlistID: String?, at date: Date = .now) async {
         guard let playlistID, !playlistID.isEmpty else { return }
 

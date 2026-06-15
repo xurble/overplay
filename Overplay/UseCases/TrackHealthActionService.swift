@@ -62,7 +62,23 @@ enum TrackHealthActionService {
         message: String,
         in context: ModelContext
     ) throws {
-        item.protected = true
+        try setProtected(
+            item,
+            playlist: playlist,
+            isProtected: true,
+            message: message,
+            in: context
+        )
+    }
+
+    static func setProtected(
+        _ item: PlaylistItemRecord,
+        playlist: PlaylistRecord,
+        isProtected: Bool,
+        message: String,
+        in context: ModelContext
+    ) throws {
+        item.protected = isProtected
         item.updatedAt = .now
         EventRepository.logHistory(
             playlistID: playlist.id,

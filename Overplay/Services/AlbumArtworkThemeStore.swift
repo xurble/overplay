@@ -51,18 +51,13 @@ actor AlbumArtworkThemeStore {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    func theme(for key: String, accessedAt: Date = .now) async -> AlbumArtworkTheme? {
+    func theme(for key: String, accessedAt _: Date = .now) async -> AlbumArtworkTheme? {
         do {
-            var cacheFile = try loadCacheFile()
-            guard var record = cacheFile.records[key],
+            let cacheFile = try loadCacheFile()
+            guard let record = cacheFile.records[key],
                   record.algorithmVersion == AlbumArtworkThemeBuilder.algorithmVersion else {
                 return nil
             }
-
-            record.lastAccessedAt = accessedAt
-            cacheFile.records[key] = record
-            try save(cacheFile)
-            self.cacheFile = cacheFile
             return record.theme
         } catch {
             AlbumArtworkThemeDiagnostics.log("theme store read failed: \(error.localizedDescription)")

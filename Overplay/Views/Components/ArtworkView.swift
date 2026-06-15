@@ -1,34 +1,34 @@
+import ImageIO
 import SwiftUI
 
-#if os(macOS)
-import AppKit
+private struct DecodedArtworkImage: @unchecked Sendable {
+    var image: CGImage
 
-private typealias OverplayPlatformImage = NSImage
-
-private extension Image {
-    init(overplayPlatformImage image: OverplayPlatformImage) {
-        self.init(nsImage: image)
+    nonisolated init(image: CGImage) {
+        self.image = image
     }
 }
 
-private func platformImage(contentsOf url: URL) -> OverplayPlatformImage? {
-    OverplayPlatformImage(contentsOf: url)
-}
-#else
-import UIKit
-
-private typealias OverplayPlatformImage = UIImage
-
-private extension Image {
-    init(overplayPlatformImage image: OverplayPlatformImage) {
-        self.init(uiImage: image)
+nonisolated private func decodedArtworkImage(contentsOf url: URL, maxPixelSize: Int) -> DecodedArtworkImage? {
+    let sourceOptions: [CFString: Any] = [
+        kCGImageSourceShouldCache: false
+    ]
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions as CFDictionary) else {
+        return nil
     }
-}
 
-private func platformImage(contentsOf url: URL) -> OverplayPlatformImage? {
-    OverplayPlatformImage(contentsOfFile: url.path)
+    let thumbnailOptions: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceShouldCacheImmediately: true,
+        kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+    ]
+    guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) else {
+        return nil
+    }
+
+    return DecodedArtworkImage(image: image)
 }
-#endif
 
 struct ArtworkView: View {
     var urlString: String?
@@ -36,7 +36,7 @@ struct ArtworkView: View {
     var playlistID: String?
     var cornerRadius: CGFloat = 22
 
-    @State private var image: OverplayPlatformImage?
+    @State private var image: CGImage?
 
     var body: some View {
         artworkContent
@@ -55,7 +55,7 @@ struct ArtworkView: View {
     private var artworkContent: some View {
         Group {
             if let image {
-                Image(overplayPlatformImage: image)
+                Image(decorative: image, scale: 1)
                     .resizable()
                     .scaledToFill()
             } else {
@@ -81,20 +81,36 @@ struct ArtworkView: View {
         "\(urlString ?? "")|\(pixelSize)|\(playlistID ?? "")"
     }
 
-    @MainActor
     private func loadArtwork() async {
-        image = nil
+        await MainActor.run {
+            image = nil
+        }
         guard let urlString else { return }
 
-        let fileURL = await ArtworkCacheService.shared.artworkFileURL(
+        let fileURL: URL?
+        if let cachedFileURL = await ArtworkCacheService.shared.cachedArtworkFileURL(
             for: urlString,
-            pixelSize: pixelSize,
-            playlistID: playlistID
-        )
+            pixelSize: pixelSize
+        ) {
+            fileURL = cachedFileURL
+        } else {
+            fileURL = await ArtworkCacheService.shared.artworkFileURL(
+                for: urlString,
+                pixelSize: pixelSize,
+                playlistID: playlistID
+            )
+        }
         guard !Task.isCancelled, let fileURL else { return }
 
-        guard let baseImage = platformImage(contentsOf: fileURL) else { return }
-        image = baseImage
+        let pixelSize = pixelSize
+        let loadedImage = await Task.detached(priority: .utility) {
+            decodedArtworkImage(contentsOf: fileURL, maxPixelSize: pixelSize)
+        }.value
+        guard !Task.isCancelled, let loadedImage else { return }
+
+        await MainActor.run {
+            image = loadedImage.image
+        }
     }
 }
 

@@ -5,7 +5,7 @@ struct PlaylistManagementView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackController.self) private var playbackController
 
-    @Query(sort: \PlaylistItemRecord.createdAt) private var playlistItems: [PlaylistItemRecord]
+    @Query private var playlistItems: [PlaylistItemRecord]
     @Query(sort: \TrackRecord.title) private var tracks: [TrackRecord]
 
     var settings: OverplaySettings
@@ -13,13 +13,31 @@ struct PlaylistManagementView: View {
 
     @State private var viewModel = PlaylistManagementViewModel()
 
+    init(settings: OverplaySettings, playlist: PlaylistRecord) {
+        self.settings = settings
+        self.playlist = playlist
+
+        let playlistID = playlist.id
+        _playlistItems = Query(
+            filter: #Predicate<PlaylistItemRecord> { item in
+                item.playlistID == playlistID
+            },
+            sort: [
+                SortDescriptor(\PlaylistItemRecord.sortOrder),
+                SortDescriptor(\PlaylistItemRecord.createdAt)
+            ]
+        )
+    }
+
     var body: some View {
+        let detail = detailPresentation
+
         List {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label(playlistPresentation.roleTitle, systemImage: playlistPresentation.iconIntent.systemImage)
+                    Label(detail.playlist.roleTitle, systemImage: detail.playlist.iconIntent.systemImage)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(roleTint)
+                        .foregroundStyle(roleTint(for: detail.playlist))
                     Text(playlist.name)
                         .font(.title2.bold())
                 }
@@ -28,17 +46,17 @@ struct PlaylistManagementView: View {
 
             Section {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    StatCardView(title: "Known", value: "\(summary.knownCount)", systemImage: "music.note.list", tint: .pink)
-                    StatCardView(title: "Playable", value: "\(summary.playableCount)", systemImage: "play.circle.fill", tint: .green)
-                    StatCardView(title: "Evicted", value: "\(summary.evictedCount)", systemImage: "trash.fill", tint: .red)
-                    StatCardView(title: "At risk", value: "\(summary.atRiskCount)", systemImage: "exclamationmark.triangle.fill", tint: .orange)
+                    StatCardView(title: "Known", value: "\(detail.summary.knownCount)", systemImage: "music.note.list", tint: .pink)
+                    StatCardView(title: "Playable", value: "\(detail.summary.playableCount)", systemImage: "play.circle.fill", tint: .green)
+                    StatCardView(title: "Evicted", value: "\(detail.summary.evictedCount)", systemImage: "trash.fill", tint: .red)
+                    StatCardView(title: "At risk", value: "\(detail.summary.atRiskCount)", systemImage: "exclamationmark.triangle.fill", tint: .orange)
                 }
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
             }
 
             Section("Tracks") {
-                if orderedItems.isEmpty {
+                if detail.rows.isEmpty {
                     ContentUnavailableView(
                         "No Tracks",
                         systemImage: "music.note.list",
@@ -46,44 +64,34 @@ struct PlaylistManagementView: View {
                     )
                 }
 
-                ForEach(orderedItems) { item in
-                    if let track = track(for: item) {
-                        Button {
-                            Task { await play(item, track: track) }
-                        } label: {
-                            PlaylistTrackRowView(
-                                track: track,
-                                item: item,
-                                playlistID: playlist.musicPlaylistID,
-                                isCurrent: viewModel.isCurrentItem(
-                                    item,
-                                    track: track,
-                                    playlist: playlist,
-                                    currentPlaylistID: playbackController.currentPlaylistID,
-                                    currentPlaylistItem: playbackController.currentPlaylistItem,
-                                    currentTrack: playbackController.currentTrack
-                                )
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(!item.isPlayable)
-                        .swipeActions(edge: .trailing) {
-                            if playlist.role == .triage, item.isPlayable {
-                                Button(role: .destructive) {
-                                    Task { await evict(item, track: track) }
-                                } label: {
-                                    Label("Evict Now", systemImage: "trash.fill")
-                                }
-                                .disabled(viewModel.evictingItemIDs.contains(item.id))
-
-                                Button {
-                                    Task { await promote(item, track: track) }
-                                } label: {
-                                    Label("Promote", systemImage: "star.fill")
-                                }
-                                .tint(.pink)
-                                .disabled(viewModel.promotingItemIDs.contains(item.id))
+                ForEach(detail.rows) { row in
+                    Button {
+                        Task { await play(row.item, track: row.track) }
+                    } label: {
+                        PlaylistTrackRowView(
+                            summary: row.summary,
+                            playlistID: playlist.musicPlaylistID,
+                            isCurrent: row.isCurrent
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!row.item.isPlayable)
+                    .swipeActions(edge: .trailing) {
+                        if playlist.role == .triage, row.item.isPlayable {
+                            Button(role: .destructive) {
+                                Task { await evict(row.item, track: row.track) }
+                            } label: {
+                                Label("Evict Now", systemImage: "trash.fill")
                             }
+                            .disabled(viewModel.evictingItemIDs.contains(row.id))
+
+                            Button {
+                                Task { await promote(row.item, track: row.track) }
+                            } label: {
+                                Label("Promote", systemImage: "star.fill")
+                            }
+                            .tint(.pink)
+                            .disabled(viewModel.promotingItemIDs.contains(row.id))
                         }
                     }
                 }
@@ -145,39 +153,20 @@ struct PlaylistManagementView: View {
         }
     }
 
-    private var orderedItems: [PlaylistItemRecord] {
-        viewModel.orderedItems(
-            for: playlist,
-            playlistItems: playlistItems,
-            playbackModeState: playbackController.playbackModeState(for: playlist.musicPlaylistID)
-        )
-    }
-
-    private func track(for item: PlaylistItemRecord) -> TrackRecord? {
-        viewModel.track(for: item, tracks: tracks)
-    }
-
-    private var summary: DashboardSummary {
-        viewModel.summary(
+    private var detailPresentation: PlaylistManagementViewModel.DetailPresentation {
+        viewModel.detailPresentation(
             for: playlist,
             playlistItems: playlistItems,
             tracks: tracks,
+            playbackModeState: playbackController.playbackModeState(for: playlist.musicPlaylistID),
             currentPlaylistID: playbackController.currentPlaylistID,
+            currentPlaylistItem: playbackController.currentPlaylistItem,
+            currentTrack: playbackController.currentTrack,
             evictAfterSkips: settings.evictAfterSkips
         )
     }
 
-    private var playlistPresentation: PlaylistSummaryPresentation {
-        viewModel.playlistPresentation(
-            for: playlist,
-            playlistItems: playlistItems,
-            tracks: tracks,
-            currentPlaylistID: playbackController.currentTrack != nil ? playbackController.currentPlaylistID : nil,
-            evictAfterSkips: settings.evictAfterSkips
-        )
-    }
-
-    private var roleTint: Color {
+    private func roleTint(for playlistPresentation: PlaylistSummaryPresentation) -> Color {
         if playlistPresentation.isCurrentPlaybackPlaylist {
             return .green
         }

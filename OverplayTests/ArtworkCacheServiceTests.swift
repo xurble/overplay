@@ -59,6 +59,42 @@ struct ArtworkCacheServiceTests {
         #expect(try Data(contentsOf: cachedURL) == Data("cached-artwork".utf8))
     }
 
+    @Test("read only cached lookup reuses file without updating access metadata")
+    func readOnlyCachedLookupReusesFileWithoutUpdatingAccessMetadata() async throws {
+        let rootDirectory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootDirectory) }
+
+        let sourceURL = "https://example.com/artwork.jpg"
+        let accessedAt = Date(timeIntervalSince1970: 100)
+        let service = ArtworkCacheService(
+            rootDirectory: rootDirectory,
+            downloader: { _ in Data("cached-artwork".utf8) }
+        )
+
+        let firstURL = try #require(await service.artworkFileURL(
+            for: sourceURL,
+            pixelSize: 512,
+            playlistID: "playlist-1",
+            accessedAt: accessedAt
+        ))
+        let cachedOnlyService = ArtworkCacheService(
+            rootDirectory: rootDirectory,
+            downloader: { _ in throw URLError(.notConnectedToInternet) }
+        )
+
+        let cachedURL = try #require(await cachedOnlyService.cachedArtworkFileURL(
+            for: sourceURL,
+            pixelSize: 512
+        ))
+        let manifest = try await cachedOnlyService.manifestSnapshot()
+        let entry = try #require(manifest.entries.values.first)
+
+        #expect(cachedURL == firstURL)
+        #expect(try Data(contentsOf: cachedURL) == Data("cached-artwork".utf8))
+        #expect(entry.lastAccessedAt == accessedAt)
+        #expect(manifest.playlistUsage["playlist-1"] == accessedAt)
+    }
+
     @Test("eviction removes artwork from least recently used playlists first")
     func evictionRemovesArtworkFromLeastRecentlyUsedPlaylistsFirst() async throws {
         let rootDirectory = temporaryDirectory()

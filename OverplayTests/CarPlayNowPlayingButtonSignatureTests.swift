@@ -129,4 +129,28 @@ struct CarPlayNowPlayingButtonSignatureTests {
         #expect(evictedHealth.title == "Evicted")
         #expect(evicted != atRisk)
     }
+
+    @Test("maps skip intent to CarPlay action menu icon")
+    func mapsSkipIntentToCarPlayActionMenuIcon() {
+        var signature = CarPlayNowPlayingButtonSignature(
+            trackID: nil,
+            skipCount: 0,
+            isProtected: false,
+            isEvicted: false,
+            shuffleEnabled: false,
+            repeatEnabled: false,
+            skipForwardIntent: .standard
+        )
+
+        #expect(signature.trackActionMenuSystemImage == "info.circle.fill")
+
+        signature.skipForwardIntent = .skipCountReset
+        #expect(signature.trackActionMenuSystemImage == "info.circle.fill")
+
+        signature.skipForwardIntent = .countedSkip
+        #expect(signature.trackActionMenuSystemImage == "exclamationmark.triangle.fill")
+
+        signature.skipForwardIntent = .eviction
+        #expect(signature.trackActionMenuSystemImage == "exclamationmark.octagon.fill")
+    }
 }

@@ -10,6 +10,17 @@ struct CarPlayNowPlayingButtonSignature: Equatable {
     var repeatEnabled: Bool
     var skipForwardIntent: PlaybackSkipForwardIntent
 
+    var trackActionMenuSystemImage: String {
+        switch skipForwardIntent {
+        case .standard, .skipCountReset:
+            "info.circle.fill"
+        case .countedSkip:
+            "exclamationmark.triangle.fill"
+        case .eviction:
+            "exclamationmark.octagon.fill"
+        }
+    }
+
     static func make(
         playbackController: PlaybackController,
         settings: OverplaySettings,

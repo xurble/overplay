@@ -821,6 +821,42 @@ final class PlaybackController {
     }
 
     @discardableResult
+    func toggleCurrentKeep(
+        context: ModelContext,
+        enabledMessage: String = "Keep turned on by user",
+        disabledMessage: String = "Keep turned off by user"
+    ) -> Bool {
+        guard let musicItemID = currentTrack?.id,
+              let playlist = try? currentPlaylist(in: context),
+              let item = try? PlaybackSessionSupport.resolvePlaylistItem(
+                  forMusicItemID: musicItemID,
+                  currentPlaylistItem: currentPlaylistItem,
+                  playlist: playlist,
+                  in: context
+              ) else {
+            statusMessage = "Choose a linked playlist track to toggle keep."
+            return false
+        }
+
+        let shouldProtect = !item.protected
+        do {
+            try TrackHealthActionService.setProtected(
+                item,
+                playlist: playlist,
+                isProtected: shouldProtect,
+                message: shouldProtect ? enabledMessage : disabledMessage,
+                in: context
+            )
+        } catch {
+            statusMessage = error.localizedDescription
+            return false
+        }
+        currentPlaylistItem = item
+        syncPlaybackMetadata(for: musicItemID, context: context)
+        return true
+    }
+
+    @discardableResult
     func resetCurrentSkipCount(context: ModelContext, message: String = "Skip count reset by user") -> Bool {
         guard let musicItemID = currentTrack?.id,
               let playlist = try? currentPlaylist(in: context),

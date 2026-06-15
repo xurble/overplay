@@ -81,21 +81,6 @@ struct PlayerSheetView: View {
         ) {
             guard !Task.isCancelled, requestIdentity == artworkThemeIdentity else { return }
             applyArtworkTheme(cachedTheme, source: "cached")
-            Task(priority: .background) {
-                let refreshedTheme = await AlbumArtworkThemeProvider.shared.prepareTheme(
-                    forArtworkURLTemplate: artworkURLTemplate,
-                    playlistID: playlistID,
-                    trackTitle: trackTitle,
-                    artistName: artistName,
-                    albumTitle: albumTitle,
-                    requiresIncreasedContrast: requiresIncreasedContrast
-                )
-                await MainActor.run {
-                    guard requestIdentity == artworkThemeIdentity else { return }
-                    guard refreshedTheme != cachedTheme else { return }
-                    applyArtworkTheme(refreshedTheme, source: "refreshed")
-                }
-            }
             return
         }
 

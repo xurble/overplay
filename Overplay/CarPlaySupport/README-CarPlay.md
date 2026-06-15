@@ -29,8 +29,9 @@ active queue, then opens `CPNowPlayingTemplate`. Standard CarPlay playback
 controls are routed through the shared remote command and playback services.
 
 The shared Now Playing template also installs a custom track-health image button
-using SF Symbols. The button opens a short CarPlay action sheet for resetting
-skip count, marking the current track safe, or evicting it immediately.
+using SF Symbols derived from the current skip-forward intent. The button opens
+a short CarPlay action sheet for toggling Keep, resetting skip count, promoting
+triage tracks, or evicting the current track immediately.
 
 ## Verification
 

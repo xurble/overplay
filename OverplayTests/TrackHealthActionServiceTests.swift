@@ -81,6 +81,36 @@ struct TrackHealthActionServiceTests {
         #expect(history.first?.skipCountAtEvent == 2)
     }
 
+    @Test("set protected toggles keep state and logs history")
+    func setProtectedTogglesKeepStateAndLogsHistory() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(musicPlaylistID: "playlist-1", name: "Main", role: .oneTruePlaylist)
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: UUID(), skipCount: 2)
+        context.insert(playlist)
+        context.insert(item)
+
+        try TrackHealthActionService.setProtected(
+            item,
+            playlist: playlist,
+            isProtected: true,
+            message: "Keep turned on in CarPlay",
+            in: context
+        )
+        try TrackHealthActionService.setProtected(
+            item,
+            playlist: playlist,
+            isProtected: false,
+            message: "Keep turned off in CarPlay",
+            in: context
+        )
+
+        let messages = try context.fetch(FetchDescriptor<HistoryEvent>()).compactMap(\.message)
+        #expect(!item.protected)
+        #expect(messages.contains("Keep turned on in CarPlay"))
+        #expect(messages.contains("Keep turned off in CarPlay"))
+    }
+
     @Test("evict track updates local state and remote mutation policy")
     func evictTrackUpdatesLocalStateAndRemoteMutationPolicy() throws {
         let container = try OverplayTestSupport.makeModelContainer()

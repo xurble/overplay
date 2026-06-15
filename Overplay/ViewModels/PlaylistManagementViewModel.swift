@@ -5,6 +5,20 @@ import SwiftData
 @MainActor
 @Observable
 final class PlaylistManagementViewModel {
+    struct DetailPresentation {
+        var playlist: PlaylistSummaryPresentation
+        var summary: DashboardSummary
+        var rows: [TrackRowPresentation]
+    }
+
+    struct TrackRowPresentation: Identifiable {
+        var id: UUID { item.id }
+        var item: PlaylistItemRecord
+        var track: TrackRecord
+        var summary: TrackSummaryPresentation
+        var isCurrent: Bool
+    }
+
     struct Dependencies {
         var playPlaylistFromTrack: (PlaylistRecord, TrackRecord, OverplaySettings, ModelContext) async -> Void
         var playPlaylist: (PlaylistRecord, OverplaySettings, ModelContext) async -> Void
@@ -46,6 +60,61 @@ final class PlaylistManagementViewModel {
     var promotingItemIDs = Set<UUID>()
     var evictingItemIDs = Set<UUID>()
     var message: String?
+
+    func detailPresentation(
+        for playlist: PlaylistRecord,
+        playlistItems: [PlaylistItemRecord],
+        tracks: [TrackRecord],
+        playbackModeState: PlaybackModeState,
+        currentPlaylistID: String?,
+        currentPlaylistItem: PlaylistItemRecord?,
+        currentTrack: CurrentPlaybackTrack?,
+        evictAfterSkips: Int
+    ) -> DetailPresentation {
+        let visibleItems = visibleItems(for: playlist, playlistItems: playlistItems)
+        let orderedItems = PlaylistDisplayOrder.orderedItems(visibleItems, state: playbackModeState)
+        let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
+        let rows = orderedItems.compactMap { item -> TrackRowPresentation? in
+            guard let track = tracksByID[item.trackID] else { return nil }
+
+            return TrackRowPresentation(
+                item: item,
+                track: track,
+                summary: TrackSummaryPresentation(
+                    id: item.id,
+                    playlistID: item.playlistID,
+                    trackID: track.id,
+                    title: track.title,
+                    artistName: track.artistName,
+                    albumTitle: track.albumTitle,
+                    artworkURLString: track.artworkURLTemplate,
+                    skipCount: item.skipCount,
+                    isPlayable: item.isPlayable
+                ),
+                isCurrent: isCurrentItem(
+                    item,
+                    track: track,
+                    playlist: playlist,
+                    currentPlaylistID: currentPlaylistID,
+                    currentPlaylistItem: currentPlaylistItem,
+                    currentTrack: currentTrack
+                )
+            )
+        }
+        let builder = PlaylistPresentationBuilder(
+            playlists: [playlist],
+            items: visibleItems,
+            tracks: tracks,
+            currentPlaylistID: currentTrack == nil ? nil : currentPlaylistID,
+            evictAfterSkips: evictAfterSkips
+        )
+
+        return DetailPresentation(
+            playlist: builder.summary(for: playlist),
+            summary: builder.dashboardSummary(forPlaylistID: playlist.id),
+            rows: rows
+        )
+    }
 
     func orderedItems(
         for playlist: PlaylistRecord,

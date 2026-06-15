@@ -33,6 +33,75 @@ struct PlaylistManagementViewModelTests {
         #expect(orderedItems.map(\.id) == [secondItem.id, firstItem.id])
     }
 
+    @Test("detail presentation builds ordered rows with summaries and counts")
+    func detailPresentationBuildsRowsWithSummariesAndCounts() {
+        let viewModel = PlaylistManagementViewModel()
+        let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main", role: .oneTruePlaylist)
+        let otherPlaylist = PlaylistRecord(musicPlaylistID: "other", name: "Other")
+        let firstTrack = TrackRecord(
+            catalogID: "first",
+            title: "First",
+            artistName: "Artist",
+            albumTitle: "Album",
+            artworkURLTemplate: "https://example.com/first.jpg"
+        )
+        let secondTrack = TrackRecord(catalogID: "second", title: "Second", artistName: "Artist")
+        let evictedTrack = TrackRecord(catalogID: "evicted", title: "Evicted", artistName: "Artist")
+        let otherTrack = TrackRecord(catalogID: "other", title: "Other", artistName: "Artist")
+        let firstItem = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: firstTrack.id,
+            sortOrder: 0,
+            skipCount: 1
+        )
+        let secondItem = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: secondTrack.id,
+            sortOrder: 1
+        )
+        let evictedItem = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: evictedTrack.id,
+            sortOrder: 2,
+            skipCount: 3,
+            evictedAt: .now
+        )
+        let otherItem = PlaylistItemRecord(playlistID: otherPlaylist.id, trackID: otherTrack.id, sortOrder: 0)
+        let state = PlaybackModeState(
+            playerID: "player",
+            musicPlaylistID: playlist.musicPlaylistID,
+            shuffleEnabled: true,
+            orderedTrackIDs: [
+                secondTrack.id.uuidString,
+                firstTrack.id.uuidString,
+                evictedTrack.id.uuidString
+            ]
+        )
+
+        let detail = viewModel.detailPresentation(
+            for: playlist,
+            playlistItems: [firstItem, otherItem, secondItem, evictedItem],
+            tracks: [otherTrack, evictedTrack, firstTrack, secondTrack],
+            playbackModeState: state,
+            currentPlaylistID: playlist.musicPlaylistID,
+            currentPlaylistItem: secondItem,
+            currentTrack: CurrentPlaybackTrack(id: "second", title: "Second", artistName: "Artist"),
+            evictAfterSkips: 3
+        )
+
+        #expect(detail.rows.map(\.id) == [secondItem.id, firstItem.id, evictedItem.id])
+        #expect(detail.rows.map(\.summary.title) == ["Second", "First", "Evicted"])
+        #expect(detail.rows[1].summary.subtitle == "Artist - Album")
+        #expect(detail.rows[1].summary.artworkURLString == "https://example.com/first.jpg")
+        #expect(detail.rows[2].summary.isPlayable == false)
+        #expect(detail.rows[0].isCurrent)
+        #expect(detail.summary.knownCount == 3)
+        #expect(detail.summary.playableCount == 2)
+        #expect(detail.summary.evictedCount == 1)
+        #expect(detail.playlist.playableTrackCount == 2)
+        #expect(detail.playlist.isCurrentPlaybackPlaylist)
+    }
+
     @Test("current item uses shared current playlist item matcher")
     func currentItemUsesSharedCurrentPlaylistItemMatcher() {
         let viewModel = PlaylistManagementViewModel()

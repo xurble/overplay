@@ -196,8 +196,43 @@ struct NewModelRepositoryTests {
         #expect(inserted.id == updated.id)
         #expect(updated.title == "Updated")
         #expect(updated.albumTitle == "Updated Album")
+        #expect(updated.artworkURLTemplate == "https://example.com/artwork.jpg")
         #expect(updated.durationSeconds == 210)
         #expect(updated.musicKitPlaybackData == Data("cached-playback".utf8))
+
+        let missingArtworkSnapshot = TrackSnapshot(
+            id: "track-1",
+            catalogID: "catalog-1",
+            libraryID: "library-1",
+            playlistEntryID: "entry-3",
+            playlistID: "playlist-1",
+            title: "Updated Again",
+            artistName: "Sample Artist",
+            albumTitle: "Updated Album",
+            artworkURLTemplate: nil,
+            durationSeconds: 220
+        )
+        let retainedArtwork = try TrackRecordRepository.upsert(missingArtworkSnapshot, in: context)
+
+        #expect(retainedArtwork.artworkURLTemplate == "https://example.com/artwork.jpg")
+        #expect(retainedArtwork.durationSeconds == 220)
+
+        let changedArtworkSnapshot = TrackSnapshot(
+            id: "track-1",
+            catalogID: "catalog-1",
+            libraryID: "library-1",
+            playlistEntryID: "entry-4",
+            playlistID: "playlist-1",
+            title: "Updated Again",
+            artistName: "Sample Artist",
+            albumTitle: "Updated Album",
+            artworkURLTemplate: "https://example.com/changed.jpg",
+            durationSeconds: 230
+        )
+        let unchangedArtwork = try TrackRecordRepository.upsert(changedArtworkSnapshot, in: context)
+
+        #expect(unchangedArtwork.artworkURLTemplate == "https://example.com/artwork.jpg")
+        #expect(unchangedArtwork.durationSeconds == 230)
     }
 
     @Test("playlist item upsert creates then updates membership by playlist and track")

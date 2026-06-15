@@ -4,7 +4,7 @@ import Testing
 
 @Suite("Album artwork theme store")
 struct AlbumArtworkThemeStoreTests {
-    @Test("theme store round-trips persisted JSON records")
+    @Test("theme store round-trips persisted JSON records without rewriting cache hits")
     func themeStoreRoundTripsPersistedJSONRecords() async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -42,7 +42,7 @@ struct AlbumArtworkThemeStoreTests {
         #expect(record?.artworkDataHash == "hash-a")
         #expect(record?.usedOCR == true)
         #expect(record?.algorithmVersion == AlbumArtworkThemeBuilder.algorithmVersion)
-        #expect(record?.lastAccessedAt == Date(timeIntervalSince1970: 20))
+        #expect(record?.lastAccessedAt == Date(timeIntervalSince1970: 10))
     }
 
     @Test("theme store key separates contrast mode and algorithm version")

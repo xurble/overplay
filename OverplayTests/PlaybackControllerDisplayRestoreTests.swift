@@ -231,6 +231,19 @@ struct PlaybackControllerDisplayRestoreTests {
         #expect(controller.displayedIsProtected)
         #expect(controller.playbackItemMetadataVersion > previousMetadataVersion)
         #expect(history.first?.message == "Protected in CarPlay")
+
+        let protectedMetadataVersion = controller.playbackItemMetadataVersion
+        controller.toggleCurrentKeep(
+            context: context,
+            enabledMessage: "Keep turned on in CarPlay",
+            disabledMessage: "Keep turned off in CarPlay"
+        )
+
+        let updatedHistory = try context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(!item.protected)
+        #expect(!controller.displayedIsProtected)
+        #expect(controller.playbackItemMetadataVersion > protectedMetadataVersion)
+        #expect(updatedHistory.compactMap(\.message).contains("Keep turned off in CarPlay"))
     }
 
     @Test("reset all local stats refreshes displayed metadata")

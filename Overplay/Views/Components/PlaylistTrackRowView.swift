@@ -1,9 +1,7 @@
-import SwiftData
 import SwiftUI
 
 struct PlaylistTrackRowView: View {
-    var track: TrackRecord
-    @Bindable var item: PlaylistItemRecord
+    var summary: TrackSummaryPresentation
     var playlistID: String
     var isCurrent: Bool
 
@@ -11,7 +9,7 @@ struct PlaylistTrackRowView: View {
         HStack(spacing: 12) {
             ZStack(alignment: .bottomTrailing) {
                 ArtworkView(
-                    urlString: track.artworkURLTemplate,
+                    urlString: summary.artworkURLString,
                     pixelSize: 96,
                     playlistID: playlistID,
                     cornerRadius: 8
@@ -28,17 +26,17 @@ struct PlaylistTrackRowView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(track.title)
+                Text(summary.title)
                     .font(.headline)
-                    .foregroundStyle(item.isPlayable ? .primary : .secondary)
-                Text(presentation.subtitle)
+                    .foregroundStyle(summary.isPlayable ? .primary : .secondary)
+                Text(summary.subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            if let skipCountLabel = presentation.skipCountLabel {
+            if let skipCountLabel = summary.skipCountLabel {
                 Text(skipCountLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -47,15 +45,21 @@ struct PlaylistTrackRowView: View {
         .contentShape(Rectangle())
         .padding(.vertical, 4)
     }
+}
 
-    private var presentation: TrackSummaryPresentation {
-        TrackSummaryPresentation(
-            id: item.id,
-            title: track.title,
-            artistName: track.artistName,
-            albumTitle: track.albumTitle,
-            skipCount: item.skipCount,
-            isPlayable: item.isPlayable
-        )
-    }
+#Preview {
+    PlaylistTrackRowView(
+        summary: TrackSummaryPresentation(
+            id: UUID(),
+            title: "Soft Machine",
+            artistName: "Glass Coast",
+            albumTitle: "Late Light",
+            artworkURLString: nil,
+            skipCount: 2,
+            isPlayable: true
+        ),
+        playlistID: "preview-playlist",
+        isCurrent: true
+    )
+    .padding()
 }
