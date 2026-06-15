@@ -1,3 +1,4 @@
+import MediaPlayer
 import SwiftData
 import Testing
 @testable import Overplay
@@ -52,5 +53,69 @@ struct RemoteCommandServiceTests {
         #expect(service.context === carPlayContext)
 
         service.deactivate()
+    }
+
+    @Test("sync publishes Overplay playback modes to remote command center")
+    func syncPublishesOverplayPlaybackModesToRemoteCommandCenter() throws {
+        let playlistID = "playlist-\(UUID().uuidString)"
+        let playerID = "player-\(UUID().uuidString)"
+        let playbackController = PlaybackController(playerID: playerID)
+        let service = RemoteCommandService()
+        let commandCenter = MPRemoteCommandCenter.shared()
+        defer {
+            PlaybackModeStore.clear(playerID: playerID, musicPlaylistID: playlistID, flushImmediately: true)
+            commandCenter.changeShuffleModeCommand.currentShuffleType = .off
+            commandCenter.changeRepeatModeCommand.currentRepeatType = .off
+        }
+
+        playbackController.currentPlaylistID = playlistID
+        PlaybackModeStore.save(
+            PlaybackModeState(
+                playerID: playerID,
+                musicPlaylistID: playlistID,
+                shuffleEnabled: true,
+                repeatEnabled: true
+            ),
+            flushImmediately: true
+        )
+
+        service.syncPlaybackModes(from: playbackController)
+
+        #expect(commandCenter.changeShuffleModeCommand.currentShuffleType == .items)
+        #expect(commandCenter.changeRepeatModeCommand.currentRepeatType == .all)
+    }
+
+    @Test("repeat one remote command collapses to unsupported off state")
+    func repeatOneRemoteCommandCollapsesToUnsupportedOffState() throws {
+        let playlistID = "playlist-\(UUID().uuidString)"
+        let playerID = "player-\(UUID().uuidString)"
+        let playbackController = PlaybackController(playerID: playerID)
+        let service = RemoteCommandService()
+        let commandCenter = MPRemoteCommandCenter.shared()
+        defer {
+            PlaybackModeStore.clear(playerID: playerID, musicPlaylistID: playlistID, flushImmediately: true)
+            commandCenter.changeShuffleModeCommand.currentShuffleType = .off
+            commandCenter.changeRepeatModeCommand.currentRepeatType = .off
+        }
+
+        playbackController.currentPlaylistID = playlistID
+        PlaybackModeStore.save(
+            PlaybackModeState(
+                playerID: playerID,
+                musicPlaylistID: playlistID,
+                repeatEnabled: true
+            ),
+            flushImmediately: true
+        )
+
+        let result = service.applyRepeatModeCommand(
+            .one,
+            source: "Test",
+            playbackController: playbackController
+        )
+
+        #expect(result == .success)
+        #expect(!playbackController.repeatEnabled)
+        #expect(commandCenter.changeRepeatModeCommand.currentRepeatType == .off)
     }
 }

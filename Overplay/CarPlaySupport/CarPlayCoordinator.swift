@@ -1,5 +1,6 @@
 import CarPlay
 import Foundation
+import MediaPlayer
 import Observation
 import SwiftData
 import UIKit
@@ -305,29 +306,67 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func makeShuffleButton() -> CPNowPlayingShuffleButton {
-        let button = CPNowPlayingShuffleButton { [weak self] button in
+        let button = CPNowPlayingShuffleButton { [weak self] _ in
             Task { @MainActor in
-                guard let self, let playbackController = self.playbackController, let modelContext = self.modelContext else { return }
-                await playbackController.toggleShuffle(context: modelContext)
-                button.isSelected = playbackController.shuffleEnabled
-                self.syncPlaybackModes()
-                self.updateNowPlayingButtons(force: true)
+                await self?.applyCarPlayShuffleToggle()
             }
         }
-        button.isSelected = playbackController?.shuffleEnabled == true
+        button.isEnabled = playbackController?.currentPlaylistID != nil
         return button
     }
 
     private func makeRepeatButton() -> CPNowPlayingRepeatButton {
-        let button = CPNowPlayingRepeatButton { [weak self] button in
-            guard let self else { return }
-            self.playbackController?.toggleRepeat()
-            button.isSelected = self.playbackController?.repeatEnabled == true
-            self.syncPlaybackModes()
-            self.updateNowPlayingButtons(force: true)
+        let button = CPNowPlayingRepeatButton { [weak self] _ in
+            Task { @MainActor in
+                self?.applyCarPlayRepeatToggle()
+            }
         }
-        button.isSelected = playbackController?.repeatEnabled == true
+        button.isEnabled = playbackController?.currentPlaylistID != nil
         return button
+    }
+
+    private func applyCarPlayShuffleToggle() async {
+        guard let playbackController else { return }
+
+        let targetShuffleType = RemotePlaybackModeMapper.shuffleType(for: !playbackController.shuffleEnabled)
+        if let remoteCommandService {
+            let status = await remoteCommandService.applyShuffleModeCommand(
+                targetShuffleType,
+                source: "CarPlay"
+            )
+            guard status == .success else {
+                syncPlaybackModes()
+                updateNowPlayingButtons(force: true)
+                return
+            }
+        } else if let modelContext {
+            await playbackController.setShuffleEnabled(!playbackController.shuffleEnabled, context: modelContext)
+            syncPlaybackModes()
+        }
+
+        updateNowPlayingButtons(force: true)
+    }
+
+    private func applyCarPlayRepeatToggle() {
+        guard let playbackController else { return }
+
+        let targetRepeatType = RemotePlaybackModeMapper.repeatType(for: !playbackController.repeatEnabled)
+        if let remoteCommandService {
+            let status = remoteCommandService.applyRepeatModeCommand(
+                targetRepeatType,
+                source: "CarPlay"
+            )
+            guard status == .success else {
+                syncPlaybackModes()
+                updateNowPlayingButtons(force: true)
+                return
+            }
+        } else {
+            playbackController.setRepeatEnabled(!playbackController.repeatEnabled)
+            syncPlaybackModes()
+        }
+
+        updateNowPlayingButtons(force: true)
     }
 
     private func makeTrackHealthButton(systemImage: String) -> CPNowPlayingImageButton {

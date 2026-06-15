@@ -7,11 +7,15 @@ enum RemotePlaybackModeMapper {
     }
 
     static func shuffleEnabled(for shuffleType: MPShuffleType) -> Bool {
+        canonicalShuffleType(for: shuffleType) != .off
+    }
+
+    static func canonicalShuffleType(for shuffleType: MPShuffleType) -> MPShuffleType {
         switch shuffleType {
-        case .items, .collections:
-            true
+        case .off:
+            .off
         default:
-            false
+            .items
         }
     }
 
@@ -20,7 +24,16 @@ enum RemotePlaybackModeMapper {
     }
 
     static func repeatEnabled(for repeatType: MPRepeatType) -> Bool {
-        repeatType != .off
+        canonicalRepeatType(for: repeatType) == .all
+    }
+
+    static func canonicalRepeatType(for repeatType: MPRepeatType) -> MPRepeatType {
+        switch repeatType {
+        case .all:
+            .all
+        default:
+            .off
+        }
     }
 
     static func repeatType(for repeatMode: MusicKit.MusicPlayer.RepeatMode) -> MPRepeatType {

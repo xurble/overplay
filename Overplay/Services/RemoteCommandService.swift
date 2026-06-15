@@ -120,13 +120,24 @@ final class RemoteCommandService {
             guard let self, let playbackController = self.playbackController, let context = self.context else {
                 return .commandFailed
             }
+            guard playbackController.currentPlaylistID != nil else {
+                self.syncPlaybackModes(from: playbackController)
+                return .noActionableNowPlayingItem
+            }
 
+            let requestedShuffleType = event.shuffleType
+            let targetShuffleType = RemotePlaybackModeMapper.canonicalShuffleType(for: requestedShuffleType)
+            self.publishPlaybackModes(
+                shuffleEnabled: RemotePlaybackModeMapper.shuffleEnabled(for: targetShuffleType),
+                repeatEnabled: playbackController.repeatEnabled
+            )
             Task { @MainActor in
-                await playbackController.setShuffleEnabled(
-                    RemotePlaybackModeMapper.shuffleEnabled(for: event.shuffleType),
+                _ = await self.applyShuffleModeCommand(
+                    requestedShuffleType,
+                    source: "MPRemoteCommandCenter",
+                    playbackController: playbackController,
                     context: context
                 )
-                self.syncPlaybackModes(from: playbackController)
             }
             return .success
         })
@@ -137,10 +148,23 @@ final class RemoteCommandService {
             guard let self, let playbackController = self.playbackController else {
                 return .commandFailed
             }
-
-            Task { @MainActor in
-                playbackController.setRepeatEnabled(RemotePlaybackModeMapper.repeatEnabled(for: event.repeatType))
+            guard playbackController.currentPlaylistID != nil else {
                 self.syncPlaybackModes(from: playbackController)
+                return .noActionableNowPlayingItem
+            }
+
+            let requestedRepeatType = event.repeatType
+            let targetRepeatType = RemotePlaybackModeMapper.canonicalRepeatType(for: requestedRepeatType)
+            self.publishPlaybackModes(
+                shuffleEnabled: playbackController.shuffleEnabled,
+                repeatEnabled: RemotePlaybackModeMapper.repeatEnabled(for: targetRepeatType)
+            )
+            Task { @MainActor in
+                _ = self.applyRepeatModeCommand(
+                    requestedRepeatType,
+                    source: "MPRemoteCommandCenter",
+                    playbackController: playbackController
+                )
             }
             return .success
         })
@@ -180,12 +204,73 @@ final class RemoteCommandService {
     }
 
     func syncPlaybackModes(from playbackController: PlaybackController) {
+        publishPlaybackModes(
+            shuffleEnabled: playbackController.shuffleEnabled,
+            repeatEnabled: playbackController.repeatEnabled
+        )
+    }
+
+    @discardableResult
+    func applyShuffleModeCommand(
+        _ shuffleType: MPShuffleType,
+        source: String,
+        playbackController: PlaybackController? = nil,
+        context: ModelContext? = nil
+    ) async -> MPRemoteCommandHandlerStatus {
+        guard let playbackController = playbackController ?? self.playbackController,
+              let context = context ?? self.context else {
+            return .commandFailed
+        }
+        guard playbackController.currentPlaylistID != nil else {
+            syncPlaybackModes(from: playbackController)
+            return .noActionableNowPlayingItem
+        }
+
+        let canonicalShuffleType = RemotePlaybackModeMapper.canonicalShuffleType(for: shuffleType)
+        let shuffleEnabled = RemotePlaybackModeMapper.shuffleEnabled(for: canonicalShuffleType)
+        publishPlaybackModes(shuffleEnabled: shuffleEnabled, repeatEnabled: playbackController.repeatEnabled)
+
+        await playbackController.setShuffleEnabled(shuffleEnabled, context: context)
+        syncPlaybackModes(from: playbackController)
+        Self.logger.info(
+            "\(source, privacy: .public) shuffle mode command requested \(String(describing: shuffleType), privacy: .public); published \(String(describing: canonicalShuffleType), privacy: .public)"
+        )
+        return .success
+    }
+
+    @discardableResult
+    func applyRepeatModeCommand(
+        _ repeatType: MPRepeatType,
+        source: String,
+        playbackController: PlaybackController? = nil
+    ) -> MPRemoteCommandHandlerStatus {
+        guard let playbackController = playbackController ?? self.playbackController else {
+            return .commandFailed
+        }
+        guard playbackController.currentPlaylistID != nil else {
+            syncPlaybackModes(from: playbackController)
+            return .noActionableNowPlayingItem
+        }
+
+        let canonicalRepeatType = RemotePlaybackModeMapper.canonicalRepeatType(for: repeatType)
+        let repeatEnabled = RemotePlaybackModeMapper.repeatEnabled(for: canonicalRepeatType)
+        publishPlaybackModes(shuffleEnabled: playbackController.shuffleEnabled, repeatEnabled: repeatEnabled)
+
+        playbackController.setRepeatEnabled(repeatEnabled)
+        syncPlaybackModes(from: playbackController)
+        Self.logger.info(
+            "\(source, privacy: .public) repeat mode command requested \(String(describing: repeatType), privacy: .public); published \(String(describing: canonicalRepeatType), privacy: .public)"
+        )
+        return .success
+    }
+
+    private func publishPlaybackModes(shuffleEnabled: Bool, repeatEnabled: Bool) {
         let commandCenter = MPRemoteCommandCenter.shared()
         commandCenter.changeShuffleModeCommand.currentShuffleType = RemotePlaybackModeMapper.shuffleType(
-            for: playbackController.shuffleEnabled
+            for: shuffleEnabled
         )
         commandCenter.changeRepeatModeCommand.currentRepeatType = RemotePlaybackModeMapper.repeatType(
-            for: playbackController.repeatEnabled
+            for: repeatEnabled
         )
     }
 

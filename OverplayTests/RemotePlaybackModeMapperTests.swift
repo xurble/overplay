@@ -15,6 +15,12 @@ struct RemotePlaybackModeMapperTests {
         #expect(RemotePlaybackModeMapper.shuffleEnabled(for: .collections))
     }
 
+    @Test func canonicalizesRemoteShuffleTypesToSupportedStates() {
+        #expect(RemotePlaybackModeMapper.canonicalShuffleType(for: .off) == .off)
+        #expect(RemotePlaybackModeMapper.canonicalShuffleType(for: .items) == .items)
+        #expect(RemotePlaybackModeMapper.canonicalShuffleType(for: .collections) == .items)
+    }
+
     @Test func mapsRepeatEnabledToRemoteRepeatTypes() {
         #expect(RemotePlaybackModeMapper.repeatType(for: false) == .off)
         #expect(RemotePlaybackModeMapper.repeatType(for: true) == .all)
@@ -23,7 +29,13 @@ struct RemotePlaybackModeMapperTests {
     @Test func mapsRemoteRepeatTypesToRepeatEnabled() {
         #expect(!RemotePlaybackModeMapper.repeatEnabled(for: .off))
         #expect(RemotePlaybackModeMapper.repeatEnabled(for: .all))
-        #expect(RemotePlaybackModeMapper.repeatEnabled(for: .one))
+        #expect(!RemotePlaybackModeMapper.repeatEnabled(for: .one))
+    }
+
+    @Test func canonicalizesRemoteRepeatTypesToSupportedStates() {
+        #expect(RemotePlaybackModeMapper.canonicalRepeatType(for: .off) == .off)
+        #expect(RemotePlaybackModeMapper.canonicalRepeatType(for: .all) == .all)
+        #expect(RemotePlaybackModeMapper.canonicalRepeatType(for: .one) == .off)
     }
 
     @Test func mapsMusicRepeatModesToRemoteRepeatTypes() {
