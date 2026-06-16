@@ -639,9 +639,16 @@ final class PlaybackController {
         try? currentPlaylist(in: context)?.role
     }
 
-    func skipForwardIntent(settings: OverplaySettings, context: ModelContext) -> PlaybackSkipForwardIntent {
+    func skipForwardIntent(
+        settings: OverplaySettings,
+        context: ModelContext,
+        requiresControllableQueue: Bool = true
+    ) -> PlaybackSkipForwardIntent {
         _ = playbackItemMetadataVersion
-        guard canControlPlayback else { return .standard }
+        guard currentPlaylistID != nil, currentTrack != nil else { return .standard }
+        if requiresControllableQueue, !canControlPlayback {
+            return .standard
+        }
 
         let currentTrackID = activeSession?.trackID ?? currentTrack?.id
         let baseSession: TrackPlaySession?

@@ -101,13 +101,18 @@ enum NowPlayingPresentationFactory {
     static func playbackControlsPresentation(
         playbackController: PlaybackController,
         settings: OverplaySettings,
-        context: ModelContext
+        context: ModelContext,
+        requiresControllableQueueForSkipIntent: Bool = true
     ) -> PlaybackControlsPresentation {
         PlaybackControlsPresentation(
             isPlaying: playbackController.isPlaying,
             shuffleEnabled: playbackController.shuffleEnabled,
             repeatEnabled: playbackController.repeatEnabled,
-            skipForwardIntent: playbackController.skipForwardIntent(settings: settings, context: context)
+            skipForwardIntent: playbackController.skipForwardIntent(
+                settings: settings,
+                context: context,
+                requiresControllableQueue: requiresControllableQueueForSkipIntent
+            )
         )
     }
 
@@ -120,7 +125,8 @@ enum NowPlayingPresentationFactory {
         let controls = playbackControlsPresentation(
             playbackController: playbackController,
             settings: settings,
-            context: context
+            context: context,
+            requiresControllableQueueForSkipIntent: false
         )
         return CarPlayNowPlayingButtonSignature(
             trackID: nowPlaying.trackID,
