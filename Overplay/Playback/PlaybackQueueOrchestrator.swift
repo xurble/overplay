@@ -60,10 +60,20 @@ enum PlaybackQueueOrchestrator {
             tracks,
             tracksByID: inputs.tracksByID
         )
+        let itemsByTrackID = inputs.items.firstValueDictionary(keyedBy: \.trackID)
         return orderedTrackIDs.compactMap { localTrackID in
-            musicTracksByLocalID[localTrackID].map {
-                PlaybackQueueEntry(localTrackID: localTrackID, musicTrack: $0)
+            guard let trackID = UUID(uuidString: localTrackID),
+                  let item = itemsByTrackID[trackID],
+                  let musicTrack = musicTracksByLocalID[localTrackID] else {
+                return nil
             }
+
+            return PlaybackQueueEntry(
+                playlistItemID: item.id,
+                localTrackID: localTrackID,
+                queuedMusicItemID: musicTrack.id.rawValue,
+                musicTrack: musicTrack
+            )
         }
     }
 
@@ -88,6 +98,7 @@ enum PlaybackQueueOrchestrator {
 
         return PlaybackQueueCoordinator.cachedEntries(
             orderedTrackIDs: orderedTrackIDs,
+            itemsByTrackID: inputs.items.firstValueDictionary(keyedBy: \.trackID),
             tracksByID: inputs.tracksByID
         )
     }
@@ -122,9 +133,14 @@ enum PlaybackQueueOrchestrator {
 
     static func cachedQueueEntries(
         orderedTrackIDs: [String],
+        itemsByTrackID: [UUID: PlaylistItemRecord],
         tracksByID: [UUID: TrackRecord]
     ) -> [PlaybackQueueEntry] {
-        PlaybackQueueCoordinator.cachedEntries(orderedTrackIDs: orderedTrackIDs, tracksByID: tracksByID)
+        PlaybackQueueCoordinator.cachedEntries(
+            orderedTrackIDs: orderedTrackIDs,
+            itemsByTrackID: itemsByTrackID,
+            tracksByID: tracksByID
+        )
     }
 
     static func orderedQueueTracks(
@@ -156,11 +172,12 @@ enum PlaybackQueueOrchestrator {
         playlistID: String,
         playerID: String,
         lastMusicItemID: String,
+        lastLocalTrackID: String? = nil,
         in context: ModelContext
     ) throws -> (entries: [PlaybackQueueEntry], didUpdateStoredShuffleOrder: Bool) {
         let inputs = try playlistInputs(for: playlistID, in: context)
         let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: inputs.items)
-        let lastLocalTrackID = PlaybackQueueBuilder.localTrackID(
+        let resolvedLastLocalTrackID = lastLocalTrackID ?? PlaybackQueueBuilder.localTrackID(
             matching: lastMusicItemID,
             tracksByID: inputs.tracksByID
         )
@@ -168,10 +185,11 @@ enum PlaybackQueueOrchestrator {
             orderTracks: orderTracks,
             playerID: playerID,
             playlistID: playlistID,
-            lastLocalTrackID: lastLocalTrackID
+            lastLocalTrackID: resolvedLastLocalTrackID
         )
         let entries = cachedQueueEntries(
             orderedTrackIDs: restartOrder.orderedTrackIDs,
+            itemsByTrackID: inputs.items.firstValueDictionary(keyedBy: \.trackID),
             tracksByID: inputs.tracksByID
         )
         return (entries, restartOrder.didUpdateStoredShuffleOrder)

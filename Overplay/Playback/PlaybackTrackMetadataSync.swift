@@ -13,12 +13,14 @@ enum PlaybackTrackMetadataSync {
         for musicItemID: String,
         currentTrack: CurrentPlaybackTrack?,
         currentPlaylistItem: PlaylistItemRecord?,
+        trustedPlaylistItem: PlaylistItemRecord? = nil,
         currentPlaylistID: String?,
         queueItem: MusicPlayer.Queue.Entry.Item?,
         in context: ModelContext
     ) -> MetadataUpdate {
-        var playlistItem: PlaylistItemRecord?
-        if let playlist = try? PlaybackTrackResolver.currentPlaylist(musicPlaylistID: currentPlaylistID, in: context),
+        var playlistItem = trustedPlaylistItem
+        if playlistItem == nil,
+           let playlist = try? PlaybackTrackResolver.currentPlaylist(musicPlaylistID: currentPlaylistID, in: context),
            let resolvedItem = try? PlaybackSessionSupport.resolvePlaylistItem(
                forMusicItemID: musicItemID,
                currentPlaylistItem: currentPlaylistItem,
@@ -36,6 +38,7 @@ enum PlaybackTrackMetadataSync {
                     playlistItem: playlistItem,
                     musicPlaylistID: currentPlaylistID,
                     queueItem: queueItem,
+                    trustPlaylistItem: trustedPlaylistItem != nil,
                     in: context
                 ),
                 shouldRefreshExistingTrack: true
@@ -49,6 +52,7 @@ enum PlaybackTrackMetadataSync {
                 playlistItem: playlistItem,
                 musicPlaylistID: currentPlaylistID,
                 queueItem: queueItem,
+                trustPlaylistItem: trustedPlaylistItem != nil,
                 in: context
             ),
             shouldRefreshExistingTrack: false

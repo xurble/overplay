@@ -80,6 +80,36 @@ struct PlaybackTrackResolverTests {
         #expect(!currentTrack.protected)
     }
 
+    @Test("current playback track can trust a queue correlated playlist item")
+    func currentPlaybackTrackCanTrustQueueCorrelatedPlaylistItem() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(musicPlaylistID: "playlist-1", name: "Main", role: .oneTruePlaylist)
+        let track = TrackRecord(
+            catalogID: "catalog-1",
+            libraryID: "library-1",
+            title: "Current Track",
+            artistName: "Current Artist"
+        )
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id, skipCount: 2)
+        context.insert(playlist)
+        context.insert(track)
+        context.insert(item)
+
+        let currentTrack = try #require(PlaybackTrackResolver.currentPlaybackTrack(
+            musicItemID: "runtime-only-id",
+            playlistItem: item,
+            musicPlaylistID: playlist.musicPlaylistID,
+            queueItem: nil,
+            trustPlaylistItem: true,
+            in: context
+        ))
+
+        #expect(currentTrack.id == "runtime-only-id")
+        #expect(currentTrack.title == "Current Track")
+        #expect(currentTrack.skipCount == 2)
+    }
+
     @Test("metadata sync clears a stale playlist item")
     func metadataSyncClearsStalePlaylistItem() throws {
         let container = try OverplayTestSupport.makeModelContainer()
@@ -119,6 +149,42 @@ struct PlaybackTrackResolverTests {
         #expect(update.playlistItem == nil)
         #expect(update.track?.id == "library-current")
         #expect(update.track?.title == "Current Track")
+    }
+
+    @Test("metadata sync trusts a queue correlated playlist item")
+    func metadataSyncTrustsQueueCorrelatedPlaylistItem() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(musicPlaylistID: "playlist-1", name: "Main", role: .oneTruePlaylist)
+        let track = TrackRecord(
+            catalogID: "catalog-current",
+            libraryID: "library-current",
+            title: "Current Track",
+            artistName: "Current Artist"
+        )
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id, skipCount: 3)
+        context.insert(playlist)
+        context.insert(track)
+        context.insert(item)
+
+        let update = PlaybackTrackMetadataSync.metadataUpdate(
+            for: "runtime-only-id",
+            currentTrack: CurrentPlaybackTrack(
+                id: "library-current",
+                title: "Current Track",
+                artistName: "Current Artist"
+            ),
+            currentPlaylistItem: item,
+            trustedPlaylistItem: item,
+            currentPlaylistID: playlist.musicPlaylistID,
+            queueItem: nil,
+            in: context
+        )
+
+        #expect(update.playlistItem?.id == item.id)
+        #expect(update.track?.id == "runtime-only-id")
+        #expect(update.track?.title == "Current Track")
+        #expect(update.track?.skipCount == 3)
     }
 
     @Test("restored track lookup uses local track id before music item id")

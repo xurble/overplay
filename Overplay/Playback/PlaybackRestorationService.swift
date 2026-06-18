@@ -36,6 +36,7 @@ enum PlaybackRestorationService {
             durationSeconds: restored.track.durationSeconds,
             activeSession: PlaybackSessionSupport.makeSession(
                 trackID: state.musicItemID,
+                localTrackID: state.localTrackID,
                 elapsedSeconds: state.elapsedSeconds,
                 durationSeconds: restored.track.durationSeconds,
                 sessionStartDate: state.updatedAt

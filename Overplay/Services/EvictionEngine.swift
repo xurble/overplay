@@ -3,10 +3,27 @@ import SwiftData
 
 struct TrackPlaySession: Equatable {
     var trackID: String
+    var localTrackID: String?
     var sessionStartDate: Date
     var lastObservedPlaybackTime: Double
     var durationSeconds: Double?
     var hasEvaluated: Bool
+
+    init(
+        trackID: String,
+        localTrackID: String? = nil,
+        sessionStartDate: Date,
+        lastObservedPlaybackTime: Double,
+        durationSeconds: Double?,
+        hasEvaluated: Bool
+    ) {
+        self.trackID = trackID
+        self.localTrackID = localTrackID
+        self.sessionStartDate = sessionStartDate
+        self.lastObservedPlaybackTime = lastObservedPlaybackTime
+        self.durationSeconds = durationSeconds
+        self.hasEvaluated = hasEvaluated
+    }
 
     var progressPercentage: Double? {
         guard let durationSeconds, durationSeconds > 0 else {

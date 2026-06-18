@@ -12,6 +12,7 @@ enum PlaybackSessionEvaluationService {
 
     static func bootstrapSession(
         trackID: String?,
+        localTrackID: String? = nil,
         elapsedSeconds: Double,
         durationSeconds: Double?
     ) -> TrackPlaySession? {
@@ -19,6 +20,7 @@ enum PlaybackSessionEvaluationService {
 
         return PlaybackSessionSupport.makeSession(
             trackID: trackID,
+            localTrackID: localTrackID,
             elapsedSeconds: elapsedSeconds,
             durationSeconds: durationSeconds
         )
@@ -38,11 +40,13 @@ enum PlaybackSessionEvaluationService {
     static func markEvaluatedWithoutSkip(
         activeSession: TrackPlaySession?,
         currentTrackID: String?,
+        localTrackID: String? = nil,
         elapsedSeconds: Double,
         durationSeconds: Double?
     ) -> TrackPlaySession? {
         guard var session = activeSession ?? bootstrapSession(
             trackID: currentTrackID,
+            localTrackID: localTrackID,
             elapsedSeconds: elapsedSeconds,
             durationSeconds: durationSeconds
         ) else {
@@ -137,6 +141,7 @@ enum PlaybackSessionEvaluationService {
     ) throws -> EvaluationOutcome? {
         guard var session = activeSession ?? bootstrapSession(
             trackID: currentTrackID,
+            localTrackID: fallbackLocalTrackID ?? currentPlaylistItem?.trackID.uuidString,
             elapsedSeconds: elapsedSeconds,
             durationSeconds: durationSeconds
         ) else {
@@ -248,22 +253,22 @@ enum PlaybackSessionEvaluationService {
         playlist: PlaylistRecord,
         context: ModelContext
     ) throws -> PlaylistItemRecord? {
+        if let localTrackID = session.localTrackID ?? fallbackLocalTrackID,
+           let trackID = UUID(uuidString: localTrackID),
+           let item = try PlaylistItemRepository.item(
+               playlistID: playlist.id,
+               trackID: trackID,
+               in: context
+           ) {
+            return item
+        }
+
         if let item = try PlaybackSessionSupport.resolvePlaylistItem(
             forMusicItemID: session.trackID,
             currentPlaylistItem: currentPlaylistItem,
             playlist: playlist,
             in: context
         ) {
-            return item
-        }
-
-        if let fallbackLocalTrackID,
-           let trackID = UUID(uuidString: fallbackLocalTrackID),
-           let item = try PlaylistItemRepository.item(
-               playlistID: playlist.id,
-               trackID: trackID,
-               in: context
-           ) {
             return item
         }
 
