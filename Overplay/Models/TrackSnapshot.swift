@@ -50,6 +50,35 @@ struct AppleMusicPlaylist: Identifiable, Hashable, Sendable {
     }
 }
 
+struct SpotifyPlaylist: Identifiable, Hashable, Sendable {
+    var id: String
+    var name: String
+    var trackCount: Int?
+    var ownerName: String?
+}
+
+struct RemotePlaylistLink: Identifiable, Hashable, Sendable {
+    var id: String
+    var name: String
+    var trackCount: Int?
+    var source: PlaylistSource
+
+    init(id: String, name: String, trackCount: Int? = nil, source: PlaylistSource) {
+        self.id = id
+        self.name = name
+        self.trackCount = trackCount
+        self.source = source
+    }
+
+    init(_ playlist: AppleMusicPlaylist) {
+        self.init(id: playlist.id, name: playlist.name, trackCount: playlist.trackCount, source: .appleMusic)
+    }
+
+    init(_ playlist: SpotifyPlaylist) {
+        self.init(id: playlist.id, name: playlist.name, trackCount: playlist.trackCount, source: .spotify)
+    }
+}
+
 struct SearchSongResult: Identifiable, Hashable, Sendable {
     var id: String
     var title: String

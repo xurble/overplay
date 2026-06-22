@@ -61,13 +61,34 @@ struct PlaylistSelectionViewModelTests {
         #expect(viewModel.message == "Added Inbox as a triage playlist.")
     }
 
+    @Test("make one true rejects spotify linked playlists")
+    func makeOneTrueRejectsSpotifyLinkedPlaylists() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let viewModel = PlaylistSelectionViewModel()
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "spotify-1",
+            name: "Discover Weekly",
+            source: .spotify,
+            role: .triage
+        )
+        context.insert(playlist)
+
+        viewModel.makeOneTrue(playlist, context: context, dependencies: makeDependencies())
+
+        #expect(viewModel.message == PlaylistSyncError.unsupportedSourceForOneTruePlaylist.localizedDescription)
+    }
+
     private func makeDependencies(
         fetchedPlaylists: [AppleMusicPlaylist] = [],
+        fetchedSpotifyPlaylists: [SpotifyPlaylist] = [],
         syncAllCount: Int = 0,
         reconcileStoredOrder: @escaping (PlaylistRecord, ModelContext) -> Void = { _, _ in }
     ) -> PlaylistSelectionViewModel.Dependencies {
         PlaylistSelectionViewModel.Dependencies {
             fetchedPlaylists
+        } fetchSpotifyPlaylists: { _ in
+            fetchedSpotifyPlaylists
         } createManagedOneTruePlaylist: { name, _, _ in
             PlaylistRecord(musicPlaylistID: "created", name: name, role: .oneTruePlaylist)
         } syncPlaylist: { _, _ in

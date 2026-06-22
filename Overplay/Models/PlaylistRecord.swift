@@ -6,6 +6,7 @@ final class PlaylistRecord {
     var id: UUID = UUID()
     var musicPlaylistID: String = ""
     var name: String = ""
+    var sourceRawValue: String = PlaylistSource.appleMusic.rawValue
     var roleRawValue: String = PlaylistRole.triage.rawValue
     var writePolicyRawValue: String = PlaylistWritePolicy.managed.rawValue
     var isActive: Bool = true
@@ -14,6 +15,11 @@ final class PlaylistRecord {
     var sortOrder: Int = 0
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
+
+    var source: PlaylistSource {
+        get { PlaylistSource(rawValue: sourceRawValue) ?? .appleMusic }
+        set { sourceRawValue = newValue.rawValue }
+    }
 
     var role: PlaylistRole {
         get { PlaylistRole(rawValue: roleRawValue) ?? .triage }
@@ -33,6 +39,7 @@ final class PlaylistRecord {
         id: UUID = UUID(),
         musicPlaylistID: String,
         name: String,
+        source: PlaylistSource = .appleMusic,
         role: PlaylistRole = .triage,
         writePolicy: PlaylistWritePolicy = .managed,
         isActive: Bool = true,
@@ -45,6 +52,7 @@ final class PlaylistRecord {
         self.id = id
         self.musicPlaylistID = musicPlaylistID
         self.name = name
+        self.sourceRawValue = source.rawValue
         self.roleRawValue = role.rawValue
         self.writePolicyRawValue = writePolicy.rawValue
         self.isActive = isActive

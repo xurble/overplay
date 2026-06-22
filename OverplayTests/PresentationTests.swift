@@ -11,6 +11,7 @@ struct PlaylistSummaryPresentationTests {
             id: UUID(),
             title: "Overplay",
             role: .oneTruePlaylist,
+            source: .appleMusic,
             writePolicy: .managed,
             activeTrackCount: 12,
             playableTrackCount: 11,
@@ -21,6 +22,7 @@ struct PlaylistSummaryPresentationTests {
             id: UUID(),
             title: "Inbox",
             role: .triage,
+            source: .spotify,
             writePolicy: .incomingOnly,
             activeTrackCount: 1,
             playableTrackCount: 1,
@@ -39,6 +41,7 @@ struct PlaylistSummaryPresentationTests {
         #expect(triage.iconIntent.systemImage == "play.fill")
         #expect(triage.displayPriority == 1)
         #expect(triage.writePolicyTitle == "Incoming only")
+        #expect(triage.sourceTitle == "Spotify")
     }
 
     @Test("display ordering puts main playlists first then sorts names case-insensitively")
@@ -59,6 +62,7 @@ struct PlaylistSummaryPresentationTests {
             id: UUID(),
             title: title,
             role: role,
+            source: .appleMusic,
             writePolicy: .managed,
             activeTrackCount: 0,
             playableTrackCount: 0,
