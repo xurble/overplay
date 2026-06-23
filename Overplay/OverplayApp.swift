@@ -18,7 +18,8 @@ struct OverplayApp: App {
             PlaylistRecord.self,
             TrackRecord.self,
             PlaylistItemRecord.self,
-            HistoryEvent.self
+            HistoryEvent.self,
+            SpotifyCredentialsRecord.self
         ])
     }
 

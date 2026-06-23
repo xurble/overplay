@@ -1,3 +1,8 @@
+enum PlaylistSource: String, CaseIterable, Codable, Hashable, Sendable {
+    case appleMusic
+    case spotify
+}
+
 enum PlaylistRole: String, CaseIterable, Codable, Hashable, Sendable {
     case oneTruePlaylist
     case triage

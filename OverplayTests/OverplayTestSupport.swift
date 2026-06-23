@@ -10,7 +10,8 @@ enum OverplayTestSupport {
             PlaylistRecord.self,
             TrackRecord.self,
             PlaylistItemRecord.self,
-            HistoryEvent.self
+            HistoryEvent.self,
+            SpotifyCredentialsRecord.self
         ])
         let configuration = ModelConfiguration(
             schema: schema,

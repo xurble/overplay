@@ -7,15 +7,18 @@ enum PlaylistSyncError: LocalizedError {
     case playlistNotFound
     case playlistHasNoTracks
     case trackNotFoundInPlaylist
+    case unsupportedSourceForOneTruePlaylist
 
     var errorDescription: String? {
         switch self {
         case .playlistNotFound:
-            "The selected Apple Music playlist could not be found."
+            "The selected playlist could not be found."
         case .playlistHasNoTracks:
             "The selected playlist did not return any playable tracks."
         case .trackNotFoundInPlaylist:
             "The evicted track was not found in the selected Apple Music playlist."
+        case .unsupportedSourceForOneTruePlaylist:
+            "Only Apple Music playlists can be used as the One True Playlist."
         }
     }
 }
@@ -36,34 +39,54 @@ struct PlaylistSyncService {
         subsystem: Bundle.main.bundleIdentifier ?? "Overplay",
         category: "PlaylistSync"
     )
-    private let playlistFetcher: any MusicLibraryPlaylistFetching
 
-    init(playlistFetcher: any MusicLibraryPlaylistFetching = MusicKitLibraryPlaylistFetcher()) {
-        self.playlistFetcher = playlistFetcher
+    private let sourceRegistry: PlaylistSourceSyncRegistry
+    private let appleMusicSource: AppleMusicPlaylistSourceSync
+
+    init(
+        sourceRegistry: PlaylistSourceSyncRegistry = PlaylistSourceSyncRegistry(),
+        appleMusicSource: AppleMusicPlaylistSourceSync = AppleMusicPlaylistSourceSync()
+    ) {
+        self.sourceRegistry = sourceRegistry
+        self.appleMusicSource = appleMusicSource
+    }
+
+    func fetchLibraryPlaylists(source: PlaylistSource, in context: ModelContext) async throws -> [RemotePlaylistLink] {
+        try await sourceRegistry.adapter(for: source).fetchLibraryPlaylists(in: context)
     }
 
     func fetchLibraryPlaylists() async throws -> [AppleMusicPlaylist] {
-        AppleMusicPlaylistDisplayOrder.sorted(try await fetchAllLibraryPlaylists()
-            .map { playlist in
-                AppleMusicPlaylist(
-                    id: playlist.id.rawValue,
-                    name: playlist.name,
-                    trackCount: playlist.tracks?.count
-                )
-            })
+        try await fetchAppleMusicLibraryPlaylists()
     }
 
-    func syncPlaylist(id playlistID: String, in context: ModelContext) async throws -> Int {
-        let existingRecord = try PlaylistRepository.playlist(musicPlaylistID: playlistID, in: context)
-        let playlist = try await loadPlaylist(
-            id: playlistID,
-            name: existingRecord?.name,
-            playlistRecord: existingRecord,
-            in: context
-        )
+    func fetchAppleMusicLibraryPlaylists(in context: ModelContext? = nil) async throws -> [AppleMusicPlaylist] {
+        let links: [RemotePlaylistLink]
+        if let context {
+            links = try await appleMusicSource.fetchLibraryPlaylists(in: context)
+        } else {
+            links = try await appleMusicSource.fetchLibraryPlaylists(in: .ephemeral)
+        }
+        return links.map {
+            AppleMusicPlaylist(id: $0.id, name: $0.name, trackCount: $0.trackCount)
+        }
+    }
+
+    func fetchSpotifyLibraryPlaylists(in context: ModelContext) async throws -> [SpotifyPlaylist] {
+        let links = try await sourceRegistry.adapter(for: .spotify).fetchLibraryPlaylists(in: context)
+        return links.map {
+            SpotifyPlaylist(id: $0.id, name: $0.name, trackCount: $0.trackCount, ownerName: nil)
+        }
+    }
+
+    func syncPlaylist(id playlistID: String, source: PlaylistSource, in context: ModelContext) async throws -> Int {
+        let existingRecord = try PlaylistRepository.playlist(remotePlaylistID: playlistID, source: source, in: context)
         let record = try PlaylistRepository.upsert(
-            musicPlaylistID: playlist.id.rawValue,
-            name: playlist.name,
+            remotePlaylist: RemotePlaylistLink(
+                id: playlistID,
+                name: existingRecord?.name ?? "Playlist",
+                trackCount: nil,
+                source: source
+            ),
             role: existingRecord?.role ?? .oneTruePlaylist,
             in: context
         )
@@ -71,21 +94,22 @@ struct PlaylistSyncService {
     }
 
     func syncPlaylist(_ playlistRecord: PlaylistRecord, in context: ModelContext) async throws -> Int {
-        let playlist = try await loadPlaylist(
-            id: playlistRecord.musicPlaylistID,
-            name: playlistRecord.name,
+        let adapter = sourceRegistry.adapter(for: playlistRecord)
+        let fetchResult = try await adapter.fetchTrackSnapshots(
+            playlistID: playlistRecord.musicPlaylistID,
+            playlistName: playlistRecord.name,
             playlistRecord: playlistRecord,
             in: context
         )
-        let tracks = try await loadTracks(for: playlist)
-        let snapshots = tracks.map { snapshot(from: $0, playlistID: playlistRecord.musicPlaylistID) }
 
-        let summary = try reconcile(
-            snapshots: snapshots,
+        var summary = try reconcile(
+            snapshots: fetchResult.snapshots,
             playlistRecord: playlistRecord,
             syncedAt: .now,
             in: context
         )
+        summary.skippedCount = fetchResult.skippedCount
+        summary.skippedReason = fetchResult.skippedReason
         try context.save()
         logSyncSummary(summary, playlistRecord: playlistRecord)
         warmUpArtworkThemes(for: summary.artworkWarmupSnapshots)
@@ -132,7 +156,7 @@ struct PlaylistSyncService {
                 items: sourceTracks
             )
         }
-        let libraryPlaylists = try await fetchLibraryPlaylists()
+        let libraryPlaylists = try await fetchAppleMusicLibraryPlaylists()
         let canonicalID = PlaylistLibraryIDResolver.resolvedMusicPlaylistID(
             storedID: createdPlaylist.id.rawValue,
             name: createdPlaylist.name,
@@ -362,6 +386,11 @@ struct PlaylistSyncService {
         let items = try PlaylistItemRepository.items(forPlaylistID: playlistRecord.id, in: context)
         let localTracks = try TrackRecordRepository.tracks(ids: items.map(\.trackID), in: context)
         let tracksByID = localTracks.firstValueDictionary(keyedBy: \.id)
+
+        if playlistRecord.source == .spotify {
+            return PlaybackQueueBuilder.cachedPlayableMusicTracks(items: items, tracksByID: tracksByID)
+        }
+
         let playableMusicItemIDs = PlaybackQueueBuilder.playableMusicItemIDs(
             items: items,
             tracksByID: tracksByID
@@ -399,49 +428,11 @@ struct PlaylistSyncService {
         playlistRecord: PlaylistRecord? = nil,
         in context: ModelContext? = nil
     ) async throws -> Playlist {
-        let libraryPlaylists = try await fetchAllLibraryPlaylists()
-        let candidates = libraryPlaylists.map {
-            PlaylistLibraryIDResolver.Candidate(id: $0.id.rawValue, name: $0.name)
-        }
-
-        guard let resolvedID = PlaylistLibraryIDResolver.resolvedMusicPlaylistID(
-            storedID: playlistID,
+        try await appleMusicSource.loadPlaylist(
+            id: playlistID,
             name: name,
-            libraryPlaylists: candidates
-        ) else {
-            throw PlaylistSyncError.playlistNotFound
-        }
-
-        if resolvedID != playlistID,
-           let playlistRecord,
-           let context {
-            try applyHealedMusicPlaylistID(
-                from: playlistID,
-                to: resolvedID,
-                playlistRecord: playlistRecord,
-                in: context
-            )
-        }
-
-        guard let playlist = libraryPlaylists.first(where: { $0.id.rawValue == resolvedID }) else {
-            throw PlaylistSyncError.playlistNotFound
-        }
-
-        return playlist
-    }
-
-    private func fetchAllLibraryPlaylists() async throws -> [Playlist] {
-        try await playlistFetcher.fetchAllPlaylists(pageLimit: 100)
-    }
-
-    private func applyHealedMusicPlaylistID(
-        from oldID: String,
-        to newID: String,
-        playlistRecord: PlaylistRecord,
-        in context: ModelContext
-    ) throws {
-        Self.logger.warning(
-            "Healed stale Apple Music playlist ID from \(oldID, privacy: .public) to \(newID, privacy: .public) for '\(playlistRecord.name, privacy: .public)'"
+            playlistRecord: playlistRecord,
+            in: context
         )
 
         playlistRecord.musicPlaylistID = newID
@@ -485,5 +476,15 @@ struct PlaylistSyncService {
         Task(priority: .background) {
             await AlbumArtworkThemeWarmupService.shared.enqueue(tracks)
         }
+    }
+}
+
+private extension ModelContext {
+    static var ephemeral: ModelContext {
+        let schema = Schema([PlaylistRecord.self])
+        let container = try! ModelContainer(for: schema, configurations: [
+            ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+        ])
+        return ModelContext(container)
     }
 }

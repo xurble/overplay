@@ -80,6 +80,7 @@ struct PlaylistPresentationBuilder {
             title: playlist.name,
             artworkURLString: representativeArtworkURL(for: playlist),
             role: playlist.role,
+            source: playlist.source,
             writePolicy: playlist.writePolicy,
             activeTrackCount: playlistItems.count,
             playableTrackCount: playlistItems.filter(\.isPlayable).count,

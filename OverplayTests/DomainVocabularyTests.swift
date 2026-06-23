@@ -8,6 +8,12 @@ struct DomainVocabularyPayload<Value: Codable & Equatable>: Codable, Equatable {
 
 @Suite("Domain vocabulary")
 struct DomainVocabularyTests {
+    @Test("playlist source raw values are stable")
+    func playlistSourceRawValuesAreStable() {
+        #expect(PlaylistSource.appleMusic.rawValue == "appleMusic")
+        #expect(PlaylistSource.spotify.rawValue == "spotify")
+    }
+
     @Test("playlist role raw values are stable")
     func playlistRoleRawValuesAreStable() {
         #expect(PlaylistRole.oneTruePlaylist.rawValue == "oneTruePlaylist")
@@ -61,6 +67,7 @@ struct DomainVocabularyTests {
 
     @Test("domain vocabulary codable values round trip")
     func domainVocabularyCodableValuesRoundTrip() throws {
+        try assertRoundTrips(PlaylistSource.spotify)
         try assertRoundTrips(PlaylistRole.oneTruePlaylist)
         try assertRoundTrips(PlaylistWritePolicy.incomingOnly)
         try assertRoundTrips(HistoryEventType.promoted)

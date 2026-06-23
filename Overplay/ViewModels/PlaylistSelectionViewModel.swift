@@ -7,6 +7,7 @@ import SwiftData
 final class PlaylistSelectionViewModel {
     struct Dependencies {
         var fetchLibraryPlaylists: () async throws -> [AppleMusicPlaylist]
+        var fetchSpotifyPlaylists: (_ context: ModelContext) async throws -> [SpotifyPlaylist]
         var createManagedOneTruePlaylist: (_ name: String, _ sourcePlaylistID: String?, _ context: ModelContext) async throws -> PlaylistRecord
         var syncPlaylist: (_ playlist: PlaylistRecord, _ context: ModelContext) async throws -> Int
         var syncPlaylistID: (_ playlistID: String, _ context: ModelContext) async throws -> Int
@@ -20,6 +21,8 @@ final class PlaylistSelectionViewModel {
         ) -> Dependencies {
             Dependencies {
                 try await PlaylistSyncService().fetchLibraryPlaylists()
+            } fetchSpotifyPlaylists: { context in
+                try await PlaylistSyncService().fetchSpotifyLibraryPlaylists(in: context)
             } createManagedOneTruePlaylist: { name, sourcePlaylistID, context in
                 if let sourcePlaylistID {
                     try await PlaylistSyncService().createManagedOneTruePlaylist(
@@ -33,7 +36,7 @@ final class PlaylistSelectionViewModel {
             } syncPlaylist: { playlist, context in
                 try await PlaylistSyncService().syncPlaylist(playlist, in: context)
             } syncPlaylistID: { playlistID, context in
-                try await PlaylistSyncService().syncPlaylist(id: playlistID, in: context)
+                try await PlaylistSyncService().syncPlaylist(id: playlistID, source: .appleMusic, in: context)
             } syncAllLinkedPlaylists: { context in
                 try await PlaylistSyncService().syncAllLinkedPlaylists(in: context)
             } reconcileStoredOrder: { playlist, context in
@@ -45,8 +48,10 @@ final class PlaylistSelectionViewModel {
     }
 
     var playlists: [AppleMusicPlaylist] = []
+    var spotifyPlaylists: [SpotifyPlaylist] = []
     var searchText = ""
     var isLoading = false
+    var isLoadingSpotify = false
     var isSyncingAll = false
     var isCreatingOneTruePlaylist = false
     var syncingPlaylistIDs = Set<UUID>()
@@ -58,6 +63,11 @@ final class PlaylistSelectionViewModel {
         return playlists.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
     }
 
+    var filteredSpotifyPlaylists: [SpotifyPlaylist] {
+        guard !searchText.isEmpty else { return spotifyPlaylists }
+        return spotifyPlaylists.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
+
     func loadPlaylists(dependencies: Dependencies) async {
         isLoading = true
         defer { isLoading = false }
@@ -66,6 +76,21 @@ final class PlaylistSelectionViewModel {
             playlists = try await dependencies.fetchLibraryPlaylists()
             message = playlists.isEmpty ? "No Apple Music library playlists were found." : nil
         } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    func loadSpotifyPlaylists(context: ModelContext, dependencies: Dependencies) async {
+        isLoadingSpotify = true
+        defer { isLoadingSpotify = false }
+
+        do {
+            spotifyPlaylists = try await dependencies.fetchSpotifyPlaylists(context)
+            if spotifyPlaylists.isEmpty {
+                message = "No Spotify playlists were found."
+            }
+        } catch {
+            spotifyPlaylists = []
             message = error.localizedDescription
         }
     }
@@ -110,7 +135,23 @@ final class PlaylistSelectionViewModel {
         }
     }
 
+    func addSpotifyTriage(_ playlist: SpotifyPlaylist, context: ModelContext, dependencies: Dependencies) {
+        do {
+            let record = try PlaylistRepository.addTriagePlaylist(RemotePlaylistLink(playlist), in: context)
+            try context.save()
+            message = "Added \(playlist.name) as a Spotify triage playlist."
+            refreshPlaylistInBackground(record, context: context, dependencies: dependencies)
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
     func makeOneTrue(_ playlist: PlaylistRecord, context: ModelContext, dependencies: Dependencies) {
+        guard playlist.source == .appleMusic else {
+            message = PlaylistSyncError.unsupportedSourceForOneTruePlaylist.localizedDescription
+            return
+        }
+
         do {
             try SettingsRepository.selectPlaylist(
                 AppleMusicPlaylist(id: playlist.musicPlaylistID, name: playlist.name, trackCount: nil),
@@ -171,7 +212,8 @@ final class PlaylistSelectionViewModel {
         do {
             let count = try await dependencies.syncPlaylist(playlist, context)
             dependencies.reconcileStoredOrder(playlist, context)
-            message = "Synced \(count) tracks from \(playlist.name)."
+            let sourceLabel = playlist.source == .spotify ? "Spotify" : "Apple Music"
+            message = "Synced \(count) tracks from \(playlist.name) (\(sourceLabel))."
         } catch {
             message = error.localizedDescription
         }

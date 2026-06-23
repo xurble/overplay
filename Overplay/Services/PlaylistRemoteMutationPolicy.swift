@@ -4,6 +4,7 @@ enum PlaylistRemoteMutationPolicy {
         playlist: PlaylistRecord
     ) -> Bool {
         item.evictedAt != nil
+            && playlist.source == .appleMusic
             && playlist.role == .oneTruePlaylist
             && playlist.allowsRemoteWrites
     }

@@ -23,6 +23,7 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
     let title: String
     var artworkURLString: String?
     let role: PlaylistRole
+    let source: PlaylistSource
     let writePolicy: PlaylistWritePolicy
     let activeTrackCount: Int
     let playableTrackCount: Int
@@ -69,6 +70,15 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
         }
     }
 
+    var sourceTitle: String {
+        switch source {
+        case .appleMusic:
+            "Apple Music"
+        case .spotify:
+            "Spotify"
+        }
+    }
+
     var writePolicyTitle: String {
         switch writePolicy {
         case .managed:
@@ -91,7 +101,7 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
     }
 
     var dashboardDetailText: String {
-        "\(activeTrackCountLabel) - \(syncStatusLabel) - \(writePolicyTitle)"
+        "\(activeTrackCountLabel) - \(sourceTitle) - \(syncStatusLabel) - \(writePolicyTitle)"
     }
 
     static func areInDisplayOrder(_ left: PlaylistSummaryPresentation, _ right: PlaylistSummaryPresentation) -> Bool {

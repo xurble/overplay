@@ -38,6 +38,23 @@ enum PlaylistRepository {
         return try context.fetch(descriptor).first
     }
 
+    static func playlist(
+        remotePlaylistID: String,
+        source: PlaylistSource,
+        in context: ModelContext
+    ) throws -> PlaylistRecord? {
+        let sourceRawValue = source.rawValue
+        var descriptor = FetchDescriptor<PlaylistRecord>(
+            predicate: #Predicate {
+                $0.musicPlaylistID == remotePlaylistID && $0.sourceRawValue == sourceRawValue
+            },
+            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.name)]
+        )
+        descriptor.fetchLimit = 1
+        descriptor.includePendingChanges = true
+        return try context.fetch(descriptor).first
+    }
+
     static func oneTruePlaylist(in context: ModelContext) throws -> PlaylistRecord? {
         let oneTruePlaylistRole = PlaylistRole.oneTruePlaylist.rawValue
         var descriptor = FetchDescriptor<PlaylistRecord>(
@@ -53,17 +70,25 @@ enum PlaylistRepository {
 
     @discardableResult
     static func upsert(
-        musicPlaylistID: String,
-        name: String,
+        remotePlaylist: RemotePlaylistLink,
         role: PlaylistRole,
         writePolicy: PlaylistWritePolicy = .managed,
         isActive: Bool = true,
         sortOrder: Int = 0,
         in context: ModelContext
     ) throws -> PlaylistRecord {
-        let playlist = try playlist(musicPlaylistID: musicPlaylistID, in: context) ?? PlaylistRecord(
-            musicPlaylistID: musicPlaylistID,
-            name: name,
+        if role == .oneTruePlaylist, remotePlaylist.source != .appleMusic {
+            throw PlaylistSyncError.unsupportedSourceForOneTruePlaylist
+        }
+
+        let playlist = try playlist(
+            remotePlaylistID: remotePlaylist.id,
+            source: remotePlaylist.source,
+            in: context
+        ) ?? PlaylistRecord(
+            musicPlaylistID: remotePlaylist.id,
+            name: remotePlaylist.name,
+            source: remotePlaylist.source,
             role: role
         )
 
@@ -71,7 +96,8 @@ enum PlaylistRepository {
             context.insert(playlist)
         }
 
-        playlist.name = name
+        playlist.name = remotePlaylist.name
+        playlist.source = remotePlaylist.source
         playlist.role = role
         playlist.writePolicy = writePolicy
         playlist.isActive = isActive
@@ -81,19 +107,44 @@ enum PlaylistRepository {
     }
 
     @discardableResult
+    static func upsert(
+        musicPlaylistID: String,
+        name: String,
+        role: PlaylistRole,
+        writePolicy: PlaylistWritePolicy = .managed,
+        isActive: Bool = true,
+        sortOrder: Int = 0,
+        in context: ModelContext
+    ) throws -> PlaylistRecord {
+        try upsert(
+            remotePlaylist: RemotePlaylistLink(
+                id: musicPlaylistID,
+                name: name,
+                source: .appleMusic
+            ),
+            role: role,
+            writePolicy: writePolicy,
+            isActive: isActive,
+            sortOrder: sortOrder,
+            in: context
+        )
+    }
+
+    @discardableResult
     static func setOneTruePlaylist(
         _ appleMusicPlaylist: AppleMusicPlaylist,
         writePolicy: PlaylistWritePolicy = .managed,
         in context: ModelContext
     ) throws -> PlaylistRecord {
-        for existingPlaylist in try activePlaylists(in: context) where existingPlaylist.role == .oneTruePlaylist && existingPlaylist.musicPlaylistID != appleMusicPlaylist.id {
+        for existingPlaylist in try activePlaylists(in: context)
+            where existingPlaylist.role == .oneTruePlaylist
+            && existingPlaylist.musicPlaylistID != appleMusicPlaylist.id {
             existingPlaylist.role = .triage
             existingPlaylist.updatedAt = .now
         }
 
         return try upsert(
-            musicPlaylistID: appleMusicPlaylist.id,
-            name: appleMusicPlaylist.name,
+            remotePlaylist: RemotePlaylistLink(appleMusicPlaylist),
             role: .oneTruePlaylist,
             writePolicy: writePolicy,
             in: context
@@ -101,22 +152,34 @@ enum PlaylistRepository {
     }
 
     @discardableResult
-    static func addTriagePlaylist(_ appleMusicPlaylist: AppleMusicPlaylist, in context: ModelContext) throws -> PlaylistRecord {
-        if let existingPlaylist = try playlist(musicPlaylistID: appleMusicPlaylist.id, in: context),
+    static func addTriagePlaylist(_ remotePlaylist: RemotePlaylistLink, in context: ModelContext) throws -> PlaylistRecord {
+        if remotePlaylist.source != .appleMusic,
+           let existingPlaylist = try playlist(remotePlaylistID: remotePlaylist.id, source: remotePlaylist.source, in: context) {
+            existingPlaylist.name = remotePlaylist.name
+            existingPlaylist.isActive = true
+            existingPlaylist.updatedAt = .now
+            return existingPlaylist
+        }
+
+        if let existingPlaylist = try playlist(musicPlaylistID: remotePlaylist.id, in: context),
            existingPlaylist.role == .oneTruePlaylist {
-            existingPlaylist.name = appleMusicPlaylist.name
+            existingPlaylist.name = remotePlaylist.name
             existingPlaylist.isActive = true
             existingPlaylist.updatedAt = .now
             return existingPlaylist
         }
 
         return try upsert(
-            musicPlaylistID: appleMusicPlaylist.id,
-            name: appleMusicPlaylist.name,
+            remotePlaylist: remotePlaylist,
             role: .triage,
-            writePolicy: .managed,
+            writePolicy: remotePlaylist.source == .spotify ? .incomingOnly : .managed,
             in: context
         )
+    }
+
+    @discardableResult
+    static func addTriagePlaylist(_ appleMusicPlaylist: AppleMusicPlaylist, in context: ModelContext) throws -> PlaylistRecord {
+        try addTriagePlaylist(RemotePlaylistLink(appleMusicPlaylist), in: context)
     }
 
     static func deactivateTriagePlaylist(_ playlist: PlaylistRecord, in context: ModelContext) throws {
