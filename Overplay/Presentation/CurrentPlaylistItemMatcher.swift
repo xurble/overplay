@@ -20,6 +20,13 @@ enum CurrentPlaylistItemMatcher {
             return true
         }
 
-        return PlaybackQueueBuilder.musicItemIDs(for: track).contains(currentTrack.id)
+        let musicItemIDs = PlaybackQueueBuilder.musicItemIDs(for: track)
+        let matchesMusicID = musicItemIDs.contains(currentTrack.id)
+        if matchesMusicID {
+            TrackMetadataDiagnostics.log(
+                "current row matched by music item id playlist=\(TrackMetadataDiagnostics.describe(playlist)) rowItemID=\(itemID.uuidString) rowTrackID=\(track.id.uuidString) rowMusicIDs=\(musicItemIDs.joined(separator: ",")) currentItem=\(TrackMetadataDiagnostics.describe(currentPlaylistItem)) currentTrack=\(TrackMetadataDiagnostics.describe(currentTrack))"
+            )
+        }
+        return matchesMusicID
     }
 }

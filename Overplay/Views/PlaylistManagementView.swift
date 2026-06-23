@@ -73,6 +73,7 @@ struct PlaylistManagementView: View {
                             playlistID: playlist.musicPlaylistID,
                             isCurrent: row.isCurrent
                         )
+                        .id(row.renderID)
                     }
                     .buttonStyle(.plain)
                     .disabled(!row.item.isPlayable)
@@ -162,6 +163,7 @@ struct PlaylistManagementView: View {
             currentPlaylistID: playbackController.currentPlaylistID,
             currentPlaylistItem: playbackController.currentPlaylistItem,
             currentTrack: playbackController.currentTrack,
+            playbackItemMetadataVersion: playbackController.playbackItemMetadataVersion,
             evictAfterSkips: settings.evictAfterSkips
         )
     }

@@ -113,6 +113,37 @@ struct PlaybackCoordinatorTests {
         ) == 0)
     }
 
+    @Test("realized active queue state preserves queue and playlist item identity")
+    func realizedActiveQueueStatePreservesQueueAndPlaylistItemIdentity() {
+        let firstItemID = UUID()
+        let secondItemID = UUID()
+        let entries = [
+            RealizedPlaybackQueueEntry(
+                queueEntryID: "queue-1",
+                playlistItemID: firstItemID,
+                localTrackID: "local-1",
+                queuedMusicItemID: "music-1"
+            ),
+            RealizedPlaybackQueueEntry(
+                queueEntryID: "queue-2",
+                playlistItemID: secondItemID,
+                localTrackID: "local-2",
+                queuedMusicItemID: "music-2"
+            )
+        ]
+
+        let state = PlaybackQueueCoordinator.activeQueueState(entries: entries, startingAt: "local-2")
+
+        #expect(state.index == 1)
+        #expect(state.entries[1].queueEntryID == "queue-2")
+        #expect(state.entries[1].playlistItemID == secondItemID)
+        #expect(PlaybackQueueCoordinator.updatedActiveQueueIndex(
+            localTrackID: "local-1",
+            activeQueueEntries: state.entries,
+            currentIndex: state.index
+        ) == 0)
+    }
+
     @Test("playlist scoped local track lookup ignores matching tracks in other playlists")
     func playlistScopedLocalTrackLookupIgnoresOtherPlaylists() throws {
         let container = try OverplayTestSupport.makeModelContainer()

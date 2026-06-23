@@ -3,8 +3,55 @@ import Foundation
 import SwiftData
 
 struct PlaybackQueueEntry {
+    var playlistItemID: UUID
     var localTrackID: String
+    var queuedMusicItemID: String
     var musicTrack: Track
+}
+
+struct RealizedPlaybackQueueEntry: Equatable {
+    var queueEntryID: String
+    var playlistItemID: UUID
+    var localTrackID: String
+    var queuedMusicItemID: String
+}
+
+struct PlaybackQueueMaterialization {
+    var queueEntries: [MusicPlayer.Queue.Entry]
+    var realizedEntries: [RealizedPlaybackQueueEntry]
+    var startingEntry: MusicPlayer.Queue.Entry?
+}
+
+enum PlaybackQueueMaterializer {
+    static func materialize(
+        _ entries: [PlaybackQueueEntry],
+        startingAt localTrackID: String?
+    ) -> PlaybackQueueMaterialization {
+        var queueEntries: [MusicPlayer.Queue.Entry] = []
+        var realizedEntries: [RealizedPlaybackQueueEntry] = []
+        var startingEntry: MusicPlayer.Queue.Entry?
+
+        for entry in entries {
+            let queueEntry = MusicPlayer.Queue.Entry(entry.musicTrack)
+            queueEntries.append(queueEntry)
+            realizedEntries.append(RealizedPlaybackQueueEntry(
+                queueEntryID: queueEntry.id,
+                playlistItemID: entry.playlistItemID,
+                localTrackID: entry.localTrackID,
+                queuedMusicItemID: entry.queuedMusicItemID
+            ))
+
+            if entry.localTrackID == localTrackID {
+                startingEntry = queueEntry
+            }
+        }
+
+        return PlaybackQueueMaterialization(
+            queueEntries: queueEntries,
+            realizedEntries: realizedEntries,
+            startingEntry: startingEntry
+        )
+    }
 }
 
 enum PlaybackQueueCoordinator {
@@ -21,25 +68,33 @@ enum PlaybackQueueCoordinator {
 
     static func cachedEntries(
         orderedTrackIDs: [String],
+        itemsByTrackID: [UUID: PlaylistItemRecord],
         tracksByID: [UUID: TrackRecord]
     ) -> [PlaybackQueueEntry] {
         orderedTrackIDs.compactMap { localTrackID in
-            cachedEntry(localTrackID: localTrackID, tracksByID: tracksByID)
+            cachedEntry(localTrackID: localTrackID, itemsByTrackID: itemsByTrackID, tracksByID: tracksByID)
         }
     }
 
     static func cachedEntry(
         localTrackID: String,
+        itemsByTrackID: [UUID: PlaylistItemRecord],
         tracksByID: [UUID: TrackRecord]
     ) -> PlaybackQueueEntry? {
         guard let trackID = UUID(uuidString: localTrackID),
+              let item = itemsByTrackID[trackID],
               let trackRecord = tracksByID[trackID],
               let playbackData = trackRecord.musicKitPlaybackData,
               let musicTrack = try? JSONDecoder().decode(Track.self, from: playbackData) else {
             return nil
         }
 
-        return PlaybackQueueEntry(localTrackID: localTrackID, musicTrack: musicTrack)
+        return PlaybackQueueEntry(
+            playlistItemID: item.id,
+            localTrackID: localTrackID,
+            queuedMusicItemID: musicTrack.id.rawValue,
+            musicTrack: musicTrack
+        )
     }
 
     static func localTrackID(matching musicItemID: String, context: ModelContext) throws -> String? {
@@ -66,18 +121,46 @@ enum PlaybackQueueCoordinator {
     }
 
     static func activeQueueState(
-        entries: [PlaybackQueueEntry],
+        entries: [RealizedPlaybackQueueEntry],
         startingAt localTrackID: String?
-    ) -> (localTrackIDs: [String], index: Int?) {
-        let localTrackIDs = entries.map(\.localTrackID)
-        guard !localTrackIDs.isEmpty else {
+    ) -> (entries: [RealizedPlaybackQueueEntry], index: Int?) {
+        guard !entries.isEmpty else {
             return ([], nil)
         }
 
         let index = localTrackID
-            .flatMap { localTrackIDs.firstIndex(of: $0) }
-            ?? localTrackIDs.startIndex
-        return (localTrackIDs, index)
+            .flatMap { localTrackID in
+                entries.firstIndex { $0.localTrackID == localTrackID }
+            }
+            ?? entries.startIndex
+        return (entries, index)
+    }
+
+    static func updatedActiveQueueIndex(
+        localTrackID: String?,
+        activeQueueEntries: [RealizedPlaybackQueueEntry],
+        currentIndex: Int?
+    ) -> Int? {
+        guard let localTrackID,
+              let index = activeQueueEntries.firstIndex(where: { $0.localTrackID == localTrackID }) else {
+            return currentIndex
+        }
+
+        return index
+    }
+
+    static func advancedActiveQueueIndex(
+        by offset: Int,
+        activeQueueEntries: [RealizedPlaybackQueueEntry],
+        currentIndex: Int?
+    ) -> Int? {
+        guard let currentIndex else { return nil }
+        let newIndex = currentIndex + offset
+        guard activeQueueEntries.indices.contains(newIndex) else {
+            return nil
+        }
+
+        return newIndex
     }
 
     static func updatedActiveQueueIndex(

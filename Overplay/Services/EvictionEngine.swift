@@ -3,10 +3,27 @@ import SwiftData
 
 struct TrackPlaySession: Equatable {
     var trackID: String
+    var localTrackID: String?
     var sessionStartDate: Date
     var lastObservedPlaybackTime: Double
     var durationSeconds: Double?
     var hasEvaluated: Bool
+
+    init(
+        trackID: String,
+        localTrackID: String? = nil,
+        sessionStartDate: Date,
+        lastObservedPlaybackTime: Double,
+        durationSeconds: Double?,
+        hasEvaluated: Bool
+    ) {
+        self.trackID = trackID
+        self.localTrackID = localTrackID
+        self.sessionStartDate = sessionStartDate
+        self.lastObservedPlaybackTime = lastObservedPlaybackTime
+        self.durationSeconds = durationSeconds
+        self.hasEvaluated = hasEvaluated
+    }
 
     var progressPercentage: Double? {
         guard let durationSeconds, durationSeconds > 0 else {
@@ -61,9 +78,13 @@ enum EvictionEngine {
         let leftBeforeThreshold = progress < settings.skipThresholdPercentage
 
         if listenedLongEnough && leftBeforeThreshold {
+            let previousSkipCount = item.skipCount
             item.skipCount += 1
             item.lastSkippedAt = .now
             item.updatedAt = .now
+            TrackMetadataDiagnostics.log(
+                "counted skip playlist=\(TrackMetadataDiagnostics.describe(playlist)) itemID=\(item.id.uuidString) trackID=\(item.trackID.uuidString) previousSkips=\(previousSkipCount) newSkips=\(item.skipCount) elapsed=\(String(format: "%.1f", session.lastObservedPlaybackTime)) progress=\(String(format: "%.1f", progress)) threshold=\(settings.skipThresholdPercentage)"
+            )
             logHistory(
                 item: item,
                 playlist: playlist,
@@ -87,6 +108,9 @@ enum EvictionEngine {
                         context: context
                     )
                 } else {
+                    TrackMetadataDiagnostics.log(
+                        "skip reached threshold without auto eviction playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) triageAutoEvicts=\(settings.triageAutoEvictsOnSkipCount)"
+                    )
                     logHistory(
                         item: item,
                         playlist: playlist,
@@ -99,6 +123,9 @@ enum EvictionEngine {
                 }
             }
         } else {
+            TrackMetadataDiagnostics.log(
+                "ignored skip playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) elapsed=\(String(format: "%.1f", session.lastObservedPlaybackTime)) progress=\(String(format: "%.1f", progress)) listenedLongEnough=\(listenedLongEnough) leftBeforeThreshold=\(leftBeforeThreshold)"
+            )
             logHistory(
                 item: item,
                 playlist: playlist,
@@ -118,12 +145,17 @@ enum EvictionEngine {
         settings: OverplaySettings,
         context: ModelContext
     ) {
+        let previousSkipCount = item.skipCount
+        let previousPlaythroughCount = item.playthroughCount
         item.playthroughCount += 1
         item.lastPlayedAt = .now
         if settings.playthroughResetsSkipCount {
             item.skipCount = 0
         }
         item.updatedAt = .now
+        TrackMetadataDiagnostics.log(
+            "counted playthrough playlist=\(TrackMetadataDiagnostics.describe(playlist)) itemID=\(item.id.uuidString) trackID=\(item.trackID.uuidString) previousSkips=\(previousSkipCount) newSkips=\(item.skipCount) previousPlays=\(previousPlaythroughCount) newPlays=\(item.playthroughCount) resetSkips=\(settings.playthroughResetsSkipCount) progress=\(session.progressPercentage.map { String(format: "%.1f", $0) } ?? "nil")"
+        )
         logHistory(
             item: item,
             playlist: playlist,

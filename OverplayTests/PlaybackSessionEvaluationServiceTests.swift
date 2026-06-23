@@ -211,6 +211,64 @@ struct PlaybackSessionEvaluationServiceTests {
         #expect(fixture.item.skipCount == 1)
     }
 
+    @Test("skip transition prefers session local track id over music item id")
+    func skipTransitionPrefersSessionLocalTrackIDOverMusicItemID() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "playlist-1",
+            name: "Main",
+            role: .oneTruePlaylist
+        )
+        let localTrack = TrackRecord(
+            catalogID: "catalog-local",
+            libraryID: "library-local",
+            title: "Local Track",
+            artistName: "Artist"
+        )
+        let musicIDTrack = TrackRecord(
+            catalogID: "music-id-track",
+            libraryID: "music-id-track",
+            title: "Music ID Track",
+            artistName: "Artist"
+        )
+        let localItem = PlaylistItemRecord(playlistID: playlist.id, trackID: localTrack.id, skipCount: 0)
+        let musicIDItem = PlaylistItemRecord(playlistID: playlist.id, trackID: musicIDTrack.id, skipCount: 0)
+        context.insert(playlist)
+        context.insert(localTrack)
+        context.insert(musicIDTrack)
+        context.insert(localItem)
+        context.insert(musicIDItem)
+        let settings = OverplaySettings(
+            evictAfterSkips: 3,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 0
+        )
+
+        let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
+            activeSession: TrackPlaySession(
+                trackID: "music-id-track",
+                localTrackID: localTrack.id.uuidString,
+                sessionStartDate: .now,
+                lastObservedPlaybackTime: 15,
+                durationSeconds: 180,
+                hasEvaluated: false
+            ),
+            currentTrackID: "music-id-track",
+            elapsedSeconds: 15,
+            durationSeconds: 180,
+            currentPlaylistItem: nil,
+            playlist: playlist,
+            settings: settings,
+            naturalCompletion: false,
+            context: context
+        )
+
+        #expect(outcome?.item?.id == localItem.id)
+        #expect(localItem.skipCount == 1)
+        #expect(musicIDItem.skipCount == 0)
+    }
+
     @Test("protected track skips are ignored")
     func protectedTrackSkipsAreIgnored() throws {
         let fixture = try makeFixture(skipCount: 2, protected: true)

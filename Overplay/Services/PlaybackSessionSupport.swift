@@ -4,6 +4,7 @@ import SwiftData
 enum PlaybackSessionSupport {
     static func makeSession(
         trackID: String,
+        localTrackID: String? = nil,
         elapsedSeconds: Double,
         durationSeconds: Double?,
         sessionStartDate: Date = .now,
@@ -11,6 +12,7 @@ enum PlaybackSessionSupport {
     ) -> TrackPlaySession {
         TrackPlaySession(
             trackID: trackID,
+            localTrackID: localTrackID,
             sessionStartDate: sessionStartDate,
             lastObservedPlaybackTime: elapsedSeconds,
             durationSeconds: durationSeconds,

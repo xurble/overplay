@@ -434,6 +434,20 @@ struct PlaylistSyncService {
             playlistRecord: playlistRecord,
             in: context
         )
+
+        playlistRecord.musicPlaylistID = newID
+        playlistRecord.updatedAt = .now
+
+        let settings = try SettingsRepository.settings(in: context)
+        if settings.selectedPlaylistID == oldID {
+            settings.selectedPlaylistID = newID
+            settings.updatedAt = .now
+        }
+
+        PlaybackModeStore.rekeyMusicPlaylistID(from: oldID, to: newID, flushImmediately: true)
+        LocalPlaybackStateStore.rekeyMusicPlaylistID(from: oldID, to: newID, flushImmediately: true)
+        PlaybackIdentityStore.rekeyMusicPlaylistID(from: oldID, to: newID, flushImmediately: true)
+        try context.save()
     }
 
     private func loadTracks(for playlist: Playlist) async throws -> [Track] {

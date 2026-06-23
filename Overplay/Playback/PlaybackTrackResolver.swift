@@ -116,14 +116,18 @@ enum PlaybackTrackResolver {
         playlistItem: PlaylistItemRecord?,
         musicPlaylistID: String?,
         queueItem: MusicPlayer.Queue.Entry.Item?,
+        trustPlaylistItem: Bool = false,
         in context: ModelContext
     ) -> CurrentPlaybackTrack? {
         if let playlistItem,
-           (try? PlaybackSessionSupport.itemMatchesMusicItemID(
-               playlistItem,
-               musicItemID: musicItemID,
-               in: context
-           )) == true,
+           (
+               trustPlaylistItem ||
+               (try? PlaybackSessionSupport.itemMatchesMusicItemID(
+                   playlistItem,
+                   musicItemID: musicItemID,
+                   in: context
+               )) == true
+           ),
            let trackRecord = try? TrackRecordRepository.track(id: playlistItem.trackID, in: context) {
             return CurrentPlaybackTrack(trackRecord, musicItemID: musicItemID, item: playlistItem)
         }
@@ -132,7 +136,8 @@ enum PlaybackTrackResolver {
             return CurrentPlaybackTrack(trackRecord, musicItemID: musicItemID, item: nil)
         }
 
-        guard let snapshot = snapshot(from: queueItem, playlistID: musicPlaylistID) else {
+        guard let snapshot = snapshot(from: queueItem, playlistID: musicPlaylistID),
+              snapshot.id == musicItemID else {
             return nil
         }
 
