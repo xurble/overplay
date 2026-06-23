@@ -4,7 +4,7 @@ import SwiftData
 enum PlaylistItemRepository {
     static func allItems(in context: ModelContext) throws -> [PlaylistItemRecord] {
         let descriptor = FetchDescriptor<PlaylistItemRecord>(
-            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.createdAt)]
+            sortBy: [SortDescriptor(\.createdAt)]
         )
         return try context.fetch(descriptor)
     }
@@ -40,7 +40,7 @@ enum PlaylistItemRepository {
     static func item(id: UUID, in context: ModelContext) throws -> PlaylistItemRecord? {
         var descriptor = FetchDescriptor<PlaylistItemRecord>(
             predicate: #Predicate { $0.id == id },
-            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.createdAt)]
+            sortBy: [SortDescriptor(\.createdAt)]
         )
         descriptor.fetchLimit = 1
         descriptor.includePendingChanges = true
@@ -52,7 +52,7 @@ enum PlaylistItemRepository {
             predicate: #Predicate {
                 $0.playlistID == playlistID && $0.trackID == trackID
             },
-            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.createdAt)]
+            sortBy: [SortDescriptor(\.createdAt)]
         )
         descriptor.fetchLimit = 1
         descriptor.includePendingChanges = true
@@ -62,7 +62,7 @@ enum PlaylistItemRepository {
     static func items(forPlaylistID playlistID: UUID, in context: ModelContext) throws -> [PlaylistItemRecord] {
         var descriptor = FetchDescriptor<PlaylistItemRecord>(
             predicate: #Predicate { $0.playlistID == playlistID },
-            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.createdAt)]
+            sortBy: [SortDescriptor(\.createdAt)]
         )
         descriptor.includePendingChanges = true
         return try context.fetch(descriptor)
@@ -73,7 +73,7 @@ enum PlaylistItemRepository {
             predicate: #Predicate {
                 $0.playlistID == playlistID && $0.evictedAt == nil
             },
-            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.createdAt)]
+            sortBy: [SortDescriptor(\.createdAt)]
         )
         descriptor.includePendingChanges = true
         return try context.fetch(descriptor)
@@ -124,10 +124,7 @@ enum PlaylistItemRepository {
             item.musicPlaylistEntryID = musicPlaylistEntryID
             didChange = true
         }
-        if let sortOrder, item.sortOrder != sortOrder {
-            item.sortOrder = sortOrder
-            didChange = true
-        }
+        _ = sortOrder
         if didChange {
             item.updatedAt = .now
         }
@@ -136,5 +133,32 @@ enum PlaylistItemRepository {
             record: item,
             mutation: didChange ? .updated : .unchanged
         )
+    }
+
+    @discardableResult
+    static func removeDuplicateItems(in context: ModelContext) throws -> Int {
+        let groupedItems = Dictionary(grouping: try allItems(in: context)) { item in
+            "\(item.playlistID.uuidString)::\(item.trackID.uuidString)"
+        }
+        var removedCount = 0
+
+        for items in groupedItems.values where items.count > 1 {
+            let orderedItems = items.sorted {
+                if $0.createdAt != $1.createdAt {
+                    return $0.createdAt < $1.createdAt
+                }
+                return $0.id.uuidString < $1.id.uuidString
+            }
+
+            for duplicate in orderedItems.dropFirst() {
+                context.delete(duplicate)
+                removedCount += 1
+            }
+        }
+
+        if removedCount > 0 {
+            try context.save()
+        }
+        return removedCount
     }
 }

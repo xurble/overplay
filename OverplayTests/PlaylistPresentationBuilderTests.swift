@@ -60,16 +60,33 @@ struct PlaylistPresentationBuilderTests {
         #expect(summary.artworkURLString == "https://example.com/art.jpg")
     }
 
-    @Test("track summaries include playable tracks in playlist order with health")
+    @Test("track summaries include playable tracks in created order with health")
     func trackSummaries() {
         let playlistID = UUID()
         let firstTrack = TrackRecord(title: "First", artistName: "Artist", albumTitle: "Album")
         let secondTrack = TrackRecord(title: "Second", artistName: "Artist")
         let evictedTrack = TrackRecord(title: "Evicted", artistName: "Artist")
         let items = [
-            PlaylistItemRecord(playlistID: playlistID, trackID: secondTrack.id, sortOrder: 2, skipCount: 2),
-            PlaylistItemRecord(playlistID: playlistID, trackID: firstTrack.id, sortOrder: 1),
-            PlaylistItemRecord(playlistID: playlistID, trackID: evictedTrack.id, sortOrder: 3, evictedAt: .now)
+            PlaylistItemRecord(
+                playlistID: playlistID,
+                trackID: secondTrack.id,
+                sortOrder: 2,
+                skipCount: 2,
+                createdAt: Date(timeIntervalSince1970: 20)
+            ),
+            PlaylistItemRecord(
+                playlistID: playlistID,
+                trackID: firstTrack.id,
+                sortOrder: 1,
+                createdAt: Date(timeIntervalSince1970: 10)
+            ),
+            PlaylistItemRecord(
+                playlistID: playlistID,
+                trackID: evictedTrack.id,
+                sortOrder: 3,
+                evictedAt: .now,
+                createdAt: Date(timeIntervalSince1970: 30)
+            )
         ]
 
         let summaries = builder(items: items, tracks: [firstTrack, secondTrack, evictedTrack], evictAfterSkips: 3)
@@ -95,10 +112,9 @@ struct PlaylistPresentationBuilderTests {
         let summaries = builder(items: items, tracks: [firstTrack, secondTrack, thirdTrack])
             .trackSummaries(
                 forPlaylistID: playlistID,
-                playbackModeState: PlaybackModeState(
+                playbackOrderState: PlaybackOrderState(
                     playerID: "main",
                     musicPlaylistID: "one",
-                    shuffleEnabled: true,
                     orderedTrackIDs: [
                         thirdTrack.id.uuidString,
                         firstTrack.id.uuidString,

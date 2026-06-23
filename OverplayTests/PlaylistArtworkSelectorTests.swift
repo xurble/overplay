@@ -38,22 +38,26 @@ struct PlaylistArtworkSelectorTests {
             playlistID: playlist.id,
             trackID: evictedTrack.id,
             sortOrder: 0,
-            evictedAt: Date(timeIntervalSince1970: 10)
+            evictedAt: Date(timeIntervalSince1970: 10),
+            createdAt: Date(timeIntervalSince1970: 10)
         )
         let noArtworkItem = PlaylistItemRecord(
             playlistID: playlist.id,
             trackID: trackWithoutArtwork.id,
-            sortOrder: 1
+            sortOrder: 1,
+            createdAt: Date(timeIntervalSince1970: 20)
         )
         let firstArtworkItem = PlaylistItemRecord(
             playlistID: playlist.id,
             trackID: firstPlayableArtworkTrack.id,
-            sortOrder: 2
+            sortOrder: 2,
+            createdAt: Date(timeIntervalSince1970: 30)
         )
         let laterArtworkItem = PlaylistItemRecord(
             playlistID: playlist.id,
             trackID: laterPlayableArtworkTrack.id,
-            sortOrder: 3
+            sortOrder: 3,
+            createdAt: Date(timeIntervalSince1970: 40)
         )
         let tracksByID = [
             evictedTrack.id: evictedTrack,

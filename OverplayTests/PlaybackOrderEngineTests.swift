@@ -4,37 +4,63 @@ import Testing
 
 @Suite("Playback order engine")
 struct PlaybackOrderEngineTests {
-    @Test("shuffle promotes the current track and shuffles the rest")
-    func shufflePromotesCurrentTrack() {
-        let tracks = makeTracks(count: 5)
+    @Test("reshuffle keeps avoided track out of the top five")
+    func reshuffleKeepsAvoidedTrackOutOfTopFive() {
+        let tracks = makeTracks(count: 8)
 
-        let order = PlaybackOrderEngine.shuffleOrder(
+        let order = PlaybackOrderEngine.reshuffledOrder(
             for: tracks,
-            currentTrackID: "track-3",
-            randomize: { $0.reversed() }
+            avoiding: "track-3",
+            randomize: { $0 }
         )
 
-        #expect(order == ["track-3", "track-5", "track-4", "track-2", "track-1"])
+        #expect(order.firstIndex(of: "track-3") == 5)
     }
 
-    @Test("normal order restores playlist position")
-    func normalOrderRestoresPlaylistPosition() {
+    @Test("small reshuffle keeps avoided track away from first")
+    func smallReshuffleKeepsAvoidedTrackAwayFromFirst() {
+        let tracks = makeTracks(count: 5)
+
+        let order = PlaybackOrderEngine.reshuffledOrder(
+            for: tracks,
+            avoiding: "track-3",
+            randomize: { $0 }
+        )
+
+        #expect(order.last == "track-3")
+    }
+
+    @Test("normal order seeds from creation date")
+    func normalOrderSeedsFromCreationDate() {
         let tracks = [
-            PlaybackOrderTrack(id: "third", sortOrder: 2, createdAt: Date(timeIntervalSince1970: 30)),
-            PlaybackOrderTrack(id: "first", sortOrder: 0, createdAt: Date(timeIntervalSince1970: 10)),
-            PlaybackOrderTrack(id: "second", sortOrder: 1, createdAt: Date(timeIntervalSince1970: 20))
+            PlaybackOrderTrack(id: "third", createdAt: Date(timeIntervalSince1970: 30)),
+            PlaybackOrderTrack(id: "first", createdAt: Date(timeIntervalSince1970: 10)),
+            PlaybackOrderTrack(id: "second", createdAt: Date(timeIntervalSince1970: 20))
         ]
 
         #expect(PlaybackOrderEngine.normalOrder(for: tracks) == ["first", "second", "third"])
     }
 
-    @Test("tiny playlists keep normal order when shuffle is enabled")
-    func tinyPlaylistsKeepNormalOrder() {
+    @Test("one-track reshuffle keeps the only track")
+    func oneTrackReshuffleKeepsOnlyTrack() {
+        let tracks = makeTracks(count: 1)
+
+        let order = PlaybackOrderEngine.reshuffledOrder(
+            for: tracks,
+            avoiding: "track-1",
+            randomize: { $0.reversed() }
+        )
+
+        #expect(order == ["track-1"])
+    }
+
+    @Test("two-track reshuffle keeps avoided track second")
+    func twoTrackReshuffleKeepsAvoidedTrackSecond() {
         let tracks = makeTracks(count: 2)
 
-        let order = PlaybackOrderEngine.shuffleOrder(
+        let order = PlaybackOrderEngine.reshuffledOrder(
             for: tracks,
-            currentTrackID: "track-2",
+            avoiding: "track-2",
             randomize: { $0.reversed() }
         )
 
@@ -45,27 +71,26 @@ struct PlaybackOrderEngineTests {
     func reconcileAppendsSyncedInTracks() {
         let tracks = makeTracks(count: 4)
 
-        let order = PlaybackOrderEngine.reconciledShuffleOrder(
+        let order = PlaybackOrderEngine.reconciledOrder(
             storedOrder: ["track-2", "track-1"],
             tracks: tracks,
-            currentTrackID: nil
+            includeUnplayableTrackID: nil
         )
 
         #expect(order == ["track-2", "track-1", "track-3", "track-4"])
     }
 
-    @Test("reconcile creates shuffled order when shuffle has no stored order")
-    func reconcileCreatesShuffledOrderWhenStoredOrderIsEmpty() {
+    @Test("reconcile seeds normal order when stored order is empty")
+    func reconcileSeedsNormalOrderWhenStoredOrderIsEmpty() {
         let tracks = makeTracks(count: 4)
 
-        let order = PlaybackOrderEngine.reconciledShuffleOrder(
+        let order = PlaybackOrderEngine.reconciledOrder(
             storedOrder: [],
             tracks: tracks,
-            currentTrackID: nil,
-            randomize: { $0.reversed() }
+            includeUnplayableTrackID: nil
         )
 
-        #expect(order == ["track-4", "track-3", "track-2", "track-1"])
+        #expect(order == ["track-1", "track-2", "track-3", "track-4"])
     }
 
     @Test("reconcile removes unplayable tracks except current")
@@ -73,50 +98,23 @@ struct PlaybackOrderEngineTests {
         var tracks = makeTracks(count: 4)
         tracks[1] = PlaybackOrderTrack(
             id: "track-2",
-            sortOrder: 1,
             createdAt: Date(timeIntervalSince1970: 1),
             isPlayable: false
         )
 
-        let keptCurrent = PlaybackOrderEngine.reconciledShuffleOrder(
+        let keptCurrent = PlaybackOrderEngine.reconciledOrder(
             storedOrder: ["track-2", "track-3", "track-1", "track-4"],
             tracks: tracks,
-            currentTrackID: "track-2"
+            includeUnplayableTrackID: "track-2"
         )
-        let droppedAfterTransition = PlaybackOrderEngine.reconciledShuffleOrder(
+        let droppedAfterTransition = PlaybackOrderEngine.reconciledOrder(
             storedOrder: keptCurrent,
             tracks: tracks,
-            currentTrackID: "track-3"
+            includeUnplayableTrackID: "track-3"
         )
 
         #expect(keptCurrent == ["track-2", "track-3", "track-1", "track-4"])
         #expect(droppedAfterTransition == ["track-3", "track-1", "track-4"])
-    }
-
-    @Test("repeat shuffle keeps last played out of top five")
-    func repeatShuffleKeepsLastPlayedOutOfTopFive() {
-        let tracks = makeTracks(count: 8)
-
-        let order = PlaybackOrderEngine.repeatShuffleOrder(
-            for: tracks,
-            lastPlayedTrackID: "track-3",
-            randomize: { $0 }
-        )
-
-        #expect(order.firstIndex(of: "track-3") == 5)
-    }
-
-    @Test("repeat shuffle keeps last played last for five or fewer tracks")
-    func repeatShuffleKeepsLastPlayedLastForSmallLists() {
-        let tracks = makeTracks(count: 5)
-
-        let order = PlaybackOrderEngine.repeatShuffleOrder(
-            for: tracks,
-            lastPlayedTrackID: "track-2",
-            randomize: { $0 }
-        )
-
-        #expect(order.last == "track-2")
     }
 
     @Test("adjacent available ID uses ordered local IDs without falling back to the head")
@@ -148,7 +146,6 @@ struct PlaybackOrderEngineTests {
         (1...count).map { index in
             PlaybackOrderTrack(
                 id: "track-\(index)",
-                sortOrder: index,
                 createdAt: Date(timeIntervalSince1970: TimeInterval(index))
             )
         }

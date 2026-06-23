@@ -4,8 +4,8 @@ import Testing
 
 @Suite("Playlist display order")
 struct PlaylistDisplayOrderTests {
-    @Test("uses stored shuffle order before normal playlist order")
-    func usesStoredShuffleOrderBeforeNormalPlaylistOrder() {
+    @Test("uses stored local order before created fallback order")
+    func usesStoredLocalOrderBeforeCreatedFallbackOrder() {
         let playlistID = UUID()
         let items = [
             PlaylistItemRecord(playlistID: playlistID, trackID: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, sortOrder: 0),
@@ -13,10 +13,9 @@ struct PlaylistDisplayOrderTests {
             PlaylistItemRecord(playlistID: playlistID, trackID: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!, sortOrder: 2),
             PlaylistItemRecord(playlistID: playlistID, trackID: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!, sortOrder: 3)
         ]
-        let state = PlaybackModeState(
+        let state = PlaybackOrderState(
             playerID: "main",
             musicPlaylistID: "playlist-1",
-            shuffleEnabled: true,
             orderedTrackIDs: [
                 "00000000-0000-0000-0000-000000000003",
                 "00000000-0000-0000-0000-000000000001"

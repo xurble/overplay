@@ -6,7 +6,6 @@ enum PlaybackQueueBuilder {
         items.map { item in
             PlaybackOrderTrack(
                 id: item.trackID.uuidString,
-                sortOrder: item.sortOrder,
                 createdAt: item.createdAt,
                 isPlayable: item.isPlayable
             )

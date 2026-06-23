@@ -3,12 +3,11 @@ import Foundation
 enum PlaylistDisplayOrder {
     static func orderedItems(
         _ items: [PlaylistItemRecord],
-        state: PlaybackModeState
+        state: PlaybackOrderState
     ) -> [PlaylistItemRecord] {
         let displayOrder = PlaybackOrderEngine.displayOrder(
             for: PlaybackQueueBuilder.playbackOrderTracks(items: items),
-            storedOrder: state.orderedTrackIDs,
-            shuffleEnabled: state.shuffleEnabled
+            storedOrder: state.orderedTrackIDs
         )
         let displayIndex = displayOrder.enumerated().firstValueDictionary(
             keyedBy: \.element,
@@ -24,9 +23,6 @@ enum PlaylistDisplayOrder {
             case (nil, _?):
                 return false
             case (nil, nil):
-                if left.sortOrder != right.sortOrder {
-                    return left.sortOrder < right.sortOrder
-                }
                 if left.createdAt != right.createdAt {
                     return left.createdAt < right.createdAt
                 }

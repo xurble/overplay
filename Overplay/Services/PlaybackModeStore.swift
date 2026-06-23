@@ -1,46 +1,40 @@
 import Foundation
 
-struct PlaybackModeState: Codable, Equatable, Sendable {
+struct PlaybackOrderState: Codable, Equatable, Sendable {
     var playerID: String
     var musicPlaylistID: String
-    var shuffleEnabled: Bool
-    var repeatEnabled: Bool
     var orderedTrackIDs: [String]
     var updatedAt: Date
 
     init(
         playerID: String,
         musicPlaylistID: String,
-        shuffleEnabled: Bool = false,
-        repeatEnabled: Bool = false,
         orderedTrackIDs: [String] = [],
         updatedAt: Date = .now
     ) {
         self.playerID = playerID
         self.musicPlaylistID = musicPlaylistID
-        self.shuffleEnabled = shuffleEnabled
-        self.repeatEnabled = repeatEnabled
         self.orderedTrackIDs = orderedTrackIDs
         self.updatedAt = updatedAt
     }
 }
 
-enum PlaybackModeStore {
-    private static let key = "overplay.playbackModeStates.v1"
+enum PlaybackOrderStore {
+    private static let key = "overplay.playbackOrderStates.v1"
 
     static func state(
         playerID: String,
         musicPlaylistID: String,
         from defaults: UserDefaults = .standard
-    ) -> PlaybackModeState {
-        states(from: defaults)[storageKey(playerID: playerID, musicPlaylistID: musicPlaylistID)] ?? PlaybackModeState(
+    ) -> PlaybackOrderState {
+        states(from: defaults)[storageKey(playerID: playerID, musicPlaylistID: musicPlaylistID)] ?? PlaybackOrderState(
             playerID: playerID,
             musicPlaylistID: musicPlaylistID
         )
     }
 
     static func save(
-        _ state: PlaybackModeState,
+        _ state: PlaybackOrderState,
         to defaults: UserDefaults = .standard,
         flushImmediately: Bool = false
     ) {
@@ -56,7 +50,7 @@ enum PlaybackModeStore {
         musicPlaylistID: String,
         in defaults: UserDefaults = .standard,
         flushImmediately: Bool = false,
-        transform: (inout PlaybackModeState) -> Void
+        transform: (inout PlaybackOrderState) -> Void
     ) {
         var state = state(playerID: playerID, musicPlaylistID: musicPlaylistID, from: defaults)
         transform(&state)
@@ -98,16 +92,16 @@ enum PlaybackModeStore {
         "\(playerID)::\(musicPlaylistID)"
     }
 
-    private static func states(from defaults: UserDefaults) -> [String: PlaybackModeState] {
+    private static func states(from defaults: UserDefaults) -> [String: PlaybackOrderState] {
         guard let data = defaults.data(forKey: key) else {
             return [:]
         }
 
-        return (try? JSONDecoder().decode([String: PlaybackModeState].self, from: data)) ?? [:]
+        return (try? JSONDecoder().decode([String: PlaybackOrderState].self, from: data)) ?? [:]
     }
 
     private static func save(
-        _ states: [String: PlaybackModeState],
+        _ states: [String: PlaybackOrderState],
         to defaults: UserDefaults,
         flushImmediately: Bool
     ) {

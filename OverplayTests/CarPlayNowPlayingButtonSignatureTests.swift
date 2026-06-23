@@ -6,7 +6,7 @@ import Testing
 @MainActor
 @Suite("CarPlay now playing button signature", .serialized)
 struct CarPlayNowPlayingButtonSignatureTests {
-    @Test("reflects presentation state for track health and playback modes")
+    @Test("reflects presentation state for track health")
     func reflectsPresentationState() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
@@ -40,7 +40,6 @@ struct CarPlayNowPlayingButtonSignatureTests {
             artistName: track.artistName
         )
         controller.currentPlaylistItem = item
-        controller.setRepeatEnabled(true)
 
         let signature = CarPlayNowPlayingButtonSignature.make(
             playbackController: controller,
@@ -57,19 +56,12 @@ struct CarPlayNowPlayingButtonSignatureTests {
             settings: settings,
             context: context
         )
-        let controls = NowPlayingPresentationFactory.playbackControlsPresentation(
-            playbackController: controller,
-            settings: settings,
-            context: context
-        )
 
         #expect(signature.trackID == nowPlaying.trackID)
         #expect(signature.skipCount == nowPlaying.skipCount)
         #expect(signature.isProtected == nowPlaying.isProtected)
         #expect(signature.isEvicted == nowPlaying.isEvicted)
-        #expect(signature.shuffleEnabled == controls.shuffleEnabled)
-        #expect(signature.repeatEnabled == controls.repeatEnabled)
-        #expect(signature.skipForwardIntent == controls.skipForwardIntent)
+        #expect(signature.skipForwardIntent == .standard)
         #expect(health.title == "Protected")
     }
 
@@ -137,8 +129,6 @@ struct CarPlayNowPlayingButtonSignatureTests {
             skipCount: 0,
             isProtected: false,
             isEvicted: false,
-            shuffleEnabled: false,
-            repeatEnabled: false,
             skipForwardIntent: .standard
         )
 

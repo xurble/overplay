@@ -6,8 +6,6 @@ struct CarPlayNowPlayingButtonSignature: Equatable {
     var skipCount: Int
     var isProtected: Bool
     var isEvicted: Bool
-    var shuffleEnabled: Bool
-    var repeatEnabled: Bool
     var skipForwardIntent: PlaybackSkipForwardIntent
 
     var trackActionMenuSystemImage: String {

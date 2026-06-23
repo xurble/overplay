@@ -2,22 +2,20 @@ import Foundation
 import Testing
 @testable import Overplay
 
-@Suite("Playback mode store")
-struct PlaybackModeStoreTests {
-    @Test("stores independent mode state by player and playlist")
-    func storesIndependentModeStateByPlayerAndPlaylist() throws {
-        let suiteName = "OverplayTests.PlaybackModeStore.\(UUID().uuidString)"
+@Suite("Playback order store")
+struct PlaybackOrderStoreTests {
+    @Test("stores independent order state by player and playlist")
+    func storesIndependentOrderStateByPlayerAndPlaylist() throws {
+        let suiteName = "OverplayTests.PlaybackOrderStore.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer {
             defaults.removePersistentDomain(forName: suiteName)
         }
 
-        PlaybackModeStore.save(
-            PlaybackModeState(
+        PlaybackOrderStore.save(
+            PlaybackOrderState(
                 playerID: "main",
                 musicPlaylistID: "playlist-1",
-                shuffleEnabled: true,
-                repeatEnabled: true,
                 orderedTrackIDs: ["a", "b"],
                 updatedAt: Date(timeIntervalSince1970: 100)
             ),
@@ -25,68 +23,59 @@ struct PlaybackModeStoreTests {
             flushImmediately: true
         )
 
-        let saved = PlaybackModeStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults)
-        let otherPlaylist = PlaybackModeStore.state(playerID: "main", musicPlaylistID: "playlist-2", from: defaults)
-        let otherPlayer = PlaybackModeStore.state(playerID: "carplay", musicPlaylistID: "playlist-1", from: defaults)
+        let saved = PlaybackOrderStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults)
+        let otherPlaylist = PlaybackOrderStore.state(playerID: "main", musicPlaylistID: "playlist-2", from: defaults)
+        let otherPlayer = PlaybackOrderStore.state(playerID: "carplay", musicPlaylistID: "playlist-1", from: defaults)
 
-        #expect(saved.shuffleEnabled)
-        #expect(saved.repeatEnabled)
         #expect(saved.orderedTrackIDs == ["a", "b"])
-        #expect(!otherPlaylist.shuffleEnabled)
-        #expect(!otherPlaylist.repeatEnabled)
         #expect(otherPlaylist.orderedTrackIDs.isEmpty)
-        #expect(!otherPlayer.shuffleEnabled)
-        #expect(!otherPlayer.repeatEnabled)
         #expect(otherPlayer.orderedTrackIDs.isEmpty)
     }
 
-    @Test("updates and clears stored mode state")
-    func updatesAndClearsStoredModeState() throws {
-        let suiteName = "OverplayTests.PlaybackModeStore.\(UUID().uuidString)"
+    @Test("updates and clears stored order state")
+    func updatesAndClearsStoredOrderState() throws {
+        let suiteName = "OverplayTests.PlaybackOrderStore.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer {
             defaults.removePersistentDomain(forName: suiteName)
         }
 
-        PlaybackModeStore.update(
+        PlaybackOrderStore.update(
             playerID: "main",
             musicPlaylistID: "playlist-1",
             in: defaults,
             flushImmediately: true
         ) { state in
-            state.shuffleEnabled = true
             state.orderedTrackIDs = ["track-1"]
         }
 
-        #expect(PlaybackModeStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults).shuffleEnabled)
+        #expect(PlaybackOrderStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults).orderedTrackIDs == ["track-1"])
 
-        PlaybackModeStore.clear(
+        PlaybackOrderStore.clear(
             playerID: "main",
             musicPlaylistID: "playlist-1",
             from: defaults,
             flushImmediately: true
         )
 
-        #expect(!PlaybackModeStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults).shuffleEnabled)
+        #expect(PlaybackOrderStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults).orderedTrackIDs.isEmpty)
     }
 
-    @Test("rekeys stored mode state when playlist ID heals")
-    func rekeysStoredModeStateWhenPlaylistIDHeals() throws {
-        let suiteName = "OverplayTests.PlaybackModeStore.\(UUID().uuidString)"
+    @Test("rekeys stored order state when playlist ID heals")
+    func rekeysStoredOrderStateWhenPlaylistIDHeals() throws {
+        let suiteName = "OverplayTests.PlaybackOrderStore.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer {
             defaults.removePersistentDomain(forName: suiteName)
         }
 
-        PlaybackModeStore.update(playerID: "main", musicPlaylistID: "p.old", in: defaults) { state in
-            state.shuffleEnabled = true
+        PlaybackOrderStore.update(playerID: "main", musicPlaylistID: "p.old", in: defaults) { state in
             state.orderedTrackIDs = ["track-1"]
         }
 
-        PlaybackModeStore.rekeyMusicPlaylistID(from: "p.old", to: "p.new", from: defaults, flushImmediately: true)
+        PlaybackOrderStore.rekeyMusicPlaylistID(from: "p.old", to: "p.new", from: defaults, flushImmediately: true)
 
-        #expect(PlaybackModeStore.state(playerID: "main", musicPlaylistID: "p.new", from: defaults).shuffleEnabled)
-        #expect(PlaybackModeStore.state(playerID: "main", musicPlaylistID: "p.new", from: defaults).orderedTrackIDs == ["track-1"])
-        #expect(!PlaybackModeStore.state(playerID: "main", musicPlaylistID: "p.old", from: defaults).shuffleEnabled)
+        #expect(PlaybackOrderStore.state(playerID: "main", musicPlaylistID: "p.new", from: defaults).orderedTrackIDs == ["track-1"])
+        #expect(PlaybackOrderStore.state(playerID: "main", musicPlaylistID: "p.old", from: defaults).orderedTrackIDs.isEmpty)
     }
 }

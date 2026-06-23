@@ -10,8 +10,9 @@ struct PlaylistSyncReconciliationTests {
     func reconcileInsertsTracksAndPlaylistItems() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
+        let musicPlaylistID = "playlist-\(UUID().uuidString)"
         let playlist = PlaylistRecord(
-            musicPlaylistID: "playlist-1",
+            musicPlaylistID: musicPlaylistID,
             name: "Main",
             role: .oneTruePlaylist
         )
@@ -34,7 +35,11 @@ struct PlaylistSyncReconciliationTests {
         #expect(try TrackRecordRepository.allTracks(in: context).count == 2)
         let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
         #expect(items.count == 2)
-        #expect(items.map(\.sortOrder) == [0, 1])
+        #expect(summary.insertedLocalTrackIDs.count == 2)
+        #expect(PlaybackOrderStore.state(
+            playerID: "main",
+            musicPlaylistID: musicPlaylistID
+        ).orderedTrackIDs == summary.insertedLocalTrackIDs)
         #expect(playlist.lastSyncedAt == Date(timeIntervalSince1970: 100))
     }
 
@@ -135,12 +140,13 @@ struct PlaylistSyncReconciliationTests {
         #expect(item.lastSeenInPlaylistAt == itemLastSeenInPlaylistAt)
     }
 
-    @Test("reconcile reports changed sort order")
-    func reconcileReportsChangedSortOrder() throws {
+    @Test("reconcile ignores remote sort order changes")
+    func reconcileIgnoresRemoteSortOrderChanges() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
+        let musicPlaylistID = "playlist-\(UUID().uuidString)"
         let playlist = PlaylistRecord(
-            musicPlaylistID: "playlist-1",
+            musicPlaylistID: musicPlaylistID,
             name: "Main",
             role: .oneTruePlaylist
         )
@@ -154,6 +160,10 @@ struct PlaylistSyncReconciliationTests {
             syncedAt: Date(timeIntervalSince1970: 100),
             in: context
         )
+        let firstOrder = PlaybackOrderStore.state(
+            playerID: "main",
+            musicPlaylistID: musicPlaylistID
+        ).orderedTrackIDs
 
         let summary = try PlaylistSyncService().reconcile(
             snapshots: [
@@ -168,10 +178,48 @@ struct PlaylistSyncReconciliationTests {
         let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
         #expect(summary.fetchedCount == 2)
         #expect(summary.insertedCount == 0)
-        #expect(summary.updatedCount == 2)
-        #expect(summary.unchangedCount == 0)
-        #expect(items.map(\.sortOrder) == [0, 1])
-        #expect(items.allSatisfy { $0.lastSeenInPlaylistAt == Date(timeIntervalSince1970: 200) })
+        #expect(summary.updatedCount == 0)
+        #expect(summary.unchangedCount == 2)
+        #expect(items.count == 2)
+        #expect(PlaybackOrderStore.state(
+            playerID: "main",
+            musicPlaylistID: musicPlaylistID
+        ).orderedTrackIDs == firstOrder)
+        #expect(items.allSatisfy { $0.lastSeenInPlaylistAt != Date(timeIntervalSince1970: 200) })
+    }
+
+    @Test("reconcile collapses duplicate remote tracks")
+    func reconcileCollapsesDuplicateRemoteTracks() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let musicPlaylistID = "playlist-\(UUID().uuidString)"
+        let playlist = PlaylistRecord(
+            musicPlaylistID: musicPlaylistID,
+            name: "Main",
+            role: .oneTruePlaylist
+        )
+        context.insert(playlist)
+
+        let summary = try PlaylistSyncService().reconcile(
+            snapshots: [
+                snapshot(id: "track-1", title: "First"),
+                snapshot(id: "track-1", title: "First Duplicate"),
+                snapshot(id: "track-2", title: "Second")
+            ],
+            playlistRecord: playlist,
+            syncedAt: Date(timeIntervalSince1970: 100),
+            in: context
+        )
+
+        #expect(summary.fetchedCount == 3)
+        #expect(summary.insertedCount == 2)
+        #expect(summary.skippedCount == 1)
+        #expect(try TrackRecordRepository.allTracks(in: context).count == 2)
+        #expect(try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context).count == 2)
+        #expect(PlaybackOrderStore.state(
+            playerID: "main",
+            musicPlaylistID: musicPlaylistID
+        ).orderedTrackIDs.count == 2)
     }
 
     @Test("reconcile remote removals keeps local item playable")

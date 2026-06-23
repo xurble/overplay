@@ -18,7 +18,7 @@ struct RemoteCommandServiceTests {
         let initialTargetCount = service.registeredTargetCount
 
         #expect(service.isActive)
-        #expect(initialTargetCount == 7)
+        #expect(initialTargetCount == 6)
         #expect(service.context === firstContext)
 
         service.update(playbackController: playbackController, context: secondContext)
@@ -55,67 +55,48 @@ struct RemoteCommandServiceTests {
         service.deactivate()
     }
 
-    @Test("sync publishes Overplay playback modes to remote command center")
-    func syncPublishesOverplayPlaybackModesToRemoteCommandCenter() throws {
+    @Test("sync publishes shuffle off and repeat all to remote command center")
+    func syncPublishesPlaybackModesToRemoteCommandCenter() throws {
         let playlistID = "playlist-\(UUID().uuidString)"
         let playerID = "player-\(UUID().uuidString)"
         let playbackController = PlaybackController(playerID: playerID)
         let service = RemoteCommandService()
         let commandCenter = MPRemoteCommandCenter.shared()
         defer {
-            PlaybackModeStore.clear(playerID: playerID, musicPlaylistID: playlistID, flushImmediately: true)
+            PlaybackOrderStore.clear(playerID: playerID, musicPlaylistID: playlistID, flushImmediately: true)
             commandCenter.changeShuffleModeCommand.currentShuffleType = .off
             commandCenter.changeRepeatModeCommand.currentRepeatType = .off
         }
 
         playbackController.currentPlaylistID = playlistID
-        PlaybackModeStore.save(
-            PlaybackModeState(
+        PlaybackOrderStore.save(
+            PlaybackOrderState(
                 playerID: playerID,
-                musicPlaylistID: playlistID,
-                shuffleEnabled: true,
-                repeatEnabled: true
+                musicPlaylistID: playlistID
             ),
             flushImmediately: true
         )
 
         service.syncPlaybackModes(from: playbackController)
 
-        #expect(commandCenter.changeShuffleModeCommand.currentShuffleType == .items)
+        #expect(commandCenter.changeShuffleModeCommand.currentShuffleType == .off)
         #expect(commandCenter.changeRepeatModeCommand.currentRepeatType == .all)
     }
 
-    @Test("repeat one remote command collapses to unsupported off state")
-    func repeatOneRemoteCommandCollapsesToUnsupportedOffState() throws {
-        let playlistID = "playlist-\(UUID().uuidString)"
-        let playerID = "player-\(UUID().uuidString)"
-        let playbackController = PlaybackController(playerID: playerID)
+    @Test("activation disables repeat command")
+    func activationDisablesRepeatCommand() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = ModelContext(container)
+        let playbackController = PlaybackController()
         let service = RemoteCommandService()
         let commandCenter = MPRemoteCommandCenter.shared()
         defer {
-            PlaybackModeStore.clear(playerID: playerID, musicPlaylistID: playlistID, flushImmediately: true)
-            commandCenter.changeShuffleModeCommand.currentShuffleType = .off
-            commandCenter.changeRepeatModeCommand.currentRepeatType = .off
+            service.deactivate()
         }
 
-        playbackController.currentPlaylistID = playlistID
-        PlaybackModeStore.save(
-            PlaybackModeState(
-                playerID: playerID,
-                musicPlaylistID: playlistID,
-                repeatEnabled: true
-            ),
-            flushImmediately: true
-        )
+        service.activate(playbackController: playbackController, context: context)
 
-        let result = service.applyRepeatModeCommand(
-            .one,
-            source: "Test",
-            playbackController: playbackController
-        )
-
-        #expect(result == .success)
-        #expect(!playbackController.repeatEnabled)
-        #expect(commandCenter.changeRepeatModeCommand.currentRepeatType == .off)
+        #expect(!commandCenter.changeRepeatModeCommand.isEnabled)
+        #expect(commandCenter.changeRepeatModeCommand.currentRepeatType == .all)
     }
 }

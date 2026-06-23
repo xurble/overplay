@@ -2,13 +2,11 @@ import Foundation
 
 struct PlaybackOrderTrack: Equatable, Sendable {
     var id: String
-    var sortOrder: Int
     var createdAt: Date
     var isPlayable: Bool
 
-    init(id: String, sortOrder: Int, createdAt: Date, isPlayable: Bool = true) {
+    init(id: String, createdAt: Date, isPlayable: Bool = true) {
         self.id = id
-        self.sortOrder = sortOrder
         self.createdAt = createdAt
         self.isPlayable = isPlayable
     }
@@ -16,83 +14,58 @@ struct PlaybackOrderTrack: Equatable, Sendable {
 
 enum PlaybackOrderEngine {
     static func normalOrder(for tracks: [PlaybackOrderTrack], includeUnplayableTrackID: String? = nil) -> [String] {
-        ordered(tracks)
+        uniqueIDs(ordered(tracks)
             .filter { $0.isPlayable || $0.id == includeUnplayableTrackID }
-            .map(\.id)
+            .map(\.id))
     }
 
-    static func shuffleOrder(
+    static func reshuffledOrder(
         for tracks: [PlaybackOrderTrack],
-        currentTrackID: String?,
+        avoiding avoidedTrackID: String?,
         randomize: ([String]) -> [String] = { $0.shuffled() }
     ) -> [String] {
         let playableIDs = normalOrder(for: tracks)
-        guard playableIDs.count > 2 else {
+        guard playableIDs.count > 1 else {
             return playableIDs
         }
 
-        guard let currentTrackID, playableIDs.contains(currentTrackID) else {
+        guard let avoidedTrackID, playableIDs.contains(avoidedTrackID) else {
             return randomize(playableIDs)
         }
 
-        return [currentTrackID] + randomize(playableIDs.filter { $0 != currentTrackID })
-    }
-
-    static func reconciledShuffleOrder(
-        storedOrder: [String],
-        tracks: [PlaybackOrderTrack],
-        currentTrackID: String?,
-        randomize: ([String]) -> [String] = { $0.shuffled() }
-    ) -> [String] {
-        let playableIDs = normalOrder(for: tracks)
-        guard playableIDs.count > 2 else {
-            return playableIDs
-        }
-
-        guard !storedOrder.isEmpty else {
-            return shuffleOrder(
-                for: tracks,
-                currentTrackID: currentTrackID,
-                randomize: randomize
-            )
-        }
-
-        let playableSet = Set(playableIDs)
-        var reconciled = storedOrder.filter { playableSet.contains($0) || $0 == currentTrackID }
-        let existingSet = Set(reconciled)
-        reconciled.append(contentsOf: playableIDs.filter { !existingSet.contains($0) })
-        return reconciled
-    }
-
-    static func repeatShuffleOrder(
-        for tracks: [PlaybackOrderTrack],
-        lastPlayedTrackID: String,
-        randomize: ([String]) -> [String] = { $0.shuffled() }
-    ) -> [String] {
-        let playableIDs = normalOrder(for: tracks)
-        guard playableIDs.count > 2 else {
-            return playableIDs
-        }
-
-        let remainingIDs = randomize(playableIDs.filter { $0 != lastPlayedTrackID })
-        guard playableIDs.contains(lastPlayedTrackID) else {
-            return randomize(playableIDs)
-        }
-
-        if playableIDs.count <= 5 {
-            return remainingIDs + [lastPlayedTrackID]
+        let remainingIDs = randomize(playableIDs.filter { $0 != avoidedTrackID })
+        guard playableIDs.count > 5 else {
+            return remainingIDs + [avoidedTrackID]
         }
 
         let insertionIndex = min(5, remainingIDs.count)
-        return Array(remainingIDs.prefix(insertionIndex)) + [lastPlayedTrackID] + Array(remainingIDs.dropFirst(insertionIndex))
+        return Array(remainingIDs.prefix(insertionIndex))
+            + [avoidedTrackID]
+            + Array(remainingIDs.dropFirst(insertionIndex))
+    }
+
+    static func reconciledOrder(
+        storedOrder: [String],
+        tracks: [PlaybackOrderTrack],
+        includeUnplayableTrackID: String? = nil
+    ) -> [String] {
+        let availableIDs = normalOrder(for: tracks, includeUnplayableTrackID: includeUnplayableTrackID)
+        guard !storedOrder.isEmpty else {
+            return availableIDs
+        }
+
+        let availableSet = Set(availableIDs)
+        var reconciled = uniqueIDs(storedOrder).filter { availableSet.contains($0) }
+        let existingSet = Set(reconciled)
+        reconciled.append(contentsOf: availableIDs.filter { !existingSet.contains($0) })
+        return reconciled
     }
 
     static func displayOrder(
         for tracks: [PlaybackOrderTrack],
-        storedOrder: [String],
-        shuffleEnabled: Bool
+        storedOrder: [String]
     ) -> [String] {
-        guard shuffleEnabled, !storedOrder.isEmpty else {
+        guard !storedOrder.isEmpty else {
             return ordered(tracks).map(\.id)
         }
 
@@ -138,12 +111,14 @@ enum PlaybackOrderEngine {
     }
 
     private static func normalPrecedes(_ left: PlaybackOrderTrack, _ right: PlaybackOrderTrack) -> Bool {
-        if left.sortOrder != right.sortOrder {
-            return left.sortOrder < right.sortOrder
-        }
         if left.createdAt != right.createdAt {
             return left.createdAt < right.createdAt
         }
         return left.id < right.id
+    }
+
+    private static func uniqueIDs(_ ids: [String]) -> [String] {
+        var seen = Set<String>()
+        return ids.filter { seen.insert($0).inserted }
     }
 }

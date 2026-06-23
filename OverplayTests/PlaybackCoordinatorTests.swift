@@ -5,30 +5,28 @@ import Testing
 
 @Suite("Playback coordinators")
 struct PlaybackCoordinatorTests {
-    @Test("shuffle enable stores an order retaining the current track first")
-    func shuffleEnableStoresCurrentTrackFirst() throws {
+    @Test("reshuffle stores an order with avoided track out of first position")
+    func reshuffleStoresOrderAvoidingFirstPosition() throws {
         let defaults = try #require(UserDefaults(suiteName: "OverplayTests.PlaybackCoordinator.\(UUID().uuidString)"))
         let trackIDs = [UUID(), UUID(), UUID()]
         let orderTracks = playbackItems(trackIDs)
-        let currentLocalTrackID = trackIDs[1].uuidString
+        let avoidedLocalTrackID = trackIDs[1].uuidString
 
-        PlaybackModeCoordinator.setShuffleEnabled(
-            true,
+        let orderedTrackIDs = PlaybackOrderCoordinator.reshuffle(
             playerID: "main",
             playlistID: "playlist-1",
             orderTracks: orderTracks,
-            currentLocalTrackID: currentLocalTrackID,
+            avoiding: avoidedLocalTrackID,
             defaults: defaults
         )
 
-        let state = PlaybackModeStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults)
-        #expect(state.shuffleEnabled)
-        #expect(state.orderedTrackIDs.first == currentLocalTrackID)
+        let state = PlaybackOrderStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults)
+        #expect(orderedTrackIDs.first != avoidedLocalTrackID)
         #expect(Set(state.orderedTrackIDs) == Set(trackIDs.map(\.uuidString)))
     }
 
-    @Test("starting playback at a track keeps the stored shuffled order")
-    func startingPlaybackAtTrackKeepsStoredShuffledOrder() throws {
+    @Test("ordered track IDs preserve stored local order")
+    func orderedTrackIDsPreserveStoredLocalOrder() throws {
         let defaults = try #require(UserDefaults(suiteName: "OverplayTests.PlaybackCoordinator.\(UUID().uuidString)"))
         let trackIDs = [UUID(), UUID(), UUID(), UUID()]
         let orderTracks = playbackItems(trackIDs)
@@ -38,58 +36,55 @@ struct PlaybackCoordinatorTests {
             trackIDs[3].uuidString,
             trackIDs[1].uuidString
         ]
-        PlaybackModeStore.save(
-            PlaybackModeState(
+        PlaybackOrderStore.save(
+            PlaybackOrderState(
                 playerID: "main",
                 musicPlaylistID: "playlist-1",
-                shuffleEnabled: true,
                 orderedTrackIDs: storedOrder
             ),
             to: defaults
         )
 
-        let orderedTrackIDs = PlaybackModeCoordinator.orderedTrackIDs(
+        let orderedTrackIDs = PlaybackOrderCoordinator.orderedTrackIDs(
             orderTracks: orderTracks,
             playerID: "main",
             playlistID: "playlist-1",
-            startingTrackID: trackIDs[1].uuidString,
-            promoteStartingTrackInShuffle: false,
             defaults: defaults
         )
 
-        let state = PlaybackModeStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults)
+        let state = PlaybackOrderStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults)
         #expect(orderedTrackIDs == storedOrder)
         #expect(state.orderedTrackIDs == storedOrder)
     }
 
-    @Test("repeat restart keeps last played last for small shuffled queues")
-    func repeatRestartKeepsLastPlayedLastForSmallShuffledQueues() throws {
+    @Test("append track IDs adds only playable missing tracks")
+    func appendTrackIDsAddsOnlyPlayableMissingTracks() throws {
         let defaults = try #require(UserDefaults(suiteName: "OverplayTests.PlaybackCoordinator.\(UUID().uuidString)"))
-        let trackIDs = [UUID(), UUID(), UUID()]
-        let orderTracks = playbackItems(trackIDs)
-        let lastLocalTrackID = trackIDs[0].uuidString
-        PlaybackModeStore.save(
-            PlaybackModeState(
+        let trackIDs = [UUID(), UUID(), UUID(), UUID()]
+        var orderTracks = playbackItems(trackIDs)
+        orderTracks[3] = PlaybackOrderTrack(
+            id: trackIDs[3].uuidString,
+            createdAt: Date(timeIntervalSince1970: 3),
+            isPlayable: false
+        )
+        PlaybackOrderStore.save(
+            PlaybackOrderState(
                 playerID: "main",
                 musicPlaylistID: "playlist-1",
-                shuffleEnabled: true,
-                orderedTrackIDs: trackIDs.map(\.uuidString)
+                orderedTrackIDs: [trackIDs[0].uuidString]
             ),
             to: defaults
         )
 
-        let restart = PlaybackModeCoordinator.repeatRestartOrder(
-            orderTracks: orderTracks,
+        let orderedTrackIDs = PlaybackOrderCoordinator.appendTrackIDs(
+            [trackIDs[1].uuidString, trackIDs[3].uuidString, trackIDs[0].uuidString],
             playerID: "main",
             playlistID: "playlist-1",
-            lastLocalTrackID: lastLocalTrackID,
+            orderTracks: orderTracks,
             defaults: defaults
         )
 
-        let state = PlaybackModeStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults)
-        #expect(restart.didUpdateStoredShuffleOrder)
-        #expect(restart.orderedTrackIDs.last == lastLocalTrackID)
-        #expect(state.orderedTrackIDs == restart.orderedTrackIDs)
+        #expect(orderedTrackIDs == [trackIDs[0].uuidString, trackIDs[1].uuidString])
     }
 
     @Test("active queue index advances and clears at bounds")
@@ -190,7 +185,6 @@ struct PlaybackCoordinatorTests {
         trackIDs.enumerated().map { index, trackID in
             PlaybackOrderTrack(
                 id: trackID.uuidString,
-                sortOrder: index,
                 createdAt: Date(timeIntervalSince1970: Double(index))
             )
         }

@@ -98,6 +98,7 @@ struct PlaylistMutationService {
         promotedItem.evictionSource = nil
         promotedItem.lastSeenInPlaylistAt = promotedAt
         promotedItem.updatedAt = promotedAt
+        try appendToLocalOrder(item: promotedItem, playlist: oneTruePlaylist, in: context)
 
         EventRepository.logHistory(
             playlistID: sourcePlaylist.id,
@@ -151,6 +152,7 @@ struct PlaylistMutationService {
         item.evictionSource = nil
         item.lastSeenInPlaylistAt = addedAt
         item.updatedAt = addedAt
+        try appendToLocalOrder(item: item, playlist: playlist, in: context)
 
         EventRepository.logHistory(
             playlistID: playlist.id,
@@ -205,5 +207,19 @@ struct PlaylistMutationService {
             throw PlaylistMutationError.musicItemMissing
         }
         return song
+    }
+
+    private func appendToLocalOrder(
+        item: PlaylistItemRecord,
+        playlist: PlaylistRecord,
+        in context: ModelContext
+    ) throws {
+        let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
+        PlaybackOrderCoordinator.appendTrackIDs(
+            [item.trackID.uuidString],
+            playerID: "main",
+            playlistID: playlist.musicPlaylistID,
+            orderTracks: PlaybackQueueBuilder.playbackOrderTracks(items: items)
+        )
     }
 }

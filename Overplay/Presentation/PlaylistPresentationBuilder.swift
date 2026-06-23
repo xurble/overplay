@@ -40,10 +40,10 @@ struct PlaylistPresentationBuilder {
 
     func trackSummaries(
         forPlaylistID playlistID: UUID,
-        playbackModeState: PlaybackModeState? = nil
+        playbackOrderState: PlaybackOrderState? = nil
     ) -> [TrackSummaryPresentation] {
         let playableItems = itemsForPlaylist(playlistID).filter(\.isPlayable)
-        let orderedItems = playbackModeState.map {
+        let orderedItems = playbackOrderState.map {
             PlaylistDisplayOrder.orderedItems(playableItems, state: $0)
         } ?? playableItems.sorted(by: areItemsInPlaylistOrder)
 
@@ -94,10 +94,6 @@ struct PlaylistPresentationBuilder {
     }
 
     private func areItemsInPlaylistOrder(_ left: PlaylistItemRecord, _ right: PlaylistItemRecord) -> Bool {
-        if left.sortOrder != right.sortOrder {
-            return left.sortOrder < right.sortOrder
-        }
-
         return left.createdAt < right.createdAt
     }
 }

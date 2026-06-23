@@ -23,7 +23,6 @@ struct PlaylistManagementView: View {
                 item.playlistID == playlistID
             },
             sort: [
-                SortDescriptor(\PlaylistItemRecord.sortOrder),
                 SortDescriptor(\PlaylistItemRecord.createdAt)
             ]
         )
@@ -159,7 +158,7 @@ struct PlaylistManagementView: View {
             for: playlist,
             playlistItems: playlistItems,
             tracks: tracks,
-            playbackModeState: playbackController.playbackModeState(for: playlist.musicPlaylistID),
+            playbackOrderState: playbackController.playbackOrderState(for: playlist.musicPlaylistID),
             currentPlaylistID: playbackController.currentPlaylistID,
             currentPlaylistItem: playbackController.currentPlaylistItem,
             currentTrack: playbackController.currentTrack,

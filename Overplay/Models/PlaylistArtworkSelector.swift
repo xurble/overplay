@@ -9,9 +9,6 @@ enum PlaylistArtworkSelector {
         items
             .filter { $0.playlistID == playlist.id && $0.isPlayable }
             .sorted { left, right in
-                if left.sortOrder != right.sortOrder {
-                    return left.sortOrder < right.sortOrder
-                }
                 return left.createdAt < right.createdAt
             }
             .lazy

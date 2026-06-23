@@ -80,7 +80,7 @@ final class PlaylistManagementViewModel {
         for playlist: PlaylistRecord,
         playlistItems: [PlaylistItemRecord],
         tracks: [TrackRecord],
-        playbackModeState: PlaybackModeState,
+        playbackOrderState: PlaybackOrderState,
         currentPlaylistID: String?,
         currentPlaylistItem: PlaylistItemRecord?,
         currentTrack: CurrentPlaybackTrack?,
@@ -89,7 +89,7 @@ final class PlaylistManagementViewModel {
     ) -> DetailPresentation {
         _ = playbackItemMetadataVersion
         let visibleItems = visibleItems(for: playlist, playlistItems: playlistItems)
-        let orderedItems = PlaylistDisplayOrder.orderedItems(visibleItems, state: playbackModeState)
+        let orderedItems = PlaylistDisplayOrder.orderedItems(visibleItems, state: playbackOrderState)
         let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
         let rows = orderedItems.compactMap { item -> TrackRowPresentation? in
             guard let track = tracksByID[item.trackID] else { return nil }
@@ -144,11 +144,11 @@ final class PlaylistManagementViewModel {
     func orderedItems(
         for playlist: PlaylistRecord,
         playlistItems: [PlaylistItemRecord],
-        playbackModeState: PlaybackModeState
+        playbackOrderState: PlaybackOrderState
     ) -> [PlaylistItemRecord] {
         PlaylistDisplayOrder.orderedItems(
             visibleItems(for: playlist, playlistItems: playlistItems),
-            state: playbackModeState
+            state: playbackOrderState
         )
     }
 
@@ -265,6 +265,7 @@ final class PlaylistManagementViewModel {
 
         do {
             try await dependencies.promote(item, context)
+            dependencies.reconcileStoredOrder(playlist, context)
             message = "Promoted \(track.title)."
         } catch {
             message = error.localizedDescription
@@ -284,6 +285,7 @@ final class PlaylistManagementViewModel {
 
         do {
             try dependencies.evict(item, playlist, context)
+            dependencies.reconcileStoredOrder(playlist, context)
             message = "Evicted \(track.title)."
         } catch {
             message = error.localizedDescription

@@ -1,5 +1,4 @@
 import MediaPlayer
-@preconcurrency import MusicKit
 import Testing
 @testable import Overplay
 
@@ -19,34 +18,5 @@ struct RemotePlaybackModeMapperTests {
         #expect(RemotePlaybackModeMapper.canonicalShuffleType(for: .off) == .off)
         #expect(RemotePlaybackModeMapper.canonicalShuffleType(for: .items) == .items)
         #expect(RemotePlaybackModeMapper.canonicalShuffleType(for: .collections) == .items)
-    }
-
-    @Test func mapsRepeatEnabledToRemoteRepeatTypes() {
-        #expect(RemotePlaybackModeMapper.repeatType(for: false) == .off)
-        #expect(RemotePlaybackModeMapper.repeatType(for: true) == .all)
-    }
-
-    @Test func mapsRemoteRepeatTypesToRepeatEnabled() {
-        #expect(!RemotePlaybackModeMapper.repeatEnabled(for: .off))
-        #expect(RemotePlaybackModeMapper.repeatEnabled(for: .all))
-        #expect(!RemotePlaybackModeMapper.repeatEnabled(for: .one))
-    }
-
-    @Test func canonicalizesRemoteRepeatTypesToSupportedStates() {
-        #expect(RemotePlaybackModeMapper.canonicalRepeatType(for: .off) == .off)
-        #expect(RemotePlaybackModeMapper.canonicalRepeatType(for: .all) == .all)
-        #expect(RemotePlaybackModeMapper.canonicalRepeatType(for: .one) == .off)
-    }
-
-    @Test func mapsMusicRepeatModesToRemoteRepeatTypes() {
-        #expect(RemotePlaybackModeMapper.repeatType(for: .none) == .off)
-        #expect(RemotePlaybackModeMapper.repeatType(for: .one) == .off)
-        #expect(RemotePlaybackModeMapper.repeatType(for: .all) == .all)
-    }
-
-    @Test func mapsRemoteRepeatTypesToMusicRepeatModes() {
-        #expect(RemotePlaybackModeMapper.repeatMode(for: .off) == .none)
-        #expect(RemotePlaybackModeMapper.repeatMode(for: .one) == .none)
-        #expect(RemotePlaybackModeMapper.repeatMode(for: .all) == .all)
     }
 }

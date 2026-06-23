@@ -106,9 +106,7 @@ enum NowPlayingPresentationFactory {
         playbackController: PlaybackController
     ) -> PlaybackControlsPresentation {
         PlaybackControlsPresentation(
-            isPlaying: playbackController.isPlaying,
-            shuffleEnabled: playbackController.shuffleEnabled,
-            repeatEnabled: playbackController.repeatEnabled
+            isPlaying: playbackController.isPlaying
         )
     }
 
@@ -120,8 +118,6 @@ enum NowPlayingPresentationFactory {
     ) -> PlaybackControlsPresentation {
         PlaybackControlsPresentation(
             isPlaying: playbackController.isPlaying,
-            shuffleEnabled: playbackController.shuffleEnabled,
-            repeatEnabled: playbackController.repeatEnabled,
             skipForwardIntent: playbackController.skipForwardIntent(
                 settings: settings,
                 context: context,
@@ -147,8 +143,6 @@ enum NowPlayingPresentationFactory {
             skipCount: nowPlaying.skipCount,
             isProtected: nowPlaying.isProtected,
             isEvicted: nowPlaying.isEvicted,
-            shuffleEnabled: controls.shuffleEnabled,
-            repeatEnabled: controls.repeatEnabled,
             skipForwardIntent: controls.skipForwardIntent
         )
     }

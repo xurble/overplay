@@ -18,7 +18,7 @@ enum CarPlayLibrarySnapshot {
 
     static func trackSummaries(
         forPlaylistID playlistID: UUID,
-        playbackModeState: PlaybackModeState? = nil,
+        playbackOrderState: PlaybackOrderState? = nil,
         in context: ModelContext
     ) throws -> [TrackSummaryPresentation] {
         let items = try PlaylistItemRepository.items(forPlaylistID: playlistID, in: context)
@@ -28,6 +28,6 @@ enum CarPlayLibrarySnapshot {
             items: items,
             tracks: tracks,
             evictAfterSkips: 0
-        ).trackSummaries(forPlaylistID: playlistID, playbackModeState: playbackModeState)
+        ).trackSummaries(forPlaylistID: playlistID, playbackOrderState: playbackOrderState)
     }
 }

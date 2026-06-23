@@ -17,17 +17,16 @@ struct PlaylistManagementViewModelTests {
         let firstItem = PlaylistItemRecord(playlistID: playlist.id, trackID: firstTrack.id, sortOrder: 0)
         let secondItem = PlaylistItemRecord(playlistID: playlist.id, trackID: secondTrack.id, sortOrder: 1)
         let otherItem = PlaylistItemRecord(playlistID: otherPlaylist.id, trackID: otherTrack.id, sortOrder: 0)
-        let state = PlaybackModeState(
+        let state = PlaybackOrderState(
             playerID: "player",
             musicPlaylistID: playlist.musicPlaylistID,
-            shuffleEnabled: true,
             orderedTrackIDs: [secondTrack.id.uuidString, firstTrack.id.uuidString]
         )
 
         let orderedItems = viewModel.orderedItems(
             for: playlist,
             playlistItems: [firstItem, otherItem, secondItem],
-            playbackModeState: state
+            playbackOrderState: state
         )
 
         #expect(orderedItems.map(\.id) == [secondItem.id, firstItem.id])
@@ -67,10 +66,9 @@ struct PlaylistManagementViewModelTests {
             evictedAt: .now
         )
         let otherItem = PlaylistItemRecord(playlistID: otherPlaylist.id, trackID: otherTrack.id, sortOrder: 0)
-        let state = PlaybackModeState(
+        let state = PlaybackOrderState(
             playerID: "player",
             musicPlaylistID: playlist.musicPlaylistID,
-            shuffleEnabled: true,
             orderedTrackIDs: [
                 secondTrack.id.uuidString,
                 firstTrack.id.uuidString,
@@ -82,7 +80,7 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [firstItem, otherItem, secondItem, evictedItem],
             tracks: [otherTrack, evictedTrack, firstTrack, secondTrack],
-            playbackModeState: state,
+            playbackOrderState: state,
             currentPlaylistID: playlist.musicPlaylistID,
             currentPlaylistItem: secondItem,
             currentTrack: CurrentPlaybackTrack(id: "second", title: "Second", artistName: "Artist"),
@@ -113,7 +111,7 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [item],
             tracks: [track],
-            playbackModeState: PlaybackModeState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
+            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
             currentPlaylistID: playlist.musicPlaylistID,
             currentPlaylistItem: item,
             currentTrack: CurrentPlaybackTrack(id: "track", title: "Track", artistName: "Artist"),
@@ -127,7 +125,7 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [item],
             tracks: [track],
-            playbackModeState: PlaybackModeState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
+            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
             currentPlaylistID: playlist.musicPlaylistID,
             currentPlaylistItem: item,
             currentTrack: CurrentPlaybackTrack(id: "track", title: "Track", artistName: "Artist"),

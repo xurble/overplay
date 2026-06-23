@@ -44,7 +44,7 @@ struct CarPlayLibrarySnapshotTests {
         #expect(summaries.last?.playableTrackCount == 0)
     }
 
-    @Test func trackSummariesIncludePlayableTracksInPlaylistOrder() throws {
+    @Test func trackSummariesIncludePlayableTracksInCreatedOrder() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = ModelContext(container)
 
@@ -58,9 +58,26 @@ struct CarPlayLibrarySnapshotTests {
         context.insert(secondTrack)
         context.insert(evictedTrack)
 
-        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: secondTrack.id, sortOrder: 2, skipCount: 2))
-        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: firstTrack.id, sortOrder: 1))
-        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: evictedTrack.id, sortOrder: 3, evictedAt: .now))
+        context.insert(PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: secondTrack.id,
+            sortOrder: 2,
+            skipCount: 2,
+            createdAt: Date(timeIntervalSince1970: 20)
+        ))
+        context.insert(PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: firstTrack.id,
+            sortOrder: 1,
+            createdAt: Date(timeIntervalSince1970: 10)
+        ))
+        context.insert(PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: evictedTrack.id,
+            sortOrder: 3,
+            evictedAt: .now,
+            createdAt: Date(timeIntervalSince1970: 30)
+        ))
         try context.save()
 
         let tracks = try CarPlayLibrarySnapshot.trackSummaries(
@@ -102,10 +119,9 @@ struct CarPlayLibrarySnapshotTests {
 
         let tracks = try CarPlayLibrarySnapshot.trackSummaries(
             forPlaylistID: playlist.id,
-            playbackModeState: PlaybackModeState(
+            playbackOrderState: PlaybackOrderState(
                 playerID: "main",
                 musicPlaylistID: playlist.musicPlaylistID,
-                shuffleEnabled: true,
                 orderedTrackIDs: [
                     thirdTrack.id.uuidString,
                     firstTrack.id.uuidString,

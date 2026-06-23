@@ -35,8 +35,6 @@ enum PlaybackSkipForwardIntent: Equatable, Sendable {
 
 struct PlaybackControlsPresentation: Equatable, Sendable {
     let isPlaying: Bool
-    let shuffleEnabled: Bool
-    let repeatEnabled: Bool
     var skipForwardIntent: PlaybackSkipForwardIntent = .standard
 
     var primarySystemImage: String {
@@ -48,23 +46,11 @@ struct PlaybackControlsPresentation: Equatable, Sendable {
     }
 
     var shuffleSystemImage: String {
-        shuffleEnabled ? "shuffle.circle.fill" : "shuffle"
+        "shuffle"
     }
 
     var shuffleTitle: String {
         "Shuffle"
-    }
-
-    var repeatModeTitle: String {
-        repeatEnabled ? "All" : "Off"
-    }
-
-    var repeatTitle: String {
-        "Repeat \(repeatModeTitle)"
-    }
-
-    var repeatSystemImage: String {
-        "repeat"
     }
 
     var skipForwardSystemImage: String {

@@ -41,19 +41,16 @@ enum PlaybackQueueOrchestrator {
         playlistID: String,
         playerID: String,
         startingTrackID: String?,
-        promoteStartingTrackInShuffle: Bool = false,
         retainedTrackID: String? = nil,
         in context: ModelContext
     ) throws -> [PlaybackQueueEntry] {
         let inputs = try playlistInputs(for: playlistID, in: context)
         let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: inputs.items)
-        let orderedTrackIDs = PlaybackModeCoordinator.orderedTrackIDs(
+        let orderedTrackIDs = PlaybackOrderCoordinator.orderedTrackIDs(
             orderTracks: orderTracks,
             playerID: playerID,
             playlistID: playlistID,
-            startingTrackID: startingTrackID,
-            promoteStartingTrackInShuffle: promoteStartingTrackInShuffle,
-            retainedTrackID: retainedTrackID
+            retainedTrackID: retainedTrackID ?? startingTrackID
         )
 
         let musicTracksByLocalID = PlaybackQueueCoordinator.musicTracksByLocalID(
@@ -81,19 +78,16 @@ enum PlaybackQueueOrchestrator {
         for playlistID: String,
         playerID: String,
         startingTrackID: String? = nil,
-        promoteStartingTrackInShuffle: Bool = false,
         retainedTrackID: String? = nil,
         in context: ModelContext
     ) throws -> [PlaybackQueueEntry] {
         let inputs = try playlistInputs(for: playlistID, in: context)
         let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: inputs.items)
-        let orderedTrackIDs = PlaybackModeCoordinator.orderedTrackIDs(
+        let orderedTrackIDs = PlaybackOrderCoordinator.orderedTrackIDs(
             orderTracks: orderTracks,
             playerID: playerID,
             playlistID: playlistID,
-            startingTrackID: startingTrackID,
-            promoteStartingTrackInShuffle: promoteStartingTrackInShuffle,
-            retainedTrackID: retainedTrackID
+            retainedTrackID: retainedTrackID ?? startingTrackID
         )
 
         return PlaybackQueueCoordinator.cachedEntries(
@@ -111,7 +105,7 @@ enum PlaybackQueueOrchestrator {
     ) throws -> [String] {
         let inputs = try playlistInputs(for: playlistID, in: context)
         let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: inputs.items)
-        return PlaybackModeCoordinator.orderedTrackIDs(
+        return PlaybackOrderCoordinator.orderedTrackIDs(
             orderTracks: orderTracks,
             playerID: playerID,
             playlistID: playlistID,
@@ -148,7 +142,6 @@ enum PlaybackQueueOrchestrator {
         playlistID: String,
         playerID: String,
         startingTrackID: String?,
-        promoteStartingTrackInShuffle: Bool = false,
         retainedTrackID: String? = nil,
         in context: ModelContext
     ) throws -> [Track] {
@@ -157,7 +150,6 @@ enum PlaybackQueueOrchestrator {
             playlistID: playlistID,
             playerID: playerID,
             startingTrackID: startingTrackID,
-            promoteStartingTrackInShuffle: promoteStartingTrackInShuffle,
             retainedTrackID: retainedTrackID,
             in: context
         )
@@ -168,30 +160,24 @@ enum PlaybackQueueOrchestrator {
         PlaybackQueueCoordinator.queueTracks(from: entries, fallback: tracks)
     }
 
-    static func repeatRestartQueueEntries(
+    static func reshuffledQueueEntries(
         playlistID: String,
         playerID: String,
-        lastMusicItemID: String,
-        lastLocalTrackID: String? = nil,
+        avoiding avoidedLocalTrackID: String?,
         in context: ModelContext
-    ) throws -> (entries: [PlaybackQueueEntry], didUpdateStoredShuffleOrder: Bool) {
+    ) throws -> [PlaybackQueueEntry] {
         let inputs = try playlistInputs(for: playlistID, in: context)
         let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: inputs.items)
-        let resolvedLastLocalTrackID = lastLocalTrackID ?? PlaybackQueueBuilder.localTrackID(
-            matching: lastMusicItemID,
-            tracksByID: inputs.tracksByID
-        )
-        let restartOrder = PlaybackModeCoordinator.repeatRestartOrder(
-            orderTracks: orderTracks,
+        let orderedTrackIDs = PlaybackOrderCoordinator.reshuffle(
             playerID: playerID,
             playlistID: playlistID,
-            lastLocalTrackID: resolvedLastLocalTrackID
+            orderTracks: orderTracks,
+            avoiding: avoidedLocalTrackID
         )
-        let entries = cachedQueueEntries(
-            orderedTrackIDs: restartOrder.orderedTrackIDs,
+        return cachedQueueEntries(
+            orderedTrackIDs: orderedTrackIDs,
             itemsByTrackID: inputs.items.firstValueDictionary(keyedBy: \.trackID),
             tracksByID: inputs.tracksByID
         )
-        return (entries, restartOrder.didUpdateStoredShuffleOrder)
     }
 }

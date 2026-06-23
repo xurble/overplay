@@ -1,122 +1,141 @@
 import Foundation
 
-enum PlaybackModeCoordinator {
+enum PlaybackOrderCoordinator {
     static func orderedTrackIDs(
         orderTracks: [PlaybackOrderTrack],
         playerID: String,
         playlistID: String,
-        startingTrackID: String? = nil,
-        promoteStartingTrackInShuffle: Bool = false,
         retainedTrackID: String? = nil,
         defaults: UserDefaults = .standard
     ) -> [String] {
-        var state = PlaybackModeStore.state(playerID: playerID, musicPlaylistID: playlistID, from: defaults)
+        let state = reconciledState(
+            orderTracks: orderTracks,
+            playerID: playerID,
+            playlistID: playlistID,
+            retainedTrackID: retainedTrackID,
+            defaults: defaults
+        )
+        return state.orderedTrackIDs
+    }
 
-        if state.shuffleEnabled {
-            let orderedTrackIDs: [String]
-            if promoteStartingTrackInShuffle, let startingTrackID {
-                orderedTrackIDs = PlaybackOrderEngine.shuffleOrder(
-                    for: orderTracks,
-                    currentTrackID: startingTrackID
-                )
-            } else {
-                orderedTrackIDs = PlaybackOrderEngine.reconciledShuffleOrder(
-                    storedOrder: state.orderedTrackIDs,
-                    tracks: orderTracks,
-                    currentTrackID: retainedTrackID
-                )
-            }
-            state.orderedTrackIDs = orderedTrackIDs
-            PlaybackModeStore.save(state, to: defaults, flushImmediately: true)
-            return orderedTrackIDs
+    @discardableResult
+    static func reshuffle(
+        playerID: String,
+        playlistID: String,
+        orderTracks: [PlaybackOrderTrack],
+        avoiding avoidedTrackID: String?,
+        flushImmediately: Bool = true,
+        defaults: UserDefaults = .standard
+    ) -> [String] {
+        let orderedTrackIDs = PlaybackOrderEngine.reshuffledOrder(
+            for: orderTracks,
+            avoiding: avoidedTrackID
+        )
+        PlaybackOrderStore.save(
+            PlaybackOrderState(
+                playerID: playerID,
+                musicPlaylistID: playlistID,
+                orderedTrackIDs: orderedTrackIDs
+            ),
+            to: defaults,
+            flushImmediately: flushImmediately
+        )
+        return orderedTrackIDs
+    }
+
+    @discardableResult
+    static func appendTrackIDs(
+        _ trackIDs: [String],
+        playerID: String,
+        playlistID: String,
+        orderTracks: [PlaybackOrderTrack],
+        flushImmediately: Bool = true,
+        defaults: UserDefaults = .standard
+    ) -> [String] {
+        let state = PlaybackOrderStore.state(playerID: playerID, musicPlaylistID: playlistID, from: defaults)
+        let existing = Set(state.orderedTrackIDs)
+        let available = Set(PlaybackOrderEngine.normalOrder(for: orderTracks))
+        let appended = trackIDs.filter { available.contains($0) && !existing.contains($0) }
+        guard !appended.isEmpty else {
+            return state.orderedTrackIDs
         }
 
-        return PlaybackOrderEngine.normalOrder(
-            for: orderTracks,
+        let orderedTrackIDs = state.orderedTrackIDs + appended
+        PlaybackOrderStore.save(
+            PlaybackOrderState(
+                playerID: playerID,
+                musicPlaylistID: playlistID,
+                orderedTrackIDs: orderedTrackIDs
+            ),
+            to: defaults,
+            flushImmediately: flushImmediately
+        )
+        return orderedTrackIDs
+    }
+
+    @discardableResult
+    static func removeTrackIDs(
+        _ trackIDs: Set<String>,
+        playerID: String,
+        playlistID: String,
+        flushImmediately: Bool = true,
+        defaults: UserDefaults = .standard
+    ) -> [String] {
+        let state = PlaybackOrderStore.state(playerID: playerID, musicPlaylistID: playlistID, from: defaults)
+        let orderedTrackIDs = state.orderedTrackIDs.filter { !trackIDs.contains($0) }
+        guard orderedTrackIDs != state.orderedTrackIDs else {
+            return state.orderedTrackIDs
+        }
+
+        PlaybackOrderStore.save(
+            PlaybackOrderState(
+                playerID: playerID,
+                musicPlaylistID: playlistID,
+                orderedTrackIDs: orderedTrackIDs
+            ),
+            to: defaults,
+            flushImmediately: flushImmediately
+        )
+        return orderedTrackIDs
+    }
+
+    @discardableResult
+    static func reconciledState(
+        orderTracks: [PlaybackOrderTrack],
+        playerID: String,
+        playlistID: String,
+        retainedTrackID: String? = nil,
+        flushImmediately: Bool = true,
+        defaults: UserDefaults = .standard
+    ) -> PlaybackOrderState {
+        var state = PlaybackOrderStore.state(playerID: playerID, musicPlaylistID: playlistID, from: defaults)
+        let orderedTrackIDs = PlaybackOrderEngine.reconciledOrder(
+            storedOrder: state.orderedTrackIDs,
+            tracks: orderTracks,
             includeUnplayableTrackID: retainedTrackID
         )
-    }
-
-    static func setShuffleEnabled(
-        _ isEnabled: Bool,
-        playerID: String,
-        playlistID: String,
-        orderTracks: [PlaybackOrderTrack],
-        currentLocalTrackID: String?,
-        flushImmediately: Bool = true,
-        defaults: UserDefaults = .standard
-    ) {
-        PlaybackModeStore.update(
-            playerID: playerID,
-            musicPlaylistID: playlistID,
-            in: defaults,
-            flushImmediately: flushImmediately
-        ) { state in
-            state.shuffleEnabled = isEnabled
-            state.orderedTrackIDs = if isEnabled {
-                PlaybackOrderEngine.shuffleOrder(
-                    for: orderTracks,
-                    currentTrackID: currentLocalTrackID
-                )
-            } else {
-                []
-            }
-        }
-    }
-
-    static func setRepeatEnabled(
-        _ isEnabled: Bool,
-        playerID: String,
-        playlistID: String,
-        flushImmediately: Bool = true,
-        defaults: UserDefaults = .standard
-    ) {
-        PlaybackModeStore.update(
-            playerID: playerID,
-            musicPlaylistID: playlistID,
-            in: defaults,
-            flushImmediately: flushImmediately
-        ) { state in
-            state.repeatEnabled = isEnabled
-        }
-    }
-
-    static func repeatRestartOrder(
-        orderTracks: [PlaybackOrderTrack],
-        playerID: String,
-        playlistID: String,
-        lastLocalTrackID: String?,
-        defaults: UserDefaults = .standard
-    ) -> (orderedTrackIDs: [String], didUpdateStoredShuffleOrder: Bool) {
-        var state = PlaybackModeStore.state(playerID: playerID, musicPlaylistID: playlistID, from: defaults)
-
-        if state.shuffleEnabled {
-            let orderedTrackIDs = if let lastLocalTrackID {
-                PlaybackOrderEngine.repeatShuffleOrder(
-                    for: orderTracks,
-                    lastPlayedTrackID: lastLocalTrackID
-                )
-            } else {
-                PlaybackOrderEngine.shuffleOrder(for: orderTracks, currentTrackID: nil)
-            }
+        if state.orderedTrackIDs != orderedTrackIDs {
             state.orderedTrackIDs = orderedTrackIDs
-            PlaybackModeStore.save(state, to: defaults, flushImmediately: true)
-            return (orderedTrackIDs, true)
+            PlaybackOrderStore.save(state, to: defaults, flushImmediately: flushImmediately)
         }
-
-        return (PlaybackOrderEngine.normalOrder(for: orderTracks), false)
+        return state
     }
 
-    static func reconciledStoredOrder(
-        storedOrder: [String],
-        orderTracks: [PlaybackOrderTrack],
-        currentTrackID: String?
-    ) -> [String] {
-        PlaybackOrderEngine.reconciledShuffleOrder(
-            storedOrder: storedOrder,
-            tracks: orderTracks,
-            currentTrackID: currentTrackID
-        )
+    static func updateOrder(
+        playerID: String,
+        playlistID: String,
+        flushImmediately: Bool = true,
+        defaults: UserDefaults = .standard,
+        transform: (inout [String]) -> Void
+    ) {
+        PlaybackOrderStore.update(
+            playerID: playerID,
+            musicPlaylistID: playlistID,
+            in: defaults,
+            flushImmediately: flushImmediately
+        ) { state in
+            transform(&state.orderedTrackIDs)
+        }
     }
 
     static func adjacentAvailableID(

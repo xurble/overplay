@@ -255,21 +255,8 @@ struct PlaybackModeControlsView: View {
             }
             .fullScreenPlayerControlStyle(
                 palette: controlPalette,
-                prominence: controlsPresentation.shuffleEnabled ? .selected : .secondary,
-                fallbackTint: controlsPresentation.shuffleEnabled ? .accentColor : .secondary.opacity(0.24)
-            )
-
-            Button {
-                playbackController.toggleRepeat()
-                runtime.remoteCommandService.syncPlaybackModes(from: playbackController)
-            } label: {
-                Label(controlsPresentation.repeatTitle, systemImage: controlsPresentation.repeatSystemImage)
-                    .frame(maxWidth: .infinity)
-            }
-            .fullScreenPlayerControlStyle(
-                palette: controlPalette,
-                prominence: controlsPresentation.repeatEnabled ? .selected : .secondary,
-                fallbackTint: controlsPresentation.repeatEnabled ? .accentColor : .secondary.opacity(0.24)
+                prominence: .secondary,
+                fallbackTint: .secondary.opacity(0.24)
             )
         }
     }

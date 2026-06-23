@@ -264,33 +264,36 @@ struct NewModelRepositoryTests {
         #expect(updated.skipCount == 2)
     }
 
-    @Test("playlist items are returned in synced playlist order")
-    func playlistItemsAreReturnedInSyncedPlaylistOrder() throws {
+    @Test("playlist items are returned in created order")
+    func playlistItemsAreReturnedInCreatedOrder() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let playlistID = UUID()
 
-        let last = try PlaylistItemRepository.upsert(
+        let last = PlaylistItemRecord(
             playlistID: playlistID,
             trackID: UUID(),
             musicPlaylistEntryID: "entry-last",
             sortOrder: 2,
-            in: context
+            createdAt: Date(timeIntervalSince1970: 30)
         )
-        let first = try PlaylistItemRepository.upsert(
+        let first = PlaylistItemRecord(
             playlistID: playlistID,
             trackID: UUID(),
             musicPlaylistEntryID: "entry-first",
             sortOrder: 0,
-            in: context
+            createdAt: Date(timeIntervalSince1970: 10)
         )
-        let middle = try PlaylistItemRepository.upsert(
+        let middle = PlaylistItemRecord(
             playlistID: playlistID,
             trackID: UUID(),
             musicPlaylistEntryID: "entry-middle",
             sortOrder: 1,
-            in: context
+            createdAt: Date(timeIntervalSince1970: 20)
         )
+        context.insert(last)
+        context.insert(first)
+        context.insert(middle)
 
         let items = try PlaylistItemRepository.items(forPlaylistID: playlistID, in: context)
 
@@ -308,13 +311,15 @@ struct NewModelRepositoryTests {
         let playableItem = PlaylistItemRecord(
             playlistID: playlistID,
             trackID: playableTrackID,
-            sortOrder: 1
+            sortOrder: 1,
+            createdAt: Date(timeIntervalSince1970: 10)
         )
         let evictedItem = PlaylistItemRecord(
             playlistID: playlistID,
             trackID: evictedTrackID,
             sortOrder: 0,
-            evictedAt: Date(timeIntervalSince1970: 100)
+            evictedAt: Date(timeIntervalSince1970: 100),
+            createdAt: Date(timeIntervalSince1970: 20)
         )
         let otherPlaylistItem = PlaylistItemRecord(
             playlistID: otherPlaylistID,
@@ -332,10 +337,45 @@ struct NewModelRepositoryTests {
             in: context
         )
 
-        #expect(allPlaylistItems.map(\.id) == [evictedItem.id, playableItem.id])
+        #expect(allPlaylistItems.map(\.id) == [playableItem.id, evictedItem.id])
         #expect(playableItems.map(\.id) == [playableItem.id])
         #expect(fetchedItem?.id == playableItem.id)
         #expect(try PlaylistItemRepository.item(id: evictedItem.id, in: context)?.id == evictedItem.id)
+    }
+
+    @Test("playlist item repository removes duplicate memberships")
+    func playlistItemRepositoryRemovesDuplicateMemberships() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlistID = UUID()
+        let trackID = UUID()
+        let keptItem = PlaylistItemRecord(
+            playlistID: playlistID,
+            trackID: trackID,
+            musicPlaylistEntryID: "entry-kept",
+            createdAt: Date(timeIntervalSince1970: 10)
+        )
+        let duplicateItem = PlaylistItemRecord(
+            playlistID: playlistID,
+            trackID: trackID,
+            musicPlaylistEntryID: "entry-duplicate",
+            createdAt: Date(timeIntervalSince1970: 20)
+        )
+        let otherItem = PlaylistItemRecord(
+            playlistID: playlistID,
+            trackID: UUID(),
+            musicPlaylistEntryID: "entry-other",
+            createdAt: Date(timeIntervalSince1970: 30)
+        )
+        context.insert(duplicateItem)
+        context.insert(otherItem)
+        context.insert(keptItem)
+
+        let removedCount = try PlaylistItemRepository.removeDuplicateItems(in: context)
+        let items = try PlaylistItemRepository.items(forPlaylistID: playlistID, in: context)
+
+        #expect(removedCount == 1)
+        #expect(items.map(\.id) == [keptItem.id, otherItem.id])
     }
 
     @Test("track repository fetches scoped tracks by predicate")

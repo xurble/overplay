@@ -30,6 +30,7 @@ struct PlaylistSyncSummary: Equatable {
     var unchangedCount = 0
     var skippedCount = 0
     var skippedReason: String?
+    var insertedLocalTrackIDs: [String] = []
     var artworkWarmupSnapshots: [TrackSnapshot] = []
 }
 
@@ -101,7 +102,7 @@ struct PlaylistSyncService {
             syncedAt: .now,
             in: context
         )
-        summary.skippedCount = fetchResult.skippedCount
+        summary.skippedCount += fetchResult.skippedCount
         summary.skippedReason = fetchResult.skippedReason
         try context.save()
         logSyncSummary(summary, playlistRecord: playlistRecord)
@@ -193,8 +194,15 @@ struct PlaylistSyncService {
         in context: ModelContext
     ) throws -> PlaylistSyncSummary {
         var summary = PlaylistSyncSummary(fetchedCount: snapshots.count)
+        var seenRemoteTrackKeys = Set<String>()
 
         for (sortOrder, snapshot) in snapshots.enumerated() {
+            let remoteTrackKey = snapshot.catalogID ?? snapshot.libraryID ?? snapshot.id
+            guard seenRemoteTrackKeys.insert(remoteTrackKey).inserted else {
+                summary.skippedCount += 1
+                continue
+            }
+
             let existingTrack = try TrackRecordRepository.track(
                 catalogID: snapshot.catalogID ?? snapshot.id,
                 libraryID: snapshot.libraryID ?? snapshot.id,
@@ -221,7 +229,6 @@ struct PlaylistSyncService {
                     playlistID: playlistRecord.id,
                     trackID: trackResult.record.id,
                     musicPlaylistEntryID: snapshot.playlistEntryID,
-                    sortOrder: sortOrder,
                     in: context
                 )
 
@@ -234,6 +241,9 @@ struct PlaylistSyncService {
                     itemMutation: itemResult.mutation
                 )
                 record(mutation, in: &summary)
+                if mutation == .inserted {
+                    summary.insertedLocalTrackIDs.append(trackResult.record.id.uuidString)
+                }
                 if mutation == .inserted || trackResult.shouldWarmUpArtworkTheme {
                     summary.artworkWarmupSnapshots.append(snapshot)
                 }
@@ -258,6 +268,13 @@ struct PlaylistSyncService {
         playlistRecord.lastSyncedAt = syncedAt
         playlistRecord.lastSyncError = nil
         playlistRecord.updatedAt = syncedAt
+        let items = try PlaylistItemRepository.items(forPlaylistID: playlistRecord.id, in: context)
+        PlaybackOrderCoordinator.appendTrackIDs(
+            summary.insertedLocalTrackIDs,
+            playerID: "main",
+            playlistID: playlistRecord.musicPlaylistID,
+            orderTracks: PlaybackQueueBuilder.playbackOrderTracks(items: items)
+        )
         return summary
     }
 
