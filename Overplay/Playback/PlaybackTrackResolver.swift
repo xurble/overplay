@@ -136,7 +136,8 @@ enum PlaybackTrackResolver {
             return CurrentPlaybackTrack(trackRecord, musicItemID: musicItemID, item: nil)
         }
 
-        guard let snapshot = snapshot(from: queueItem, playlistID: musicPlaylistID) else {
+        guard let snapshot = snapshot(from: queueItem, playlistID: musicPlaylistID),
+              snapshot.id == musicItemID else {
             return nil
         }
 

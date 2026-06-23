@@ -163,6 +163,9 @@ enum PlaybackSessionEvaluationService {
                   context: context
               ) else {
             session.hasEvaluated = true
+            TrackMetadataDiagnostics.log(
+                "session evaluation could not resolve playlist item trackID=\(session.trackID) localTrackID=\(session.localTrackID ?? "nil") fallbackLocalTrackID=\(fallbackLocalTrackID ?? "nil") playlist=\(TrackMetadataDiagnostics.describe(playlist)) currentItem=\(TrackMetadataDiagnostics.describe(currentPlaylistItem))"
+            )
             return EvaluationOutcome(
                 session: session,
                 playlist: playlist,
@@ -194,6 +197,9 @@ enum PlaybackSessionEvaluationService {
         }
         session.hasEvaluated = true
         try context.save()
+        TrackMetadataDiagnostics.log(
+            "session evaluation saved naturalCompletion=\(naturalCompletion) trackID=\(session.trackID) localTrackID=\(session.localTrackID ?? "nil") progress=\(session.progressPercentage.map { String(format: "%.1f", $0) } ?? "nil") playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item))"
+        )
 
         return EvaluationOutcome(
             session: session,
@@ -236,6 +242,9 @@ enum PlaybackSessionEvaluationService {
         )
         session.hasEvaluated = true
         try context.save()
+        TrackMetadataDiagnostics.log(
+            "playthrough evaluation saved trackID=\(session.trackID) localTrackID=\(session.localTrackID ?? "nil") progress=\(session.progressPercentage.map { String(format: "%.1f", $0) } ?? "nil") playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item))"
+        )
 
         return EvaluationOutcome(
             session: session,

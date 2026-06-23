@@ -6,7 +6,13 @@ enum NowPlayingPresentationFactory {
         playbackController: PlaybackController,
         settings: OverplaySettings
     ) -> NowPlayingPresentation {
-        NowPlayingPresentation(
+        if let item = playbackController.currentPlaylistItem,
+           item.skipCount != playbackController.currentTrack?.skipCount {
+            TrackMetadataDiagnostics.log(
+                "now playing presentation without context has stale snapshot item=\(TrackMetadataDiagnostics.describe(item)) snapshot=\(TrackMetadataDiagnostics.describe(playbackController.currentTrack))"
+            )
+        }
+        return NowPlayingPresentation(
             trackID: playbackController.currentTrack?.id,
             title: playbackController.currentTrack?.title,
             artistName: playbackController.currentTrack?.artistName,
@@ -31,7 +37,15 @@ enum NowPlayingPresentationFactory {
         settings: OverplaySettings,
         context: ModelContext
     ) -> NowPlayingPresentation {
-        NowPlayingPresentation(
+        let displayedSkipCount = playbackController.displayedSkipCount(context: context)
+        if displayedSkipCount == 0,
+           let snapshotSkipCount = playbackController.currentTrack?.skipCount,
+           snapshotSkipCount > 0 {
+            TrackMetadataDiagnostics.log(
+                "now playing context presentation resolved zero skips while snapshot has \(snapshotSkipCount) track=\(TrackMetadataDiagnostics.describe(playbackController.currentTrack)) item=\(TrackMetadataDiagnostics.describe(playbackController.currentPlaylistItem))"
+            )
+        }
+        return NowPlayingPresentation(
             trackID: playbackController.currentTrack?.id,
             title: playbackController.currentTrack?.title,
             artistName: playbackController.currentTrack?.artistName,
@@ -44,7 +58,7 @@ enum NowPlayingPresentationFactory {
             minimumSkipListeningSeconds: settings.minimumSkipListeningSeconds,
             playthroughThresholdPercentage: settings.playthroughThresholdPercentage,
             playthroughResetsSkipCount: settings.playthroughResetsSkipCount,
-            skipCount: playbackController.displayedSkipCount(context: context),
+            skipCount: displayedSkipCount,
             evictAfterSkips: settings.evictAfterSkips,
             isEvicted: playbackController.displayedIsEvicted(context: context),
             isProtected: playbackController.displayedIsProtected(context: context)

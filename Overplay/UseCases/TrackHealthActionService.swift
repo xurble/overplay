@@ -1,13 +1,7 @@
 import Foundation
-import OSLog
 import SwiftData
 
 enum TrackHealthActionService {
-    private static let logger = Logger(
-        subsystem: Bundle.main.bundleIdentifier ?? "Overplay",
-        category: "TrackHealth"
-    )
-
     static func keepCurrentTrack(
         _ item: PlaylistItemRecord,
         playlist: PlaylistRecord,
@@ -30,6 +24,9 @@ enum TrackHealthActionService {
             in: context
         )
         try context.save()
+        TrackMetadataDiagnostics.log(
+            "manual keep saved playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) protect=\(protect)"
+        )
     }
 
     static func resetSkipCount(
@@ -51,8 +48,8 @@ enum TrackHealthActionService {
             in: context
         )
         try context.save()
-        logger.info(
-            "Reset skip count for playlist \(playlist.musicPlaylistID, privacy: .public), item \(item.id.uuidString, privacy: .public), previous \(previousSkipCount, privacy: .public)"
+        TrackMetadataDiagnostics.log(
+            "manual reset skip count saved playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) previousSkips=\(previousSkipCount)"
         )
     }
 
@@ -90,6 +87,9 @@ enum TrackHealthActionService {
             in: context
         )
         try context.save()
+        TrackMetadataDiagnostics.log(
+            "manual protected state saved playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) isProtected=\(isProtected)"
+        )
     }
 
     static func evictTrack(
@@ -109,6 +109,9 @@ enum TrackHealthActionService {
             context: context
         )
         try context.save()
+        TrackMetadataDiagnostics.log(
+            "manual eviction saved playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) reason=\(reason.rawValue) source=\(source.rawValue)"
+        )
     }
 
     static func restoreTrack(
@@ -118,5 +121,8 @@ enum TrackHealthActionService {
     ) throws {
         EvictionEngine.restore(item, playlist: playlist, context: context)
         try context.save()
+        TrackMetadataDiagnostics.log(
+            "manual restore saved playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item))"
+        )
     }
 }

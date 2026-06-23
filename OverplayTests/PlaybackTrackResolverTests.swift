@@ -187,6 +187,47 @@ struct PlaybackTrackResolverTests {
         #expect(update.track?.skipCount == 3)
     }
 
+    @Test("metadata sync lets queue correlated identity replace stale display")
+    func metadataSyncLetsQueueCorrelatedIdentityReplaceStaleDisplay() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(musicPlaylistID: "playlist-1", name: "Main", role: .oneTruePlaylist)
+        let staleTrack = TrackRecord(
+            catalogID: "kennedy",
+            libraryID: "kennedy",
+            title: "Kennedy",
+            artistName: "Stale Artist"
+        )
+        let currentTrack = TrackRecord(
+            catalogID: "shimmy",
+            libraryID: "shimmy",
+            title: "Shimmy Shimmy",
+            artistName: "Current Artist"
+        )
+        let staleItem = PlaylistItemRecord(playlistID: playlist.id, trackID: staleTrack.id, skipCount: 1)
+        let currentItem = PlaylistItemRecord(playlistID: playlist.id, trackID: currentTrack.id, skipCount: 7)
+        context.insert(playlist)
+        context.insert(staleTrack)
+        context.insert(currentTrack)
+        context.insert(staleItem)
+        context.insert(currentItem)
+
+        let update = PlaybackTrackMetadataSync.metadataUpdate(
+            for: "shimmy",
+            currentTrack: CurrentPlaybackTrack(staleTrack, musicItemID: "kennedy", item: staleItem),
+            currentPlaylistItem: staleItem,
+            trustedPlaylistItem: currentItem,
+            currentPlaylistID: playlist.musicPlaylistID,
+            queueItem: nil,
+            in: context
+        )
+
+        #expect(update.playlistItem?.id == currentItem.id)
+        #expect(update.track?.id == "shimmy")
+        #expect(update.track?.title == "Shimmy Shimmy")
+        #expect(update.track?.skipCount == 7)
+    }
+
     @Test("restored track lookup uses local track id before music item id")
     func restoredTrackLookupUsesLocalTrackIDFirst() throws {
         let container = try OverplayTestSupport.makeModelContainer()

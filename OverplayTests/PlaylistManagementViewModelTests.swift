@@ -102,6 +102,45 @@ struct PlaylistManagementViewModelTests {
         #expect(detail.playlist.isCurrentPlaybackPlaylist)
     }
 
+    @Test("row render identity changes when skip count changes")
+    func rowRenderIdentityChangesWhenSkipCountChanges() {
+        let viewModel = PlaylistManagementViewModel()
+        let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main", role: .oneTruePlaylist)
+        let track = TrackRecord(catalogID: "track", title: "Track", artistName: "Artist")
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id, skipCount: 1)
+
+        let before = viewModel.detailPresentation(
+            for: playlist,
+            playlistItems: [item],
+            tracks: [track],
+            playbackModeState: PlaybackModeState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
+            currentPlaylistID: playlist.musicPlaylistID,
+            currentPlaylistItem: item,
+            currentTrack: CurrentPlaybackTrack(id: "track", title: "Track", artistName: "Artist"),
+            playbackItemMetadataVersion: 0,
+            evictAfterSkips: 3
+        )
+
+        item.skipCount = 2
+
+        let after = viewModel.detailPresentation(
+            for: playlist,
+            playlistItems: [item],
+            tracks: [track],
+            playbackModeState: PlaybackModeState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
+            currentPlaylistID: playlist.musicPlaylistID,
+            currentPlaylistItem: item,
+            currentTrack: CurrentPlaybackTrack(id: "track", title: "Track", artistName: "Artist"),
+            playbackItemMetadataVersion: 1,
+            evictAfterSkips: 3
+        )
+
+        #expect(before.rows.first?.id == after.rows.first?.id)
+        #expect(before.rows.first?.summary.skipCount == 1)
+        #expect(after.rows.first?.summary.skipCount == 2)
+        #expect(before.rows.first?.renderID != after.rows.first?.renderID)
+    }
+
     @Test("current item uses shared current playlist item matcher")
     func currentItemUsesSharedCurrentPlaylistItemMatcher() {
         let viewModel = PlaylistManagementViewModel()

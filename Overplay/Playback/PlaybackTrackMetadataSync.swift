@@ -30,31 +30,25 @@ enum PlaybackTrackMetadataSync {
             playlistItem = resolvedItem
         }
 
+        let resolvedTrack = PlaybackTrackResolver.currentPlaybackTrack(
+            musicItemID: musicItemID,
+            playlistItem: playlistItem,
+            musicPlaylistID: currentPlaylistID,
+            queueItem: queueItem,
+            trustPlaylistItem: trustedPlaylistItem != nil,
+            in: context
+        )
         if currentTrack?.id == musicItemID {
             return MetadataUpdate(
                 playlistItem: playlistItem,
-                track: PlaybackTrackResolver.currentPlaybackTrack(
-                    musicItemID: musicItemID,
-                    playlistItem: playlistItem,
-                    musicPlaylistID: currentPlaylistID,
-                    queueItem: queueItem,
-                    trustPlaylistItem: trustedPlaylistItem != nil,
-                    in: context
-                ),
+                track: resolvedTrack,
                 shouldRefreshExistingTrack: true
             )
         }
 
         return MetadataUpdate(
             playlistItem: playlistItem,
-            track: PlaybackTrackResolver.currentPlaybackTrack(
-                musicItemID: musicItemID,
-                playlistItem: playlistItem,
-                musicPlaylistID: currentPlaylistID,
-                queueItem: queueItem,
-                trustPlaylistItem: trustedPlaylistItem != nil,
-                in: context
-            ),
+            track: resolvedTrack,
             shouldRefreshExistingTrack: false
         )
     }

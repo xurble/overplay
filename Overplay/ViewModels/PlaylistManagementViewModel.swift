@@ -13,10 +13,25 @@ final class PlaylistManagementViewModel {
 
     struct TrackRowPresentation: Identifiable {
         var id: UUID { item.id }
+        var renderID: RenderID {
+            RenderID(
+                itemID: item.id,
+                skipCount: summary.skipCount,
+                isPlayable: summary.isPlayable,
+                isCurrent: isCurrent
+            )
+        }
         var item: PlaylistItemRecord
         var track: TrackRecord
         var summary: TrackSummaryPresentation
         var isCurrent: Bool
+
+        struct RenderID: Hashable {
+            var itemID: UUID
+            var skipCount: Int
+            var isPlayable: Bool
+            var isCurrent: Bool
+        }
     }
 
     struct Dependencies {
@@ -69,8 +84,10 @@ final class PlaylistManagementViewModel {
         currentPlaylistID: String?,
         currentPlaylistItem: PlaylistItemRecord?,
         currentTrack: CurrentPlaybackTrack?,
+        playbackItemMetadataVersion: Int = 0,
         evictAfterSkips: Int
     ) -> DetailPresentation {
+        _ = playbackItemMetadataVersion
         let visibleItems = visibleItems(for: playlist, playlistItems: playlistItems)
         let orderedItems = PlaylistDisplayOrder.orderedItems(visibleItems, state: playbackModeState)
         let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
@@ -100,6 +117,14 @@ final class PlaylistManagementViewModel {
                     currentTrack: currentTrack
                 )
             )
+        }
+        if currentTrack != nil, playlist.musicPlaylistID == currentPlaylistID {
+            let currentRows = rows.filter(\.isCurrent)
+            if currentRows.count != 1 {
+                TrackMetadataDiagnostics.log(
+                    "playlist detail current row anomaly playlist=\(TrackMetadataDiagnostics.describe(playlist)) rowCount=\(rows.count) matchedCurrentRows=\(currentRows.count) matchedItemIDs=\(currentRows.map { $0.item.id.uuidString }.joined(separator: ",")) currentItem=\(TrackMetadataDiagnostics.describe(currentPlaylistItem)) currentTrack=\(TrackMetadataDiagnostics.describe(currentTrack))"
+                )
+            }
         }
         let builder = PlaylistPresentationBuilder(
             playlists: [playlist],

@@ -1,17 +1,12 @@
 import CoreGraphics
 import Foundation
 import ImageIO
-import OSLog
 import SwiftUI
 @preconcurrency import Vision
 
 nonisolated enum AlbumArtworkThemeDiagnostics {
-    private static let logger = Logger(subsystem: "farm.poplar.Overplay", category: "AlbumArtworkTheme")
-
     static func log(_ message: String) {
-        #if DEBUG
-        logger.debug("\(message, privacy: .public)")
-        #endif
+        _ = message
     }
 
     static func describe(_ color: AlbumArtworkRGBColor) -> String {

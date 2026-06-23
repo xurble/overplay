@@ -6,6 +6,62 @@ import Testing
 @MainActor
 @Suite("Playback controller display restore")
 struct PlaybackControllerDisplayRestoreTests {
+    @Test("evaluation outcome matches currently displayed item")
+    func evaluationOutcomeMatchesCurrentlyDisplayedItem() {
+        let controller = PlaybackController()
+        let playlist = PlaylistRecord(musicPlaylistID: "playlist-1", name: "Main")
+        let track = TrackRecord(catalogID: "music-1", title: "Track", artistName: "Artist")
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id)
+        controller.currentPlaylistItem = item
+        controller.currentTrack = CurrentPlaybackTrack(id: "music-1", title: "Track", artistName: "Artist")
+
+        let outcome = PlaybackSessionEvaluationService.EvaluationOutcome(
+            session: TrackPlaySession(
+                trackID: "music-1",
+                localTrackID: track.id.uuidString,
+                sessionStartDate: Date(timeIntervalSince1970: 100),
+                lastObservedPlaybackTime: 12,
+                durationSeconds: 120,
+                hasEvaluated: true
+            ),
+            playlist: playlist,
+            item: item,
+            evictedDuringEvaluation: false,
+            shouldSyncPlaybackMetadata: true
+        )
+
+        #expect(controller.evaluationOutcomeMatchesDisplayedPlayback(outcome))
+    }
+
+    @Test("stale evaluation outcome does not match newly displayed item")
+    func staleEvaluationOutcomeDoesNotMatchNewlyDisplayedItem() {
+        let controller = PlaybackController()
+        let playlist = PlaylistRecord(musicPlaylistID: "playlist-1", name: "Main")
+        let previousTrack = TrackRecord(catalogID: "previous", title: "Previous", artistName: "Artist")
+        let newTrack = TrackRecord(catalogID: "new", title: "New", artistName: "Artist")
+        let previousItem = PlaylistItemRecord(playlistID: playlist.id, trackID: previousTrack.id)
+        let newItem = PlaylistItemRecord(playlistID: playlist.id, trackID: newTrack.id)
+        controller.currentPlaylistItem = newItem
+        controller.currentTrack = CurrentPlaybackTrack(id: "new", title: "New", artistName: "Artist")
+
+        let staleOutcome = PlaybackSessionEvaluationService.EvaluationOutcome(
+            session: TrackPlaySession(
+                trackID: "previous",
+                localTrackID: previousTrack.id.uuidString,
+                sessionStartDate: Date(timeIntervalSince1970: 100),
+                lastObservedPlaybackTime: 12,
+                durationSeconds: 120,
+                hasEvaluated: true
+            ),
+            playlist: playlist,
+            item: previousItem,
+            evictedDuringEvaluation: false,
+            shouldSyncPlaybackMetadata: true
+        )
+
+        #expect(!controller.evaluationOutcomeMatchesDisplayedPlayback(staleOutcome))
+    }
+
     @Test("restores mini player display from local database state")
     func restoresMiniPlayerDisplayFromLocalDatabaseState() throws {
         let previousState = LocalPlaybackStateStore.load()
