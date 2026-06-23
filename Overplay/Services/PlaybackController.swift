@@ -657,6 +657,9 @@ final class PlaybackController {
                     currentMusicItemID: currentMusicItemID,
                     currentLocalTrackID: currentLocalTrackID
                 )
+                if let currentLocalTrackID {
+                    await stagePendingModeQueueRebuild(after: currentLocalTrackID, context: context)
+                }
             } else {
                 await rebuildCurrentQueue(context: context)
             }
@@ -1433,7 +1436,9 @@ final class PlaybackController {
                     )
                 }
 
-                if let activeQueueCurrentEntry {
+                // While a mode rebuild is pending, stale MusicKit queue movement
+                // should surface so refresh can consume the pending rebuild.
+                if let activeQueueCurrentEntry, pendingModeQueueRebuild == nil {
                     return CurrentPlaybackIdentity(
                         musicItemID: activeQueueCurrentEntry.queuedMusicItemID,
                         localTrackID: activeQueueCurrentEntry.localTrackID,
@@ -1453,7 +1458,7 @@ final class PlaybackController {
             }
         }
 
-        if let activeQueueCurrentEntry {
+        if let activeQueueCurrentEntry, pendingModeQueueRebuild == nil {
             return CurrentPlaybackIdentity(
                 musicItemID: activeQueueCurrentEntry.queuedMusicItemID,
                 localTrackID: activeQueueCurrentEntry.localTrackID,
@@ -1650,6 +1655,67 @@ final class PlaybackController {
         bumpPlaybackItemMetadataVersion()
         NowPlayingMetadataService.update(track: currentTrack, elapsed: elapsedSeconds, isPlaying: isPlaying)
         persistLocalPlaybackState(musicItemID: activeQueueCurrentEntry.queuedMusicItemID)
+    }
+
+    private func stagePendingModeQueueRebuild(after currentLocalTrackID: String, context: ModelContext) async {
+        guard let currentPlaylistID,
+              let currentQueueEntry = player.queue.currentEntry else {
+            return
+        }
+
+        do {
+            let queueEntries = try PlaybackQueueOrchestrator.orderedCachedQueueEntries(
+                for: currentPlaylistID,
+                playerID: playerID,
+                retainedTrackID: currentLocalTrackID,
+                in: context
+            )
+            let transitionEntries = PlaybackQueueCoordinator.transitionEntries(
+                from: queueEntries,
+                startingAt: currentLocalTrackID
+            )
+            let upcomingEntries = Array(transitionEntries.dropFirst())
+            guard !upcomingEntries.isEmpty else { return }
+
+            let upcomingTracks = upcomingEntries.map(\.musicTrack)
+            try await player.queue.insert(upcomingTracks, position: .afterCurrentEntry)
+
+            if let currentRealizedEntry = currentRealizedQueueEntry(
+                queueEntryID: currentQueueEntry.id,
+                localTrackID: currentLocalTrackID,
+                context: context
+            ) {
+                activeQueueEntries = [currentRealizedEntry]
+                activeQueueIndex = 0
+            }
+        } catch {
+            TrackMetadataDiagnostics.log(
+                "pending mode queue staging failed currentLocalTrackID=\(currentLocalTrackID) error=\(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func currentRealizedQueueEntry(
+        queueEntryID: String,
+        localTrackID: String,
+        context: ModelContext
+    ) -> RealizedPlaybackQueueEntry? {
+        guard let item = try? playlistItem(localTrackID: localTrackID, context: context) else {
+            return nil
+        }
+
+        guard let musicItemID = player.queue.currentEntry?.item?.id.rawValue
+            ?? currentTrack?.id
+            ?? activeQueueCurrentEntry?.queuedMusicItemID else {
+            return nil
+        }
+
+        return RealizedPlaybackQueueEntry(
+            queueEntryID: queueEntryID,
+            playlistItemID: item.id,
+            localTrackID: localTrackID,
+            queuedMusicItemID: musicItemID
+        )
     }
 
     private func prefetchCurrentArtworkIfNeeded(musicItemID: String, playlistID: String?) {

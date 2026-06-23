@@ -2,11 +2,17 @@ import CarPlay
 import Foundation
 import MediaPlayer
 import Observation
+import OSLog
 import SwiftData
 import UIKit
 
 @MainActor
 final class CarPlayCoordinator: NSObject {
+    private static let logger = Logger(
+        subsystem: Bundle.main.bundleIdentifier ?? "Overplay",
+        category: "CarPlay"
+    )
+
     private weak var interfaceController: CPInterfaceController?
     private var playbackController: PlaybackController?
     private var remoteCommandService: RemoteCommandService?
@@ -297,42 +303,65 @@ final class CarPlayCoordinator: NSObject {
         guard force || signature != lastNowPlayingButtonSignature else { return false }
 
         lastNowPlayingButtonSignature = signature
+        let shuffleButton = makeShuffleButton(isSelected: signature.shuffleEnabled)
+        let repeatButton = makeRepeatButton(isSelected: signature.repeatEnabled)
+        logModeButtons(
+            event: "now playing buttons updated",
+            signature: signature,
+            shuffleButton: shuffleButton,
+            repeatButton: repeatButton,
+            force: force
+        )
         CPNowPlayingTemplate.shared.updateNowPlayingButtons([
-            makeShuffleButton(),
-            makeRepeatButton(),
+            shuffleButton,
+            repeatButton,
             makeTrackHealthButton(systemImage: signature.trackActionMenuSystemImage)
         ])
         return true
     }
 
-    private func makeShuffleButton() -> CPNowPlayingShuffleButton {
-        let button = CPNowPlayingShuffleButton { [weak self] _ in
+    private func makeShuffleButton(isSelected: Bool) -> CPNowPlayingImageButton {
+        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "shuffle")) { [weak self] button in
             Task { @MainActor in
+                self?.logModeButtonTap(kind: "shuffle", button: button)
                 await self?.applyCarPlayShuffleToggle()
             }
         }
         button.isEnabled = playbackController?.currentPlaylistID != nil
+        button.isSelected = isSelected
+        logModeButtonCreation(kind: "shuffle", button: button)
         return button
     }
 
-    private func makeRepeatButton() -> CPNowPlayingRepeatButton {
-        let button = CPNowPlayingRepeatButton { [weak self] _ in
+    private func makeRepeatButton(isSelected: Bool) -> CPNowPlayingImageButton {
+        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "repeat")) { [weak self] button in
             Task { @MainActor in
+                self?.logModeButtonTap(kind: "repeat", button: button)
                 self?.applyCarPlayRepeatToggle()
             }
         }
         button.isEnabled = playbackController?.currentPlaylistID != nil
+        button.isSelected = isSelected
+        logModeButtonCreation(kind: "repeat", button: button)
         return button
     }
 
     private func applyCarPlayShuffleToggle() async {
         guard let playbackController else { return }
 
+        let previousShuffleEnabled = playbackController.shuffleEnabled
+        let previousRepeatEnabled = playbackController.repeatEnabled
         let targetShuffleType = RemotePlaybackModeMapper.shuffleType(for: !playbackController.shuffleEnabled)
+        Self.logger.debug(
+            "CarPlay shuffle push applying: modelBefore shuffle=\(previousShuffleEnabled, privacy: .public) repeat=\(previousRepeatEnabled, privacy: .public), target=\(String(describing: targetShuffleType), privacy: .public), commandCenterBefore=\(self.remotePlaybackModeDescription(), privacy: .public)"
+        )
         if let remoteCommandService {
             let status = await remoteCommandService.applyShuffleModeCommand(
                 targetShuffleType,
                 source: "CarPlay"
+            )
+            Self.logger.debug(
+                "CarPlay shuffle push remote status=\(String(describing: status), privacy: .public), modelAfter shuffle=\(playbackController.shuffleEnabled, privacy: .public) repeat=\(playbackController.repeatEnabled, privacy: .public), commandCenterAfter=\(self.remotePlaybackModeDescription(), privacy: .public)"
             )
             guard status == .success else {
                 syncPlaybackModes()
@@ -342,6 +371,9 @@ final class CarPlayCoordinator: NSObject {
         } else if let modelContext {
             await playbackController.setShuffleEnabled(!playbackController.shuffleEnabled, context: modelContext)
             syncPlaybackModes()
+            Self.logger.debug(
+                "CarPlay shuffle push fallback applied, modelAfter shuffle=\(playbackController.shuffleEnabled, privacy: .public) repeat=\(playbackController.repeatEnabled, privacy: .public), commandCenterAfter=\(self.remotePlaybackModeDescription(), privacy: .public)"
+            )
         }
 
         updateNowPlayingButtons(force: true)
@@ -350,11 +382,19 @@ final class CarPlayCoordinator: NSObject {
     private func applyCarPlayRepeatToggle() {
         guard let playbackController else { return }
 
+        let previousShuffleEnabled = playbackController.shuffleEnabled
+        let previousRepeatEnabled = playbackController.repeatEnabled
         let targetRepeatType = RemotePlaybackModeMapper.repeatType(for: !playbackController.repeatEnabled)
+        Self.logger.debug(
+            "CarPlay repeat push applying: modelBefore shuffle=\(previousShuffleEnabled, privacy: .public) repeat=\(previousRepeatEnabled, privacy: .public), target=\(String(describing: targetRepeatType), privacy: .public), commandCenterBefore=\(self.remotePlaybackModeDescription(), privacy: .public)"
+        )
         if let remoteCommandService {
             let status = remoteCommandService.applyRepeatModeCommand(
                 targetRepeatType,
                 source: "CarPlay"
+            )
+            Self.logger.debug(
+                "CarPlay repeat push remote status=\(String(describing: status), privacy: .public), modelAfter shuffle=\(playbackController.shuffleEnabled, privacy: .public) repeat=\(playbackController.repeatEnabled, privacy: .public), commandCenterAfter=\(self.remotePlaybackModeDescription(), privacy: .public)"
             )
             guard status == .success else {
                 syncPlaybackModes()
@@ -364,13 +404,53 @@ final class CarPlayCoordinator: NSObject {
         } else {
             playbackController.setRepeatEnabled(!playbackController.repeatEnabled)
             syncPlaybackModes()
+            Self.logger.debug(
+                "CarPlay repeat push fallback applied, modelAfter shuffle=\(playbackController.shuffleEnabled, privacy: .public) repeat=\(playbackController.repeatEnabled, privacy: .public), commandCenterAfter=\(self.remotePlaybackModeDescription(), privacy: .public)"
+            )
         }
 
         updateNowPlayingButtons(force: true)
     }
 
+    private func logModeButtonCreation(kind: String, button: CPNowPlayingButton) {
+        Self.logger.debug(
+            "CarPlay \(kind, privacy: .public) button created: enabled=\(button.isEnabled, privacy: .public) selected=\(button.isSelected, privacy: .public), model=\(self.playbackModeDescription(), privacy: .public), commandCenter=\(self.remotePlaybackModeDescription(), privacy: .public)"
+        )
+    }
+
+    private func logModeButtonTap(kind: String, button: CPNowPlayingButton) {
+        Self.logger.debug(
+            "CarPlay \(kind, privacy: .public) button tapped: enabled=\(button.isEnabled, privacy: .public) selected=\(button.isSelected, privacy: .public), model=\(self.playbackModeDescription(), privacy: .public), commandCenter=\(self.remotePlaybackModeDescription(), privacy: .public)"
+        )
+    }
+
+    private func logModeButtons(
+        event: String,
+        signature: CarPlayNowPlayingButtonSignature,
+        shuffleButton: CPNowPlayingButton,
+        repeatButton: CPNowPlayingButton,
+        force: Bool
+    ) {
+        Self.logger.debug(
+            "CarPlay \(event, privacy: .public): force=\(force, privacy: .public), signature shuffle=\(signature.shuffleEnabled, privacy: .public) repeat=\(signature.repeatEnabled, privacy: .public), shuffleButton enabled=\(shuffleButton.isEnabled, privacy: .public) selected=\(shuffleButton.isSelected, privacy: .public), repeatButton enabled=\(repeatButton.isEnabled, privacy: .public) selected=\(repeatButton.isSelected, privacy: .public), model=\(self.playbackModeDescription(), privacy: .public), commandCenter=\(self.remotePlaybackModeDescription(), privacy: .public)"
+        )
+    }
+
+    private func playbackModeDescription() -> String {
+        guard let playbackController else {
+            return "unavailable"
+        }
+
+        return "playlist=\(playbackController.currentPlaylistID ?? "nil"), shuffle=\(playbackController.shuffleEnabled), repeat=\(playbackController.repeatEnabled)"
+    }
+
+    private func remotePlaybackModeDescription() -> String {
+        let commandCenter = MPRemoteCommandCenter.shared()
+        return "shuffle=\(String(describing: commandCenter.changeShuffleModeCommand.currentShuffleType)), repeat=\(String(describing: commandCenter.changeRepeatModeCommand.currentRepeatType))"
+    }
+
     private func makeTrackHealthButton(systemImage: String) -> CPNowPlayingImageButton {
-        let button = CPNowPlayingImageButton(image: healthButtonImage(systemImage: systemImage)) { [weak self] _ in
+        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: systemImage)) { [weak self] _ in
             Task { @MainActor in
                 self?.showTrackHealthMenu()
             }
@@ -379,7 +459,7 @@ final class CarPlayCoordinator: NSObject {
         return button
     }
 
-    private func healthButtonImage(systemImage: String) -> UIImage {
+    private func buttonImage(systemImage: String) -> UIImage {
         let configuration = UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold)
         return (UIImage(systemName: systemImage, withConfiguration: configuration) ?? UIImage())
             .withRenderingMode(.alwaysTemplate)
