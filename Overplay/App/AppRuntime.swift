@@ -7,7 +7,6 @@ final class AppRuntime {
     static let shared = AppRuntime()
 
     let authorizationService = MusicAuthorizationService()
-    let spotifyAuthorizationService = SpotifyAuthorizationService()
     let playbackController = PlaybackController()
     let remoteCommandService = RemoteCommandService()
     let periodicPlaylistSyncService = PeriodicPlaylistSyncService()

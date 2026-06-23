@@ -1,3 +1,4 @@
+import Foundation
 import SwiftData
 import Testing
 @testable import Overplay
@@ -33,8 +34,13 @@ struct PlaylistSelectionViewModelTests {
         context.insert(first)
         context.insert(second)
         var reconciledIDs: [String] = []
+        var syncedIDs: [String] = []
         let dependencies = makeDependencies(
             syncAllCount: 7,
+            syncAllLinkedPlaylists: { playlists, _ in
+                syncedIDs = playlists.map(\.musicPlaylistID)
+                return 7
+            },
             reconcileStoredOrder: { playlist, _ in
                 reconciledIDs.append(playlist.musicPlaylistID)
             }
@@ -44,6 +50,7 @@ struct PlaylistSelectionViewModelTests {
 
         #expect(!viewModel.isSyncingAll)
         #expect(viewModel.message == "Synced 7 tracks across linked playlists.")
+        #expect(syncedIDs == ["first", "second"])
         #expect(reconciledIDs == ["first", "second"])
     }
 
@@ -61,42 +68,25 @@ struct PlaylistSelectionViewModelTests {
         #expect(viewModel.message == "Added Inbox as a triage playlist.")
     }
 
-    @Test("make one true rejects spotify linked playlists")
-    func makeOneTrueRejectsSpotifyLinkedPlaylists() throws {
-        let container = try OverplayTestSupport.makeModelContainer()
-        let context = container.mainContext
-        let viewModel = PlaylistSelectionViewModel()
-        let playlist = PlaylistRecord(
-            musicPlaylistID: "spotify-1",
-            name: "Discover Weekly",
-            source: .spotify,
-            role: .triage
-        )
-        context.insert(playlist)
-
-        viewModel.makeOneTrue(playlist, context: context, dependencies: makeDependencies())
-
-        #expect(viewModel.message == PlaylistSyncError.unsupportedSourceForOneTruePlaylist.localizedDescription)
-    }
-
     private func makeDependencies(
         fetchedPlaylists: [AppleMusicPlaylist] = [],
-        fetchedSpotifyPlaylists: [SpotifyPlaylist] = [],
         syncAllCount: Int = 0,
+        syncAllLinkedPlaylists: ((_ playlists: [PlaylistRecord], _ context: ModelContext) async throws -> Int)? = nil,
         reconcileStoredOrder: @escaping (PlaylistRecord, ModelContext) -> Void = { _, _ in }
     ) -> PlaylistSelectionViewModel.Dependencies {
         PlaylistSelectionViewModel.Dependencies {
             fetchedPlaylists
-        } fetchSpotifyPlaylists: { _ in
-            fetchedSpotifyPlaylists
         } createManagedOneTruePlaylist: { name, _, _ in
             PlaylistRecord(musicPlaylistID: "created", name: name, role: .oneTruePlaylist)
         } syncPlaylist: { _, _ in
             0
         } syncPlaylistID: { _, _ in
             0
-        } syncAllLinkedPlaylists: { _ in
-            syncAllCount
+        } syncAllLinkedPlaylists: { playlists, context in
+            if let syncAllLinkedPlaylists {
+                return try await syncAllLinkedPlaylists(playlists, context)
+            }
+            return syncAllCount
         } reconcileStoredOrder: { playlist, context in
             reconcileStoredOrder(playlist, context)
         } dismiss: {

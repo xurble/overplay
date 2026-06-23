@@ -71,29 +71,6 @@ struct PlaylistRemoteMutationPolicyTests {
         ))
     }
 
-    @Test("spotify playlist evictions do not delete remotely")
-    func spotifyPlaylistEvictionsDoNotDeleteRemotely() {
-        let playlist = PlaylistRecord(
-            musicPlaylistID: "spotify-playlist",
-            name: "Spotify Inbox",
-            source: .spotify,
-            role: .triage,
-            writePolicy: .incomingOnly
-        )
-        let item = PlaylistItemRecord(
-            playlistID: playlist.id,
-            trackID: UUID(),
-            evictedAt: Date(timeIntervalSince1970: 100),
-            evictionReason: .manual,
-            evictionSource: .user
-        )
-
-        #expect(!PlaylistRemoteMutationPolicy.shouldDeleteRemotelyAfterEviction(
-            item: item,
-            playlist: playlist
-        ))
-    }
-
     @Test("active items do not delete remotely")
     func activeItemsDoNotDeleteRemotely() {
         let playlist = PlaylistRecord(

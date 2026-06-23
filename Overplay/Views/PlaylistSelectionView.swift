@@ -5,15 +5,12 @@ struct PlaylistSelectionView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Environment(PlaybackController.self) private var playbackController
-    @Environment(AppRuntime.self) private var runtime
 
     @Query(sort: \PlaylistRecord.name) private var linkedPlaylists: [PlaylistRecord]
     @Query(sort: \PlaylistItemRecord.createdAt) private var playlistItems: [PlaylistItemRecord]
     @Query(sort: \TrackRecord.title) private var tracks: [TrackRecord]
-    @Query private var spotifyCredentials: [SpotifyCredentialsRecord]
 
     @State private var viewModel = PlaylistSelectionViewModel()
-    @State private var isSigningInToSpotify = false
 
     var body: some View {
         List {
@@ -43,7 +40,7 @@ struct PlaylistSelectionView: View {
             }
 
             Section("Linked Playlists") {
-                if linkedPlaylists.isEmpty {
+                if sortedLinkedPlaylists.isEmpty {
                     ContentUnavailableView(
                         "No Linked Playlists",
                         systemImage: "music.note.list",
@@ -66,7 +63,7 @@ struct PlaylistSelectionView: View {
                 } label: {
                     Label(viewModel.isSyncingAll ? "Syncing All" : "Sync All", systemImage: "arrow.triangle.2.circlepath")
                 }
-                .disabled(linkedPlaylists.isEmpty || viewModel.isSyncingAll)
+                .disabled(sortedLinkedPlaylists.isEmpty || viewModel.isSyncingAll)
             }
 
             Section("Apple Music Playlists") {
@@ -76,42 +73,6 @@ struct PlaylistSelectionView: View {
 
                 ForEach(viewModel.filteredPlaylists) { playlist in
                     appleMusicPlaylistRow(playlist)
-                }
-            }
-
-            Section("Spotify Playlists") {
-                if !runtime.spotifyAuthorizationService.isConfigured {
-                    Text("Add a Spotify client ID to your build settings to enable Spotify triage playlists.")
-                        .foregroundStyle(.secondary)
-                } else if isSpotifyConnected {
-                    if let displayName = spotifyCredentials.first?.displayName, !displayName.isEmpty {
-                        Text("Connected as \(displayName)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if viewModel.isLoadingSpotify {
-                        ProgressView("Loading Spotify playlists")
-                    }
-
-                    ForEach(viewModel.filteredSpotifyPlaylists) { playlist in
-                        spotifyPlaylistRow(playlist)
-                    }
-
-                    Button("Sign Out of Spotify", role: .destructive) {
-                        signOutOfSpotify()
-                    }
-                } else {
-                    Text("Connect Spotify to add triage playlists from your Spotify library. Tracks are matched to Apple Music for playback.")
-                        .foregroundStyle(.secondary)
-
-                    Button {
-                        signInToSpotify()
-                    } label: {
-                        Label(isSigningInToSpotify ? "Connecting" : "Connect Spotify", systemImage: "link")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isSigningInToSpotify)
                 }
             }
 
@@ -127,20 +88,10 @@ struct PlaylistSelectionView: View {
         .searchable(text: $viewModel.searchText, prompt: "Filter playlists")
         .refreshable {
             await viewModel.loadPlaylists(dependencies: dependencies)
-            if isSpotifyConnected {
-                await viewModel.loadSpotifyPlaylists(context: modelContext, dependencies: dependencies)
-            }
         }
         .task {
             await viewModel.loadPlaylists(dependencies: dependencies)
-            if isSpotifyConnected {
-                await viewModel.loadSpotifyPlaylists(context: modelContext, dependencies: dependencies)
-            }
         }
-    }
-
-    private var isSpotifyConnected: Bool {
-        spotifyCredentials.first?.hasAccessToken == true
     }
 
     private var sortedLinkedPlaylists: [PlaylistRecord] {
@@ -263,58 +214,6 @@ struct PlaylistSelectionView: View {
             }
         }
         .padding(.vertical, 6)
-    }
-
-    private func spotifyPlaylistRow(_ playlist: SpotifyPlaylist) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(playlist.name)
-                        .font(.headline)
-                    if let trackCount = playlist.trackCount {
-                        Text("\(trackCount) tracks")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-                Label("Spotify", systemImage: "music.note")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Button {
-                viewModel.addSpotifyTriage(playlist, context: modelContext, dependencies: dependencies)
-            } label: {
-                Label("Add Triage", systemImage: "tray.and.arrow.down.fill")
-            }
-            .buttonStyle(.bordered)
-        }
-        .padding(.vertical, 6)
-    }
-
-    private func signInToSpotify() {
-        isSigningInToSpotify = true
-        Task {
-            defer { isSigningInToSpotify = false }
-            do {
-                try await runtime.spotifyAuthorizationService.signIn(in: modelContext)
-                await viewModel.loadSpotifyPlaylists(context: modelContext, dependencies: dependencies)
-                viewModel.message = "Connected to Spotify."
-            } catch {
-                viewModel.message = error.localizedDescription
-            }
-        }
-    }
-
-    private func signOutOfSpotify() {
-        do {
-            try runtime.spotifyAuthorizationService.signOut(in: modelContext)
-            viewModel.spotifyPlaylists = []
-            viewModel.message = "Signed out of Spotify."
-        } catch {
-            viewModel.message = error.localizedDescription
-        }
     }
 
     private func presentation(for playlist: PlaylistRecord) -> PlaylistSummaryPresentation {

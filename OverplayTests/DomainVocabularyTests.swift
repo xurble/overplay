@@ -11,7 +11,6 @@ struct DomainVocabularyTests {
     @Test("playlist source raw values are stable")
     func playlistSourceRawValuesAreStable() {
         #expect(PlaylistSource.appleMusic.rawValue == "appleMusic")
-        #expect(PlaylistSource.spotify.rawValue == "spotify")
     }
 
     @Test("playlist role raw values are stable")
@@ -67,7 +66,7 @@ struct DomainVocabularyTests {
 
     @Test("domain vocabulary codable values round trip")
     func domainVocabularyCodableValuesRoundTrip() throws {
-        try assertRoundTrips(PlaylistSource.spotify)
+        try assertRoundTrips(PlaylistSource.appleMusic)
         try assertRoundTrips(PlaylistRole.oneTruePlaylist)
         try assertRoundTrips(PlaylistWritePolicy.incomingOnly)
         try assertRoundTrips(HistoryEventType.promoted)

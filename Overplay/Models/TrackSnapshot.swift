@@ -50,13 +50,6 @@ struct AppleMusicPlaylist: Identifiable, Hashable, Sendable {
     }
 }
 
-struct SpotifyPlaylist: Identifiable, Hashable, Sendable {
-    var id: String
-    var name: String
-    var trackCount: Int?
-    var ownerName: String?
-}
-
 struct RemotePlaylistLink: Identifiable, Hashable, Sendable {
     var id: String
     var name: String
@@ -72,10 +65,6 @@ struct RemotePlaylistLink: Identifiable, Hashable, Sendable {
 
     init(_ playlist: AppleMusicPlaylist) {
         self.init(id: playlist.id, name: playlist.name, trackCount: playlist.trackCount, source: .appleMusic)
-    }
-
-    init(_ playlist: SpotifyPlaylist) {
-        self.init(id: playlist.id, name: playlist.name, trackCount: playlist.trackCount, source: .spotify)
     }
 }
 

@@ -10,6 +10,4 @@ INFOPLIST_FILE = Config/Info.plist
 
 ICLOUD_CONTAINER_IDENTIFIER = iCloud.com.example.Overplay
 
-SPOTIFY_CLIENT_ID =
-
 #include? "Local.xcconfig"

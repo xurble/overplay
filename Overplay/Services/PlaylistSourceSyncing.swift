@@ -24,12 +24,10 @@ struct PlaylistSourceSyncRegistry {
     private let adapters: [PlaylistSource: any PlaylistSourceSyncing]
 
     init(
-        appleMusic: AppleMusicPlaylistSourceSync = AppleMusicPlaylistSourceSync(),
-        spotify: SpotifyPlaylistSourceSync = SpotifyPlaylistSourceSync()
+        appleMusic: AppleMusicPlaylistSourceSync = AppleMusicPlaylistSourceSync()
     ) {
         adapters = [
-            .appleMusic: appleMusic,
-            .spotify: spotify
+            .appleMusic: appleMusic
         ]
     }
 

@@ -14,14 +14,14 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
 
     func fetchLibraryPlaylists(in context: ModelContext) async throws -> [RemotePlaylistLink] {
         let playlists = try await playlistFetcher.fetchAllPlaylists(pageLimit: 100)
-        return AppleMusicPlaylistDisplayOrder.sorted(playlists.map {
-            RemotePlaylistLink(
+        let appleMusicPlaylists = playlists.map {
+            AppleMusicPlaylist(
                 id: $0.id.rawValue,
                 name: $0.name,
-                trackCount: $0.tracks?.count,
-                source: .appleMusic
+                trackCount: $0.tracks?.count
             )
-        })
+        }
+        return AppleMusicPlaylistDisplayOrder.sorted(appleMusicPlaylists).map(RemotePlaylistLink.init)
     }
 
     func fetchTrackSnapshots(
@@ -95,6 +95,7 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
 
         PlaybackModeStore.rekeyMusicPlaylistID(from: oldID, to: newID, flushImmediately: true)
         LocalPlaybackStateStore.rekeyMusicPlaylistID(from: oldID, to: newID, flushImmediately: true)
+        PlaybackIdentityStore.rekeyMusicPlaylistID(from: oldID, to: newID, flushImmediately: true)
         try context.save()
     }
 

@@ -71,13 +71,6 @@ struct PlaylistSyncService {
         }
     }
 
-    func fetchSpotifyLibraryPlaylists(in context: ModelContext) async throws -> [SpotifyPlaylist] {
-        let links = try await sourceRegistry.adapter(for: .spotify).fetchLibraryPlaylists(in: context)
-        return links.map {
-            SpotifyPlaylist(id: $0.id, name: $0.name, trackCount: $0.trackCount, ownerName: nil)
-        }
-    }
-
     func syncPlaylist(id playlistID: String, source: PlaylistSource, in context: ModelContext) async throws -> Int {
         let existingRecord = try PlaylistRepository.playlist(remotePlaylistID: playlistID, source: source, in: context)
         let record = try PlaylistRepository.upsert(
@@ -387,10 +380,6 @@ struct PlaylistSyncService {
         let localTracks = try TrackRecordRepository.tracks(ids: items.map(\.trackID), in: context)
         let tracksByID = localTracks.firstValueDictionary(keyedBy: \.id)
 
-        if playlistRecord.source == .spotify {
-            return PlaybackQueueBuilder.cachedPlayableMusicTracks(items: items, tracksByID: tracksByID)
-        }
-
         let playableMusicItemIDs = PlaybackQueueBuilder.playableMusicItemIDs(
             items: items,
             tracksByID: tracksByID
@@ -434,20 +423,6 @@ struct PlaylistSyncService {
             playlistRecord: playlistRecord,
             in: context
         )
-
-        playlistRecord.musicPlaylistID = newID
-        playlistRecord.updatedAt = .now
-
-        let settings = try SettingsRepository.settings(in: context)
-        if settings.selectedPlaylistID == oldID {
-            settings.selectedPlaylistID = newID
-            settings.updatedAt = .now
-        }
-
-        PlaybackModeStore.rekeyMusicPlaylistID(from: oldID, to: newID, flushImmediately: true)
-        LocalPlaybackStateStore.rekeyMusicPlaylistID(from: oldID, to: newID, flushImmediately: true)
-        PlaybackIdentityStore.rekeyMusicPlaylistID(from: oldID, to: newID, flushImmediately: true)
-        try context.save()
     }
 
     private func loadTracks(for playlist: Playlist) async throws -> [Track] {

@@ -172,7 +172,7 @@ enum PlaylistRepository {
         return try upsert(
             remotePlaylist: remotePlaylist,
             role: .triage,
-            writePolicy: remotePlaylist.source == .spotify ? .incomingOnly : .managed,
+            writePolicy: .managed,
             in: context
         )
     }

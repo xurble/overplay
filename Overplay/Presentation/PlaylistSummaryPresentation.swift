@@ -74,8 +74,6 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
         switch source {
         case .appleMusic:
             "Apple Music"
-        case .spotify:
-            "Spotify"
         }
     }
 

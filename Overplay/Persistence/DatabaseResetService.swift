@@ -20,7 +20,6 @@ enum DatabaseResetService {
         try context.delete(model: PlaylistItemRecord.self)
         try context.delete(model: TrackRecord.self)
         try context.delete(model: PlaylistRecord.self)
-        try context.delete(model: SpotifyCredentialsRecord.self)
         try context.delete(model: OverplaySettings.self)
     }
 }
