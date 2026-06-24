@@ -10,6 +10,7 @@ final class AppStartupViewModel {
         var refreshAuthorization: () async -> Void
         var installRemoteCommands: () -> Void
         var restoreLocalPlaybackDisplay: () -> Void
+        var startPlaybackMonitoring: () -> Void
         var startPeriodicPlaylistSync: () -> Void
         var stopPeriodicPlaylistSync: () -> Void
     }
@@ -73,6 +74,8 @@ final class AppStartupViewModel {
             runtime.remoteCommandService.activate(playbackController: playbackController, context: modelContext)
         } restoreLocalPlaybackDisplay: {
             playbackController.restoreLocalPlaybackDisplay(context: modelContext)
+        } startPlaybackMonitoring: {
+            playbackController.startMonitoring(context: modelContext)
         } startPeriodicPlaylistSync: {
             runtime.periodicPlaylistSyncService.start(
                 context: modelContext,
@@ -89,6 +92,10 @@ final class AppStartupViewModel {
 
         StartupProfiler.measure("Local playback display restore") {
             dependencies.restoreLocalPlaybackDisplay()
+        }
+
+        StartupProfiler.measure("Playback monitoring startup") {
+            dependencies.startPlaybackMonitoring()
         }
 
         StartupProfiler.measure("Periodic playlist sync startup") {

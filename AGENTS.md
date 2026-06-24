@@ -151,6 +151,29 @@ How:
 -   Keep surface-specific code limited to platform APIs, view/template
     construction, navigation, presentation, and adapter glue.
 
+Playback engine changes:
+
+-   Treat every playback engine change as a cross-surface change. A fix that
+    works only from the iPhone UI is incomplete if CarPlay, Lock Screen,
+    Control Center, AirPods/headset controls, keyboard/media keys, or MusicKit
+    queue changes can leave another surface stale.
+-   Identify every place where track-change information can originate or be
+    observed: app controls, CarPlay controls, remote command handlers, MusicKit
+    queue/current-entry changes, natural queue completion, explicit queue
+    rebuilds, playlist mutation, sync, and local persistence restore.
+-   Route generated actions into the shared playback controller, and route
+    observed external changes back through the same reconciliation path that
+    updates observable playback state, local queue identity, current-track
+    metadata, and `MPNowPlayingInfoCenter`.
+-   Prefer the actual player-reported current item when reconciling playback.
+    Local queue state is useful context, but it must not mask a concrete
+    MusicKit current-entry change from another surface.
+-   When a track changes, evaluate and persist the outgoing track/session
+    before replacing shared current-track state with the incoming track.
+-   Add focused tests at the shared policy/controller/use-case layer for
+    cross-surface playback behavior. Tests should protect iPhone, CarPlay,
+    and system playback surfaces together whenever possible.
+
 ------------------------------------------------------------------------
 
 ## Keep Views Small

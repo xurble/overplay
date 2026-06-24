@@ -122,7 +122,6 @@ Each linked playlist stores:
 - Write policy: `managed` or `incomingOnly`.
 - Last successful sync date.
 - Last sync error, if any.
-- Local sort/order preferences.
 - Whether the playlist is active.
 
 Exactly one active playlist has the `oneTruePlaylist` role. The user may add,
@@ -151,6 +150,10 @@ For every tracked playlist item, store:
 When a single catalogue song appears in multiple linked playlists, Overplay may
 share metadata, but playlist membership, skip count, playthrough count, and
 eviction state must remain playlist-specific.
+
+Within one linked playlist, a song identity may appear at most once. Duplicate
+remote entries, repeated manual adds, and promotion of an already-present song
+should collapse to the existing playlist item for that playlist.
 
 ### Album artwork cache
 
@@ -233,7 +236,10 @@ The app should sync:
 - After a successful manual add or promotion.
 
 Sync must be idempotent. Running sync multiple times should not duplicate
-tracks or erase history.
+tracks or erase history. A linked playlist must contain at most one local
+playlist item per song identity; duplicate remote occurrences should collapse
+to the first seen song identity, and manual add or promotion should reactivate
+or reuse an existing playlist item instead of creating another copy.
 
 If MusicKit reports a different library playlist ID than the one Overplay
 stored (for example after `createPlaylist`), sync may heal the linked
@@ -348,9 +354,9 @@ storage:
 
 - Currently playing track/session.
 - Current playback queue.
+- Current local playback order for each player and playlist.
 - Current playback position.
 - Current selected screen or playlist view.
-- Shuffle/repeat playback state.
 - Now Playing UI state.
 - Any transient sync or playback progress state.
 
@@ -364,74 +370,126 @@ interfering with each other's playback.
 
 ## Playback Order, Shuffle, and Repeat
 
-Overplay owns playback order. MusicKit should receive an explicit queue from
-Overplay, while MusicKit shuffle and repeat modes remain off. This keeps skip
-tracking, eviction filtering, playlist display order, CarPlay, and remote
-commands aligned to the same source of truth.
+Overplay owns playback order. SwiftData tracks playlist membership, track
+metadata, health, and history; it does not own playback order or playlist sort
+order. Playback order is local, disposable, and keyed by player and Apple Music
+playlist. Each playlist has exactly one current local order at a time. There is
+no separate unshuffled order to restore during playback.
 
-Shuffle and repeat state is local-only and must not be stored in SwiftData or
-iCloud-backed records. Persist the state in local storage keyed by player and
-playlist so independent players or windows can avoid overwriting each other's
-mode state. The stored state should include whether shuffle is enabled, whether
-repeat-all is enabled, and the current local shuffled track order.
+MusicKit should receive an explicit full queue from Overplay, while MusicKit
+shuffle and repeat modes remain off. Overplay owns repeat by reshuffling and
+rebuilding the queue when the end is reached. This keeps skip tracking,
+eviction filtering, playlist display order, CarPlay, system controls, and
+remote commands aligned to the same source of truth.
+
+Local order state:
+
+- Store only the ordered local track IDs and an update date.
+- Seed missing local order from the current unique playable playlist
+  membership.
+- Treat old sort-order, shuffle-mode, and repeat-mode state as disposable.
+- Playlist display order should mirror the current local playback order for
+  that player and playlist.
+- A playlist must not contain duplicate songs. Sync, manual add, and promotion
+  should reuse or reactivate the existing playlist item for a song instead of
+  creating a duplicate.
+
+Starting playback:
+
+- Starting a playlist sends the full current local order to MusicKit.
+- If the user starts at a specific track, MusicKit should start at that track
+  within the full queue.
+- If no track is requested, playback starts at the first track in local order.
+- MusicKit and Overplay UI should be reconciled immediately after queue setup so
+  every surface agrees on the current track and queue position.
 
 Shuffle behavior:
 
-- Turning shuffle on immediately records a new shuffled order for the current
-  playlist and updates playlist display order.
-- If a track is currently playing, that track is excluded from the random
-  portion and promoted to the head of the new shuffled order.
-- The current track must continue playing without restarting. Do not replace the
-  MusicKit queue while the current track is still playing solely because shuffle
-  was toggled.
-- When playback leaves the current track, replace the MusicKit queue with the
-  app-owned shuffled order and continue from the correct next or previous track.
-- For playlists with one or two playable tracks, shuffle may be enabled, but the
-  order remains normal until the playlist grows.
-
-Shuffle-off behavior follows the same seamless rule:
-
-- Turning shuffle off immediately clears the stored shuffled order and updates
-  playlist display order back to normal playlist order.
-- The current track must continue playing without restarting.
-- When playback leaves the current track, replace the MusicKit queue with normal
-  playlist order.
-- If moving forward after shuffle is turned off, continue with the track below
-  the last-playing track in normal playlist order.
-- If the last-playing track is already the final track in normal order and
-  repeat is off, do not continue into the stale shuffled queue.
-
-Sync and eviction behavior:
-
-- New playable tracks synced into a shuffled playlist are appended to the end of
-  the stored shuffled order until the next shuffle.
-- Tracks that are evicted or removed from the remote playlist are removed from
-  the stored shuffled order.
-- If the removed or evicted track is currently playing, keep it in the effective
-  order until playback leaves it, then remove it.
-- Playlist track lists should reflect the stored shuffled order whenever shuffle
-  is enabled for that player and playlist; otherwise they should use normal
-  playlist order.
+- Shuffle is a one-shot action, not a persistent selected mode.
+- Pressing shuffle creates a new full-playlist random order, saves it locally,
+  sends the full new queue to MusicKit, and restarts playback from the first
+  track at position zero.
+- The currently or most recently played track must not appear in the top five
+  tracks of the new order.
+- For playlists with two to four tracks, keep the currently or most recently
+  played track out of the first position.
+- For a one-track playlist, the single track remains the whole order.
+- There is no shuffle-off behavior because there is no preserved unshuffled
+  order to return to.
 
 Repeat behavior:
 
-- Repeat is an on/off repeat-all mode. Repeat-one is not part of Overplay's
-  playback model.
-- Repeat state is persisted in the same local player-and-playlist state as
-  shuffle.
-- When repeat is on and the end of a non-shuffled queue is reached, restart from
-  the first playable track in normal playlist order.
-- When repeat is on and the end of a shuffled queue is reached, create a fresh
-  shuffle and start from the head of the new shuffled order.
-- The last-played track must not appear in the top five tracks of the fresh
-  shuffle. If there are five or fewer playable tracks, keep the last-played
-  track last. If there are only one or two playable tracks, use the normal-order
-  short-circuit behavior.
+- Playlists always repeat. There is no user-facing repeat button in Overplay's
+  iOS or CarPlay UI, and repeat-one is not part of the playback model.
+- When the last track is played through or skipped past, Overplay evaluates the
+  outgoing track, creates a fresh shuffled order using the same placement rules,
+  saves it, sends the full queue to MusicKit, and starts from the first track.
+- Platform/system UI may still expose repeat or shuffle concepts, but Overplay
+  should keep its own MusicKit shuffle and repeat modes off and treat local
+  order as authoritative.
+
+Additions and removals:
+
+- Playlist additions from MusicKit sync, SwiftData sync, manual add, or
+  promotion append to the end of the current local order.
+- If the changed playlist is currently playing, playable additions should also
+  be appended to the live MusicKit queue when possible without restarting
+  playback.
+- For non-playing playlists, deletions and evictions remove the track from
+  local order immediately.
+- For the currently playing playlist, deletion or eviction is recorded in
+  SwiftData, but the active MusicKit queue is left alone for the current
+  playthrough. The track disappears on the next shuffle, rebuild, or switch
+  back to that playlist.
+- When switching away from a playlist, reconcile its local order so already
+  evicted or otherwise unplayable tracks are removed before it is played again.
 
 All playback surfaces must use the same behavior: Now Playing, mini player,
 lock-screen and remote commands, CarPlay, keyboard/media keys, and playlist row
 play actions should route through the shared playback controller rather than
-implementing shuffle or repeat locally.
+implementing shuffle, repeat, queue ordering, or current-track reconciliation
+locally.
+
+## Cross-Surface Playback Consistency
+
+Playback is a shared engine with many surfaces, not a phone-only feature.
+Every playback change must be designed so iPhone, iPad, Mac, CarPlay, Lock
+Screen, Control Center, AirPods/headset controls, keyboard/media keys, Siri or
+shortcut entry points, MusicKit queue state, and system now-playing metadata
+agree about the current track, queue, play state, and playback position.
+
+Track changes can be generated by Overplay controls, CarPlay controls, remote
+commands, keyboard or headset transport controls, MusicKit queue advancement,
+natural end-of-queue completion, explicit queue rebuilds, playlist mutation,
+sync, and playback state restoration. All generated actions should enter the
+shared playback controller. All observed external changes should flow back
+through the same reconciliation path that updates:
+
+- Observable playback state used by SwiftUI and CarPlay.
+- Local active queue identity and current playlist context.
+- Skip/playthrough session evaluation for the outgoing track.
+- Current-track metadata and artwork.
+- `MPNowPlayingInfoCenter` metadata and remote command state.
+- Local playback state used for restore.
+
+The actual player-reported current item is authoritative when it is available.
+Local queue order and cached active-queue entries may help correlate playlist
+items and health state, but they must not hide a concrete MusicKit current-entry
+change from another surface. If MusicKit reports a new current item that cannot
+be correlated to local queue identity, Overplay should still update the visible
+now-playing display from that player item rather than continuing to show a stale
+local queue entry.
+
+When playback leaves a track, the outgoing session should be evaluated before
+shared current-track state is replaced with the incoming track. This keeps skip,
+playthrough, eviction, and health updates attached to the track that actually
+finished or was skipped, regardless of whether the transition started from the
+app, CarPlay, a remote command, or MusicKit itself.
+
+Playback UI should observe shared playback state rather than infer state from a
+surface-local action. CarPlay templates, SwiftUI views, system metadata, and
+remote commands should be thin adapters over the shared controller and
+presentation models.
 
 ## Required Screens
 
@@ -648,9 +706,9 @@ window through the standard app settings command as well as in-app navigation.
 ### PlaybackController
 
 - Own Apple Music playback.
-- Build app-owned queues from active, non-evicted playlist items.
-- Own shuffle and repeat behavior, including seamless deferred queue
-  replacement when shuffle is toggled during playback.
+- Build full app-owned MusicKit queues from the current local playlist order.
+- Own local playback order, one-shot reshuffle/restart behavior, and
+  end-of-playlist repeat by rebuilding from a fresh shuffled order.
 - Track play sessions.
 - Publish current playback state.
 - Forward transitions to the eviction engine.
@@ -688,8 +746,8 @@ window through the standard app settings command as well as in-app navigation.
 ### RemoteCommandService
 
 - Register remote command handlers.
-- Forward play, pause, next, previous, shuffle, and repeat to the playback
-  controller.
+- Forward play, pause, next, previous, and supported shuffle actions to the
+  playback controller.
 - Avoid retain cycles and clean up handlers when appropriate.
 - Support lock-screen, Control Center, headset, keyboard, and Mac media-key
   commands where each platform exposes them.

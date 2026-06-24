@@ -976,7 +976,8 @@ final class PlaybackController {
         let identity = resolvedCurrentPlaybackIdentity(context: context)
         let newTrackID = identity?.musicItemID
         let newLocalTrackID = identity?.localTrackID
-        elapsedSeconds = player.playbackTime
+        let currentPlaybackTime = player.playbackTime
+        elapsedSeconds = currentPlaybackTime
         isPlaying = player.state.playbackStatus == .playing
 
         if let oldTrackID, newTrackID == nil, !isRestartingQueue {
@@ -1000,12 +1001,19 @@ final class PlaybackController {
             newLocalTrackID: newLocalTrackID
         )
 
-        if didChangeTrack, let identity {
-            applyResolvedPlaybackIdentity(identity, context: context)
+        if didChangeTrack, let settings = try? SettingsRepository.settings(in: context) {
+            await evaluateActiveSession(
+                settings: settings,
+                context: context,
+                naturalCompletion: false,
+                elapsedSeconds: activeSession?.lastObservedPlaybackTime,
+                durationSeconds: activeSession?.durationSeconds
+            )
+            elapsedSeconds = currentPlaybackTime
         }
 
-        if didChangeTrack, let settings = try? SettingsRepository.settings(in: context) {
-            await evaluateActiveSession(settings: settings, context: context, naturalCompletion: false)
+        if didChangeTrack, let identity {
+            applyResolvedPlaybackIdentity(identity, context: context)
         }
 
         if let identity {
@@ -1138,8 +1146,14 @@ final class PlaybackController {
         }
     }
 
-    private func evaluateActiveSession(settings: OverplaySettings, context: ModelContext, naturalCompletion: Bool) async {
-        elapsedSeconds = player.playbackTime
+    private func evaluateActiveSession(
+        settings: OverplaySettings,
+        context: ModelContext,
+        naturalCompletion: Bool,
+        elapsedSeconds observedElapsedSeconds: Double? = nil,
+        durationSeconds observedDurationSeconds: Double? = nil
+    ) async {
+        elapsedSeconds = observedElapsedSeconds ?? player.playbackTime
         prepareCurrentPlaylistItemForEvaluation(context: context)
 
         do {
@@ -1147,7 +1161,7 @@ final class PlaybackController {
                 activeSession: activeSession,
                 currentTrackID: currentTrack?.id,
                 elapsedSeconds: elapsedSeconds,
-                durationSeconds: durationSeconds ?? currentTrack?.durationSeconds,
+                durationSeconds: observedDurationSeconds ?? durationSeconds ?? currentTrack?.durationSeconds,
                 currentPlaylistItem: currentPlaylistItem,
                 playlist: currentPlaylist(in: context),
                 settings: settings,
@@ -1395,9 +1409,16 @@ final class PlaybackController {
                     )
                 }
 
-                // While a mode rebuild is pending, stale MusicKit queue movement
-                // should surface so refresh can consume the pending rebuild.
-                if let activeQueueCurrentEntry, pendingModeQueueRebuild == nil {
+                // Only use the active queue fallback when MusicKit's reported
+                // item still names the same track. If MusicKit reports a
+                // different unresolved item, surface that item so external
+                // navigation cannot leave the UI stuck on the old local row.
+                if let activeQueueCurrentEntry,
+                   PlaybackIdentityFallbackPolicy.shouldUseActiveQueueFallback(
+                       queueReportedTrackID: queueReportedTrackID,
+                       activeQueueMusicItemID: activeQueueCurrentEntry.queuedMusicItemID,
+                       isModeQueueRebuildPending: pendingModeQueueRebuild != nil
+                   ) {
                     return CurrentPlaybackIdentity(
                         musicItemID: activeQueueCurrentEntry.queuedMusicItemID,
                         localTrackID: activeQueueCurrentEntry.localTrackID,
