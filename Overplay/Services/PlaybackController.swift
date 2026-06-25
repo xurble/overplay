@@ -78,6 +78,10 @@ final class PlaybackController {
         return musicKitNowPlayingTrack ?? currentTrack
     }
 
+    var nowPlayingDisplayLocalTrackID: String? {
+        activeQueueCurrentLocalTrackID ?? currentPlaylistItem?.trackID.uuidString
+    }
+
     var canControlPlayback: Bool {
         currentPlaylistID != nil && currentTrack != nil && activeQueueIndex != nil
     }

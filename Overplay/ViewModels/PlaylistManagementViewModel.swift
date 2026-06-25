@@ -17,8 +17,7 @@ final class PlaylistManagementViewModel {
             RenderID(
                 itemID: item.id,
                 skipCount: summary.skipCount,
-                isPlayable: summary.isPlayable,
-                isCurrent: isCurrent
+                isPlayable: summary.isPlayable
             )
         }
         var item: PlaylistItemRecord
@@ -30,7 +29,6 @@ final class PlaylistManagementViewModel {
             var itemID: UUID
             var skipCount: Int
             var isPlayable: Bool
-            var isCurrent: Bool
         }
     }
 
@@ -83,6 +81,7 @@ final class PlaylistManagementViewModel {
         playbackOrderState: PlaybackOrderState,
         currentPlaylistID: String?,
         currentPlaylistItem: PlaylistItemRecord?,
+        currentLocalTrackID: String? = nil,
         currentTrack: CurrentPlaybackTrack?,
         playbackItemMetadataVersion: Int = 0,
         evictAfterSkips: Int
@@ -114,11 +113,12 @@ final class PlaylistManagementViewModel {
                     playlist: playlist,
                     currentPlaylistID: currentPlaylistID,
                     currentPlaylistItem: currentPlaylistItem,
+                    currentLocalTrackID: currentLocalTrackID,
                     currentTrack: currentTrack
                 )
             )
         }
-        if currentTrack != nil, playlist.musicPlaylistID == currentPlaylistID {
+        if (currentTrack != nil || currentLocalTrackID != nil), playlist.musicPlaylistID == currentPlaylistID {
             let currentRows = rows.filter(\.isCurrent)
             if currentRows.count != 1 {
                 TrackMetadataDiagnostics.log(
@@ -130,7 +130,7 @@ final class PlaylistManagementViewModel {
             playlists: [playlist],
             items: visibleItems,
             tracks: tracks,
-            currentPlaylistID: currentTrack == nil ? nil : currentPlaylistID,
+            currentPlaylistID: currentTrack == nil && currentLocalTrackID == nil ? nil : currentPlaylistID,
             evictAfterSkips: evictAfterSkips
         )
 
@@ -200,6 +200,7 @@ final class PlaylistManagementViewModel {
         playlist: PlaylistRecord,
         currentPlaylistID: String?,
         currentPlaylistItem: PlaylistItemRecord?,
+        currentLocalTrackID: String? = nil,
         currentTrack: CurrentPlaybackTrack?
     ) -> Bool {
         CurrentPlaylistItemMatcher.isCurrent(
@@ -208,6 +209,7 @@ final class PlaylistManagementViewModel {
             playlist: playlist,
             currentPlaylistID: currentPlaylistID,
             currentPlaylistItem: currentPlaylistItem,
+            currentLocalTrackID: currentLocalTrackID,
             currentTrack: currentTrack
         )
     }

@@ -139,6 +139,40 @@ struct PlaylistManagementViewModelTests {
         #expect(before.rows.first?.renderID != after.rows.first?.renderID)
     }
 
+    @Test("row render identity is stable when current highlight changes")
+    func rowRenderIdentityIsStableWhenCurrentHighlightChanges() {
+        let viewModel = PlaylistManagementViewModel()
+        let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main", role: .oneTruePlaylist)
+        let track = TrackRecord(catalogID: "track", title: "Track", artistName: "Artist")
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id)
+
+        let before = viewModel.detailPresentation(
+            for: playlist,
+            playlistItems: [item],
+            tracks: [track],
+            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
+            currentPlaylistID: playlist.musicPlaylistID,
+            currentPlaylistItem: nil,
+            currentTrack: nil,
+            evictAfterSkips: 3
+        )
+
+        let after = viewModel.detailPresentation(
+            for: playlist,
+            playlistItems: [item],
+            tracks: [track],
+            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
+            currentPlaylistID: playlist.musicPlaylistID,
+            currentPlaylistItem: item,
+            currentTrack: CurrentPlaybackTrack(id: "track", title: "Track", artistName: "Artist"),
+            evictAfterSkips: 3
+        )
+
+        #expect(before.rows.first?.renderID == after.rows.first?.renderID)
+        #expect(before.rows.first?.isCurrent == false)
+        #expect(after.rows.first?.isCurrent == true)
+    }
+
     @Test("current item uses shared current playlist item matcher")
     func currentItemUsesSharedCurrentPlaylistItemMatcher() {
         let viewModel = PlaylistManagementViewModel()
@@ -154,6 +188,29 @@ struct PlaylistManagementViewModelTests {
             currentPlaylistItem: item,
             currentTrack: CurrentPlaybackTrack(id: "other", title: "Track", artistName: "Artist")
         ))
+    }
+
+    @Test("current item can use display local track ID while MusicKit ID is unresolved")
+    func currentItemCanUseDisplayLocalTrackID() {
+        let viewModel = PlaylistManagementViewModel()
+        let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main")
+        let track = TrackRecord(catalogID: "catalog", libraryID: "library", title: "Track", artistName: "Artist")
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id)
+
+        let detail = viewModel.detailPresentation(
+            for: playlist,
+            playlistItems: [item],
+            tracks: [track],
+            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
+            currentPlaylistID: playlist.musicPlaylistID,
+            currentPlaylistItem: nil,
+            currentLocalTrackID: track.id.uuidString,
+            currentTrack: CurrentPlaybackTrack(id: "runtime-only", title: "Track", artistName: "Artist"),
+            evictAfterSkips: 3
+        )
+
+        #expect(detail.rows.first?.isCurrent == true)
+        #expect(detail.playlist.isCurrentPlaybackPlaylist)
     }
 
     @Test("sync reports success and reconciles stored order")

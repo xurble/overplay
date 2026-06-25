@@ -44,6 +44,42 @@ struct CurrentPlaylistItemMatcherTests {
             playlist: playlist,
             currentPlaylistID: "main",
             currentPlaylistItem: nil,
+            currentLocalTrackID: track.id.uuidString,
+            currentTrack: nil
+        ))
+        #expect(CurrentPlaylistItemMatcher.isCurrent(
+            itemID: item.id,
+            track: track,
+            playlist: playlist,
+            currentPlaylistID: "main",
+            currentPlaylistItem: nil,
+            currentLocalTrackID: track.id.uuidString,
+            currentTrack: CurrentPlaybackTrack(id: "runtime-only", title: "Track", artistName: "Artist")
+        ))
+        #expect(!CurrentPlaylistItemMatcher.isCurrent(
+            itemID: item.id,
+            track: track,
+            playlist: playlist,
+            currentPlaylistID: "main",
+            currentPlaylistItem: item,
+            currentLocalTrackID: otherTrack.id.uuidString,
+            currentTrack: CurrentPlaybackTrack(id: "catalog", title: "Track", artistName: "Artist")
+        ))
+        #expect(CurrentPlaylistItemMatcher.isCurrent(
+            itemID: otherItem.id,
+            track: otherTrack,
+            playlist: playlist,
+            currentPlaylistID: "main",
+            currentPlaylistItem: item,
+            currentLocalTrackID: otherTrack.id.uuidString,
+            currentTrack: CurrentPlaybackTrack(id: "catalog", title: "Track", artistName: "Artist")
+        ))
+        #expect(CurrentPlaylistItemMatcher.isCurrent(
+            itemID: item.id,
+            track: track,
+            playlist: playlist,
+            currentPlaylistID: "main",
+            currentPlaylistItem: nil,
             currentTrack: CurrentPlaybackTrack(id: "catalog", title: "Track", artistName: "Artist")
         ))
         #expect(CurrentPlaylistItemMatcher.isCurrent(
@@ -54,7 +90,7 @@ struct CurrentPlaylistItemMatcherTests {
             currentPlaylistItem: nil,
             currentTrack: CurrentPlaybackTrack(id: "library", title: "Track", artistName: "Artist")
         ))
-        #expect(!CurrentPlaylistItemMatcher.isCurrent(
+        #expect(CurrentPlaylistItemMatcher.isCurrent(
             itemID: item.id,
             track: track,
             playlist: playlist,

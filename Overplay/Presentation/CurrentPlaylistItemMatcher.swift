@@ -7,10 +7,14 @@ enum CurrentPlaylistItemMatcher {
         playlist: PlaylistRecord,
         currentPlaylistID: String?,
         currentPlaylistItem: PlaylistItemRecord?,
+        currentLocalTrackID: String? = nil,
         currentTrack: CurrentPlaybackTrack?
     ) -> Bool {
-        guard let currentTrack,
-              playlist.musicPlaylistID == currentPlaylistID else { return false }
+        guard playlist.musicPlaylistID == currentPlaylistID else { return false }
+
+        if let currentLocalTrackID {
+            return currentLocalTrackID == track.id.uuidString
+        }
 
         if currentPlaylistItem?.id == itemID {
             return true
@@ -19,6 +23,8 @@ enum CurrentPlaylistItemMatcher {
         if currentPlaylistItem?.trackID == track.id {
             return true
         }
+
+        guard let currentTrack else { return false }
 
         let musicItemIDs = PlaybackQueueBuilder.musicItemIDs(for: track)
         let matchesMusicID = musicItemIDs.contains(currentTrack.id)

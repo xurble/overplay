@@ -161,7 +161,8 @@ struct PlaylistManagementView: View {
             playbackOrderState: playbackController.playbackOrderState(for: playlist.musicPlaylistID),
             currentPlaylistID: playbackController.currentPlaylistID,
             currentPlaylistItem: playbackController.currentPlaylistItem,
-            currentTrack: playbackController.currentTrack,
+            currentLocalTrackID: playbackController.nowPlayingDisplayLocalTrackID,
+            currentTrack: playbackController.nowPlayingDisplayTrack,
             playbackItemMetadataVersion: playbackController.playbackItemMetadataVersion,
             evictAfterSkips: settings.evictAfterSkips
         )
