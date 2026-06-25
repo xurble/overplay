@@ -120,6 +120,10 @@ struct PlaybackControllerDisplayRestoreTests {
         #expect(!controller.isPlaying)
         #expect(!controller.canControlPlayback)
         #expect(controller.playbackItemMetadataVersion > 0)
+        #expect(controller.activePlaylistSnapshot?.musicPlaylistID == playlist.musicPlaylistID)
+        #expect(controller.activePlaylistSnapshot?.rows.first?.id == item.id)
+        #expect(controller.activePlaylistSnapshot?.rows.first?.skipCount == 1)
+        #expect(controller.activePlaylistSnapshot?.rows.first?.isCurrent == true)
     }
 
     @Test("keep current refreshes displayed skip count")
@@ -169,11 +173,13 @@ struct PlaybackControllerDisplayRestoreTests {
 
         controller.restoreLocalPlaybackDisplay(context: context)
         #expect(controller.displayedSkipCount == 2)
+        #expect(controller.activePlaylistSnapshot?.rows.first?.skipCount == 2)
 
         controller.keepCurrent(settings: settings, context: context)
 
         #expect(item.skipCount == 0)
         #expect(controller.displayedSkipCount == 0)
+        #expect(controller.activePlaylistSnapshot?.rows.first?.skipCount == 0)
     }
 
     @Test("reset current skip count refreshes displayed metadata")
@@ -228,6 +234,7 @@ struct PlaybackControllerDisplayRestoreTests {
         let history = try context.fetch(FetchDescriptor<HistoryEvent>())
         #expect(item.skipCount == 0)
         #expect(controller.displayedSkipCount == 0)
+        #expect(controller.activePlaylistSnapshot?.rows.first?.skipCount == 0)
         #expect(controller.playbackItemMetadataVersion > previousMetadataVersion)
         #expect(history.first?.message == "Skip count reset in CarPlay")
     }
@@ -285,6 +292,7 @@ struct PlaybackControllerDisplayRestoreTests {
         let history = try context.fetch(FetchDescriptor<HistoryEvent>())
         #expect(item.protected)
         #expect(controller.displayedIsProtected)
+        #expect(controller.activePlaylistSnapshot?.rows.first?.isProtected == true)
         #expect(controller.playbackItemMetadataVersion > previousMetadataVersion)
         #expect(history.first?.message == "Protected in CarPlay")
 
@@ -298,6 +306,7 @@ struct PlaybackControllerDisplayRestoreTests {
         let updatedHistory = try context.fetch(FetchDescriptor<HistoryEvent>())
         #expect(!item.protected)
         #expect(!controller.displayedIsProtected)
+        #expect(controller.activePlaylistSnapshot?.rows.first?.isProtected == false)
         #expect(controller.playbackItemMetadataVersion > protectedMetadataVersion)
         #expect(updatedHistory.compactMap(\.message).contains("Keep turned off in CarPlay"))
     }
@@ -365,6 +374,10 @@ struct PlaybackControllerDisplayRestoreTests {
         #expect(controller.displayedPlaythroughCount == 0)
         #expect(!controller.displayedIsProtected)
         #expect(!controller.displayedIsEvicted)
+        #expect(controller.activePlaylistSnapshot?.rows.first?.skipCount == 0)
+        #expect(controller.activePlaylistSnapshot?.rows.first?.playthroughCount == 0)
+        #expect(controller.activePlaylistSnapshot?.rows.first?.isProtected == false)
+        #expect(controller.activePlaylistSnapshot?.rows.first?.isEvicted == false)
         #expect(controller.playbackItemMetadataVersion > previousMetadataVersion)
     }
 
@@ -419,6 +432,7 @@ struct PlaybackControllerDisplayRestoreTests {
 
         #expect(item.evictedAt == nil)
         #expect(!controller.displayedIsEvicted)
+        #expect(controller.activePlaylistSnapshot?.rows.first?.isEvicted == false)
         #expect(controller.playbackItemMetadataVersion > previousMetadataVersion)
     }
 }

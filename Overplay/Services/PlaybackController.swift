@@ -41,6 +41,7 @@ final class PlaybackController {
     var durationSeconds: Double?
     var isPlaying = false
     var currentPlaylistID: String?
+    var activePlaylistSnapshot: ActivePlaylistSnapshot?
     var statusMessage: String?
     private(set) var playbackItemMetadataVersion = 0
     private var playbackModeVersion = 0
@@ -209,6 +210,7 @@ final class PlaybackController {
         activeSession = nil
         activeQueueEntries = []
         activeQueueIndex = nil
+        activePlaylistSnapshot = nil
         prefetchedArtworkTrackID = nil
         pendingModeQueueRebuild = nil
         pendingQueueAdvanceLocalTrackID = nil
@@ -314,6 +316,7 @@ final class PlaybackController {
                 player.playbackTime = state.elapsedSeconds
             }
             updateMusicKitNowPlayingTrack()
+            rebuildActivePlaylistSnapshot(context: context)
             NowPlayingMetadataService.update(track: nowPlayingDisplayTrack, elapsed: elapsedSeconds, isPlaying: isPlaying)
             prefetchCurrentArtworkIfNeeded(musicItemID: restoredMusicItemID, playlistID: state.playlistID)
         } catch {
@@ -341,6 +344,7 @@ final class PlaybackController {
             activeQueueIndex = nil
             statusMessage = nil
             bumpPlaybackItemMetadataVersion()
+            rebuildActivePlaylistSnapshot(context: context)
         } catch {
             StartupProfiler.mark("Local playback display restore failed: \(error.localizedDescription)")
         }
@@ -512,6 +516,7 @@ final class PlaybackController {
         currentPlaylistID = playlistID
         await ArtworkCacheService.shared.touchPlaylistUsage(playlistID)
         statusMessage = nil
+        rebuildActivePlaylistSnapshot(context: context)
         startMonitoring(context: context)
         await refresh(context: context)
     }
@@ -548,6 +553,7 @@ final class PlaybackController {
         if let restoredPlayback = try? PlaybackTrackResolver.restoredPlaybackTarget(
             currentPlaylistID: currentPlaylistID,
             currentPlaylistItem: currentPlaylistItem,
+            currentLocalTrackID: nowPlayingDisplayLocalTrackID,
             currentTrack: currentTrack,
             in: context
         ) {
@@ -864,6 +870,7 @@ final class PlaybackController {
         }
         currentPlaylistItem = target.item
         syncPlaybackMetadata(for: target.musicItemID, trustedPlaylistItem: target.item, context: context)
+        rebuildActivePlaylistSnapshot(context: context)
     }
 
     func promoteCurrent(settings: OverplaySettings, context: ModelContext) async {
@@ -880,6 +887,7 @@ final class PlaybackController {
         }
         currentPlaylistItem = target.item
         syncPlaybackMetadata(for: target.musicItemID, trustedPlaylistItem: target.item, context: context)
+        rebuildActivePlaylistSnapshot(context: context)
         statusMessage = "Promoted \(currentTrack?.title ?? "track") to the One True Playlist."
         await next(settings: settings, context: context)
     }
@@ -904,6 +912,7 @@ final class PlaybackController {
         }
         currentPlaylistItem = target.item
         syncPlaybackMetadata(for: target.musicItemID, trustedPlaylistItem: target.item, context: context)
+        rebuildActivePlaylistSnapshot(context: context)
         return true
     }
 
@@ -933,6 +942,7 @@ final class PlaybackController {
         }
         currentPlaylistItem = target.item
         syncPlaybackMetadata(for: target.musicItemID, trustedPlaylistItem: target.item, context: context)
+        rebuildActivePlaylistSnapshot(context: context)
         return true
     }
 
@@ -956,12 +966,14 @@ final class PlaybackController {
         }
         currentPlaylistItem = target.item
         syncPlaybackMetadata(for: target.musicItemID, trustedPlaylistItem: target.item, context: context)
+        rebuildActivePlaylistSnapshot(context: context)
         return true
     }
 
     func resetAllLocalStats(context: ModelContext) throws {
         try PlaylistItemRepository.resetAllStats(in: context)
         refreshCurrentPlaybackMetadata(context: context)
+        rebuildActivePlaylistSnapshot(context: context)
     }
 
     func restoreTrack(
@@ -971,6 +983,7 @@ final class PlaybackController {
     ) throws {
         try TrackHealthActionService.restoreTrack(item, playlist: playlist, in: context)
         refreshCurrentPlaybackMetadata(context: context)
+        rebuildActivePlaylistSnapshot(context: context)
     }
 
     func evictCurrent(settings: OverplaySettings, context: ModelContext) async {
@@ -991,6 +1004,7 @@ final class PlaybackController {
             return
         }
         currentPlaylistItem = target.item
+        rebuildActivePlaylistSnapshot(context: context)
         await removeEvictedItemFromPlaylist(target.item, playlist: target.playlist, context: context)
         await next(settings: settings, context: context)
     }
@@ -1088,11 +1102,17 @@ final class PlaybackController {
             activeQueueEntries = []
             activeQueueIndex = nil
             currentPlaylistID = nil
+            activePlaylistSnapshot = nil
             prefetchedArtworkTrackID = nil
         }
 
         logPlaybackRefreshIfNeeded(identity: identity)
         NowPlayingMetadataService.update(track: nowPlayingDisplayTrack, elapsed: elapsedSeconds, isPlaying: isPlaying)
+        if currentPlaylistID == nil {
+            activePlaylistSnapshot = nil
+        } else {
+            updateActivePlaylistSnapshotCurrentRow()
+        }
 
         if let newTrackID {
             persistLocalPlaybackState(musicItemID: newTrackID, localTrackID: newLocalTrackID)
@@ -1106,10 +1126,32 @@ final class PlaybackController {
         }
         syncPlaybackMetadata(
             for: identity.musicItemID,
-            trustedPlaylistItem: identity.isQueueCorrelated ? currentPlaylistItem : nil,
+            trustedPlaylistItem: trustedPlaylistItem(for: identity),
             context: context
         )
         persistResolvedPlaybackIdentity(identity)
+    }
+
+    private func trustedPlaylistItem(for identity: CurrentPlaybackIdentity) -> PlaylistItemRecord? {
+        if identity.isQueueCorrelated {
+            return currentPlaylistItem
+        }
+
+        guard identity.source == "activeSession" else {
+            return nil
+        }
+
+        if let playlistItemID = identity.playlistItemID,
+           currentPlaylistItem?.id == playlistItemID {
+            return currentPlaylistItem
+        }
+
+        if let localTrackID = identity.localTrackID,
+           currentPlaylistItem?.trackID.uuidString == localTrackID {
+            return currentPlaylistItem
+        }
+
+        return nil
     }
 
     private func playbackIdentityDidChange(
@@ -1230,6 +1272,9 @@ final class PlaybackController {
                 trustedPlaylistItem: outcome.item,
                 context: context
             )
+        }
+        if shouldApplyToDisplayedPlayback {
+            rebuildActivePlaylistSnapshot(context: context)
         }
     }
 
@@ -1699,6 +1744,7 @@ final class PlaybackController {
         pendingQueueAdvanceLocalTrackID = activeQueueCurrentEntry.localTrackID
         pendingQueueAdvanceStartedAt = .now
         bumpPlaybackItemMetadataVersion()
+        updateActivePlaylistSnapshotCurrentRow()
         NowPlayingMetadataService.update(track: nowPlayingDisplayTrack, elapsed: elapsedSeconds, isPlaying: isPlaying)
         persistLocalPlaybackState(
             musicItemID: activeQueueCurrentEntry.queuedMusicItemID,
@@ -1944,6 +1990,9 @@ final class PlaybackController {
                     }
                 }
             }
+            if currentPlaylistID == playlist.musicPlaylistID {
+                rebuildActivePlaylistSnapshot(context: context)
+            }
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -1980,5 +2029,45 @@ final class PlaybackController {
         }
 
         reconcileStoredOrder(for: playlist, context: context)
+    }
+
+    private func rebuildActivePlaylistSnapshot(context: ModelContext) {
+        guard let currentPlaylistID,
+              let playlist = try? currentPlaylist(in: context) else {
+            activePlaylistSnapshot = nil
+            return
+        }
+
+        do {
+            let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
+            let tracks = try TrackRecordRepository.tracks(ids: items.map(\.trackID), in: context)
+            activePlaylistSnapshot = ActivePlaylistSnapshot(
+                playlist: playlist,
+                items: items,
+                tracks: tracks,
+                playbackOrderState: PlaybackOrderStore.state(
+                    playerID: playerID,
+                    musicPlaylistID: currentPlaylistID
+                ),
+                currentPlaylistItemID: currentPlaylistItem?.id,
+                currentLocalTrackID: nowPlayingDisplayLocalTrackID,
+                currentMusicItemID: nowPlayingDisplayTrack?.id ?? currentTrack?.id
+            )
+        } catch {
+            statusMessage = "Playback is active, but refreshing the visible playlist failed: \(error.localizedDescription)"
+        }
+    }
+
+    private func updateActivePlaylistSnapshotCurrentRow() {
+        guard let activePlaylistSnapshot,
+              activePlaylistSnapshot.musicPlaylistID == currentPlaylistID else {
+            return
+        }
+
+        self.activePlaylistSnapshot = activePlaylistSnapshot.updatingCurrentRow(
+            currentPlaylistItemID: currentPlaylistItem?.id,
+            currentLocalTrackID: nowPlayingDisplayLocalTrackID,
+            currentMusicItemID: nowPlayingDisplayTrack?.id ?? currentTrack?.id
+        )
     }
 }

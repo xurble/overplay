@@ -12,11 +12,14 @@ final class PlaylistManagementViewModel {
     }
 
     struct TrackRowPresentation: Identifiable {
-        var id: UUID { item.id }
-        var item: PlaylistItemRecord
-        var track: TrackRecord
+        var id: UUID
+        var item: PlaylistItemRecord?
+        var track: TrackRecord?
+        var trackID: UUID?
+        var localTrackID: String
         var summary: TrackSummaryPresentation
         var isCurrent: Bool
+        var isPlayable: Bool
     }
 
     struct Dependencies {
@@ -71,9 +74,20 @@ final class PlaylistManagementViewModel {
         currentLocalTrackID: String? = nil,
         currentTrack: CurrentPlaybackTrack?,
         playbackItemMetadataVersion: Int = 0,
+        activePlaylistSnapshot: ActivePlaylistSnapshot? = nil,
         evictAfterSkips: Int
     ) -> DetailPresentation {
         _ = playbackItemMetadataVersion
+        if let activePlaylistSnapshot,
+           activePlaylistSnapshot.musicPlaylistID == playlist.musicPlaylistID,
+           currentPlaylistID == playlist.musicPlaylistID {
+            return activeDetailPresentation(
+                for: playlist,
+                snapshot: activePlaylistSnapshot,
+                evictAfterSkips: evictAfterSkips
+            )
+        }
+
         let visibleItems = visibleItems(for: playlist, playlistItems: playlistItems)
         let orderedItems = PlaylistDisplayOrder.orderedItems(visibleItems, state: playbackOrderState)
         let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
@@ -81,8 +95,11 @@ final class PlaylistManagementViewModel {
             guard let track = tracksByID[item.trackID] else { return nil }
 
             return TrackRowPresentation(
+                id: item.id,
                 item: item,
                 track: track,
+                trackID: track.id,
+                localTrackID: item.trackID.uuidString,
                 summary: TrackSummaryPresentation(
                     id: item.id,
                     playlistID: item.playlistID,
@@ -102,7 +119,8 @@ final class PlaylistManagementViewModel {
                     currentPlaylistItem: currentPlaylistItem,
                     currentLocalTrackID: currentLocalTrackID,
                     currentTrack: currentTrack
-                )
+                ),
+                isPlayable: item.isPlayable
             )
         }
         let builder = PlaylistPresentationBuilder(
@@ -116,6 +134,54 @@ final class PlaylistManagementViewModel {
         return DetailPresentation(
             playlist: builder.summary(for: playlist),
             summary: builder.dashboardSummary(forPlaylistID: playlist.id),
+            rows: rows
+        )
+    }
+
+    private func activeDetailPresentation(
+        for playlist: PlaylistRecord,
+        snapshot: ActivePlaylistSnapshot,
+        evictAfterSkips: Int
+    ) -> DetailPresentation {
+        let rows = snapshot.rows.map { row in
+            TrackRowPresentation(
+                id: row.id,
+                item: nil,
+                track: nil,
+                trackID: row.trackID,
+                localTrackID: row.localTrackID,
+                summary: TrackSummaryPresentation(
+                    id: row.id,
+                    playlistID: row.playlistID,
+                    trackID: row.trackID,
+                    title: row.title,
+                    artistName: row.artistName,
+                    albumTitle: row.albumTitle,
+                    artworkURLString: row.artworkURLString,
+                    skipCount: row.skipCount,
+                    isPlayable: row.isPlayable
+                ),
+                isCurrent: row.isCurrent,
+                isPlayable: row.isPlayable
+            )
+        }
+        let playlistPresentation = PlaylistSummaryPresentation(
+            id: playlist.id,
+            musicPlaylistID: playlist.musicPlaylistID,
+            title: playlist.name,
+            artworkURLString: rows.first?.summary.artworkURLString,
+            role: playlist.role,
+            source: playlist.source,
+            writePolicy: playlist.writePolicy,
+            activeTrackCount: rows.count,
+            playableTrackCount: rows.filter(\.isPlayable).count,
+            lastSyncedAt: playlist.lastSyncedAt,
+            isCurrentPlaybackPlaylist: true
+        )
+
+        return DetailPresentation(
+            playlist: playlistPresentation,
+            summary: DashboardSummary(activeRows: snapshot.rows, evictAfterSkips: evictAfterSkips),
             rows: rows
         )
     }

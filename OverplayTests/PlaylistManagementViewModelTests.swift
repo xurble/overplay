@@ -172,6 +172,79 @@ struct PlaylistManagementViewModelTests {
         #expect(after.rows.first?.isCurrent == true)
     }
 
+    @Test("current playlist detail uses active snapshot rows")
+    func currentPlaylistDetailUsesActiveSnapshotRows() {
+        let viewModel = PlaylistManagementViewModel()
+        let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main", role: .oneTruePlaylist)
+        let staleTrack = TrackRecord(catalogID: "stale", title: "Stale", artistName: "Artist")
+        let freshTrack = TrackRecord(catalogID: "fresh", title: "Fresh", artistName: "Artist")
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: staleTrack.id, skipCount: 1)
+        let snapshotItem = PlaylistItemRecord(playlistID: playlist.id, trackID: freshTrack.id, skipCount: 4)
+        snapshotItem.id = item.id
+        let snapshot = ActivePlaylistSnapshot(
+            playlist: playlist,
+            items: [snapshotItem],
+            tracks: [freshTrack],
+            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
+            currentPlaylistItemID: item.id
+        )
+
+        let detail = viewModel.detailPresentation(
+            for: playlist,
+            playlistItems: [item],
+            tracks: [staleTrack],
+            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
+            currentPlaylistID: playlist.musicPlaylistID,
+            currentPlaylistItem: item,
+            currentTrack: CurrentPlaybackTrack(id: "fresh", title: "Fresh", artistName: "Artist"),
+            activePlaylistSnapshot: snapshot,
+            evictAfterSkips: 3
+        )
+
+        #expect(detail.rows.map(\.id) == [item.id])
+        #expect(detail.rows.first?.item == nil)
+        #expect(detail.rows.first?.summary.title == "Fresh")
+        #expect(detail.rows.first?.summary.skipCount == 4)
+        #expect(detail.rows.first?.isCurrent == true)
+        #expect(detail.summary.atRiskCount == 1)
+        #expect(detail.playlist.isCurrentPlaybackPlaylist)
+    }
+
+    @Test("non-current playlist detail ignores active snapshot")
+    func nonCurrentPlaylistDetailIgnoresActiveSnapshot() {
+        let viewModel = PlaylistManagementViewModel()
+        let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main", role: .oneTruePlaylist)
+        let activePlaylist = PlaylistRecord(musicPlaylistID: "active", name: "Active")
+        let track = TrackRecord(catalogID: "track", title: "SwiftData", artistName: "Artist")
+        let activeTrack = TrackRecord(catalogID: "active", title: "Active", artistName: "Artist")
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id, skipCount: 1)
+        let activeItem = PlaylistItemRecord(playlistID: activePlaylist.id, trackID: activeTrack.id, skipCount: 5)
+        let snapshot = ActivePlaylistSnapshot(
+            playlist: activePlaylist,
+            items: [activeItem],
+            tracks: [activeTrack],
+            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: activePlaylist.musicPlaylistID),
+            currentPlaylistItemID: activeItem.id
+        )
+
+        let detail = viewModel.detailPresentation(
+            for: playlist,
+            playlistItems: [item],
+            tracks: [track],
+            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
+            currentPlaylistID: activePlaylist.musicPlaylistID,
+            currentPlaylistItem: activeItem,
+            currentTrack: CurrentPlaybackTrack(id: "active", title: "Active", artistName: "Artist"),
+            activePlaylistSnapshot: snapshot,
+            evictAfterSkips: 3
+        )
+
+        #expect(detail.rows.first?.item?.id == item.id)
+        #expect(detail.rows.first?.summary.title == "SwiftData")
+        #expect(detail.rows.first?.summary.skipCount == 1)
+        #expect(detail.playlist.isCurrentPlaybackPlaylist == false)
+    }
+
     @Test("current item uses shared current playlist item matcher")
     func currentItemUsesSharedCurrentPlaylistItemMatcher() {
         let viewModel = PlaylistManagementViewModel()

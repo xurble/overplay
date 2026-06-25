@@ -57,6 +57,7 @@ struct PlaybackControlsView: View {
             || (try? PlaybackTrackResolver.restoredPlaybackTarget(
                 currentPlaylistID: playbackController.currentPlaylistID,
                 currentPlaylistItem: playbackController.currentPlaylistItem,
+                currentLocalTrackID: playbackController.nowPlayingDisplayLocalTrackID,
                 currentTrack: playbackController.currentTrack,
                 in: modelContext
             )) != nil

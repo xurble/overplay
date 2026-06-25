@@ -304,6 +304,45 @@ struct PlaybackTrackResolverTests {
         #expect(target?.track.id == targetTrack.id)
     }
 
+    @Test("restored playback target uses local track id when runtime music id is unresolved")
+    func restoredPlaybackTargetUsesLocalTrackIDWhenRuntimeMusicIDIsUnresolved() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(musicPlaylistID: "playlist-1", name: "Main", role: .oneTruePlaylist)
+        let targetTrack = TrackRecord(
+            catalogID: "catalog-target",
+            libraryID: "library-target",
+            title: "Target",
+            artistName: "Artist"
+        )
+        let firstTrack = TrackRecord(
+            catalogID: "catalog-first",
+            libraryID: "library-first",
+            title: "First",
+            artistName: "Artist"
+        )
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: targetTrack.id)
+        context.insert(playlist)
+        context.insert(targetTrack)
+        context.insert(firstTrack)
+        context.insert(item)
+
+        let target = try PlaybackTrackResolver.restoredPlaybackTarget(
+            currentPlaylistID: playlist.musicPlaylistID,
+            currentPlaylistItem: nil,
+            currentLocalTrackID: targetTrack.id.uuidString,
+            currentTrack: CurrentPlaybackTrack(
+                id: "runtime-only-restored-id",
+                title: "Target",
+                artistName: "Artist"
+            ),
+            in: context
+        )
+
+        #expect(target?.playlist.id == playlist.id)
+        #expect(target?.track.id == targetTrack.id)
+    }
+
     @Test("default playback playlist prefers selected active playlist then main playlist")
     func defaultPlaybackPlaylistPrefersSelectedThenMain() throws {
         let container = try OverplayTestSupport.makeModelContainer()

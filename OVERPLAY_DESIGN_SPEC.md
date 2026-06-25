@@ -188,6 +188,13 @@ For performance reasons, if a playlist has existing tracks, the UI should act
 on the stored tracks as soon as possible, loading, scrolling, playing etc
 and should initiate a sync in the background.
 
+Playlist detail screens should use one shared UI with two row data sources:
+non-playing playlists render from SwiftData records, while the currently
+playing playlist may render from the playback controller's active in-memory
+playlist projection. This projection is a fresh read model only; durable
+membership, metadata, skip/playthrough counts, eviction state, history, and
+settings are still written through SwiftData.
+
 ### Additions from Apple Music
 
 When Apple Music contains a track that Overplay has not seen in a linked
@@ -358,6 +365,7 @@ storage:
 - Current playback position.
 - Current selected screen or playlist view.
 - Now Playing UI state.
+- Active playlist row projection for the currently playing playlist.
 - Any transient sync or playback progress state.
 
 Window-specific navigation and presentation state should use `SceneStorage` or
@@ -382,6 +390,13 @@ rebuilding the queue when the end is reached. This keeps skip tracking,
 eviction filtering, playlist display order, CarPlay, system controls, and
 remote commands aligned to the same source of truth.
 
+During playback, the shared playback controller should maintain an active
+playlist projection for the currently playing playlist. It should contain
+stable playlist item IDs, local track IDs, display metadata, artwork source,
+skip and playthrough counts, protected/evicted/playable state, and current-row
+state. Playlist views use this projection only when it matches the displayed
+current playlist; otherwise they fall back to SwiftData records.
+
 Local order state:
 
 - Store only the ordered local track IDs and an update date.
@@ -402,6 +417,9 @@ Starting playback:
 - If no track is requested, playback starts at the first track in local order.
 - MusicKit and Overplay UI should be reconciled immediately after queue setup so
   every surface agrees on the current track and queue position.
+- After queue setup succeeds, the playback controller materializes or refreshes
+  the active playlist projection from the same SwiftData records and local
+  order used to build the queue.
 
 Shuffle behavior:
 
@@ -435,6 +453,9 @@ Additions and removals:
 - If the changed playlist is currently playing, playable additions should also
   be appended to the live MusicKit queue when possible without restarting
   playback.
+- If the changed playlist is currently playing, refresh the active playlist
+  projection immediately after the durable SwiftData/local-order mutation so
+  visible rows do not wait for SwiftData query invalidation.
 - For non-playing playlists, deletions and evictions remove the track from
   local order immediately.
 - For the currently playing playlist, deletion or eviction is recorded in
@@ -449,6 +470,18 @@ lock-screen and remote commands, CarPlay, keyboard/media keys, and playlist row
 play actions should route through the shared playback controller rather than
 implementing shuffle, repeat, queue ordering, or current-track reconciliation
 locally.
+
+Active playlist projection updates:
+
+- Track changes update current-row state immediately.
+- Skip increments, playthrough counts, playthrough skip resets, keep/protect
+  changes, manual resets, evictions, restores, promotions, queue rebuilds, and
+  shuffle/order changes refresh the projection after their shared controller or
+  use-case mutation succeeds.
+- When playback switches to another playlist or clears, discard the old
+  projection. The old playlist then renders from SwiftData again.
+- If projection refresh fails, keep playback and durable SwiftData state
+  authoritative and allow the playlist UI to fall back to SwiftData rows.
 
 ## Cross-Surface Playback Consistency
 

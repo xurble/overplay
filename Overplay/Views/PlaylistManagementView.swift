@@ -68,16 +68,16 @@ struct PlaylistManagementView: View {
                     if playlist.role == .triage {
                         playlistTrackButton(for: row)
                             .swipeActions(edge: .trailing) {
-                                if row.item.isPlayable {
+                                if row.isPlayable {
                                     Button(role: .destructive) {
-                                        Task { await evict(row.item, track: row.track) }
+                                        Task { await evict(row) }
                                     } label: {
                                         Label("Evict Now", systemImage: "trash.fill")
                                     }
                                     .disabled(viewModel.evictingItemIDs.contains(row.id))
 
                                     Button {
-                                        Task { await promote(row.item, track: row.track) }
+                                        Task { await promote(row) }
                                     } label: {
                                         Label("Promote", systemImage: "star.fill")
                                     }
@@ -164,6 +164,7 @@ struct PlaylistManagementView: View {
             currentLocalTrackID: playbackController.nowPlayingDisplayLocalTrackID,
             currentTrack: playbackController.nowPlayingDisplayTrack,
             playbackItemMetadataVersion: playbackController.playbackItemMetadataVersion,
+            activePlaylistSnapshot: playbackController.activePlaylistSnapshot,
             evictAfterSkips: settings.evictAfterSkips
         )
     }
@@ -194,7 +195,7 @@ struct PlaylistManagementView: View {
 
     private func playlistTrackButton(for row: PlaylistManagementViewModel.TrackRowPresentation) -> some View {
         Button {
-            Task { await play(row.item, track: row.track) }
+            Task { await play(row) }
         } label: {
             PlaylistTrackRowView(
                 summary: row.summary,
@@ -204,7 +205,28 @@ struct PlaylistManagementView: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(!row.item.isPlayable)
+        .disabled(!row.isPlayable)
+    }
+
+    private func resolvedItemAndTrack(
+        for row: PlaylistManagementViewModel.TrackRowPresentation
+    ) -> (item: PlaylistItemRecord, track: TrackRecord)? {
+        if let item = row.item, let track = row.track {
+            return (item, track)
+        }
+
+        guard let item = try? PlaylistItemRepository.item(id: row.id, in: modelContext),
+              item.playlistID == playlist.id,
+              let track = try? TrackRecordRepository.track(id: item.trackID, in: modelContext) else {
+            return nil
+        }
+
+        return (item, track)
+    }
+
+    private func play(_ row: PlaylistManagementViewModel.TrackRowPresentation) async {
+        guard let resolved = resolvedItemAndTrack(for: row) else { return }
+        await play(resolved.item, track: resolved.track)
     }
 
     private func play(_ item: PlaylistItemRecord, track: TrackRecord) async {
@@ -233,6 +255,11 @@ struct PlaylistManagementView: View {
         reloadPlaylistTracks()
     }
 
+    private func promote(_ row: PlaylistManagementViewModel.TrackRowPresentation) async {
+        guard let resolved = resolvedItemAndTrack(for: row) else { return }
+        await promote(resolved.item, track: resolved.track)
+    }
+
     private func promote(_ item: PlaylistItemRecord, track: TrackRecord) async {
         await viewModel.promote(
             item,
@@ -241,6 +268,11 @@ struct PlaylistManagementView: View {
             context: modelContext,
             dependencies: dependencies
         )
+    }
+
+    private func evict(_ row: PlaylistManagementViewModel.TrackRowPresentation) async {
+        guard let resolved = resolvedItemAndTrack(for: row) else { return }
+        await evict(resolved.item, track: resolved.track)
     }
 
     private func evict(_ item: PlaylistItemRecord, track: TrackRecord) async {

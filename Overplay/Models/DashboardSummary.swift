@@ -14,6 +14,16 @@ struct DashboardSummary: Equatable, Sendable {
         }.count
     }
 
+    init(activeRows: [ActivePlaylistSnapshot.Row], evictAfterSkips: Int) {
+        let atRiskThreshold = max(evictAfterSkips - 1, 0)
+        knownCount = activeRows.count
+        playableCount = activeRows.filter(\.isPlayable).count
+        evictedCount = activeRows.filter(\.isEvicted).count
+        atRiskCount = activeRows.filter { row in
+            row.isPlayable && row.skipCount >= atRiskThreshold
+        }.count
+    }
+
     static let empty = DashboardSummary(
         knownCount: 0,
         playableCount: 0,
