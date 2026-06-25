@@ -6,12 +6,13 @@ struct PlaylistManagementView: View {
     @Environment(PlaybackController.self) private var playbackController
 
     @Query private var playlistItems: [PlaylistItemRecord]
-    @Query(sort: \TrackRecord.title) private var tracks: [TrackRecord]
 
     var settings: OverplaySettings
     var playlist: PlaylistRecord
 
     @State private var viewModel = PlaylistManagementViewModel()
+    @State private var tracks: [TrackRecord] = []
+    @State private var isScrolling = false
 
     init(settings: OverplaySettings, playlist: PlaylistRecord) {
         self.settings = settings
@@ -64,35 +65,28 @@ struct PlaylistManagementView: View {
                 }
 
                 ForEach(detail.rows) { row in
-                    Button {
-                        Task { await play(row.item, track: row.track) }
-                    } label: {
-                        PlaylistTrackRowView(
-                            summary: row.summary,
-                            playlistID: playlist.musicPlaylistID,
-                            isCurrent: row.isCurrent
-                        )
-                        .id(row.renderID)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!row.item.isPlayable)
-                    .swipeActions(edge: .trailing) {
-                        if playlist.role == .triage, row.item.isPlayable {
-                            Button(role: .destructive) {
-                                Task { await evict(row.item, track: row.track) }
-                            } label: {
-                                Label("Evict Now", systemImage: "trash.fill")
-                            }
-                            .disabled(viewModel.evictingItemIDs.contains(row.id))
+                    if playlist.role == .triage {
+                        playlistTrackButton(for: row)
+                            .swipeActions(edge: .trailing) {
+                                if row.item.isPlayable {
+                                    Button(role: .destructive) {
+                                        Task { await evict(row.item, track: row.track) }
+                                    } label: {
+                                        Label("Evict Now", systemImage: "trash.fill")
+                                    }
+                                    .disabled(viewModel.evictingItemIDs.contains(row.id))
 
-                            Button {
-                                Task { await promote(row.item, track: row.track) }
-                            } label: {
-                                Label("Promote", systemImage: "star.fill")
+                                    Button {
+                                        Task { await promote(row.item, track: row.track) }
+                                    } label: {
+                                        Label("Promote", systemImage: "star.fill")
+                                    }
+                                    .tint(.pink)
+                                    .disabled(viewModel.promotingItemIDs.contains(row.id))
+                                }
                             }
-                            .tint(.pink)
-                            .disabled(viewModel.promotingItemIDs.contains(row.id))
-                        }
+                    } else {
+                        playlistTrackButton(for: row)
                     }
                 }
             }
@@ -105,10 +99,16 @@ struct PlaylistManagementView: View {
             }
         }
         .miniPlayerScrollContentInset()
+        .onScrollPhaseChange { _, phase in
+            isScrolling = phase.isScrolling
+        }
         .navigationTitle("Playlist")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: playlist.musicPlaylistID) {
             await ArtworkCacheService.shared.touchPlaylistUsage(playlist.musicPlaylistID)
+        }
+        .task(id: playlistTrackIDsKey) {
+            reloadPlaylistTracks()
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -168,6 +168,17 @@ struct PlaylistManagementView: View {
         )
     }
 
+    private var playlistTrackIDsKey: String {
+        playlistItems
+            .map(\.trackID.uuidString)
+            .sorted()
+            .joined(separator: "|")
+    }
+
+    private func reloadPlaylistTracks() {
+        tracks = (try? TrackRecordRepository.tracks(ids: playlistItems.map(\.trackID), in: modelContext)) ?? []
+    }
+
     private func roleTint(for playlistPresentation: PlaylistSummaryPresentation) -> Color {
         if playlistPresentation.isCurrentPlaybackPlaylist {
             return .green
@@ -179,6 +190,21 @@ struct PlaylistManagementView: View {
         case .triage:
             return .teal
         }
+    }
+
+    private func playlistTrackButton(for row: PlaylistManagementViewModel.TrackRowPresentation) -> some View {
+        Button {
+            Task { await play(row.item, track: row.track) }
+        } label: {
+            PlaylistTrackRowView(
+                summary: row.summary,
+                playlistID: playlist.musicPlaylistID,
+                isCurrent: row.isCurrent,
+                loadsArtworkImmediately: !isScrolling
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!row.item.isPlayable)
     }
 
     private func play(_ item: PlaylistItemRecord, track: TrackRecord) async {
@@ -204,6 +230,7 @@ struct PlaylistManagementView: View {
 
     private func syncPlaylist() async {
         await viewModel.syncPlaylist(playlist, context: modelContext, dependencies: dependencies)
+        reloadPlaylistTracks()
     }
 
     private func promote(_ item: PlaylistItemRecord, track: TrackRecord) async {

@@ -9,6 +9,35 @@ private struct DecodedArtworkImage: @unchecked Sendable {
     }
 }
 
+private actor DecodedArtworkImageCache {
+    static let shared = DecodedArtworkImageCache()
+
+    private let maxImageCount = 300
+    private var images: [String: DecodedArtworkImage] = [:]
+    private var keysInAccessOrder: [String] = []
+
+    func image(for key: String) -> DecodedArtworkImage? {
+        guard let image = images[key] else { return nil }
+        markAccessed(key)
+        return image
+    }
+
+    func store(_ image: DecodedArtworkImage, for key: String) {
+        images[key] = image
+        markAccessed(key)
+
+        while keysInAccessOrder.count > maxImageCount {
+            let expiredKey = keysInAccessOrder.removeFirst()
+            images[expiredKey] = nil
+        }
+    }
+
+    private func markAccessed(_ key: String) {
+        keysInAccessOrder.removeAll { $0 == key }
+        keysInAccessOrder.append(key)
+    }
+}
+
 nonisolated private func decodedArtworkImage(contentsOf url: URL, maxPixelSize: Int) -> DecodedArtworkImage? {
     let sourceOptions: [CFString: Any] = [
         kCGImageSourceShouldCache: false
@@ -35,8 +64,10 @@ struct ArtworkView: View {
     var pixelSize: Int = 512
     var playlistID: String?
     var cornerRadius: CGFloat = 22
+    var loadsImmediately = true
 
     @State private var image: CGImage?
+    @State private var loadedCacheIdentity: String?
 
     var body: some View {
         artworkContent
@@ -47,7 +78,7 @@ struct ArtworkView: View {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(.white.opacity(0.18), lineWidth: 1)
             }
-            .task(id: cacheIdentity) {
+            .task(id: loadIdentity) {
                 await loadArtwork()
             }
     }
@@ -81,9 +112,27 @@ struct ArtworkView: View {
         "\(urlString ?? "")|\(pixelSize)|\(playlistID ?? "")"
     }
 
+    private var loadIdentity: String {
+        "\(cacheIdentity)|\(loadsImmediately)"
+    }
+
     private func loadArtwork() async {
+        guard loadsImmediately else { return }
+
+        let cacheIdentity = cacheIdentity
+        if let cachedImage = await DecodedArtworkImageCache.shared.image(for: cacheIdentity) {
+            await MainActor.run {
+                image = cachedImage.image
+                loadedCacheIdentity = cacheIdentity
+            }
+            return
+        }
+
         await MainActor.run {
-            image = nil
+            if loadedCacheIdentity != cacheIdentity {
+                image = nil
+                loadedCacheIdentity = cacheIdentity
+            }
         }
         guard let urlString else { return }
 
@@ -108,8 +157,10 @@ struct ArtworkView: View {
         }.value
         guard !Task.isCancelled, let loadedImage else { return }
 
+        await DecodedArtworkImageCache.shared.store(loadedImage, for: cacheIdentity)
         await MainActor.run {
             image = loadedImage.image
+            loadedCacheIdentity = cacheIdentity
         }
     }
 }

@@ -4,6 +4,7 @@ struct PlaylistTrackRowView: View {
     var summary: TrackSummaryPresentation
     var playlistID: String
     var isCurrent: Bool
+    var loadsArtworkImmediately = true
 
     var body: some View {
         HStack(spacing: 12) {
@@ -12,7 +13,8 @@ struct PlaylistTrackRowView: View {
                     urlString: summary.artworkURLString,
                     pixelSize: 96,
                     playlistID: playlistID,
-                    cornerRadius: 8
+                    cornerRadius: 8,
+                    loadsImmediately: loadsArtworkImmediately
                 )
                 .frame(width: 48, height: 48)
 
@@ -59,7 +61,8 @@ struct PlaylistTrackRowView: View {
             isPlayable: true
         ),
         playlistID: "preview-playlist",
-        isCurrent: true
+        isCurrent: true,
+        loadsArtworkImmediately: true
     )
     .padding()
 }

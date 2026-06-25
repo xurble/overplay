@@ -100,8 +100,8 @@ struct PlaylistManagementViewModelTests {
         #expect(detail.playlist.isCurrentPlaybackPlaylist)
     }
 
-    @Test("row render identity changes when skip count changes")
-    func rowRenderIdentityChangesWhenSkipCountChanges() {
+    @Test("row summary changes when skip count changes")
+    func rowSummaryChangesWhenSkipCountChanges() {
         let viewModel = PlaylistManagementViewModel()
         let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main", role: .oneTruePlaylist)
         let track = TrackRecord(catalogID: "track", title: "Track", artistName: "Artist")
@@ -136,11 +136,10 @@ struct PlaylistManagementViewModelTests {
         #expect(before.rows.first?.id == after.rows.first?.id)
         #expect(before.rows.first?.summary.skipCount == 1)
         #expect(after.rows.first?.summary.skipCount == 2)
-        #expect(before.rows.first?.renderID != after.rows.first?.renderID)
     }
 
-    @Test("row render identity is stable when current highlight changes")
-    func rowRenderIdentityIsStableWhenCurrentHighlightChanges() {
+    @Test("row identity is stable when current highlight changes")
+    func rowIdentityIsStableWhenCurrentHighlightChanges() {
         let viewModel = PlaylistManagementViewModel()
         let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main", role: .oneTruePlaylist)
         let track = TrackRecord(catalogID: "track", title: "Track", artistName: "Artist")
@@ -168,7 +167,7 @@ struct PlaylistManagementViewModelTests {
             evictAfterSkips: 3
         )
 
-        #expect(before.rows.first?.renderID == after.rows.first?.renderID)
+        #expect(before.rows.first?.id == after.rows.first?.id)
         #expect(before.rows.first?.isCurrent == false)
         #expect(after.rows.first?.isCurrent == true)
     }

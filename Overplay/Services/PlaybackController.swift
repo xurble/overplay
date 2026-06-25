@@ -79,7 +79,7 @@ final class PlaybackController {
     }
 
     var nowPlayingDisplayLocalTrackID: String? {
-        activeQueueCurrentLocalTrackID ?? currentPlaylistItem?.trackID.uuidString
+        activeQueueCurrentLocalTrackID ?? currentPlaylistItem?.trackID.uuidString ?? activeSession?.localTrackID
     }
 
     var canControlPlayback: Bool {
@@ -1622,10 +1622,15 @@ final class PlaybackController {
             queueItem: player.queue.currentEntry?.item,
             in: context
         )
-        currentPlaylistItem = update.playlistItem
+        if currentPlaylistItem?.id != update.playlistItem?.id {
+            currentPlaylistItem = update.playlistItem
+        }
+
         if let track = update.track {
-            currentTrack = track
-            bumpPlaybackItemMetadataVersion()
+            if currentTrack != track {
+                currentTrack = track
+                bumpPlaybackItemMetadataVersion()
+            }
         } else if currentTrack?.id != musicItemID {
             currentTrack = nil
             bumpPlaybackItemMetadataVersion()
@@ -1634,8 +1639,12 @@ final class PlaybackController {
 
     private func updateMusicKitNowPlayingTrack() {
         guard let currentEntry = player.queue.currentEntry else {
-            musicKitNowPlayingTrack = nil
-            isMusicKitNowPlayingTrackPending = false
+            if musicKitNowPlayingTrack != nil {
+                musicKitNowPlayingTrack = nil
+            }
+            if isMusicKitNowPlayingTrackPending {
+                isMusicKitNowPlayingTrackPending = false
+            }
             return
         }
 
@@ -1643,12 +1652,18 @@ final class PlaybackController {
             from: currentEntry.item,
             playlistID: currentPlaylistID
         ) else {
-            isMusicKitNowPlayingTrackPending = true
+            if !isMusicKitNowPlayingTrackPending {
+                isMusicKitNowPlayingTrackPending = true
+            }
             return
         }
 
-        musicKitNowPlayingTrack = track
-        isMusicKitNowPlayingTrackPending = false
+        if musicKitNowPlayingTrack != track {
+            musicKitNowPlayingTrack = track
+        }
+        if isMusicKitNowPlayingTrackPending {
+            isMusicKitNowPlayingTrackPending = false
+        }
     }
 
     private func refreshCurrentPlaybackMetadata(context: ModelContext) {
