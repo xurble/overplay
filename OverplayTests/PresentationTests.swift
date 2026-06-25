@@ -288,6 +288,70 @@ struct NowPlayingPresentationFactoryTests {
         #expect(presentation.isPlaying)
     }
 
+    @Test("factory prefers MusicKit now-playing track for visible metadata")
+    @MainActor
+    func factoryPrefersMusicKitNowPlayingTrackForVisibleMetadata() {
+        let controller = PlaybackController()
+        controller.currentTrack = CurrentPlaybackTrack(
+            id: "local-guess",
+            title: "Local Guess",
+            artistName: "Guessed Artist",
+            durationSeconds: 300,
+            skipCount: 2
+        )
+        controller.musicKitNowPlayingTrack = CurrentPlaybackTrack(
+            id: "musickit-current",
+            title: "MusicKit Current",
+            artistName: "Actual Artist",
+            albumTitle: "Actual Album",
+            durationSeconds: 100
+        )
+        controller.elapsedSeconds = 25
+        let settings = OverplaySettings(evictAfterSkips: 5)
+
+        let presentation = NowPlayingPresentationFactory.presentation(
+            playbackController: controller,
+            settings: settings
+        )
+
+        #expect(presentation.trackID == "musickit-current")
+        #expect(presentation.title == "MusicKit Current")
+        #expect(presentation.artistName == "Actual Artist")
+        #expect(presentation.albumTitle == "Actual Album")
+        #expect(presentation.durationSeconds == 100)
+        #expect(presentation.progress == 0.25)
+        #expect(presentation.skipCount == 2)
+    }
+
+    @Test("factory avoids local queue guess while MusicKit item is pending")
+    @MainActor
+    func factoryAvoidsLocalQueueGuessWhileMusicKitItemIsPending() {
+        let controller = PlaybackController()
+        controller.currentTrack = CurrentPlaybackTrack(
+            id: "local-guess",
+            title: "Local Guess",
+            artistName: "Guessed Artist",
+            durationSeconds: 300
+        )
+        controller.musicKitNowPlayingTrack = CurrentPlaybackTrack(
+            id: "previous-musickit",
+            title: "Previous MusicKit",
+            artistName: "Actual Artist",
+            durationSeconds: 100
+        )
+        controller.isMusicKitNowPlayingTrackPending = true
+        let settings = OverplaySettings()
+
+        let presentation = NowPlayingPresentationFactory.presentation(
+            playbackController: controller,
+            settings: settings
+        )
+
+        #expect(presentation.trackID == "previous-musickit")
+        #expect(presentation.title == "Previous MusicKit")
+        #expect(presentation.durationSeconds == 100)
+    }
+
     @Test("context factory uses live playlist item skip count")
     @MainActor
     func contextFactoryUsesLivePlaylistItemSkipCount() throws {

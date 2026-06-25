@@ -6,6 +6,11 @@ enum NowPlayingPresentationFactory {
         playbackController: PlaybackController,
         settings: OverplaySettings
     ) -> NowPlayingPresentation {
+        let displayTrack = playbackController.nowPlayingDisplayTrack
+        let displayDurationSeconds = durationSeconds(
+            for: displayTrack,
+            playbackController: playbackController
+        )
         if let item = playbackController.currentPlaylistItem,
            item.skipCount != playbackController.currentTrack?.skipCount {
             TrackMetadataDiagnostics.log(
@@ -13,13 +18,16 @@ enum NowPlayingPresentationFactory {
             )
         }
         return NowPlayingPresentation(
-            trackID: playbackController.currentTrack?.id,
-            title: playbackController.currentTrack?.title,
-            artistName: playbackController.currentTrack?.artistName,
-            albumTitle: playbackController.currentTrack?.albumTitle,
-            progress: playbackController.progress,
+            trackID: displayTrack?.id,
+            title: displayTrack?.title,
+            artistName: displayTrack?.artistName,
+            albumTitle: displayTrack?.albumTitle,
+            progress: progress(
+                elapsedSeconds: playbackController.elapsedSeconds,
+                durationSeconds: displayDurationSeconds
+            ),
             elapsedSeconds: playbackController.elapsedSeconds,
-            durationSeconds: playbackController.durationSeconds,
+            durationSeconds: displayDurationSeconds,
             isPlaying: playbackController.isPlaying,
             skipThresholdPercentage: settings.skipThresholdPercentage,
             minimumSkipListeningSeconds: settings.minimumSkipListeningSeconds,
@@ -37,6 +45,11 @@ enum NowPlayingPresentationFactory {
         settings: OverplaySettings,
         context: ModelContext
     ) -> NowPlayingPresentation {
+        let displayTrack = playbackController.nowPlayingDisplayTrack
+        let displayDurationSeconds = durationSeconds(
+            for: displayTrack,
+            playbackController: playbackController
+        )
         let displayedSkipCount = playbackController.displayedSkipCount(context: context)
         if displayedSkipCount == 0,
            let snapshotSkipCount = playbackController.currentTrack?.skipCount,
@@ -46,13 +59,16 @@ enum NowPlayingPresentationFactory {
             )
         }
         return NowPlayingPresentation(
-            trackID: playbackController.currentTrack?.id,
-            title: playbackController.currentTrack?.title,
-            artistName: playbackController.currentTrack?.artistName,
-            albumTitle: playbackController.currentTrack?.albumTitle,
-            progress: playbackController.progress,
+            trackID: displayTrack?.id,
+            title: displayTrack?.title,
+            artistName: displayTrack?.artistName,
+            albumTitle: displayTrack?.albumTitle,
+            progress: progress(
+                elapsedSeconds: playbackController.elapsedSeconds,
+                durationSeconds: displayDurationSeconds
+            ),
             elapsedSeconds: playbackController.elapsedSeconds,
-            durationSeconds: playbackController.durationSeconds,
+            durationSeconds: displayDurationSeconds,
             isPlaying: playbackController.isPlaying,
             skipThresholdPercentage: settings.skipThresholdPercentage,
             minimumSkipListeningSeconds: settings.minimumSkipListeningSeconds,
@@ -145,5 +161,25 @@ enum NowPlayingPresentationFactory {
             isEvicted: nowPlaying.isEvicted,
             skipForwardIntent: controls.skipForwardIntent
         )
+    }
+
+    private static func durationSeconds(
+        for displayTrack: CurrentPlaybackTrack?,
+        playbackController: PlaybackController
+    ) -> Double? {
+        if let durationSeconds = displayTrack?.durationSeconds {
+            return durationSeconds
+        }
+
+        guard displayTrack?.id == playbackController.currentTrack?.id || displayTrack == nil else {
+            return nil
+        }
+
+        return playbackController.durationSeconds
+    }
+
+    private static func progress(elapsedSeconds: Double, durationSeconds: Double?) -> Double {
+        guard let durationSeconds, durationSeconds > 0 else { return 0 }
+        return min(elapsedSeconds / durationSeconds, 1)
     }
 }

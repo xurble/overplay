@@ -148,6 +148,16 @@ enum PlaybackSessionEvaluationService {
             return nil
         }
 
+        guard !session.hasEvaluated else {
+            return EvaluationOutcome(
+                session: session,
+                playlist: playlist,
+                item: nil,
+                evictedDuringEvaluation: false,
+                shouldSyncPlaybackMetadata: false
+            )
+        }
+
         session = updateObservedProgress(
             session,
             elapsedSeconds: elapsedSeconds,

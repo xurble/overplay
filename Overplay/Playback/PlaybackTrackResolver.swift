@@ -144,6 +144,17 @@ enum PlaybackTrackResolver {
         return CurrentPlaybackTrack(snapshot)
     }
 
+    static func currentPlaybackTrack(
+        from queueItem: MusicPlayer.Queue.Entry.Item?,
+        playlistID: String?
+    ) -> CurrentPlaybackTrack? {
+        guard let snapshot = snapshot(from: queueItem, playlistID: playlistID) else {
+            return nil
+        }
+
+        return CurrentPlaybackTrack(snapshot)
+    }
+
     static func snapshot(from track: Track, playlistID: String?) -> TrackSnapshot {
         TrackSnapshot(
             id: track.id.rawValue,

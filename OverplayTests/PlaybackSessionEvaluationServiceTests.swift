@@ -148,6 +148,74 @@ struct PlaybackSessionEvaluationServiceTests {
         #expect(fixture.item.skipCount == 0)
     }
 
+    @Test("already evaluated session does not mutate newly current item")
+    func alreadyEvaluatedSessionDoesNotMutateNewlyCurrentItem() throws {
+        let fixture = try makeTwoTrackFixture()
+        let settings = OverplaySettings(
+            evictAfterSkips: 3,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 0
+        )
+        let evaluatedPreviousSession = TrackPlaySession(
+            trackID: "previous-library",
+            sessionStartDate: .now,
+            lastObservedPlaybackTime: 15,
+            durationSeconds: 180,
+            hasEvaluated: true
+        )
+
+        let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
+            activeSession: evaluatedPreviousSession,
+            currentTrackID: "previous-library",
+            elapsedSeconds: 15,
+            durationSeconds: 180,
+            currentPlaylistItem: fixture.nextItem,
+            playlist: fixture.playlist,
+            settings: settings,
+            naturalCompletion: false,
+            context: fixture.context,
+            fallbackLocalTrackID: fixture.nextTrack.id.uuidString
+        )
+
+        #expect(outcome?.session.hasEvaluated == true)
+        #expect(outcome?.item == nil)
+        #expect(fixture.previousItem.skipCount == 0)
+        #expect(fixture.nextItem.skipCount == 0)
+    }
+
+    @Test("manual skip evaluates outgoing fallback local track instead of current item")
+    func manualSkipEvaluatesOutgoingFallbackLocalTrackInsteadOfCurrentItem() throws {
+        let fixture = try makeTwoTrackFixture()
+        let settings = OverplaySettings(
+            evictAfterSkips: 3,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 0
+        )
+
+        let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
+            activeSession: TrackPlaySession(
+                trackID: "queue-only-id",
+                sessionStartDate: .now,
+                lastObservedPlaybackTime: 15,
+                durationSeconds: 180,
+                hasEvaluated: false
+            ),
+            currentTrackID: "queue-only-id",
+            elapsedSeconds: 15,
+            durationSeconds: 180,
+            currentPlaylistItem: fixture.nextItem,
+            playlist: fixture.playlist,
+            settings: settings,
+            naturalCompletion: false,
+            context: fixture.context,
+            fallbackLocalTrackID: fixture.previousTrack.id.uuidString
+        )
+
+        #expect(outcome?.item?.id == fixture.previousItem.id)
+        #expect(fixture.previousItem.skipCount == 1)
+        #expect(fixture.nextItem.skipCount == 0)
+    }
+
     @Test("skip transition resolves playlist item from current item when music id mismatches")
     func skipTransitionResolvesPlaylistItemFromCurrentItemWhenMusicIDMismatches() throws {
         let fixture = try makeFixture(skipCount: 0)
@@ -506,6 +574,46 @@ struct PlaybackSessionEvaluationServiceTests {
         context.insert(track)
         context.insert(item)
         return (container, context, playlist, track, item)
+    }
+
+    private func makeTwoTrackFixture() throws -> (
+        container: ModelContainer,
+        context: ModelContext,
+        playlist: PlaylistRecord,
+        previousTrack: TrackRecord,
+        previousItem: PlaylistItemRecord,
+        nextTrack: TrackRecord,
+        nextItem: PlaylistItemRecord
+    ) {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "playlist-1",
+            name: "Main",
+            role: .oneTruePlaylist
+        )
+        let previousTrack = TrackRecord(
+            catalogID: "previous-catalog",
+            libraryID: "previous-library",
+            title: "Previous Track",
+            artistName: "Artist",
+            durationSeconds: 180
+        )
+        let nextTrack = TrackRecord(
+            catalogID: "next-catalog",
+            libraryID: "next-library",
+            title: "Next Track",
+            artistName: "Artist",
+            durationSeconds: 180
+        )
+        let previousItem = PlaylistItemRecord(playlistID: playlist.id, trackID: previousTrack.id, skipCount: 0)
+        let nextItem = PlaylistItemRecord(playlistID: playlist.id, trackID: nextTrack.id, skipCount: 0)
+        context.insert(playlist)
+        context.insert(previousTrack)
+        context.insert(nextTrack)
+        context.insert(previousItem)
+        context.insert(nextItem)
+        return (container, context, playlist, previousTrack, previousItem, nextTrack, nextItem)
     }
 
     private func session(

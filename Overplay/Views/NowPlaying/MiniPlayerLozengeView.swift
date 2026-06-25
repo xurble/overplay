@@ -30,17 +30,17 @@ struct MiniPlayerLozengeView: View {
     private var compactContent: some View {
         HStack(spacing: 12) {
             NowPlayingArtworkView(
-                urlString: playbackController.currentTrack?.artworkURLTemplate,
+                urlString: playbackController.nowPlayingDisplayTrack?.artworkURLTemplate,
                 playlistID: playbackController.currentPlaylistID,
                 cornerRadius: 10
             )
             .frame(width: 50, height: 50)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(playbackController.currentTrack?.title ?? "Nothing playing")
+                Text(playbackController.nowPlayingDisplayTrack?.title ?? "Nothing playing")
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
-                Text(playbackController.currentTrack?.artistName ?? "Choose a playlist to start playback")
+                Text(playbackController.nowPlayingDisplayTrack?.artistName ?? "Choose a playlist to start playback")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

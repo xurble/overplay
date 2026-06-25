@@ -28,11 +28,12 @@ struct NowPlayingPaneView: View {
                 settings: settings,
                 context: modelContext
             )
+            let displayTrack = playbackController.nowPlayingDisplayTrack
             let activeArtworkTheme = artworkTheme?.isFallback == false ? artworkTheme : nil
 
             VStack(spacing: compactLayout ? 12 : 18) {
                 NowPlayingArtworkView(
-                    urlString: playbackController.currentTrack?.artworkURLTemplate,
+                    urlString: displayTrack?.artworkURLTemplate,
                     playlistID: playbackController.currentPlaylistID
                 )
                 .frame(width: artworkSize, height: artworkSize)
