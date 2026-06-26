@@ -709,7 +709,6 @@ Settings:
 - Playthrough threshold percentage.
 - Playthrough resets skip count.
 - Protect kept tracks.
-- Periodic sync preference.
 - Reset local playback state.
 - Reset shared stats and history with destructive confirmation.
 
@@ -881,7 +880,6 @@ Local JSON file only:
 - `playthroughThresholdPercentage: Double`
 - `playthroughResetsSkipCount: Bool`
 - `protectKeptTracks: Bool`
-- `periodicSyncEnabled: Bool`
 - `createdAt: Date`
 - `updatedAt: Date`
 
