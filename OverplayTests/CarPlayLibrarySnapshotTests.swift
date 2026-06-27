@@ -94,8 +94,8 @@ struct CarPlayLibrarySnapshotTests {
 
         #expect(tracks.map(\.title) == ["Mr Brightside", "Somebody Told Me"])
         #expect(tracks == sharedTracks)
-        #expect(tracks.first?.detailText == "The Killers")
-        #expect(tracks.last?.detailText == "The Killers - 2 skips")
+        #expect(tracks.first?.detailText == "The Killers - 0 plays / 0 skips")
+        #expect(tracks.last?.detailText == "The Killers - 0 plays / 2 skips")
     }
 
     @Test func trackSummariesFollowStoredShuffleOrder() throws {

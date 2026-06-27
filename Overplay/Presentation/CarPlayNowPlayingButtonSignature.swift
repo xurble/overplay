@@ -3,21 +3,11 @@ import SwiftData
 
 struct CarPlayNowPlayingButtonSignature: Equatable {
     var trackID: String?
+    var playlistRole: PlaylistRole? = nil
     var skipCount: Int
     var isProtected: Bool
     var isEvicted: Bool
     var skipForwardIntent: PlaybackSkipForwardIntent
-
-    var trackActionMenuSystemImage: String {
-        switch skipForwardIntent {
-        case .standard, .skipCountReset:
-            "info.circle.fill"
-        case .countedSkip:
-            "exclamationmark.triangle.fill"
-        case .eviction:
-            "exclamationmark.octagon.fill"
-        }
-    }
 
     static func make(
         playbackController: PlaybackController,

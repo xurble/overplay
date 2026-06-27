@@ -38,11 +38,9 @@ struct PlaylistTrackRowView: View {
 
             Spacer()
 
-            if let skipCountLabel = summary.skipCountLabel {
-                Text(skipCountLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Text(summary.healthMetricLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .contentShape(Rectangle())
         .padding(.vertical, 4)

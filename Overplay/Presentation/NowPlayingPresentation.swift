@@ -19,7 +19,9 @@ struct NowPlayingPresentation: Equatable, Sendable {
     let elapsedText: String
     let durationText: String
     let skipCount: Int
+    let playthroughCount: Int
     let skipCountText: String
+    let healthMetricText: String
     let isEvicted: Bool
     let isProtected: Bool
 
@@ -37,6 +39,7 @@ struct NowPlayingPresentation: Equatable, Sendable {
         playthroughThresholdPercentage: Double = 90,
         playthroughResetsSkipCount: Bool = true,
         skipCount: Int,
+        playthroughCount: Int = 0,
         evictAfterSkips: Int,
         isEvicted: Bool,
         isProtected: Bool
@@ -60,7 +63,10 @@ struct NowPlayingPresentation: Equatable, Sendable {
         self.elapsedText = Self.formatTime(elapsedSeconds)
         self.durationText = Self.formatTime(durationSeconds ?? 0)
         self.skipCount = skipCount
-        self.skipCountText = "Skips: \(skipCount) / \(evictAfterSkips)"
+        self.playthroughCount = playthroughCount
+        self.skipCountText = Self.pluralized(skipCount, singular: "skip")
+        self.healthMetricText = "\(Self.pluralized(playthroughCount, singular: "play")) / \(Self.pluralized(skipCount, singular: "skip"))"
+        _ = evictAfterSkips
         self.isEvicted = isEvicted
         self.isProtected = isProtected
     }
@@ -69,6 +75,10 @@ struct NowPlayingPresentation: Equatable, Sendable {
         guard seconds.isFinite else { return "0:00" }
         let totalSeconds = max(Int(seconds), 0)
         return "\(totalSeconds / 60):\(String(format: "%02d", totalSeconds % 60))"
+    }
+
+    static func pluralized(_ count: Int, singular: String) -> String {
+        count == 1 ? "1 \(singular)" : "\(count) \(singular)s"
     }
 
     static func progressPhase(
@@ -87,7 +97,8 @@ struct NowPlayingPresentation: Equatable, Sendable {
             elapsedSeconds: elapsedSeconds,
             durationSeconds: durationSeconds
         )
-        if playthroughResetsSkipCount, progressPercentage >= playthroughThresholdPercentage {
+        _ = playthroughResetsSkipCount
+        if progressPercentage >= playthroughThresholdPercentage {
             return .safe
         }
         if PlaybackSessionEvaluationService.skipWouldCount(

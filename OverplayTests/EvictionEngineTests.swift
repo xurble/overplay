@@ -6,8 +6,8 @@ import Testing
 @MainActor
 @Suite("EvictionEngine")
 struct EvictionEngineTests {
-    @Test("early skip increments count and evicts at threshold")
-    func earlySkipIncrementsCountAndEvictsAtThreshold() throws {
+    @Test("early skip increments count without auto eviction")
+    func earlySkipIncrementsCountWithoutAutoEviction() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let settings = OverplaySettings(evictAfterSkips: 3)
@@ -44,14 +44,14 @@ struct EvictionEngineTests {
 
         let history = try context.fetch(FetchDescriptor<HistoryEvent>())
         #expect(item.skipCount == 3)
-        #expect(item.evictedAt != nil)
-        #expect(item.evictionReason == .skipCount)
+        #expect(item.evictedAt == nil)
+        #expect(item.evictionReason == nil)
         #expect(history.contains { $0.eventType == .skipCounted })
-        #expect(history.contains { $0.eventType == .evicted })
+        #expect(!history.contains { $0.eventType == .evicted })
     }
 
-    @Test("protected playlist item ignores skip")
-    func protectedPlaylistItemIgnoresSkip() throws {
+    @Test("protected playlist item still counts skip")
+    func protectedPlaylistItemStillCountsSkip() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let settings = OverplaySettings(evictAfterSkips: 3)
@@ -88,9 +88,9 @@ struct EvictionEngineTests {
         )
 
         let history = try context.fetch(FetchDescriptor<HistoryEvent>())
-        #expect(item.skipCount == 2)
+        #expect(item.skipCount == 3)
         #expect(item.evictedAt == nil)
-        #expect(history.contains { $0.eventType == .skipIgnored && $0.message == "Protected" })
+        #expect(history.contains { $0.eventType == .skipCounted })
     }
 
     @Test("skip before minimum listening time is ignored")
@@ -131,8 +131,8 @@ struct EvictionEngineTests {
         #expect(history.contains { $0.eventType == .skipIgnored && $0.message == "Below minimum listening time" })
     }
 
-    @Test("playthrough increments count and resets skips")
-    func playthroughIncrementsCountAndResetsSkips() throws {
+    @Test("playthrough increments count without resetting skips")
+    func playthroughIncrementsCountWithoutResettingSkips() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let settings = OverplaySettings(playthroughResetsSkipCount: true)
@@ -169,7 +169,7 @@ struct EvictionEngineTests {
 
         let history = try context.fetch(FetchDescriptor<HistoryEvent>())
         #expect(item.playthroughCount == 1)
-        #expect(item.skipCount == 0)
+        #expect(item.skipCount == 2)
         #expect(history.contains { $0.eventType == .playthrough })
     }
 
@@ -213,14 +213,11 @@ struct EvictionEngineTests {
         #expect(item.skipCount == 3)
         #expect(item.evictedAt == nil)
         #expect(history.contains { $0.eventType == .skipCounted })
-        #expect(history.contains {
-            $0.eventType == .skipIgnored
-                && $0.message == "Triage auto-eviction is off"
-        })
+        #expect(!history.contains { $0.eventType == .evicted })
     }
 
-    @Test("triage playlist item auto evicts when enabled")
-    func triagePlaylistItemAutoEvictsWhenEnabled() throws {
+    @Test("triage playlist item does not auto evict when legacy setting is enabled")
+    func triagePlaylistItemDoesNotAutoEvictWhenLegacySettingIsEnabled() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let settings = OverplaySettings(
@@ -260,11 +257,11 @@ struct EvictionEngineTests {
 
         let history = try context.fetch(FetchDescriptor<HistoryEvent>())
         #expect(item.skipCount == 3)
-        #expect(item.evictedAt != nil)
-        #expect(item.evictionReason == .skipCount)
-        #expect(item.evictionSource == .playbackRule)
+        #expect(item.evictedAt == nil)
+        #expect(item.evictionReason == nil)
+        #expect(item.evictionSource == nil)
         #expect(history.contains { $0.eventType == .skipCounted })
-        #expect(history.contains { $0.eventType == .evicted })
+        #expect(!history.contains { $0.eventType == .evicted })
     }
 
     @Test("manual eviction works for triage playlist item")

@@ -5,22 +5,22 @@ struct DashboardSummary: Equatable, Sendable {
     var atRiskCount: Int
 
     init(items: [PlaylistItemRecord], evictAfterSkips: Int) {
-        let atRiskThreshold = max(evictAfterSkips - 1, 0)
+        _ = evictAfterSkips
         knownCount = items.count
         playableCount = items.filter(\.isPlayable).count
         evictedCount = items.filter { $0.evictedAt != nil }.count
         atRiskCount = items.filter { item in
-            item.isPlayable && item.skipCount >= atRiskThreshold
+            item.isPlayable && item.skipCount > 0
         }.count
     }
 
     init(activeRows: [ActivePlaylistSnapshot.Row], evictAfterSkips: Int) {
-        let atRiskThreshold = max(evictAfterSkips - 1, 0)
+        _ = evictAfterSkips
         knownCount = activeRows.count
         playableCount = activeRows.filter(\.isPlayable).count
         evictedCount = activeRows.filter(\.isEvicted).count
         atRiskCount = activeRows.filter { row in
-            row.isPlayable && row.skipCount >= atRiskThreshold
+            row.isPlayable && row.skipCount > 0
         }.count
     }
 

@@ -301,12 +301,19 @@ final class CarPlayCoordinator: NSObject {
         guard force || signature != lastNowPlayingButtonSignature else { return false }
 
         lastNowPlayingButtonSignature = signature
-        let shuffleButton = makeShuffleButton()
-        CPNowPlayingTemplate.shared.updateNowPlayingButtons([
-            shuffleButton,
-            makeTrackHealthButton(systemImage: signature.trackActionMenuSystemImage)
-        ])
+        CPNowPlayingTemplate.shared.updateNowPlayingButtons(nowPlayingActionButtons(for: signature))
         return true
+    }
+
+    private func nowPlayingActionButtons(for signature: CarPlayNowPlayingButtonSignature) -> [CPNowPlayingButton] {
+        if signature.playlistRole == .triage {
+            return [
+                makePromoteButton(),
+                makeEvictButton()
+            ]
+        }
+
+        return [makeEvictButton()]
     }
 
     private func makeShuffleButton() -> CPNowPlayingImageButton {
@@ -376,10 +383,20 @@ final class CarPlayCoordinator: NSObject {
         return "shuffle=\(String(describing: commandCenter.changeShuffleModeCommand.currentShuffleType)), repeat=\(String(describing: commandCenter.changeRepeatModeCommand.currentRepeatType))"
     }
 
-    private func makeTrackHealthButton(systemImage: String) -> CPNowPlayingImageButton {
-        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: systemImage)) { [weak self] _ in
+    private func makeEvictButton() -> CPNowPlayingImageButton {
+        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "trash.fill")) { [weak self] _ in
             Task { @MainActor in
-                self?.showTrackHealthMenu()
+                await self?.evictCurrentTrack()
+            }
+        }
+        button.isEnabled = playbackController?.currentTrack != nil
+        return button
+    }
+
+    private func makePromoteButton() -> CPNowPlayingImageButton {
+        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "star.fill")) { [weak self] _ in
+            Task { @MainActor in
+                await self?.promoteCurrentTrack()
             }
         }
         button.isEnabled = playbackController?.currentTrack != nil
@@ -395,119 +412,6 @@ final class CarPlayCoordinator: NSObject {
     private func currentSettings() -> OverplaySettings? {
         guard let modelContext else { return nil }
         return try? SettingsRepository.settings(in: modelContext)
-    }
-
-    private func nowPlayingPresentation() -> NowPlayingPresentation? {
-        guard let playbackController, let modelContext, let settings = currentSettings() else { return nil }
-        return NowPlayingPresentationFactory.presentation(
-            playbackController: playbackController,
-            settings: settings,
-            context: modelContext
-        )
-    }
-
-    private func trackHealthPresentation() -> TrackHealthPresentation? {
-        guard let playbackController, let modelContext, let settings = currentSettings() else { return nil }
-        return NowPlayingPresentationFactory.trackHealthPresentation(
-            playbackController: playbackController,
-            settings: settings,
-            context: modelContext
-        )
-    }
-
-    private func showTrackHealthMenu() {
-        guard let interfaceController, playbackController?.currentTrack != nil else { return }
-
-        let isTriagePlaylist = modelContext.flatMap { context in
-            playbackController?.currentPlaylistRole(context: context)
-        } == .triage
-
-        let promoteAction = CPAlertAction(title: "Promote Now", style: .default) { [weak self] _ in
-            Task { @MainActor in
-                await self?.promoteCurrentTrack()
-                self?.dismissPresentedTemplate()
-            }
-        }
-        let resetAction = CPAlertAction(title: "Reset Skip Count", style: .default) { [weak self] _ in
-            Task { @MainActor in
-                self?.resetCurrentSkipCount()
-                self?.dismissPresentedTemplate()
-            }
-        }
-        let toggleKeepAction = CPAlertAction(title: toggleKeepTitle(), style: .default) { [weak self] _ in
-            Task { @MainActor in
-                self?.toggleCurrentKeep()
-                self?.dismissPresentedTemplate()
-            }
-        }
-        let evictAction = CPAlertAction(title: "Evict Now", style: .destructive) { [weak self] _ in
-            Task { @MainActor in
-                await self?.evictCurrentTrack()
-                self?.dismissPresentedTemplate()
-            }
-        }
-        let cancelAction = CPAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in
-            Task { @MainActor in
-                self?.dismissPresentedTemplate()
-            }
-        }
-
-        let template = CPActionSheetTemplate(
-            title: "Track Health",
-            message: trackHealthMessage(),
-            actions: isTriagePlaylist
-                ? [promoteAction, evictAction, cancelAction]
-                : [toggleKeepAction, resetAction, evictAction, cancelAction]
-        )
-        interfaceController.presentTemplate(template, animated: true, completion: nil)
-    }
-
-    private func toggleKeepTitle() -> String {
-        trackHealthPresentation()?.isProtected == true ? "Turn Keep Off" : "Turn Keep On"
-    }
-
-    private func trackHealthMessage() -> String {
-        guard let nowPlaying = nowPlayingPresentation(), nowPlaying.trackID != nil else {
-            return "No track is currently playing."
-        }
-
-        let health = trackHealthPresentation() ?? TrackHealthPresentation(
-            status: .healthy,
-            isEvicted: false,
-            isProtected: false
-        )
-        return "\(nowPlaying.title): \(health.title)."
-    }
-
-    private func resetCurrentSkipCount() {
-        guard let playbackController, let modelContext else { return }
-        guard playbackController.resetCurrentSkipCount(
-            context: modelContext,
-            message: "Skip count reset in CarPlay"
-        ) else {
-            showError(
-                title: "Health action failed",
-                message: playbackController.statusMessage ?? "Choose a linked playlist track first."
-            )
-            return
-        }
-        refreshAfterHealthAction()
-    }
-
-    private func toggleCurrentKeep() {
-        guard let playbackController, let modelContext else { return }
-        guard playbackController.toggleCurrentKeep(
-            context: modelContext,
-            enabledMessage: "Keep turned on in CarPlay",
-            disabledMessage: "Keep turned off in CarPlay"
-        ) else {
-            showError(
-                title: "Health action failed",
-                message: playbackController.statusMessage ?? "Choose a linked playlist track first."
-            )
-            return
-        }
-        refreshAfterHealthAction()
     }
 
     private func evictCurrentTrack() async {
@@ -568,10 +472,6 @@ final class CarPlayCoordinator: NSObject {
         }
 
         refreshLibraryLists()
-    }
-
-    private func dismissPresentedTemplate() {
-        interfaceController?.dismissTemplate(animated: true, completion: nil)
     }
 
     private func syncPlaybackModes() {

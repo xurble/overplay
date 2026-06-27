@@ -63,27 +63,11 @@ enum PlaybackSessionEvaluationService {
         playlist: PlaylistRecord?,
         settings: OverplaySettings
     ) -> PlaybackSkipForwardIntent {
-        guard let session,
-              !session.hasEvaluated,
-              let item,
-              let playlist,
-              item.evictedAt == nil else {
-            return .standard
-        }
-
-        if playthroughWouldResetSkipCount(session: session, item: item, settings: settings) {
-            return .skipCountReset
-        }
-
-        guard !item.protected,
-              skipWouldCount(session: session, settings: settings) else {
-            return .standard
-        }
-
-        let wouldReachEvictionThreshold = item.skipCount + 1 >= settings.evictAfterSkips
-        let shouldAutoEvict = playlist.role == .oneTruePlaylist
-            || settings.triageAutoEvictsOnSkipCount
-        return wouldReachEvictionThreshold && shouldAutoEvict ? .eviction : .countedSkip
+        _ = session
+        _ = item
+        _ = playlist
+        _ = settings
+        return .standard
     }
 
     static func skipWouldCount(session: TrackPlaySession, settings: OverplaySettings) -> Bool {
@@ -186,7 +170,7 @@ enum PlaybackSessionEvaluationService {
         }
 
         let wasEvicted = item.evictedAt != nil
-        let canCountPlaythrough = item.evictedAt == nil && !item.protected
+        let canCountPlaythrough = item.evictedAt == nil
         if canCountPlaythrough && (naturalCompletion || playthroughThresholdReached(session: session, settings: settings)) {
             EvictionEngine.countPlaythrough(
                 item,
@@ -289,11 +273,6 @@ enum PlaybackSessionEvaluationService {
             in: context
         ) {
             return item
-        }
-
-        if let currentPlaylistItem,
-           currentPlaylistItem.playlistID == playlist.id {
-            return currentPlaylistItem
         }
 
         return nil

@@ -62,6 +62,99 @@ struct PlaybackControllerDisplayRestoreTests {
         #expect(!controller.evaluationOutcomeMatchesDisplayedPlayback(staleOutcome))
     }
 
+    @Test("playlist row playback evaluates outgoing track before target track")
+    func playlistRowPlaybackEvaluatesOutgoingTrackBeforeTargetTrack() async throws {
+        let fixture = try makeTwoTrackFixture()
+        let controller = PlaybackController()
+        let settings = OverplaySettings(
+            evictAfterSkips: 3,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 0
+        )
+        controller.currentPlaylistID = fixture.playlist.musicPlaylistID
+        controller.currentPlaylistItem = fixture.previousItem
+        controller.currentTrack = CurrentPlaybackTrack(
+            id: "previous-library",
+            title: fixture.previousTrack.title,
+            artistName: fixture.previousTrack.artistName,
+            durationSeconds: 180
+        )
+        controller.elapsedSeconds = 15
+        controller.durationSeconds = 180
+
+        await controller.evaluateOutgoingSessionBeforePlaybackReplacement(
+            settings: settings,
+            context: fixture.context,
+            targetPlaylistID: fixture.playlist.musicPlaylistID,
+            targetLocalTrackID: fixture.nextTrack.id.uuidString
+        )
+
+        #expect(fixture.previousItem.skipCount == 1)
+        #expect(fixture.nextItem.skipCount == 0)
+    }
+
+    @Test("playlist row playback does not evaluate when target is current track")
+    func playlistRowPlaybackDoesNotEvaluateWhenTargetIsCurrentTrack() async throws {
+        let fixture = try makeTwoTrackFixture()
+        let controller = PlaybackController()
+        let settings = OverplaySettings(
+            evictAfterSkips: 3,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 0
+        )
+        controller.currentPlaylistID = fixture.playlist.musicPlaylistID
+        controller.currentPlaylistItem = fixture.previousItem
+        controller.currentTrack = CurrentPlaybackTrack(
+            id: "previous-library",
+            title: fixture.previousTrack.title,
+            artistName: fixture.previousTrack.artistName,
+            durationSeconds: 180
+        )
+        controller.elapsedSeconds = 15
+        controller.durationSeconds = 180
+
+        await controller.evaluateOutgoingSessionBeforePlaybackReplacement(
+            settings: settings,
+            context: fixture.context,
+            targetPlaylistID: fixture.playlist.musicPlaylistID,
+            targetLocalTrackID: fixture.previousTrack.id.uuidString
+        )
+
+        #expect(fixture.previousItem.skipCount == 0)
+        #expect(fixture.nextItem.skipCount == 0)
+    }
+
+    @Test("playlist row playback in another playlist evaluates outgoing current playlist item")
+    func playlistRowPlaybackInAnotherPlaylistEvaluatesOutgoingCurrentPlaylistItem() async throws {
+        let fixture = try makeTwoPlaylistFixture()
+        let controller = PlaybackController()
+        let settings = OverplaySettings(
+            evictAfterSkips: 3,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 0
+        )
+        controller.currentPlaylistID = fixture.currentPlaylist.musicPlaylistID
+        controller.currentPlaylistItem = fixture.currentItem
+        controller.currentTrack = CurrentPlaybackTrack(
+            id: "current-library",
+            title: fixture.currentTrack.title,
+            artistName: fixture.currentTrack.artistName,
+            durationSeconds: 180
+        )
+        controller.elapsedSeconds = 15
+        controller.durationSeconds = 180
+
+        await controller.evaluateOutgoingSessionBeforePlaybackReplacement(
+            settings: settings,
+            context: fixture.context,
+            targetPlaylistID: fixture.targetPlaylist.musicPlaylistID,
+            targetLocalTrackID: fixture.targetTrack.id.uuidString
+        )
+
+        #expect(fixture.currentItem.skipCount == 1)
+        #expect(fixture.targetItem.skipCount == 0)
+    }
+
     @Test("restores mini player display from local database state")
     func restoresMiniPlayerDisplayFromLocalDatabaseState() throws {
         let previousState = LocalPlaybackStateStore.load()
@@ -124,6 +217,93 @@ struct PlaybackControllerDisplayRestoreTests {
         #expect(controller.activePlaylistSnapshot?.rows.first?.id == item.id)
         #expect(controller.activePlaylistSnapshot?.rows.first?.skipCount == 1)
         #expect(controller.activePlaylistSnapshot?.rows.first?.isCurrent == true)
+    }
+
+    private func makeTwoTrackFixture() throws -> (
+        container: ModelContainer,
+        context: ModelContext,
+        playlist: PlaylistRecord,
+        previousTrack: TrackRecord,
+        previousItem: PlaylistItemRecord,
+        nextTrack: TrackRecord,
+        nextItem: PlaylistItemRecord
+    ) {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "playlist-1",
+            name: "Main",
+            role: .oneTruePlaylist
+        )
+        let previousTrack = TrackRecord(
+            catalogID: "previous-catalog",
+            libraryID: "previous-library",
+            title: "Previous Track",
+            artistName: "Artist",
+            durationSeconds: 180
+        )
+        let nextTrack = TrackRecord(
+            catalogID: "next-catalog",
+            libraryID: "next-library",
+            title: "Next Track",
+            artistName: "Artist",
+            durationSeconds: 180
+        )
+        let previousItem = PlaylistItemRecord(playlistID: playlist.id, trackID: previousTrack.id, skipCount: 0)
+        let nextItem = PlaylistItemRecord(playlistID: playlist.id, trackID: nextTrack.id, skipCount: 0)
+        context.insert(playlist)
+        context.insert(previousTrack)
+        context.insert(nextTrack)
+        context.insert(previousItem)
+        context.insert(nextItem)
+        return (container, context, playlist, previousTrack, previousItem, nextTrack, nextItem)
+    }
+
+    private func makeTwoPlaylistFixture() throws -> (
+        container: ModelContainer,
+        context: ModelContext,
+        currentPlaylist: PlaylistRecord,
+        currentTrack: TrackRecord,
+        currentItem: PlaylistItemRecord,
+        targetPlaylist: PlaylistRecord,
+        targetTrack: TrackRecord,
+        targetItem: PlaylistItemRecord
+    ) {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let currentPlaylist = PlaylistRecord(
+            musicPlaylistID: "playlist-1",
+            name: "Current",
+            role: .oneTruePlaylist
+        )
+        let targetPlaylist = PlaylistRecord(
+            musicPlaylistID: "playlist-2",
+            name: "Target",
+            role: .triage
+        )
+        let currentTrack = TrackRecord(
+            catalogID: "current-catalog",
+            libraryID: "current-library",
+            title: "Current Track",
+            artistName: "Artist",
+            durationSeconds: 180
+        )
+        let targetTrack = TrackRecord(
+            catalogID: "target-catalog",
+            libraryID: "target-library",
+            title: "Target Track",
+            artistName: "Artist",
+            durationSeconds: 180
+        )
+        let currentItem = PlaylistItemRecord(playlistID: currentPlaylist.id, trackID: currentTrack.id, skipCount: 0)
+        let targetItem = PlaylistItemRecord(playlistID: targetPlaylist.id, trackID: targetTrack.id, skipCount: 0)
+        context.insert(currentPlaylist)
+        context.insert(targetPlaylist)
+        context.insert(currentTrack)
+        context.insert(targetTrack)
+        context.insert(currentItem)
+        context.insert(targetItem)
+        return (container, context, currentPlaylist, currentTrack, currentItem, targetPlaylist, targetTrack, targetItem)
     }
 
     @Test("keep current refreshes displayed skip count")

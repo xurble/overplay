@@ -59,6 +59,7 @@ struct PlaylistPresentationBuilder {
                 albumTitle: track.albumTitle,
                 artworkURLString: track.artworkURLTemplate,
                 skipCount: item.skipCount,
+                playthroughCount: item.playthroughCount,
                 isPlayable: item.isPlayable
             )
         }

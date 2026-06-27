@@ -28,10 +28,8 @@ track starts playback through `PlaybackController` with that playlist as the
 active queue, then opens `CPNowPlayingTemplate`. Standard CarPlay playback
 controls are routed through the shared remote command and playback services.
 
-The shared Now Playing template also installs a custom track-health image button
-using SF Symbols derived from the current skip-forward intent. The button opens
-a short CarPlay action sheet for toggling Keep, resetting skip count, promoting
-triage tracks, or evicting the current track immediately.
+The shared Now Playing template installs direct track action buttons. One True
+Playlist tracks expose Evict, while triage tracks expose Promote and Evict.
 
 ## Verification
 

@@ -34,6 +34,7 @@ enum NowPlayingPresentationFactory {
             playthroughThresholdPercentage: settings.playthroughThresholdPercentage,
             playthroughResetsSkipCount: settings.playthroughResetsSkipCount,
             skipCount: playbackController.displayedSkipCount,
+            playthroughCount: playbackController.displayedPlaythroughCount,
             evictAfterSkips: settings.evictAfterSkips,
             isEvicted: playbackController.displayedIsEvicted,
             isProtected: playbackController.displayedIsProtected
@@ -75,6 +76,7 @@ enum NowPlayingPresentationFactory {
             playthroughThresholdPercentage: settings.playthroughThresholdPercentage,
             playthroughResetsSkipCount: settings.playthroughResetsSkipCount,
             skipCount: displayedSkipCount,
+            playthroughCount: playbackController.displayedPlaythroughCount(context: context),
             evictAfterSkips: settings.evictAfterSkips,
             isEvicted: playbackController.displayedIsEvicted(context: context),
             isProtected: playbackController.displayedIsProtected(context: context)
@@ -156,6 +158,7 @@ enum NowPlayingPresentationFactory {
         )
         return CarPlayNowPlayingButtonSignature(
             trackID: nowPlaying.trackID,
+            playlistRole: playbackController.currentPlaylistRole(context: context),
             skipCount: nowPlaying.skipCount,
             isProtected: nowPlaying.isProtected,
             isEvicted: nowPlaying.isEvicted,

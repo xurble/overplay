@@ -209,7 +209,7 @@ struct TrackHealthStatusView: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            Label(presentation.skipCountText, systemImage: "forward.end.fill")
+            Label(presentation.healthMetricText, systemImage: "waveform.path.ecg")
 
             if presentation.isEvicted {
                 let healthPresentation = TrackHealthPresentation(status: .critical, isEvicted: true, isProtected: false)
@@ -284,19 +284,6 @@ struct TrackActionControlsView: View {
                     Task { await playbackController.promoteCurrent(settings: settings, context: modelContext) }
                 } label: {
                     Label("Promote", systemImage: "star.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .disabled(playbackController.currentTrack == nil)
-                .fullScreenPlayerControlStyle(
-                    palette: controlPalette,
-                    prominence: .secondary,
-                    fallbackStyle: .bordered
-                )
-            } else {
-                Button {
-                    playbackController.keepCurrent(settings: settings, context: modelContext)
-                } label: {
-                    Label("Keep", systemImage: "heart.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .disabled(playbackController.currentTrack == nil)

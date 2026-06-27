@@ -9,6 +9,7 @@ struct TrackSummaryPresentation: Equatable, Identifiable, Sendable {
     let albumTitle: String?
     var artworkURLString: String?
     let skipCount: Int
+    var playthroughCount: Int = 0
     var isPlayable: Bool = true
 
     var subtitle: String {
@@ -24,11 +25,15 @@ struct TrackSummaryPresentation: Equatable, Identifiable, Sendable {
         return skipCount == 1 ? "1 skip" : "\(skipCount) skips"
     }
 
-    var detailText: String {
-        guard let skipCountLabel else {
-            return artistName
-        }
+    var healthMetricLabel: String {
+        "\(Self.pluralized(playthroughCount, singular: "play")) / \(Self.pluralized(skipCount, singular: "skip"))"
+    }
 
-        return "\(artistName) - \(skipCountLabel)"
+    var detailText: String {
+        "\(artistName) - \(healthMetricLabel)"
+    }
+
+    private static func pluralized(_ count: Int, singular: String) -> String {
+        count == 1 ? "1 \(singular)" : "\(count) \(singular)s"
     }
 }

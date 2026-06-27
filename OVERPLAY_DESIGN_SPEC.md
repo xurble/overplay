@@ -7,11 +7,11 @@ It keeps a user's main music playlist fresh while using other playlists as
 intake and triage sources.
 
 The core playlist is the user's **One True Playlist**. Overplay plays it,
-tracks the user's own skip and playthrough behaviour, and evicts tracks that
-cross the configured skip threshold. Additional linked playlists are tracked
-as triage playlists. They can represent sources such as TikTok saves, Shazam
-discoveries, a friend's playlist, or any other Apple Music playlist the user
-wants to review before promoting songs into the One True Playlist.
+tracks the user's own skip and playthrough behaviour, and exposes manual
+eviction. Additional linked playlists are tracked as triage playlists. They
+can represent sources such as TikTok saves, Shazam discoveries, a friend's
+playlist, or any other Apple Music playlist the user wants to review before
+promoting songs into the One True Playlist.
 
 Overplay maintains its own history and state. It does not rely on Apple
 Music's global play count or skip count.
@@ -100,7 +100,7 @@ Mac is the power-user library management and background playback experience.
 Overplay tracks multiple Apple Music playlists:
 
 - **One True Playlist**: the main playlist Overplay manages and plays by
-  default. Count-based eviction rules apply here.
+  default. Tracks can be manually evicted from this playlist.
 
   When no One True Playlist is linked, the playlist management UI offers two
   setup paths. The user can create a new Apple Music playlist named "Overplay"
@@ -111,8 +111,8 @@ Overplay tracks multiple Apple Music playlists:
   outbound Apple Music mutations for that playlist.
 
 - **Triage playlists**: additional playlists used as intake sources. Overplay
-  tracks skips and playthroughs for these playlists, but does not automatically
-  evict from them by skip count.
+  tracks skips and playthroughs for these playlists. Tracks can be manually
+  promoted to the One True Playlist or manually evicted from triage playback.
 
 Each linked playlist stores:
 
@@ -284,19 +284,18 @@ Add behaviour:
 
 Manual add should support both the One True Playlist and triage playlists.
 
-## Eviction Rules
+## Track Health Tracking
 
-Count-based eviction applies only to the One True Playlist.
+Overplay does not automatically evict tracks. It records a playlist-specific
+track health metric made from playthrough count versus skip count. Promotion
+from triage and eviction from any playlist are manual user actions.
 
 ### Defaults
 
 ```swift
 skipThresholdPercentage = 50
 minimumSkipListeningSeconds = 10
-evictAfterSkips = 3
 playthroughThresholdPercentage = 90
-playthroughResetsSkipCount = true
-protectKeptTracks = false
 ```
 
 ### Skip decision
@@ -305,7 +304,6 @@ A skip is counted when all are true:
 
 - The current play session has not already been evaluated.
 - The playlist item is active and not locally evicted.
-- The track is not protected.
 - The user listened for at least `minimumSkipListeningSeconds`.
 - Playback progress is less than `skipThresholdPercentage`.
 - The transition was not natural completion.
@@ -313,26 +311,16 @@ A skip is counted when all are true:
 Manual Next should evaluate the outgoing track. Previous should generally not
 count as a skip.
 
+If the user skips after the skip threshold but before the playthrough
+threshold, neither the skip count nor the playthrough count changes.
+
 ### Playthrough decision
 
 A playthrough is counted when the track reaches
 `playthroughThresholdPercentage` or natural completion is detected.
 
-If `playthroughResetsSkipCount` is enabled, a playthrough resets that playlist
-item's skip count.
-
-### Eviction decision
-
-For One True Playlist items:
-
-```swift
-if skipCount >= evictAfterSkips && !protected {
-    evict(track, reason: .skipCount)
-}
-```
-
-For triage playlist items, skip and playthrough counts are recorded but no
-automatic eviction occurs.
+Playthroughs and skips accumulate independently. A playthrough does not reset
+the playlist item's skip count.
 
 ### Manual eviction
 
@@ -575,7 +563,7 @@ Show:
 
 - One True Playlist name.
 - Active playable count.
-- At-risk count.
+- Count of playable tracks with one or more logged skips.
 - Evicted count.
 - Recently promoted count.
 - Triage playlists with unreviewed or high-skip items.
@@ -617,10 +605,8 @@ Show:
 - Title, artist, album.
 - Playlist context.
 - Progress.
-- Skip count and eviction threshold.
-- Playthrough count.
+- Playthrough count versus skip count.
 - Playback controls.
-- Keep/reset action.
 - Manual evict action.
 - Promote action when playing from a triage playlist.
 
@@ -642,11 +628,12 @@ Show:
 
 - One True Playlist playback entry point.
 - Playable linked playlists.
-- At-risk tracks.
 - Recently evicted tracks.
 - Current track title, artist, album, and artwork where CarPlay templates
   support it.
 - Play, pause, next, previous, and Now Playing controls.
+- Direct Evict button in Now Playing, with a direct Promote button when the
+  current track belongs to a triage playlist.
 
 Platform notes:
 
@@ -682,7 +669,7 @@ Show:
 - Track.
 - Playlist.
 - Event type.
-- Count-based or manual flag.
+- Manual source where applicable.
 - Triggering skip count or manual source.
 - Date.
 - Remote Apple Music mutation status.
@@ -703,12 +690,9 @@ Settings:
 
 - One True Playlist.
 - Linked triage playlists.
-- Evict after X skips.
 - Skip threshold percentage.
 - Minimum listening time before skip can count.
 - Playthrough threshold percentage.
-- Playthrough resets skip count.
-- Protect kept tracks.
 - Reset local playback state.
 - Reset shared stats and history with destructive confirmation.
 
@@ -874,12 +858,9 @@ Local JSON file only:
 ### SettingsRecord
 
 - `id: UUID`
-- `evictAfterSkips: Int`
 - `skipThresholdPercentage: Double`
 - `minimumSkipListeningSeconds: Double`
 - `playthroughThresholdPercentage: Double`
-- `playthroughResetsSkipCount: Bool`
-- `protectKeptTracks: Bool`
 - `createdAt: Date`
 - `updatedAt: Date`
 
@@ -922,7 +903,7 @@ CarPlay should support:
 
 - Play One True Playlist.
 - Browse triage playlists.
-- View at-risk tracks.
+- Review tracks with logged skips.
 - View recently evicted tracks.
 - Now Playing controls.
 

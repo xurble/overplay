@@ -98,7 +98,8 @@ struct TrackSummaryPresentationTests {
         #expect(track(skipCount: 0).skipCountLabel == nil)
         #expect(track(skipCount: 1).skipCountLabel == "1 skip")
         #expect(track(skipCount: 2).skipCountLabel == "2 skips")
-        #expect(track(skipCount: 2).detailText == "Artist - 2 skips")
+        #expect(track(skipCount: 2).healthMetricLabel == "0 plays / 2 skips")
+        #expect(track(skipCount: 2).detailText == "Artist - 0 plays / 2 skips")
     }
 
     private func track(albumTitle: String? = nil, skipCount: Int = 0) -> TrackSummaryPresentation {
@@ -145,6 +146,7 @@ struct NowPlayingPresentationTests {
             elapsedSeconds: 125,
             durationSeconds: nil,
             skipCount: 2,
+            playthroughCount: 1,
             evictAfterSkips: 3,
             isEvicted: false,
             isProtected: false
@@ -154,7 +156,8 @@ struct NowPlayingPresentationTests {
         #expect(presentation.artistName == "Choose Play Overplay from the dashboard.")
         #expect(presentation.elapsedText == "2:05")
         #expect(presentation.durationText == "0:00")
-        #expect(presentation.skipCountText == "Skips: 2 / 3")
+        #expect(presentation.skipCountText == "2 skips")
+        #expect(presentation.healthMetricText == "1 play / 2 skips")
     }
 
     @Test("progress phase follows skip and playthrough thresholds")
@@ -202,7 +205,7 @@ struct NowPlayingPresentationTests {
             minimumSkipListeningSeconds: 10,
             playthroughThresholdPercentage: 90,
             playthroughResetsSkipCount: false
-        ) == .normal)
+        ) == .safe)
     }
 }
 
@@ -390,7 +393,8 @@ struct NowPlayingPresentationFactoryTests {
         )
 
         #expect(presentation.skipCount == 1)
-        #expect(presentation.skipCountText == "Skips: 1 / 3")
+        #expect(presentation.skipCountText == "1 skip")
+        #expect(presentation.healthMetricText == "0 plays / 1 skip")
     }
 
     @Test("context factory refreshes stale cached playlist item before presenting skip count")
@@ -438,6 +442,7 @@ struct NowPlayingPresentationFactoryTests {
         )
 
         #expect(presentation.skipCount == 1)
-        #expect(presentation.skipCountText == "Skips: 1 / 3")
+        #expect(presentation.skipCountText == "1 skip")
+        #expect(presentation.healthMetricText == "0 plays / 1 skip")
     }
 }

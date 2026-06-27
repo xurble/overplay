@@ -364,18 +364,23 @@ final class PlaybackController {
     }
 
     func playPlaylist(_ playlist: PlaylistRecord, settings: OverplaySettings, context: ModelContext) async {
-        await playPlaylist(playlist, startingAt: nil, context: context)
+        await startPlaylistPlayback(playlist, startingAt: nil, settings: settings, context: context)
     }
 
     func playPlaylist(_ playlist: PlaylistRecord, startingAt track: TrackRecord, settings: OverplaySettings, context: ModelContext) async {
-        await playPlaylist(playlist, startingAt: track, context: context)
+        await startPlaylistPlayback(playlist, startingAt: track, settings: settings, context: context)
     }
 
     func isCurrentPlaylist(_ playlist: PlaylistRecord) -> Bool {
         currentPlaylistID == playlist.musicPlaylistID && currentTrack != nil
     }
 
-    private func playPlaylist(_ playlist: PlaylistRecord, startingAt trackRecord: TrackRecord?, context: ModelContext) async {
+    private func startPlaylistPlayback(
+        _ playlist: PlaylistRecord,
+        startingAt trackRecord: TrackRecord?,
+        settings: OverplaySettings,
+        context: ModelContext
+    ) async {
         do {
             let startingTrackID = trackRecord?.id.uuidString
             let queueEntries = try PlaybackQueueOrchestrator.orderedCachedQueueEntries(
@@ -398,6 +403,7 @@ final class PlaybackController {
                 queueEntries: queueEntries,
                 playlistID: playlist.musicPlaylistID,
                 startingAt: startingTrackID,
+                outgoingSessionSettings: settings,
                 context: context
             )
         } catch {
@@ -495,11 +501,21 @@ final class PlaybackController {
         queueEntries: [PlaybackQueueEntry],
         playlistID: String,
         startingAt localTrackID: String?,
+        outgoingSessionSettings: OverplaySettings? = nil,
         context: ModelContext
     ) async throws {
         guard !queueEntries.isEmpty else {
             statusMessage = "No playable tracks remain after local evictions."
             return
+        }
+
+        if let outgoingSessionSettings {
+            await evaluateOutgoingSessionBeforePlaybackReplacement(
+                settings: outgoingSessionSettings,
+                context: context,
+                targetPlaylistID: playlistID,
+                targetLocalTrackID: localTrackID
+            )
         }
 
         warmUpTask?.cancel()
@@ -519,6 +535,32 @@ final class PlaybackController {
         rebuildActivePlaylistSnapshot(context: context)
         startMonitoring(context: context)
         await refresh(context: context)
+    }
+
+    func evaluateOutgoingSessionBeforePlaybackReplacement(
+        settings: OverplaySettings,
+        context: ModelContext,
+        targetPlaylistID: String,
+        targetLocalTrackID: String?
+    ) async {
+        let outgoingLocalTrackID = activeSession?.localTrackID
+            ?? currentPlaylistItem?.trackID.uuidString
+            ?? activeQueueCurrentLocalTrackID
+        guard activeSession != nil || currentTrack != nil else { return }
+        if currentPlaylistID == targetPlaylistID,
+           let targetLocalTrackID,
+           targetLocalTrackID == outgoingLocalTrackID {
+            return
+        }
+
+        await evaluateActiveSession(
+            settings: settings,
+            context: context,
+            naturalCompletion: false,
+            elapsedSeconds: activeSession?.lastObservedPlaybackTime ?? elapsedSeconds,
+            durationSeconds: activeSession?.durationSeconds ?? durationSeconds ?? currentTrack?.durationSeconds,
+            fallbackLocalTrackID: outgoingLocalTrackID
+        )
     }
 
     func togglePlayPause(context: ModelContext) async {
@@ -1012,6 +1054,8 @@ final class PlaybackController {
     private func refresh(context: ModelContext) async {
         let oldTrackID = activeSession?.trackID
         let oldLocalTrackID = activeSession?.localTrackID
+        let oldCurrentItemLocalTrackID = currentPlaylistItem?.trackID.uuidString
+        let oldActiveQueueLocalTrackID = activeQueueCurrentLocalTrackID
         updateMusicKitNowPlayingTrack()
         let identity = resolvedCurrentPlaybackIdentity(context: context)
         let newTrackID = identity?.musicItemID
@@ -1049,8 +1093,8 @@ final class PlaybackController {
                 elapsedSeconds: activeSession?.lastObservedPlaybackTime,
                 durationSeconds: activeSession?.durationSeconds,
                 fallbackLocalTrackID: oldLocalTrackID
-                    ?? currentPlaylistItem?.trackID.uuidString
-                    ?? activeQueueCurrentLocalTrackID
+                    ?? oldCurrentItemLocalTrackID
+                    ?? oldActiveQueueLocalTrackID
             )
             elapsedSeconds = currentPlaybackTime
         }

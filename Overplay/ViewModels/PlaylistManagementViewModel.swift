@@ -109,6 +109,7 @@ final class PlaylistManagementViewModel {
                     albumTitle: track.albumTitle,
                     artworkURLString: track.artworkURLTemplate,
                     skipCount: item.skipCount,
+                    playthroughCount: item.playthroughCount,
                     isPlayable: item.isPlayable
                 ),
                 isCurrent: isCurrentItem(
@@ -159,6 +160,7 @@ final class PlaylistManagementViewModel {
                     albumTitle: row.albumTitle,
                     artworkURLString: row.artworkURLString,
                     skipCount: row.skipCount,
+                    playthroughCount: row.playthroughCount,
                     isPlayable: row.isPlayable
                 ),
                 isCurrent: row.isCurrent,

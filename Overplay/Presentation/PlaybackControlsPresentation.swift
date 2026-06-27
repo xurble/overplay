@@ -7,29 +7,11 @@ enum PlaybackSkipForwardIntent: Equatable, Sendable {
     case skipCountReset
 
     var systemImage: String {
-        switch self {
-        case .standard:
-            "forward.fill"
-        case .countedSkip:
-            "exclamationmark.triangle.fill"
-        case .eviction:
-            "trash.fill"
-        case .skipCountReset:
-            "cross.case.fill"
-        }
+        "forward.fill"
     }
 
     var accessibilityLabel: String {
-        switch self {
-        case .standard:
-            "Next track"
-        case .countedSkip:
-            "Next track, skip will count"
-        case .eviction:
-            "Next track, track will be evicted"
-        case .skipCountReset:
-            "Next track, skip count will reset"
-        }
+        "Next track"
     }
 }
 

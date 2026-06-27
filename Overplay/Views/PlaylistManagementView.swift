@@ -49,7 +49,7 @@ struct PlaylistManagementView: View {
                     StatCardView(title: "Known", value: "\(detail.summary.knownCount)", systemImage: "music.note.list", tint: .pink)
                     StatCardView(title: "Playable", value: "\(detail.summary.playableCount)", systemImage: "play.circle.fill", tint: .green)
                     StatCardView(title: "Evicted", value: "\(detail.summary.evictedCount)", systemImage: "trash.fill", tint: .red)
-                    StatCardView(title: "At risk", value: "\(detail.summary.atRiskCount)", systemImage: "exclamationmark.triangle.fill", tint: .orange)
+                    StatCardView(title: "Skipped", value: "\(detail.summary.atRiskCount)", systemImage: "forward.end.fill", tint: .orange)
                 }
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
@@ -65,17 +65,17 @@ struct PlaylistManagementView: View {
                 }
 
                 ForEach(detail.rows) { row in
-                    if playlist.role == .triage {
-                        playlistTrackButton(for: row)
-                            .swipeActions(edge: .trailing) {
-                                if row.isPlayable {
-                                    Button(role: .destructive) {
-                                        Task { await evict(row) }
-                                    } label: {
-                                        Label("Evict Now", systemImage: "trash.fill")
-                                    }
-                                    .disabled(viewModel.evictingItemIDs.contains(row.id))
+                    playlistTrackButton(for: row)
+                        .swipeActions(edge: .trailing) {
+                            if row.isPlayable {
+                                Button(role: .destructive) {
+                                    Task { await evict(row) }
+                                } label: {
+                                    Label("Evict Now", systemImage: "trash.fill")
+                                }
+                                .disabled(viewModel.evictingItemIDs.contains(row.id))
 
+                                if playlist.role == .triage {
                                     Button {
                                         Task { await promote(row) }
                                     } label: {
@@ -85,9 +85,7 @@ struct PlaylistManagementView: View {
                                     .disabled(viewModel.promotingItemIDs.contains(row.id))
                                 }
                             }
-                    } else {
-                        playlistTrackButton(for: row)
-                    }
+                        }
                 }
             }
 

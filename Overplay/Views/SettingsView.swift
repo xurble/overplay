@@ -19,7 +19,7 @@ struct SettingsView: View {
                         Text(settings.selectedPlaylistName ?? "None")
                             .font(.body)
                         SettingsSubtitle(
-                            "Your One True Playlist. Triage auto-eviction can be enabled below."
+                            "Your One True Playlist. Evictions and triage promotions are manual."
                         )
                     }
                     Spacer()
@@ -32,13 +32,6 @@ struct SettingsView: View {
             }
 
             Section {
-                SettingsLabeledStepper(
-                    title: "Evict after \(settings.evictAfterSkips) skips",
-                    subtitle: "Remove a track from eligible linked playlists after it reaches this many counted skips.",
-                    value: $settings.evictAfterSkips,
-                    range: 1...20
-                )
-
                 SettingsSliderRow(
                     title: "Skip threshold: \(Int(settings.skipThresholdPercentage))%",
                     subtitle: "An early skip counts only if playback stops before this percentage of the track.",
@@ -62,28 +55,10 @@ struct SettingsView: View {
                     range: 1...100,
                     step: 1
                 )
-
-                SettingsLabeledToggle(
-                    title: "Playthrough resets skip count",
-                    subtitle: "When enabled, a playthrough clears the track's skip count back to zero.",
-                    isOn: $settings.playthroughResetsSkipCount
-                )
-
-                SettingsLabeledToggle(
-                    title: "Protect kept tracks from eviction",
-                    subtitle: "Tracks you mark as kept safe are excluded from automatic eviction.",
-                    isOn: $settings.protectKeptTracks
-                )
-
-                SettingsLabeledToggle(
-                    title: "Auto-evict triage playlists",
-                    subtitle: "When enabled, triage playlists use the same global skip limit as the One True Playlist.",
-                    isOn: $settings.triageAutoEvictsOnSkipCount
-                )
             } header: {
-                Text("Eviction Rules")
+                Text("Tracking Rules")
             } footer: {
-                Text("Skip and playthrough counts are tracked for all linked playlists. Triage auto-eviction is off by default.")
+                Text("Skip and playthrough counts are tracked for all linked playlists. Skips in the neutral middle of a track do not change either count.")
                     .font(.caption)
             }
 

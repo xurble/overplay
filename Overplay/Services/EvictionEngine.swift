@@ -55,19 +55,6 @@ enum EvictionEngine {
             )
             return
         }
-        guard !item.protected else {
-            logHistory(
-                item: item,
-                playlist: playlist,
-                eventType: .skipIgnored,
-                source: .playback,
-                session: session,
-                message: "Protected",
-                context: context
-            )
-            return
-        }
-
         if transitionWasNaturalCompletion {
             countPlaythrough(item, playlist: playlist, session: session, settings: settings, context: context)
             return
@@ -94,34 +81,6 @@ enum EvictionEngine {
                 message: "\(item.skipCount) skips before \(Int(settings.skipThresholdPercentage))%",
                 context: context
             )
-
-            if item.skipCount >= settings.evictAfterSkips {
-                let shouldAutoEvict = playlist.role == .oneTruePlaylist
-                    || settings.triageAutoEvictsOnSkipCount
-                if shouldAutoEvict {
-                    evict(
-                        item,
-                        playlist: playlist,
-                        reason: .skipCount,
-                        source: .playbackRule,
-                        message: "\(item.skipCount) skips before \(Int(settings.skipThresholdPercentage))%",
-                        context: context
-                    )
-                } else {
-                    TrackMetadataDiagnostics.log(
-                        "skip reached threshold without auto eviction playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) triageAutoEvicts=\(settings.triageAutoEvictsOnSkipCount)"
-                    )
-                    logHistory(
-                        item: item,
-                        playlist: playlist,
-                        eventType: .skipIgnored,
-                        source: .playback,
-                        session: session,
-                        message: "Triage auto-eviction is off",
-                        context: context
-                    )
-                }
-            }
         } else {
             TrackMetadataDiagnostics.log(
                 "ignored skip playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) elapsed=\(String(format: "%.1f", session.lastObservedPlaybackTime)) progress=\(String(format: "%.1f", progress)) listenedLongEnough=\(listenedLongEnough) leftBeforeThreshold=\(leftBeforeThreshold)"
@@ -149,12 +108,9 @@ enum EvictionEngine {
         let previousPlaythroughCount = item.playthroughCount
         item.playthroughCount += 1
         item.lastPlayedAt = .now
-        if settings.playthroughResetsSkipCount {
-            item.skipCount = 0
-        }
         item.updatedAt = .now
         TrackMetadataDiagnostics.log(
-            "counted playthrough playlist=\(TrackMetadataDiagnostics.describe(playlist)) itemID=\(item.id.uuidString) trackID=\(item.trackID.uuidString) previousSkips=\(previousSkipCount) newSkips=\(item.skipCount) previousPlays=\(previousPlaythroughCount) newPlays=\(item.playthroughCount) resetSkips=\(settings.playthroughResetsSkipCount) progress=\(session.progressPercentage.map { String(format: "%.1f", $0) } ?? "nil")"
+            "counted playthrough playlist=\(TrackMetadataDiagnostics.describe(playlist)) itemID=\(item.id.uuidString) trackID=\(item.trackID.uuidString) previousSkips=\(previousSkipCount) newSkips=\(item.skipCount) previousPlays=\(previousPlaythroughCount) newPlays=\(item.playthroughCount) progress=\(session.progressPercentage.map { String(format: "%.1f", $0) } ?? "nil")"
         )
         logHistory(
             item: item,
