@@ -67,29 +67,18 @@ actor ArtworkCacheService {
 
         do {
             try ensureCacheDirectoryExists()
-            var manifest = try loadManifest()
             let key = Self.cacheKey(sourceURL: normalizedSourceURL, pixelSize: pixelSize)
 
-            if let cachedURL = try cachedFileURL(
-                key: key,
-                playlistID: playlistID,
-                accessedAt: accessedAt,
-                manifest: &manifest
-            ) {
-                try saveManifest(manifest)
-                self.manifest = manifest
+            if let cachedURL = try refreshedCachedFileURL(key: key, playlistID: playlistID, accessedAt: accessedAt) {
+                try persistManifest()
                 return cachedURL
             }
 
             let data = try await downloadedData(for: remoteURL, cacheKey: key, priority: priority)
-            if let cachedURL = try cachedFileURL(
-                key: key,
-                playlistID: playlistID,
-                accessedAt: accessedAt,
-                manifest: &manifest
-            ) {
-                try saveManifest(manifest)
-                self.manifest = manifest
+            // The download suspended this actor, so other requests may have
+            // mutated the manifest meanwhile. Re-check fresh actor state.
+            if let cachedURL = try refreshedCachedFileURL(key: key, playlistID: playlistID, accessedAt: accessedAt) {
+                try persistManifest()
                 return cachedURL
             }
 
@@ -101,13 +90,14 @@ actor ArtworkCacheService {
                 playlistID: playlistID,
                 accessedAt: accessedAt
             )
-            manifest.entries[key] = entry
-            if let playlistID {
-                manifest.playlistUsage[playlistID] = accessedAt
+            try withManifest { manifest in
+                manifest.entries[key] = entry
+                if let playlistID {
+                    manifest.playlistUsage[playlistID] = accessedAt
+                }
             }
-            try enforceCacheLimit(manifest: &manifest, protectedPlaylistID: protectedPlaylistID)
-            try saveManifest(manifest)
-            self.manifest = manifest
+            try enforceCacheLimit(protectedPlaylistID: protectedPlaylistID)
+            try persistManifest()
             return fileURL(for: entry)
         } catch {
             return nil
@@ -126,15 +116,15 @@ actor ArtworkCacheService {
 
         do {
             try ensureCacheDirectoryExists()
-            var manifest = try loadManifest()
             let key = Self.cacheKey(sourceURL: normalizedSourceURL, pixelSize: pixelSize)
-            guard let entry = manifest.entries[key] else { return nil }
+            guard let entry = try loadManifest().entries[key] else { return nil }
             let url = fileURL(for: entry)
 
             guard FileManager.default.fileExists(atPath: url.path) else {
-                manifest.entries[key] = nil
-                try saveManifest(manifest)
-                self.manifest = manifest
+                try withManifest { manifest in
+                    manifest.entries[key] = nil
+                }
+                try persistManifest()
                 return nil
             }
 
@@ -149,10 +139,10 @@ actor ArtworkCacheService {
 
         do {
             try ensureCacheDirectoryExists()
-            var manifest = try loadManifest()
-            manifest.playlistUsage[playlistID] = date
-            try saveManifest(manifest)
-            self.manifest = manifest
+            try withManifest { manifest in
+                manifest.playlistUsage[playlistID] = date
+            }
+            try persistManifest()
         } catch {
             // Artwork cache metadata is disposable; failures should not affect playback or UI.
         }
@@ -191,27 +181,43 @@ actor ArtworkCacheService {
         return try await downloadTask.value
     }
 
-    private func cachedFileURL(
+    /// All manifest mutations flow through this synchronous helper so a
+    /// suspension can never interleave between reading and writing actor
+    /// state — the lost-update that used to clobber concurrently added
+    /// entries during refresh bursts.
+    private func withManifest<T>(_ body: (inout ArtworkCacheManifest) -> T) throws -> T {
+        var manifest = try loadManifest()
+        let result = body(&manifest)
+        self.manifest = manifest
+        return result
+    }
+
+    private func persistManifest() throws {
+        try saveManifest(loadManifest())
+    }
+
+    private func refreshedCachedFileURL(
         key: String,
         playlistID: String?,
-        accessedAt: Date,
-        manifest: inout ArtworkCacheManifest
+        accessedAt: Date
     ) throws -> URL? {
-        guard var entry = manifest.entries[key] else { return nil }
-        let url = fileURL(for: entry)
+        try withManifest { manifest -> URL? in
+            guard var entry = manifest.entries[key] else { return nil }
+            let url = fileURL(for: entry)
 
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            manifest.entries[key] = nil
-            return nil
-        }
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                manifest.entries[key] = nil
+                return nil
+            }
 
-        entry.lastAccessedAt = accessedAt
-        if let playlistID {
-            entry.associatedPlaylistIDs.insert(playlistID)
-            manifest.playlistUsage[playlistID] = accessedAt
+            entry.lastAccessedAt = accessedAt
+            if let playlistID {
+                entry.associatedPlaylistIDs.insert(playlistID)
+                manifest.playlistUsage[playlistID] = accessedAt
+            }
+            manifest.entries[key] = entry
+            return url
         }
-        manifest.entries[key] = entry
-        return url
     }
 
     private func writeArtwork(
@@ -242,31 +248,30 @@ actor ArtworkCacheService {
         )
     }
 
-    private func enforceCacheLimit(
-        manifest: inout ArtworkCacheManifest,
-        protectedPlaylistID: String?
-    ) throws {
-        var totalBytes = manifest.entries.values.reduce(0) { $0 + $1.byteSize }
-        guard totalBytes > maxCacheBytes else { return }
+    private func enforceCacheLimit(protectedPlaylistID: String?) throws {
+        try withManifest { manifest in
+            var totalBytes = manifest.entries.values.reduce(0) { $0 + $1.byteSize }
+            guard totalBytes > maxCacheBytes else { return }
 
-        let entriesToEvict = manifest.entries.values
-            .filter { entry in
-                guard let protectedPlaylistID else { return true }
-                return !entry.associatedPlaylistIDs.contains(protectedPlaylistID)
-            }
-            .sorted { left, right in
-                let leftUsage = mostRecentPlaylistUsage(for: left, manifest: manifest)
-                let rightUsage = mostRecentPlaylistUsage(for: right, manifest: manifest)
-                if leftUsage != rightUsage {
-                    return leftUsage < rightUsage
+            let entriesToEvict = manifest.entries.values
+                .filter { entry in
+                    guard let protectedPlaylistID else { return true }
+                    return !entry.associatedPlaylistIDs.contains(protectedPlaylistID)
                 }
-                return left.lastAccessedAt < right.lastAccessedAt
-            }
+                .sorted { left, right in
+                    let leftUsage = mostRecentPlaylistUsage(for: left, manifest: manifest)
+                    let rightUsage = mostRecentPlaylistUsage(for: right, manifest: manifest)
+                    if leftUsage != rightUsage {
+                        return leftUsage < rightUsage
+                    }
+                    return left.lastAccessedAt < right.lastAccessedAt
+                }
 
-        for entry in entriesToEvict where totalBytes > maxCacheBytes {
-            try? FileManager.default.removeItem(at: fileURL(for: entry))
-            manifest.entries[entry.cacheKey] = nil
-            totalBytes -= entry.byteSize
+            for entry in entriesToEvict where totalBytes > maxCacheBytes {
+                try? FileManager.default.removeItem(at: fileURL(for: entry))
+                manifest.entries[entry.cacheKey] = nil
+                totalBytes -= entry.byteSize
+            }
         }
     }
 

@@ -151,8 +151,85 @@ struct ArtworkCacheServiceTests {
         #expect(manifest.entries.isEmpty)
     }
 
+    @Test("concurrent downloads do not clobber each other's manifest entries")
+    func concurrentDownloadsDoNotClobberEachOthersManifestEntries() async throws {
+        let rootDirectory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootDirectory) }
+
+        let gate = AsyncGate()
+        let service = ArtworkCacheService(
+            rootDirectory: rootDirectory,
+            downloader: { url in
+                if url.lastPathComponent == "slow.jpg" {
+                    await gate.wait()
+                }
+                return Data(url.lastPathComponent.utf8)
+            }
+        )
+
+        // The slow request suspends the actor inside its download while
+        // holding what used to be a stale manifest copy...
+        async let slowRequest = service.artworkFileURL(
+            for: "https://example.com/slow.jpg",
+            pixelSize: 512,
+            playlistID: "playlist-1"
+        )
+        await gate.waitForArrival()
+
+        // ...while the fast request completes fully and records its entry.
+        let fastURL = try #require(await service.artworkFileURL(
+            for: "https://example.com/fast.jpg",
+            pixelSize: 512,
+            playlistID: "playlist-1"
+        ))
+
+        await gate.open()
+        let slowURL = try #require(await slowRequest)
+
+        let manifest = try await service.manifestSnapshot()
+        #expect(manifest.entries.count == 2)
+        #expect(FileManager.default.fileExists(atPath: fastURL.path))
+        #expect(FileManager.default.fileExists(atPath: slowURL.path))
+        #expect(await service.cachedArtworkFileURL(for: "https://example.com/fast.jpg", pixelSize: 512) == fastURL)
+        #expect(await service.cachedArtworkFileURL(for: "https://example.com/slow.jpg", pixelSize: 512) == slowURL)
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("OverplayArtworkCacheTests-\(UUID().uuidString)", isDirectory: true)
+    }
+}
+
+/// A gate that lets a test park a downloader mid-flight and observe that it
+/// has arrived, so actor-reentrancy interleavings can be exercised
+/// deterministically.
+private actor AsyncGate {
+    private var isOpen = false
+    private var hasArrived = false
+    private var openWaiters: [CheckedContinuation<Void, Never>] = []
+    private var arrivalWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        hasArrived = true
+        for waiter in arrivalWaiters {
+            waiter.resume()
+        }
+        arrivalWaiters.removeAll()
+
+        guard !isOpen else { return }
+        await withCheckedContinuation { openWaiters.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        for waiter in openWaiters {
+            waiter.resume()
+        }
+        openWaiters.removeAll()
+    }
+
+    func waitForArrival() async {
+        guard !hasArrived else { return }
+        await withCheckedContinuation { arrivalWaiters.append($0) }
     }
 }
