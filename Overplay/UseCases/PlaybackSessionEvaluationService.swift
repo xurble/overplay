@@ -44,6 +44,12 @@ enum PlaybackSessionEvaluationService {
         return durationSeconds - session.lastObservedPlaybackTime <= naturalCompletionToleranceSeconds
     }
 
+    /// The largest position delta between observations that still counts as
+    /// continuous listening. Polling runs every second; anything larger is a
+    /// seek, a stale jump, or missed polls, none of which the user listened
+    /// through.
+    static let maximumObservedListeningDeltaSeconds: Double = 1.5
+
     static func updateObservedProgress(
         _ session: TrackPlaySession,
         elapsedSeconds: Double,
@@ -51,6 +57,10 @@ enum PlaybackSessionEvaluationService {
         observedAt: Date = .now
     ) -> TrackPlaySession {
         var session = session
+        let positionDelta = elapsedSeconds - session.lastObservedPlaybackTime
+        if positionDelta > 0, positionDelta <= maximumObservedListeningDeltaSeconds {
+            session.listenedSeconds += positionDelta
+        }
         session.lastObservedPlaybackTime = elapsedSeconds
         session.durationSeconds = durationSeconds
         session.lastObservedAt = observedAt
@@ -75,15 +85,6 @@ enum PlaybackSessionEvaluationService {
 
         session.hasEvaluated = true
         return session
-    }
-
-    static func skipWouldCount(session: TrackPlaySession, settings: OverplaySettings) -> Bool {
-        skipWouldCount(
-            elapsedSeconds: session.lastObservedPlaybackTime,
-            durationSeconds: session.durationSeconds,
-            skipThresholdPercentage: settings.skipThresholdPercentage,
-            minimumSkipListeningSeconds: settings.minimumSkipListeningSeconds
-        )
     }
 
     static func skipWouldCount(

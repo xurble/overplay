@@ -341,6 +341,96 @@ struct PlaybackSessionEvaluationServiceTests {
         #expect(history.first?.eventType == .playthrough)
     }
 
+    @Test("listened seconds accumulate from continuous observation, not seeks")
+    func listenedSecondsAccumulateFromContinuousObservationNotSeeks() {
+        var session = PlaybackSessionSupport.makeSession(
+            trackID: "library-1",
+            elapsedSeconds: 0,
+            durationSeconds: 180
+        )
+        session = PlaybackSessionEvaluationService.updateObservedProgress(session, elapsedSeconds: 1, durationSeconds: 180)
+        session = PlaybackSessionEvaluationService.updateObservedProgress(session, elapsedSeconds: 2.2, durationSeconds: 180)
+        #expect(abs(session.listenedSeconds - 2.2) < 0.001)
+
+        session = PlaybackSessionEvaluationService.updateObservedProgress(session, elapsedSeconds: 120, durationSeconds: 180)
+        #expect(abs(session.listenedSeconds - 2.2) < 0.001)
+
+        session = PlaybackSessionEvaluationService.updateObservedProgress(session, elapsedSeconds: 20, durationSeconds: 180)
+        #expect(abs(session.listenedSeconds - 2.2) < 0.001)
+
+        session = PlaybackSessionEvaluationService.updateObservedProgress(session, elapsedSeconds: 21, durationSeconds: 180)
+        #expect(abs(session.listenedSeconds - 3.2) < 0.001)
+    }
+
+    @Test("position alone cannot satisfy the minimum listening requirement")
+    func positionAloneCannotSatisfyTheMinimumListeningRequirement() throws {
+        let fixture = try makeFixture(skipCount: 0)
+        let settings = OverplaySettings(
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 10
+        )
+        let session = TrackPlaySession(
+            trackID: "library-1",
+            sessionStartDate: .now,
+            lastObservedPlaybackTime: 40,
+            listenedSeconds: 3,
+            durationSeconds: 180,
+            hasEvaluated: false
+        )
+
+        let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
+            activeSession: session,
+            currentTrackID: "library-1",
+            elapsedSeconds: 40,
+            durationSeconds: 180,
+            currentPlaylistItem: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings,
+            naturalCompletion: false,
+            context: fixture.context
+        )
+
+        let history = try fixture.context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(outcome?.session.hasEvaluated == true)
+        #expect(fixture.item.skipCount == 0)
+        #expect(history.first?.eventType == .skipIgnored)
+        #expect(history.first?.message == "Below minimum listening time")
+    }
+
+    @Test("accumulated listening satisfies the minimum for a counted skip")
+    func accumulatedListeningSatisfiesTheMinimumForACountedSkip() throws {
+        let fixture = try makeFixture(skipCount: 0)
+        let settings = OverplaySettings(
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 10
+        )
+        let session = TrackPlaySession(
+            trackID: "library-1",
+            sessionStartDate: .now,
+            lastObservedPlaybackTime: 40,
+            listenedSeconds: 12,
+            durationSeconds: 180,
+            hasEvaluated: false
+        )
+
+        let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
+            activeSession: session,
+            currentTrackID: "library-1",
+            elapsedSeconds: 40,
+            durationSeconds: 180,
+            currentPlaylistItem: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings,
+            naturalCompletion: false,
+            context: fixture.context
+        )
+
+        let history = try fixture.context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(outcome?.session.hasEvaluated == true)
+        #expect(fixture.item.skipCount == 1)
+        #expect(history.first?.eventType == .skipCounted)
+    }
+
     @Test("mark evaluated without skip prevents skip increment")
     func markEvaluatedWithoutSkipPreventsSkipIncrement() throws {
         let fixture = try makeFixture(skipCount: 0)

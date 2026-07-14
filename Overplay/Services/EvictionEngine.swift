@@ -10,6 +10,11 @@ struct TrackPlaySession: Equatable {
     /// continues out-of-process while the app is suspended, so evaluation
     /// must know how old its latest observation is before trusting it.
     var lastObservedAt: Date
+    /// Seconds of playback actually witnessed by polling, accumulated from
+    /// small position deltas. Unlike the raw position, seeking or resuming
+    /// mid-track contributes nothing, so this is what the minimum-listening
+    /// skip rule measures.
+    var listenedSeconds: Double
     var durationSeconds: Double?
     var hasEvaluated: Bool
 
@@ -19,6 +24,7 @@ struct TrackPlaySession: Equatable {
         sessionStartDate: Date,
         lastObservedPlaybackTime: Double,
         lastObservedAt: Date? = nil,
+        listenedSeconds: Double = 0,
         durationSeconds: Double?,
         hasEvaluated: Bool
     ) {
@@ -27,6 +33,7 @@ struct TrackPlaySession: Equatable {
         self.sessionStartDate = sessionStartDate
         self.lastObservedPlaybackTime = lastObservedPlaybackTime
         self.lastObservedAt = lastObservedAt ?? sessionStartDate
+        self.listenedSeconds = listenedSeconds
         self.durationSeconds = durationSeconds
         self.hasEvaluated = hasEvaluated
     }
@@ -87,7 +94,7 @@ enum EvictionEngine {
         }
 
         let progress = session.progressPercentage ?? 0
-        let listenedLongEnough = session.lastObservedPlaybackTime >= settings.minimumSkipListeningSeconds
+        let listenedLongEnough = session.listenedSeconds >= settings.minimumSkipListeningSeconds
         let leftBeforeThreshold = progress < settings.skipThresholdPercentage
 
         if listenedLongEnough && leftBeforeThreshold {
@@ -96,7 +103,7 @@ enum EvictionEngine {
             item.lastSkippedAt = .now
             item.updatedAt = .now
             TrackMetadataDiagnostics.log(
-                "counted skip playlist=\(TrackMetadataDiagnostics.describe(playlist)) itemID=\(item.id.uuidString) trackID=\(item.trackID.uuidString) previousSkips=\(previousSkipCount) newSkips=\(item.skipCount) elapsed=\(String(format: "%.1f", session.lastObservedPlaybackTime)) progress=\(String(format: "%.1f", progress)) threshold=\(settings.skipThresholdPercentage)"
+                "counted skip playlist=\(TrackMetadataDiagnostics.describe(playlist)) itemID=\(item.id.uuidString) trackID=\(item.trackID.uuidString) previousSkips=\(previousSkipCount) newSkips=\(item.skipCount) elapsed=\(String(format: "%.1f", session.lastObservedPlaybackTime)) listened=\(String(format: "%.1f", session.listenedSeconds)) progress=\(String(format: "%.1f", progress)) threshold=\(settings.skipThresholdPercentage)"
             )
             logHistory(
                 item: item,
@@ -109,7 +116,7 @@ enum EvictionEngine {
             )
         } else {
             TrackMetadataDiagnostics.log(
-                "ignored skip playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) elapsed=\(String(format: "%.1f", session.lastObservedPlaybackTime)) progress=\(String(format: "%.1f", progress)) listenedLongEnough=\(listenedLongEnough) leftBeforeThreshold=\(leftBeforeThreshold)"
+                "ignored skip playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) elapsed=\(String(format: "%.1f", session.lastObservedPlaybackTime)) listened=\(String(format: "%.1f", session.listenedSeconds)) progress=\(String(format: "%.1f", progress)) listenedLongEnough=\(listenedLongEnough) leftBeforeThreshold=\(leftBeforeThreshold)"
             )
             logHistory(
                 item: item,

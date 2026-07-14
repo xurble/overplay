@@ -29,6 +29,7 @@ struct EvictionEngineTests {
             trackID: "track-1",
             sessionStartDate: .now,
             lastObservedPlaybackTime: 20,
+            listenedSeconds: 20,
             durationSeconds: 100,
             hasEvaluated: false
         )
@@ -74,6 +75,7 @@ struct EvictionEngineTests {
             trackID: "track-1",
             sessionStartDate: .now,
             lastObservedPlaybackTime: 20,
+            listenedSeconds: 20,
             durationSeconds: 100,
             hasEvaluated: false
         )
@@ -112,6 +114,7 @@ struct EvictionEngineTests {
             trackID: "track-1",
             sessionStartDate: .now,
             lastObservedPlaybackTime: 4,
+            listenedSeconds: 4,
             durationSeconds: 100,
             hasEvaluated: false
         )
@@ -196,6 +199,7 @@ struct EvictionEngineTests {
             trackID: "track-1",
             sessionStartDate: .now,
             lastObservedPlaybackTime: 20,
+            listenedSeconds: 20,
             durationSeconds: 100,
             hasEvaluated: false
         )
@@ -242,6 +246,7 @@ struct EvictionEngineTests {
             trackID: "track-1",
             sessionStartDate: .now,
             lastObservedPlaybackTime: 20,
+            listenedSeconds: 20,
             durationSeconds: 100,
             hasEvaluated: false
         )
