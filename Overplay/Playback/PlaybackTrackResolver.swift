@@ -168,10 +168,11 @@ enum PlaybackTrackResolver {
     }
 
     static func snapshot(from track: Track, playlistID: String?) -> TrackSnapshot {
-        TrackSnapshot(
+        let identity = MusicTrackIdentity.ids(for: track)
+        return TrackSnapshot(
             id: track.id.rawValue,
-            catalogID: track.id.rawValue,
-            libraryID: track.id.rawValue,
+            catalogID: identity.catalogID,
+            libraryID: identity.libraryID,
             playlistEntryID: nil,
             playlistID: playlistID,
             title: track.title,
@@ -188,10 +189,11 @@ enum PlaybackTrackResolver {
 
         switch item {
         case let .song(song):
+            let identity = MusicTrackIdentity.ids(fromRawID: song.id.rawValue, playParameters: song.playParameters)
             return TrackSnapshot(
                 id: song.id.rawValue,
-                catalogID: song.id.rawValue,
-                libraryID: song.id.rawValue,
+                catalogID: identity.catalogID,
+                libraryID: identity.libraryID,
                 playlistEntryID: nil,
                 playlistID: playlistID,
                 title: song.title,
@@ -201,10 +203,14 @@ enum PlaybackTrackResolver {
                 durationSeconds: song.duration
             )
         case let .musicVideo(musicVideo):
+            let identity = MusicTrackIdentity.ids(
+                fromRawID: musicVideo.id.rawValue,
+                playParameters: musicVideo.playParameters
+            )
             return TrackSnapshot(
                 id: musicVideo.id.rawValue,
-                catalogID: musicVideo.id.rawValue,
-                libraryID: musicVideo.id.rawValue,
+                catalogID: identity.catalogID,
+                libraryID: identity.libraryID,
                 playlistEntryID: nil,
                 playlistID: playlistID,
                 title: musicVideo.title,

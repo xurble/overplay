@@ -132,9 +132,10 @@ struct PlaylistMutationService {
         addedAt: Date = .now,
         in context: ModelContext
     ) throws -> PlaylistItemRecord {
+        let identity = MusicTrackIdentity.ids(fromRawID: result.id)
         let track = try TrackRecordRepository.upsert(
-            catalogID: result.id,
-            libraryID: result.id,
+            catalogID: identity.catalogID,
+            libraryID: identity.libraryID,
             title: result.title,
             artistName: result.artistName,
             albumTitle: result.albumTitle,

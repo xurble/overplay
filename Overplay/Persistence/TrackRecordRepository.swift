@@ -64,9 +64,10 @@ enum TrackRecordRepository {
 
     @discardableResult
     static func upsert(_ snapshot: TrackSnapshot, in context: ModelContext) throws -> TrackRecord {
-        try upsertWithResult(
-            catalogID: snapshot.catalogID ?? snapshot.id,
-            libraryID: snapshot.libraryID ?? snapshot.id,
+        let identity = snapshot.resolvedIdentity
+        return try upsertWithResult(
+            catalogID: identity.catalogID,
+            libraryID: identity.libraryID,
             title: snapshot.title,
             artistName: snapshot.artistName,
             albumTitle: snapshot.albumTitle,
@@ -79,9 +80,10 @@ enum TrackRecordRepository {
 
     @discardableResult
     static func upsertWithResult(_ snapshot: TrackSnapshot, in context: ModelContext) throws -> TrackRecordUpsertResult {
-        try upsertWithResult(
-            catalogID: snapshot.catalogID ?? snapshot.id,
-            libraryID: snapshot.libraryID ?? snapshot.id,
+        let identity = snapshot.resolvedIdentity
+        return try upsertWithResult(
+            catalogID: identity.catalogID,
+            libraryID: identity.libraryID,
             title: snapshot.title,
             artistName: snapshot.artistName,
             albumTitle: snapshot.albumTitle,
@@ -159,8 +161,8 @@ enum TrackRecordRepository {
         var didChange = false
         var artworkThemeInputsChanged = false
 
-        assign(catalogID, to: \.catalogID, on: track, didChange: &didChange)
-        assign(libraryID, to: \.libraryID, on: track, didChange: &didChange)
+        assignIdentifier(catalogID, to: \.catalogID, on: track, didChange: &didChange)
+        assignIdentifier(libraryID, to: \.libraryID, on: track, didChange: &didChange)
         assign(title, to: \.title, on: track, didChange: &didChange, artworkThemeInputsChanged: &artworkThemeInputsChanged)
         assign(artistName, to: \.artistName, on: track, didChange: &didChange, artworkThemeInputsChanged: &artworkThemeInputsChanged)
         assign(albumTitle, to: \.albumTitle, on: track, didChange: &didChange, artworkThemeInputsChanged: &artworkThemeInputsChanged)
@@ -205,6 +207,19 @@ enum TrackRecordRepository {
         didChange: inout Bool
     ) {
         guard track[keyPath: keyPath] != value else { return }
+        track[keyPath: keyPath] = value
+        didChange = true
+    }
+
+    /// Catalog/library IDs are fill-and-heal only: an incoming nil must never
+    /// erase a known identifier, because most sources see only one ID domain.
+    private static func assignIdentifier(
+        _ value: String?,
+        to keyPath: ReferenceWritableKeyPath<TrackRecord, String?>,
+        on track: TrackRecord,
+        didChange: inout Bool
+    ) {
+        guard let value, track[keyPath: keyPath] != value else { return }
         track[keyPath: keyPath] = value
         didChange = true
     }

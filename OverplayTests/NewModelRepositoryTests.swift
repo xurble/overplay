@@ -235,6 +235,117 @@ struct NewModelRepositoryTests {
         #expect(unchangedArtwork.durationSeconds == 230)
     }
 
+    @Test("catalog manual add and library sync collapse to one track record")
+    func catalogManualAddAndLibrarySyncCollapseToOneTrackRecord() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+
+        let manualAdd = try TrackRecordRepository.upsert(
+            catalogID: "1440833098",
+            libraryID: nil,
+            title: "Song",
+            artistName: "Artist",
+            in: context
+        )
+
+        let librarySyncSnapshot = TrackSnapshot(
+            id: "i.abc123",
+            catalogID: "1440833098",
+            libraryID: "i.abc123",
+            playlistEntryID: nil,
+            playlistID: "playlist-1",
+            title: "Song",
+            artistName: "Artist",
+            albumTitle: nil,
+            artworkURLTemplate: nil,
+            durationSeconds: 180,
+            musicKitPlaybackData: Data("cached-playback".utf8)
+        )
+        let synced = try TrackRecordRepository.upsert(librarySyncSnapshot, in: context)
+        let tracks = try TrackRecordRepository.allTracks(in: context)
+
+        #expect(tracks.count == 1)
+        #expect(synced.id == manualAdd.id)
+        #expect(synced.catalogID == "1440833098")
+        #expect(synced.libraryID == "i.abc123")
+        #expect(synced.musicKitPlaybackData == Data("cached-playback".utf8))
+    }
+
+    @Test("snapshot upsert does not mirror a single-domain ID into both fields")
+    func snapshotUpsertDoesNotMirrorASingleDomainIDIntoBothFields() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+
+        let librarySnapshot = TrackSnapshot(
+            id: "i.abc123",
+            catalogID: nil,
+            libraryID: nil,
+            playlistEntryID: nil,
+            playlistID: "playlist-1",
+            title: "Song",
+            artistName: "Artist",
+            albumTitle: nil,
+            artworkURLTemplate: nil,
+            durationSeconds: nil
+        )
+        let record = try TrackRecordRepository.upsert(librarySnapshot, in: context)
+
+        #expect(record.libraryID == "i.abc123")
+        #expect(record.catalogID == nil)
+    }
+
+    @Test("upsert does not erase a known identifier with nil")
+    func upsertDoesNotEraseAKnownIdentifierWithNil() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+
+        try TrackRecordRepository.upsert(
+            catalogID: "1440833098",
+            libraryID: "i.abc123",
+            title: "Song",
+            artistName: "Artist",
+            in: context
+        )
+        let updated = try TrackRecordRepository.upsert(
+            catalogID: nil,
+            libraryID: "i.abc123",
+            title: "Song",
+            artistName: "Artist",
+            in: context
+        )
+        let tracks = try TrackRecordRepository.allTracks(in: context)
+
+        #expect(tracks.count == 1)
+        #expect(updated.catalogID == "1440833098")
+        #expect(updated.libraryID == "i.abc123")
+    }
+
+    @Test("upsert heals a legacy mirrored catalog ID")
+    func upsertHealsALegacyMirroredCatalogID() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+
+        context.insert(TrackRecord(
+            catalogID: "i.abc123",
+            libraryID: "i.abc123",
+            title: "Song",
+            artistName: "Artist"
+        ))
+
+        let healed = try TrackRecordRepository.upsert(
+            catalogID: "1440833098",
+            libraryID: "i.abc123",
+            title: "Song",
+            artistName: "Artist",
+            in: context
+        )
+        let tracks = try TrackRecordRepository.allTracks(in: context)
+
+        #expect(tracks.count == 1)
+        #expect(healed.catalogID == "1440833098")
+        #expect(healed.libraryID == "i.abc123")
+    }
+
     @Test("playlist item upsert creates then updates membership by playlist and track")
     func playlistItemUpsertCreatesThenUpdatesMembershipByPlaylistAndTrack() throws {
         let container = try OverplayTestSupport.makeModelContainer()

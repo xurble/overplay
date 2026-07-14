@@ -105,10 +105,11 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
     }
 
     private func snapshot(from track: Track, playlistID: String) -> TrackSnapshot {
-        TrackSnapshot(
+        let identity = MusicTrackIdentity.ids(for: track)
+        return TrackSnapshot(
             id: track.id.rawValue,
-            catalogID: track.id.rawValue,
-            libraryID: track.id.rawValue,
+            catalogID: identity.catalogID,
+            libraryID: identity.libraryID,
             playlistEntryID: nil,
             playlistID: playlistID,
             title: track.title,

@@ -68,9 +68,10 @@ enum PlaybackQueueBuilder {
 
         if let playbackData = track.musicKitPlaybackData,
            let musicTrack = try? JSONDecoder().decode(Track.self, from: playbackData) {
-            let playbackID = musicTrack.id.rawValue
-            if !ids.contains(playbackID) {
-                ids.append(playbackID)
+            let identity = MusicTrackIdentity.ids(for: musicTrack)
+            for candidate in [musicTrack.id.rawValue, identity.catalogID, identity.libraryID].compactMap({ $0 })
+            where !ids.contains(candidate) {
+                ids.append(candidate)
             }
         }
 

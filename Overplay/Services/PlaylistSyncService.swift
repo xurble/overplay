@@ -203,9 +203,10 @@ struct PlaylistSyncService {
                 continue
             }
 
+            let snapshotIdentity = snapshot.resolvedIdentity
             let existingTrack = try TrackRecordRepository.track(
-                catalogID: snapshot.catalogID ?? snapshot.id,
-                libraryID: snapshot.libraryID ?? snapshot.id,
+                catalogID: snapshotIdentity.catalogID,
+                libraryID: snapshotIdentity.libraryID,
                 in: context
             )
             let existingItem = try existingTrack.flatMap {
@@ -448,10 +449,11 @@ struct PlaylistSyncService {
     }
 
     private func snapshot(from track: Track, playlistID: String) -> TrackSnapshot {
-        TrackSnapshot(
+        let identity = MusicTrackIdentity.ids(for: track)
+        return TrackSnapshot(
             id: track.id.rawValue,
-            catalogID: track.id.rawValue,
-            libraryID: track.id.rawValue,
+            catalogID: identity.catalogID,
+            libraryID: identity.libraryID,
             playlistEntryID: nil,
             playlistID: playlistID,
             title: track.title,
