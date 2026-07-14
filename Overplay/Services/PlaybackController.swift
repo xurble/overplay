@@ -1158,7 +1158,8 @@ final class PlaybackController {
             oldTrackID: oldTrackID,
             oldLocalTrackID: oldLocalTrackID,
             newTrackID: newTrackID,
-            newLocalTrackID: newLocalTrackID
+            newLocalTrackID: newLocalTrackID,
+            context: context
         )
 
         if didChangeTrack, let settings = try? SettingsRepository.settings(in: context) {
@@ -1278,14 +1279,48 @@ final class PlaybackController {
         oldTrackID: String?,
         oldLocalTrackID: String?,
         newTrackID: String?,
-        newLocalTrackID: String?
+        newLocalTrackID: String?,
+        context: ModelContext
     ) -> Bool {
-        guard let oldTrackID, let newTrackID else { return false }
-        if let oldLocalTrackID, let newLocalTrackID {
-            return oldLocalTrackID != newLocalTrackID
+        let didChange = PlaybackIdentityFallbackPolicy.identityDidChange(
+            oldMusicItemID: oldTrackID,
+            oldLocalTrackID: oldLocalTrackID,
+            newMusicItemID: newTrackID,
+            newLocalTrackID: newLocalTrackID,
+            currentTrackKnownMusicItemIDs: self.currentTrackKnownMusicItemIDs(context: context)
+        )
+
+        if !didChange,
+           let oldTrackID,
+           let newTrackID,
+           oldTrackID != newTrackID,
+           let currentPlaylistID,
+           let localTrackID = oldLocalTrackID
+               ?? currentPlaylistItem?.trackID.uuidString
+               ?? activeQueueCurrentLocalTrackID {
+            // Remember the other-domain ID so future scoped lookups resolve
+            // it directly instead of re-deriving the correspondence.
+            PlaybackIdentityStore.recordAlias(
+                newTrackID,
+                playerID: playerID,
+                musicPlaylistID: currentPlaylistID,
+                localTrackID: localTrackID
+            )
         }
 
-        return oldTrackID != newTrackID
+        return didChange
+    }
+
+    private func currentTrackKnownMusicItemIDs(context: ModelContext) -> Set<String> {
+        let localTrackID = currentPlaylistItem?.trackID
+            ?? (activeSession?.localTrackID).flatMap(UUID.init(uuidString:))
+            ?? activeQueueCurrentLocalTrackID.flatMap(UUID.init(uuidString:))
+        guard let localTrackID,
+              let record = try? TrackRecordRepository.track(id: localTrackID, in: context) else {
+            return []
+        }
+
+        return Set(PlaybackQueueBuilder.musicItemIDs(for: record))
     }
 
     private func session(_ session: TrackPlaySession, matches identity: CurrentPlaybackIdentity) -> Bool {
