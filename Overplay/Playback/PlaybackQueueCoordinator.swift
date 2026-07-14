@@ -163,6 +163,34 @@ enum PlaybackQueueCoordinator {
         return newIndex
     }
 
+    /// Index reconciliation after a user-initiated next/previous. The
+    /// player-reported entry wins when it already moved off the
+    /// pre-transition track; otherwise advance optimistically from the
+    /// pre-transition index, never blindly from the current one, which a
+    /// concurrent refresh may already have moved. An out-of-bounds advance
+    /// keeps the pre-transition index (skipping back on the first track
+    /// restarts it rather than leaving the queue position unknown).
+    static func reconciledTransitionIndex(
+        playerReportedEntryID: String?,
+        activeQueueEntries: [RealizedPlaybackQueueEntry],
+        preTransitionIndex: Int?,
+        offset: Int
+    ) -> Int? {
+        let optimisticIndex = advancedActiveQueueIndex(
+            by: offset,
+            activeQueueEntries: activeQueueEntries,
+            currentIndex: preTransitionIndex
+        ) ?? preTransitionIndex
+
+        guard let playerReportedEntryID,
+              let realizedIndex = activeQueueEntries.firstIndex(where: { $0.queueEntryID == playerReportedEntryID }),
+              realizedIndex != preTransitionIndex else {
+            return optimisticIndex
+        }
+
+        return realizedIndex
+    }
+
     static func updatedActiveQueueIndex(
         localTrackID: String?,
         activeQueueLocalTrackIDs: [String],

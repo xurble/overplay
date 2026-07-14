@@ -108,6 +108,60 @@ struct PlaybackCoordinatorTests {
         ) == 0)
     }
 
+    @Test("transition index follows the player-reported entry when it moved")
+    func transitionIndexFollowsThePlayerReportedEntryWhenItMoved() {
+        let entries = realizedEntries(count: 4)
+
+        #expect(PlaybackQueueCoordinator.reconciledTransitionIndex(
+            playerReportedEntryID: entries[2].queueEntryID,
+            activeQueueEntries: entries,
+            preTransitionIndex: 0,
+            offset: 1
+        ) == 2)
+    }
+
+    @Test("transition index advances optimistically while the player still reports the outgoing entry")
+    func transitionIndexAdvancesOptimisticallyWhileThePlayerStillReportsTheOutgoingEntry() {
+        let entries = realizedEntries(count: 4)
+
+        #expect(PlaybackQueueCoordinator.reconciledTransitionIndex(
+            playerReportedEntryID: entries[1].queueEntryID,
+            activeQueueEntries: entries,
+            preTransitionIndex: 1,
+            offset: 1
+        ) == 2)
+        #expect(PlaybackQueueCoordinator.reconciledTransitionIndex(
+            playerReportedEntryID: nil,
+            activeQueueEntries: entries,
+            preTransitionIndex: 1,
+            offset: 1
+        ) == 2)
+        #expect(PlaybackQueueCoordinator.reconciledTransitionIndex(
+            playerReportedEntryID: "unknown-entry",
+            activeQueueEntries: entries,
+            preTransitionIndex: 2,
+            offset: -1
+        ) == 1)
+    }
+
+    @Test("out-of-bounds transition keeps the pre-transition index")
+    func outOfBoundsTransitionKeepsThePreTransitionIndex() {
+        let entries = realizedEntries(count: 3)
+
+        #expect(PlaybackQueueCoordinator.reconciledTransitionIndex(
+            playerReportedEntryID: entries[0].queueEntryID,
+            activeQueueEntries: entries,
+            preTransitionIndex: 0,
+            offset: -1
+        ) == 0)
+        #expect(PlaybackQueueCoordinator.reconciledTransitionIndex(
+            playerReportedEntryID: nil,
+            activeQueueEntries: entries,
+            preTransitionIndex: 2,
+            offset: 1
+        ) == 2)
+    }
+
     @Test("realized active queue state preserves queue and playlist item identity")
     func realizedActiveQueueStatePreservesQueueAndPlaylistItemIdentity() {
         let firstItemID = UUID()
@@ -186,6 +240,17 @@ struct PlaybackCoordinatorTests {
             PlaybackOrderTrack(
                 id: trackID.uuidString,
                 createdAt: Date(timeIntervalSince1970: Double(index))
+            )
+        }
+    }
+
+    private func realizedEntries(count: Int) -> [RealizedPlaybackQueueEntry] {
+        (0..<count).map { index in
+            RealizedPlaybackQueueEntry(
+                queueEntryID: "queue-\(index)",
+                playlistItemID: UUID(),
+                localTrackID: "local-\(index)",
+                queuedMusicItemID: "music-\(index)"
             )
         }
     }

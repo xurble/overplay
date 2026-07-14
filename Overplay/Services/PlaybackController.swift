@@ -57,7 +57,9 @@ final class PlaybackController {
     @ObservationIgnored private var isRestartingQueue = false
     @ObservationIgnored private var pendingModeQueueRebuild: PendingModeQueueRebuild?
     @ObservationIgnored private var pendingQueueAdvanceLocalTrackID: String?
+    @ObservationIgnored private var pendingQueueAdvanceFromLocalTrackID: String?
     @ObservationIgnored private var pendingQueueAdvanceStartedAt: Date?
+    @ObservationIgnored private var isPerformingTransition = false
     @ObservationIgnored private var lastLocalPlaybackStateFlushAt: Date?
     @ObservationIgnored private var lastLocalPlaybackStateIdentity: LocalPlaybackStateIdentity?
     @ObservationIgnored private var lastLoggedPlaybackRefreshSignature: String?
@@ -215,6 +217,7 @@ final class PlaybackController {
         prefetchedArtworkTrackID = nil
         pendingModeQueueRebuild = nil
         pendingQueueAdvanceLocalTrackID = nil
+        pendingQueueAdvanceFromLocalTrackID = nil
         pendingQueueAdvanceStartedAt = nil
         lastLocalPlaybackStateFlushAt = nil
         lastLocalPlaybackStateIdentity = nil
@@ -466,14 +469,6 @@ final class PlaybackController {
         )
     }
 
-    private func advanceActiveQueueIndex(by offset: Int) {
-        activeQueueIndex = PlaybackQueueCoordinator.advancedActiveQueueIndex(
-            by: offset,
-            activeQueueEntries: activeQueueEntries,
-            currentIndex: activeQueueIndex
-        )
-    }
-
     private func materializeActiveQueue(
         entries: [PlaybackQueueEntry],
         startingAt localTrackID: String?
@@ -649,6 +644,12 @@ final class PlaybackController {
     }
 
     func next(settings: OverplaySettings, context: ModelContext) async {
+        // The monitor keeps polling while skipToNextEntry is in flight; the
+        // transition flag stops a concurrent refresh from moving the queue
+        // index or session out from under this method.
+        isPerformingTransition = true
+        defer { isPerformingTransition = false }
+
         prepareCurrentPlaylistItemForEvaluation(context: context)
         let skippedTrackID = activeSession?.trackID ?? currentTrack?.id
         let skippedLocalTrackID = activeSession?.localTrackID
@@ -662,12 +663,23 @@ final class PlaybackController {
         )
 
         do {
+            let preTransitionIndex = activeQueueIndex
             try await player.skipToNextEntry()
             updateMusicKitNowPlayingTrack()
-            advanceActiveQueueIndex(by: 1)
-            updateDisplayedTrackFromActiveQueue(context: context)
+            activeQueueIndex = PlaybackQueueCoordinator.reconciledTransitionIndex(
+                playerReportedEntryID: player.queue.currentEntry?.id,
+                activeQueueEntries: activeQueueEntries,
+                preTransitionIndex: preTransitionIndex,
+                offset: 1
+            )
+            updateDisplayedTrackFromActiveQueue(
+                context: context,
+                transitionedFromLocalTrackID: skippedLocalTrackID
+            )
+            isPerformingTransition = false
             await refresh(context: context)
         } catch {
+            isPerformingTransition = false
             if let skippedTrackID,
                await handleQueueEnded(
                    lastMusicItemID: skippedTrackID,
@@ -681,15 +693,31 @@ final class PlaybackController {
     }
 
     func previous(context: ModelContext) async {
+        isPerformingTransition = true
+        defer { isPerformingTransition = false }
+
         markActiveSessionEvaluatedWithoutSkip()
+        let outgoingLocalTrackID = currentPlaylistItem?.trackID.uuidString
+            ?? activeQueueCurrentLocalTrackID
 
         do {
+            let preTransitionIndex = activeQueueIndex
             try await player.skipToPreviousEntry()
             updateMusicKitNowPlayingTrack()
-            advanceActiveQueueIndex(by: -1)
-            updateDisplayedTrackFromActiveQueue(context: context)
+            activeQueueIndex = PlaybackQueueCoordinator.reconciledTransitionIndex(
+                playerReportedEntryID: player.queue.currentEntry?.id,
+                activeQueueEntries: activeQueueEntries,
+                preTransitionIndex: preTransitionIndex,
+                offset: -1
+            )
+            updateDisplayedTrackFromActiveQueue(
+                context: context,
+                transitionedFromLocalTrackID: outgoingLocalTrackID
+            )
+            isPerformingTransition = false
             await refresh(context: context)
         } catch {
+            isPerformingTransition = false
             statusMessage = error.localizedDescription
         }
     }
@@ -1060,6 +1088,15 @@ final class PlaybackController {
     }
 
     private func refresh(context: ModelContext) async {
+        // A user transition is mid-flight: reconciling identity now would
+        // race the pending skip. Track time and play state only.
+        if isPerformingTransition {
+            elapsedSeconds = player.playbackTime
+            isPlaying = player.state.playbackStatus == .playing
+            NowPlayingMetadataService.update(track: nowPlayingDisplayTrack, elapsed: elapsedSeconds, isPlaying: isPlaying)
+            return
+        }
+
         let oldTrackID = activeSession?.trackID
         let oldLocalTrackID = activeSession?.localTrackID
         let oldCurrentItemLocalTrackID = currentPlaylistItem?.trackID.uuidString
@@ -1647,39 +1684,41 @@ final class PlaybackController {
             return nil
         }
 
-        guard Date.now.timeIntervalSince(pendingQueueAdvanceStartedAt) < 2 else {
-            clearPendingQueueAdvance()
-            return nil
-        }
-
         guard let activeQueueCurrentEntry,
               activeQueueCurrentEntry.localTrackID == pendingQueueAdvanceLocalTrackID else {
             clearPendingQueueAdvance()
             return nil
         }
 
-        if let queueEntry = player.queue.currentEntry {
-            if let realizedEntry = activeQueueEntries.first(where: { $0.queueEntryID == queueEntry.id }),
-               realizedEntry.localTrackID == pendingQueueAdvanceLocalTrackID {
-                clearPendingQueueAdvance()
-                return nil
+        let confirmedLocalTrackID: String? = {
+            guard let queueEntry = player.queue.currentEntry else { return nil }
+            if let realizedEntry = activeQueueEntries.first(where: { $0.queueEntryID == queueEntry.id }) {
+                return realizedEntry.localTrackID
             }
+            if let queueReportedTrackID = queueEntry.item?.id.rawValue {
+                return localTrackID(matching: queueReportedTrackID, context: context)
+            }
+            return nil
+        }()
 
-            if let queueReportedTrackID = queueEntry.item?.id.rawValue,
-               let reportedLocalTrackID = localTrackID(matching: queueReportedTrackID, context: context),
-               reportedLocalTrackID == pendingQueueAdvanceLocalTrackID {
-                clearPendingQueueAdvance()
-                return nil
-            }
+        switch PlaybackPendingAdvancePolicy.resolution(
+            pendingLocalTrackID: pendingQueueAdvanceLocalTrackID,
+            fromLocalTrackID: pendingQueueAdvanceFromLocalTrackID,
+            confirmedLocalTrackID: confirmedLocalTrackID,
+            startedAt: pendingQueueAdvanceStartedAt
+        ) {
+        case .arrived, .diverged, .expired:
+            clearPendingQueueAdvance()
+            return nil
+        case .propagating, .pinned:
+            return CurrentPlaybackIdentity(
+                musicItemID: activeQueueCurrentEntry.queuedMusicItemID,
+                localTrackID: activeQueueCurrentEntry.localTrackID,
+                playlistItemID: activeQueueCurrentEntry.playlistItemID,
+                isQueueCorrelated: true,
+                source: "pendingQueueAdvance"
+            )
         }
-
-        return CurrentPlaybackIdentity(
-            musicItemID: activeQueueCurrentEntry.queuedMusicItemID,
-            localTrackID: activeQueueCurrentEntry.localTrackID,
-            playlistItemID: activeQueueCurrentEntry.playlistItemID,
-            isQueueCorrelated: true,
-            source: "pendingQueueAdvance"
-        )
     }
 
     private func clearPendingQueueAdvanceIfNeeded(matchedLocalTrackID: String) {
@@ -1689,6 +1728,7 @@ final class PlaybackController {
 
     private func clearPendingQueueAdvance() {
         pendingQueueAdvanceLocalTrackID = nil
+        pendingQueueAdvanceFromLocalTrackID = nil
         pendingQueueAdvanceStartedAt = nil
     }
 
@@ -1834,7 +1874,10 @@ final class PlaybackController {
         playbackItemMetadataVersion += 1
     }
 
-    private func updateDisplayedTrackFromActiveQueue(context: ModelContext) {
+    private func updateDisplayedTrackFromActiveQueue(
+        context: ModelContext,
+        transitionedFromLocalTrackID: String? = nil
+    ) {
         guard let activeQueueCurrentEntry,
               let localTrackID = activeQueueCurrentLocalTrackID,
               let item = try? playlistItem(localTrackID: localTrackID, context: context),
@@ -1846,6 +1889,7 @@ final class PlaybackController {
         currentTrack = CurrentPlaybackTrack(track, musicItemID: activeQueueCurrentEntry.queuedMusicItemID, item: item)
         durationSeconds = currentTrack?.durationSeconds
         pendingQueueAdvanceLocalTrackID = activeQueueCurrentEntry.localTrackID
+        pendingQueueAdvanceFromLocalTrackID = transitionedFromLocalTrackID
         pendingQueueAdvanceStartedAt = .now
         bumpPlaybackItemMetadataVersion()
         updateActivePlaylistSnapshotCurrentRow()
