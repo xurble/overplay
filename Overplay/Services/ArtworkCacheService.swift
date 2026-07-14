@@ -363,9 +363,11 @@ actor ArtworkCacheService {
         for entry: ArtworkCacheEntry,
         manifest: ArtworkCacheManifest
     ) -> Date {
+        // Entries with no playlist association (Search, History) compete on
+        // their own access recency instead of always evicting first.
         entry.associatedPlaylistIDs
             .compactMap { manifest.playlistUsage[$0] }
-            .max() ?? .distantPast
+            .max() ?? entry.lastAccessedAt
     }
 
     private func fileExtension(for sourceURL: String) -> String {

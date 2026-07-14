@@ -132,6 +132,39 @@ struct ArtworkCacheServiceTests {
         #expect(FileManager.default.fileExists(atPath: newURL.path))
     }
 
+    @Test("recently accessed playlist-less artwork outlives stale playlist artwork")
+    func recentlyAccessedPlaylistLessArtworkOutlivesStalePlaylistArtwork() async throws {
+        let rootDirectory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootDirectory) }
+
+        let staleSourceURL = "https://example.com/stale.jpg"
+        let searchSourceURL = "https://example.com/search.jpg"
+        let service = ArtworkCacheService(
+            rootDirectory: rootDirectory,
+            maxCacheBytes: 10,
+            downloader: { _ in Data(repeating: 1, count: 8) }
+        )
+
+        let staleURL = try #require(await service.artworkFileURL(
+            for: staleSourceURL,
+            pixelSize: 96,
+            playlistID: "stale-playlist",
+            accessedAt: Date(timeIntervalSince1970: 10)
+        ))
+        let searchURL = try #require(await service.artworkFileURL(
+            for: searchSourceURL,
+            pixelSize: 96,
+            playlistID: nil,
+            accessedAt: Date(timeIntervalSince1970: 100)
+        ))
+        let manifest = try await service.manifestSnapshot()
+
+        #expect(manifest.entries.count == 1)
+        #expect(manifest.entries.values.first?.sourceURL == searchSourceURL)
+        #expect(!FileManager.default.fileExists(atPath: staleURL.path))
+        #expect(FileManager.default.fileExists(atPath: searchURL.path))
+    }
+
     @Test("failed download returns nil without caching an entry")
     func failedDownloadReturnsNilWithoutCachingAnEntry() async throws {
         let rootDirectory = temporaryDirectory()
