@@ -32,6 +32,18 @@ enum PlaybackSessionEvaluationService {
     /// suspended while playback continued out-of-process.
     static let observationStalenessThresholdSeconds: Double = 5
 
+    /// A track that ends between polls leaves its last observation just
+    /// short of the duration. Within this window the transition is treated
+    /// as a natural completion rather than a user skip.
+    static let naturalCompletionToleranceSeconds: Double = 3
+
+    static func inferredNaturalCompletion(session: TrackPlaySession) -> Bool {
+        guard let durationSeconds = session.durationSeconds, durationSeconds > 0 else {
+            return false
+        }
+        return durationSeconds - session.lastObservedPlaybackTime <= naturalCompletionToleranceSeconds
+    }
+
     static func updateObservedProgress(
         _ session: TrackPlaySession,
         elapsedSeconds: Double,
@@ -184,7 +196,11 @@ enum PlaybackSessionEvaluationService {
 
         let wasEvicted = item.evictedAt != nil
         let canCountPlaythrough = item.evictedAt == nil
-        if canCountPlaythrough && (naturalCompletion || playthroughThresholdReached(session: session, settings: settings)) {
+        // MusicKit advances tracks itself at natural completion, so most
+        // completions arrive here as plain track changes. An observation
+        // within a poll gap of the duration is a completion, not a skip.
+        let completedNaturally = naturalCompletion || inferredNaturalCompletion(session: session)
+        if canCountPlaythrough && (completedNaturally || playthroughThresholdReached(session: session, settings: settings)) {
             EvictionEngine.countPlaythrough(
                 item,
                 playlist: playlist,
@@ -197,7 +213,7 @@ enum PlaybackSessionEvaluationService {
                 item: item,
                 playlist: playlist,
                 session: session,
-                transitionWasNaturalCompletion: naturalCompletion,
+                transitionWasNaturalCompletion: completedNaturally,
                 observationIsStale: observationIsStale,
                 settings: settings,
                 context: context

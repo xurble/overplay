@@ -61,6 +61,7 @@ final class PlaybackController {
     @ObservationIgnored private var lastLocalPlaybackStateFlushAt: Date?
     @ObservationIgnored private var lastLocalPlaybackStateIdentity: LocalPlaybackStateIdentity?
     @ObservationIgnored private var lastLoggedPlaybackRefreshSignature: String?
+    @ObservationIgnored private var didLogQueueEndWithoutRestart = false
 
     init(playerID: String = "main") {
         self.playerID = playerID
@@ -218,6 +219,7 @@ final class PlaybackController {
         lastLocalPlaybackStateFlushAt = nil
         lastLocalPlaybackStateIdentity = nil
         lastLoggedPlaybackRefreshSignature = nil
+        didLogQueueEndWithoutRestart = false
         statusMessage = "Overplay data reset."
         hasRestoredLocalPlaybackState = false
         LocalPlaybackStateStore.clear(flushImmediately: true)
@@ -1070,18 +1072,49 @@ final class PlaybackController {
         elapsedSeconds = currentPlaybackTime
         isPlaying = player.state.playbackStatus == .playing
 
-        if let oldTrackID, newTrackID == nil, !isRestartingQueue {
-            if let settings = try? SettingsRepository.settings(in: context) {
-                await evaluateActiveSession(settings: settings, context: context, naturalCompletion: true)
-            }
+        // Queue end never surfaces as a nil resolved identity, because
+        // identity resolution falls back to the cached active queue entry
+        // and session. Detect it from the player state directly, and only
+        // restart when the outgoing session was observed near its end so an
+        // external stop mid-track cannot trigger a surprise restart.
+        let queueDidEnd = PlaybackQueueEndPolicy.queueDidEnd(
+            hasCurrentEntry: player.queue.currentEntry != nil,
+            playbackStatus: player.state.playbackStatus,
+            hasActiveQueue: !activeQueueEntries.isEmpty,
+            isRestartingQueue: isRestartingQueue
+        )
+        if queueDidEnd {
+            let queueEndLocalTrackID = oldLocalTrackID
+                ?? oldCurrentItemLocalTrackID
+                ?? oldActiveQueueLocalTrackID
+            if let oldTrackID, PlaybackQueueEndPolicy.shouldRestartAfterQueueEnd(session: activeSession) {
+                TrackMetadataDiagnostics.log(
+                    "queue ended naturally status=\(player.state.playbackStatus) lastTrackID=\(oldTrackID) lastLocalTrackID=\(queueEndLocalTrackID ?? "nil")"
+                )
+                didLogQueueEndWithoutRestart = false
+                if let settings = try? SettingsRepository.settings(in: context) {
+                    await evaluateActiveSession(
+                        settings: settings,
+                        context: context,
+                        naturalCompletion: true,
+                        elapsedSeconds: activeSession?.lastObservedPlaybackTime,
+                        durationSeconds: activeSession?.durationSeconds,
+                        fallbackLocalTrackID: queueEndLocalTrackID
+                    )
+                }
 
-            if await handleQueueEnded(
-                lastMusicItemID: oldTrackID,
-                lastLocalTrackID: oldLocalTrackID,
-                context: context
-            ) {
-                return
+                if await handleQueueEnded(
+                    lastMusicItemID: oldTrackID,
+                    lastLocalTrackID: queueEndLocalTrackID,
+                    context: context
+                ) {
+                    return
+                }
+            } else {
+                logQueueEndWithoutRestartIfNeeded()
             }
+        } else {
+            didLogQueueEndWithoutRestart = false
         }
 
         let didChangeTrack = playbackIdentityDidChange(
@@ -1657,6 +1690,17 @@ final class PlaybackController {
     private func clearPendingQueueAdvance() {
         pendingQueueAdvanceLocalTrackID = nil
         pendingQueueAdvanceStartedAt = nil
+    }
+
+    private func logQueueEndWithoutRestartIfNeeded() {
+        guard !didLogQueueEndWithoutRestart else { return }
+        didLogQueueEndWithoutRestart = true
+        let sessionDescription = activeSession.map {
+            "\($0.trackID)@\(String(format: "%.1f", $0.lastObservedPlaybackTime))/\($0.durationSeconds.map { String(format: "%.1f", $0) } ?? "nil")"
+        } ?? "nil"
+        TrackMetadataDiagnostics.log(
+            "queue ended without restart status=\(player.state.playbackStatus) session=\(sessionDescription)"
+        )
     }
 
     private func logPlaybackRefreshIfNeeded(identity: CurrentPlaybackIdentity?) {

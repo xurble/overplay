@@ -262,6 +262,88 @@ struct PlaybackSessionEvaluationServiceTests {
         #expect(history.first?.message == "Stale observation")
     }
 
+    @Test("natural completion is inferred near the end of a track")
+    func naturalCompletionIsInferredNearTheEndOfATrack() {
+        #expect(PlaybackSessionEvaluationService.inferredNaturalCompletion(
+            session: session(elapsedSeconds: 178, durationSeconds: 180)
+        ))
+        #expect(PlaybackSessionEvaluationService.inferredNaturalCompletion(
+            session: session(elapsedSeconds: 177, durationSeconds: 180)
+        ))
+        #expect(!PlaybackSessionEvaluationService.inferredNaturalCompletion(
+            session: session(elapsedSeconds: 176, durationSeconds: 180)
+        ))
+        #expect(!PlaybackSessionEvaluationService.inferredNaturalCompletion(
+            session: session(elapsedSeconds: 90, durationSeconds: 180)
+        ))
+        #expect(!PlaybackSessionEvaluationService.inferredNaturalCompletion(
+            session: TrackPlaySession(
+                trackID: "library-1",
+                sessionStartDate: .now,
+                lastObservedPlaybackTime: 178,
+                durationSeconds: nil,
+                hasEvaluated: false
+            )
+        ))
+    }
+
+    @Test("track change observed near the end counts a playthrough below the threshold")
+    func trackChangeObservedNearTheEndCountsAPlaythroughBelowTheThreshold() throws {
+        let fixture = try makeFixture(skipCount: 1)
+        let settings = OverplaySettings(playthroughThresholdPercentage: 99.9)
+
+        let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
+            activeSession: nil,
+            currentTrackID: "library-1",
+            elapsedSeconds: 178,
+            durationSeconds: 180,
+            currentPlaylistItem: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings,
+            naturalCompletion: false,
+            context: fixture.context
+        )
+
+        let history = try fixture.context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(outcome?.session.hasEvaluated == true)
+        #expect(fixture.item.playthroughCount == 1)
+        #expect(fixture.item.skipCount == 1)
+        #expect(history.first?.eventType == .playthrough)
+    }
+
+    @Test("stale observation near the end still counts a playthrough")
+    func staleObservationNearTheEndStillCountsAPlaythrough() throws {
+        let fixture = try makeFixture(skipCount: 0)
+        let settings = OverplaySettings(playthroughThresholdPercentage: 99.9)
+        let now = Date(timeIntervalSince1970: 1_000)
+        let staleSession = TrackPlaySession(
+            trackID: "library-1",
+            sessionStartDate: now.addingTimeInterval(-400),
+            lastObservedPlaybackTime: 178,
+            lastObservedAt: now.addingTimeInterval(-300),
+            durationSeconds: 180,
+            hasEvaluated: false
+        )
+
+        let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
+            activeSession: staleSession,
+            currentTrackID: "library-1",
+            elapsedSeconds: 178,
+            durationSeconds: 180,
+            currentPlaylistItem: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings,
+            naturalCompletion: false,
+            context: fixture.context,
+            now: now
+        )
+
+        let history = try fixture.context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(outcome?.session.hasEvaluated == true)
+        #expect(fixture.item.playthroughCount == 1)
+        #expect(history.first?.eventType == .playthrough)
+    }
+
     @Test("mark evaluated without skip prevents skip increment")
     func markEvaluatedWithoutSkipPreventsSkipIncrement() throws {
         let fixture = try makeFixture(skipCount: 0)
