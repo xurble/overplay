@@ -297,3 +297,37 @@ Verification:
 - Pending: Mac target build awaits Step 18.
 - Complete: Unit tests pass.
 - Complete: No callers remain for deprecated repositories or models.
+
+## Deferred Follow-Ups (2026-07-14)
+
+Noted during the catch-up refresh responsiveness and artwork loss fix.
+Revisit if on-device catch-up still hitches after that work.
+
+### Playlist selection view query load
+
+`PlaylistSelectionView` holds three unfiltered `@Query` properties (all
+`PlaylistRecord`, all `PlaylistItemRecord`, all `TrackRecord`). Every
+`context.save()` during sync re-evaluates and re-diffs the entire library on
+the main thread, making this the largest remaining render amplifier during a
+catch-up sync. Replace with filtered/aggregated queries or repository-backed
+counts. UI refactor with regression risk, so deliberately deferred.
+
+### Background sync context
+
+Playlist sync currently runs on the MainActor against the main
+`ModelContext`, kept responsive by yield-chunking, once-per-cycle identity
+merge, a shared library-playlist fetch, and inter-playlist pacing. If that
+proves insufficient on device, the escalation path is a `@ModelActor`-based
+background sync context. That requires ID-based re-fetch APIs at the
+live-`@Model` boundaries (`PeriodicPlaylistSyncService` closures,
+`PlaybackController.reconcileStoredOrder`) and a sendable snapshot boundary
+around the `@MainActor` MusicKit fetchers, so it is intentionally not built
+until proven necessary.
+
+### Artwork cache location decision
+
+The artwork cache intentionally stays in the OS-purgeable Caches directory
+(user decision, 2026-07-14): artwork is disposable and re-downloadable per
+the design spec. If storage-pressure purges ever become a practical problem,
+the alternative is Application Support with backup exclusion plus a one-time
+file migration.
