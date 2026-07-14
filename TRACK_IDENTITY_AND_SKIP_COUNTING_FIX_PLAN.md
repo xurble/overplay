@@ -472,7 +472,12 @@ Verification:
 
 - Docs match implemented behavior; no code changes in this step.
 
-## Step 12 - Full Verification Pass
+## Step 12 - Full Verification Pass - Automated Complete, Device Checklist Pending
+
+- Complete (2026-07-14): full unit test suite passes (318 test cases) on the
+  iPhone 17 simulator after all steps landed.
+- Pending: the on-device manual checklist below requires a physical device
+  with an Apple Music subscription.
 
 - Run the complete unit test suite.
 - Manual device checklist:
