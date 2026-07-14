@@ -118,6 +118,150 @@ struct PlaybackSessionEvaluationServiceTests {
         #expect(history.first?.eventType == .playthrough)
     }
 
+    @Test("stale observation below skip threshold counts nothing")
+    func staleObservationBelowSkipThresholdCountsNothing() throws {
+        let fixture = try makeFixture(skipCount: 1)
+        let settings = OverplaySettings(
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 0
+        )
+        let now = Date(timeIntervalSince1970: 1_000)
+        let staleSession = TrackPlaySession(
+            trackID: "library-1",
+            sessionStartDate: now.addingTimeInterval(-400),
+            lastObservedPlaybackTime: 54,
+            lastObservedAt: now.addingTimeInterval(-300),
+            durationSeconds: 180,
+            hasEvaluated: false
+        )
+
+        let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
+            activeSession: staleSession,
+            currentTrackID: "library-1",
+            elapsedSeconds: 54,
+            durationSeconds: 180,
+            currentPlaylistItem: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings,
+            naturalCompletion: false,
+            context: fixture.context,
+            now: now
+        )
+
+        let history = try fixture.context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(outcome?.session.hasEvaluated == true)
+        #expect(fixture.item.skipCount == 1)
+        #expect(fixture.item.playthroughCount == 0)
+        #expect(history.count == 1)
+        #expect(history.first?.eventType == .skipIgnored)
+        #expect(history.first?.message == "Stale observation")
+    }
+
+    @Test("stale observation past playthrough threshold still counts playthrough")
+    func staleObservationPastPlaythroughThresholdStillCountsPlaythrough() throws {
+        let fixture = try makeFixture(skipCount: 2)
+        let settings = OverplaySettings(playthroughThresholdPercentage: 90)
+        let now = Date(timeIntervalSince1970: 1_000)
+        let staleSession = TrackPlaySession(
+            trackID: "library-1",
+            sessionStartDate: now.addingTimeInterval(-400),
+            lastObservedPlaybackTime: 170,
+            lastObservedAt: now.addingTimeInterval(-300),
+            durationSeconds: 180,
+            hasEvaluated: false
+        )
+
+        let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
+            activeSession: staleSession,
+            currentTrackID: "library-1",
+            elapsedSeconds: 170,
+            durationSeconds: 180,
+            currentPlaylistItem: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings,
+            naturalCompletion: false,
+            context: fixture.context,
+            now: now
+        )
+
+        let history = try fixture.context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(outcome?.session.hasEvaluated == true)
+        #expect(fixture.item.playthroughCount == 1)
+        #expect(fixture.item.skipCount == 2)
+        #expect(history.first?.eventType == .playthrough)
+    }
+
+    @Test("fresh observation within the staleness threshold still counts a skip")
+    func freshObservationWithinTheStalenessThresholdStillCountsASkip() throws {
+        let fixture = try makeFixture(skipCount: 0)
+        let settings = OverplaySettings(
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 0
+        )
+        let now = Date(timeIntervalSince1970: 1_000)
+        let freshSession = TrackPlaySession(
+            trackID: "library-1",
+            sessionStartDate: now.addingTimeInterval(-60),
+            lastObservedPlaybackTime: 54,
+            lastObservedAt: now.addingTimeInterval(-PlaybackSessionEvaluationService.observationStalenessThresholdSeconds),
+            durationSeconds: 180,
+            hasEvaluated: false
+        )
+
+        let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
+            activeSession: freshSession,
+            currentTrackID: "library-1",
+            elapsedSeconds: 54,
+            durationSeconds: 180,
+            currentPlaylistItem: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings,
+            naturalCompletion: false,
+            context: fixture.context,
+            now: now
+        )
+
+        let history = try fixture.context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(outcome?.session.hasEvaluated == true)
+        #expect(fixture.item.skipCount == 1)
+        #expect(history.first?.eventType == .skipCounted)
+    }
+
+    @Test("restored session observation dates make relaunch evaluation stale")
+    func restoredSessionObservationDatesMakeRelaunchEvaluationStale() throws {
+        let fixture = try makeFixture(skipCount: 0)
+        let settings = OverplaySettings(
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 0
+        )
+        let persistedAt = Date(timeIntervalSince1970: 1_000)
+        let restoredSession = PlaybackSessionSupport.makeSession(
+            trackID: "library-1",
+            elapsedSeconds: 54,
+            durationSeconds: 180,
+            sessionStartDate: persistedAt
+        )
+
+        let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
+            activeSession: restoredSession,
+            currentTrackID: "library-1",
+            elapsedSeconds: 54,
+            durationSeconds: 180,
+            currentPlaylistItem: fixture.item,
+            playlist: fixture.playlist,
+            settings: settings,
+            naturalCompletion: false,
+            context: fixture.context,
+            now: persistedAt.addingTimeInterval(3_600)
+        )
+
+        let history = try fixture.context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(outcome?.session.hasEvaluated == true)
+        #expect(fixture.item.skipCount == 0)
+        #expect(history.first?.eventType == .skipIgnored)
+        #expect(history.first?.message == "Stale observation")
+    }
+
     @Test("mark evaluated without skip prevents skip increment")
     func markEvaluatedWithoutSkipPreventsSkipIncrement() throws {
         let fixture = try makeFixture(skipCount: 0)

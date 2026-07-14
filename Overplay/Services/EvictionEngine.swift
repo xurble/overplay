@@ -6,6 +6,10 @@ struct TrackPlaySession: Equatable {
     var localTrackID: String?
     var sessionStartDate: Date
     var lastObservedPlaybackTime: Double
+    /// When `lastObservedPlaybackTime` was actually observed. Playback
+    /// continues out-of-process while the app is suspended, so evaluation
+    /// must know how old its latest observation is before trusting it.
+    var lastObservedAt: Date
     var durationSeconds: Double?
     var hasEvaluated: Bool
 
@@ -14,6 +18,7 @@ struct TrackPlaySession: Equatable {
         localTrackID: String? = nil,
         sessionStartDate: Date,
         lastObservedPlaybackTime: Double,
+        lastObservedAt: Date? = nil,
         durationSeconds: Double?,
         hasEvaluated: Bool
     ) {
@@ -21,6 +26,7 @@ struct TrackPlaySession: Equatable {
         self.localTrackID = localTrackID
         self.sessionStartDate = sessionStartDate
         self.lastObservedPlaybackTime = lastObservedPlaybackTime
+        self.lastObservedAt = lastObservedAt ?? sessionStartDate
         self.durationSeconds = durationSeconds
         self.hasEvaluated = hasEvaluated
     }
@@ -39,6 +45,7 @@ enum EvictionEngine {
         playlist: PlaylistRecord,
         session: TrackPlaySession,
         transitionWasNaturalCompletion: Bool,
+        observationIsStale: Bool = false,
         settings: OverplaySettings,
         context: ModelContext
     ) {
@@ -57,6 +64,25 @@ enum EvictionEngine {
         }
         if transitionWasNaturalCompletion {
             countPlaythrough(item, playlist: playlist, session: session, settings: settings, context: context)
+            return
+        }
+        if observationIsStale {
+            // The observation predates missed polls (typically app
+            // suspension while music kept playing), so this transition
+            // cannot be distinguished from a natural completion. Unknown
+            // must never count as a skip.
+            TrackMetadataDiagnostics.log(
+                "ignored stale skip playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) elapsed=\(String(format: "%.1f", session.lastObservedPlaybackTime)) observedAt=\(session.lastObservedAt)"
+            )
+            logHistory(
+                item: item,
+                playlist: playlist,
+                eventType: .skipIgnored,
+                source: .playback,
+                session: session,
+                message: "Stale observation",
+                context: context
+            )
             return
         }
 

@@ -26,14 +26,22 @@ enum PlaybackSessionEvaluationService {
         )
     }
 
+    /// How old the latest playback observation may be before a transition
+    /// can no longer be judged. Polling runs every second while the app is
+    /// active, so anything beyond a few missed polls means the app was
+    /// suspended while playback continued out-of-process.
+    static let observationStalenessThresholdSeconds: Double = 5
+
     static func updateObservedProgress(
         _ session: TrackPlaySession,
         elapsedSeconds: Double,
-        durationSeconds: Double?
+        durationSeconds: Double?,
+        observedAt: Date = .now
     ) -> TrackPlaySession {
         var session = session
         session.lastObservedPlaybackTime = elapsedSeconds
         session.durationSeconds = durationSeconds
+        session.lastObservedAt = observedAt
         return session
     }
 
@@ -121,7 +129,8 @@ enum PlaybackSessionEvaluationService {
         settings: OverplaySettings,
         naturalCompletion: Bool,
         context: ModelContext,
-        fallbackLocalTrackID: String? = nil
+        fallbackLocalTrackID: String? = nil,
+        now: Date = .now
     ) throws -> EvaluationOutcome? {
         guard var session = activeSession ?? bootstrapSession(
             trackID: currentTrackID,
@@ -142,10 +151,14 @@ enum PlaybackSessionEvaluationService {
             )
         }
 
+        // Judged before the progress update below, which stamps a fresh
+        // observation date onto the copy being evaluated.
+        let observationIsStale = now.timeIntervalSince(session.lastObservedAt) > observationStalenessThresholdSeconds
         session = updateObservedProgress(
             session,
             elapsedSeconds: elapsedSeconds,
-            durationSeconds: durationSeconds
+            durationSeconds: durationSeconds,
+            observedAt: observationIsStale ? session.lastObservedAt : now
         )
 
         guard let playlist,
@@ -185,6 +198,7 @@ enum PlaybackSessionEvaluationService {
                 playlist: playlist,
                 session: session,
                 transitionWasNaturalCompletion: naturalCompletion,
+                observationIsStale: observationIsStale,
                 settings: settings,
                 context: context
             )

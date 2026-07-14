@@ -8,6 +8,7 @@ enum PlaybackSessionSupport {
         elapsedSeconds: Double,
         durationSeconds: Double?,
         sessionStartDate: Date = .now,
+        lastObservedAt: Date? = nil,
         hasEvaluated: Bool = false
     ) -> TrackPlaySession {
         TrackPlaySession(
@@ -15,6 +16,7 @@ enum PlaybackSessionSupport {
             localTrackID: localTrackID,
             sessionStartDate: sessionStartDate,
             lastObservedPlaybackTime: elapsedSeconds,
+            lastObservedAt: lastObservedAt ?? sessionStartDate,
             durationSeconds: durationSeconds,
             hasEvaluated: hasEvaluated
         )
