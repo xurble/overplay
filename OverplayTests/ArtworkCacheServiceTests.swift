@@ -41,6 +41,7 @@ struct ArtworkCacheServiceTests {
             accessedAt: Date(timeIntervalSince1970: 100)
         ))
         let firstManifest = try await service.manifestSnapshot()
+        await service.flushPendingManifestSave()
 
         let cachedOnlyService = ArtworkCacheService(
             rootDirectory: rootDirectory,
@@ -77,6 +78,7 @@ struct ArtworkCacheServiceTests {
             playlistID: "playlist-1",
             accessedAt: accessedAt
         ))
+        await service.flushPendingManifestSave()
         let cachedOnlyService = ArtworkCacheService(
             rootDirectory: rootDirectory,
             downloader: { _ in throw URLError(.notConnectedToInternet) }
@@ -149,6 +151,36 @@ struct ArtworkCacheServiceTests {
 
         #expect(fileURL == nil)
         #expect(manifest.entries.isEmpty)
+    }
+
+    @Test("manifest writes are debounced until flushed")
+    func manifestWritesAreDebouncedUntilFlushed() async throws {
+        let rootDirectory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootDirectory) }
+
+        let service = ArtworkCacheService(
+            rootDirectory: rootDirectory,
+            manifestSaveDelay: .seconds(60),
+            downloader: { _ in Data("cached-artwork".utf8) }
+        )
+        let manifestURL = rootDirectory.appendingPathComponent("manifest.json")
+
+        _ = try #require(await service.artworkFileURL(
+            for: "https://example.com/artwork.jpg",
+            pixelSize: 512,
+            playlistID: "playlist-1"
+        ))
+
+        #expect(!FileManager.default.fileExists(atPath: manifestURL.path))
+
+        await service.flushPendingManifestSave()
+
+        #expect(FileManager.default.fileExists(atPath: manifestURL.path))
+        let persisted = try JSONDecoder().decode(
+            ArtworkCacheManifest.self,
+            from: Data(contentsOf: manifestURL)
+        )
+        #expect(persisted.entries.count == 1)
     }
 
     @Test("concurrent downloads do not clobber each other's manifest entries")

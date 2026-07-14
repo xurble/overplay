@@ -23,13 +23,16 @@ actor ArtworkCacheService {
     private let rootDirectory: URL
     private let manifestURL: URL
     private let maxCacheBytes: Int
+    private let manifestSaveDelay: Duration
     private let downloader: @Sendable (URL) async throws -> Data
     private var manifest: ArtworkCacheManifest?
     private var inFlightDownloads: [String: Task<Data, Error>] = [:]
+    private var manifestSaveTask: Task<Void, Never>?
 
     init(
         rootDirectory: URL? = nil,
         maxCacheBytes: Int = ArtworkCacheService.defaultMaxCacheBytes,
+        manifestSaveDelay: Duration = .seconds(1),
         downloader: @escaping @Sendable (URL) async throws -> Data = ArtworkCacheService.download
     ) {
         let rootDirectory = rootDirectory ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -38,6 +41,7 @@ actor ArtworkCacheService {
         self.rootDirectory = rootDirectory
         self.manifestURL = rootDirectory.appendingPathComponent("manifest.json")
         self.maxCacheBytes = maxCacheBytes
+        self.manifestSaveDelay = manifestSaveDelay
         self.downloader = downloader
     }
 
@@ -70,7 +74,7 @@ actor ArtworkCacheService {
             let key = Self.cacheKey(sourceURL: normalizedSourceURL, pixelSize: pixelSize)
 
             if let cachedURL = try refreshedCachedFileURL(key: key, playlistID: playlistID, accessedAt: accessedAt) {
-                try persistManifest()
+                scheduleManifestSave()
                 return cachedURL
             }
 
@@ -78,7 +82,7 @@ actor ArtworkCacheService {
             // The download suspended this actor, so other requests may have
             // mutated the manifest meanwhile. Re-check fresh actor state.
             if let cachedURL = try refreshedCachedFileURL(key: key, playlistID: playlistID, accessedAt: accessedAt) {
-                try persistManifest()
+                scheduleManifestSave()
                 return cachedURL
             }
 
@@ -97,7 +101,7 @@ actor ArtworkCacheService {
                 }
             }
             try enforceCacheLimit(protectedPlaylistID: protectedPlaylistID)
-            try persistManifest()
+            scheduleManifestSave()
             return fileURL(for: entry)
         } catch {
             return nil
@@ -124,7 +128,7 @@ actor ArtworkCacheService {
                 try withManifest { manifest in
                     manifest.entries[key] = nil
                 }
-                try persistManifest()
+                scheduleManifestSave()
                 return nil
             }
 
@@ -142,7 +146,7 @@ actor ArtworkCacheService {
             try withManifest { manifest in
                 manifest.playlistUsage[playlistID] = date
             }
-            try persistManifest()
+            scheduleManifestSave()
         } catch {
             // Artwork cache metadata is disposable; failures should not affect playback or UI.
         }
@@ -190,6 +194,27 @@ actor ArtworkCacheService {
         let result = body(&manifest)
         self.manifest = manifest
         return result
+    }
+
+    /// Manifest writes are debounced: requests mutate in-memory state and a
+    /// single pending task flushes to disk shortly after. A refresh burst
+    /// used to re-encode and rewrite the whole manifest once per request,
+    /// serializing this actor. Metadata is disposable, so losing the last
+    /// second on a crash is fine — disk re-adoption recovers the files.
+    private func scheduleManifestSave() {
+        guard manifestSaveTask == nil else { return }
+        manifestSaveTask = Task {
+            try? await Task.sleep(for: manifestSaveDelay)
+            guard !Task.isCancelled else { return }
+            manifestSaveTask = nil
+            try? persistManifest()
+        }
+    }
+
+    func flushPendingManifestSave() async {
+        manifestSaveTask?.cancel()
+        manifestSaveTask = nil
+        try? persistManifest()
     }
 
     private func persistManifest() throws {
