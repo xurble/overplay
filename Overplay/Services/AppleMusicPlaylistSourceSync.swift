@@ -37,7 +37,16 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
             in: context
         )
         let tracks = try await loadTracks(for: playlist)
-        let snapshots = tracks.map { snapshot(from: $0, playlistID: playlistID) }
+        // Snapshot mapping JSON-encodes every track's playback data on the
+        // main actor; yield periodically so large playlists don't stall UI.
+        var snapshots: [TrackSnapshot] = []
+        snapshots.reserveCapacity(tracks.count)
+        for (index, track) in tracks.enumerated() {
+            if index > 0, index.isMultiple(of: PlaylistSyncService.syncYieldStride) {
+                await Task.yield()
+            }
+            snapshots.append(snapshot(from: track, playlistID: playlistID))
+        }
         return PlaylistSourceFetchResult(snapshots: snapshots, skippedCount: 0, skippedReason: nil)
     }
 

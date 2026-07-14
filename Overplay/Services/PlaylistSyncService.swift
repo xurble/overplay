@@ -96,7 +96,7 @@ struct PlaylistSyncService {
             in: context
         )
 
-        var summary = try reconcile(
+        var summary = try await reconcile(
             snapshots: fetchResult.snapshots,
             playlistRecord: playlistRecord,
             syncedAt: .now,
@@ -176,7 +176,7 @@ struct PlaylistSyncService {
             in: context
         )
         let snapshots = sourceTracks.map { snapshot(from: $0, playlistID: record.musicPlaylistID) }
-        let summary = try reconcile(
+        let summary = try await reconcile(
             snapshots: snapshots,
             playlistRecord: record,
             syncedAt: .now,
@@ -188,17 +188,24 @@ struct PlaylistSyncService {
         return record
     }
 
+    /// How many per-track units of main-actor work run between yields in
+    /// sync hot loops, keeping the UI responsive through catch-up syncs.
+    static let syncYieldStride = 25
+
     @discardableResult
     func reconcile(
         snapshots: [TrackSnapshot],
         playlistRecord: PlaylistRecord,
         syncedAt: Date,
         in context: ModelContext
-    ) throws -> PlaylistSyncSummary {
+    ) async throws -> PlaylistSyncSummary {
         var summary = PlaylistSyncSummary(fetchedCount: snapshots.count)
         var seenRemoteTrackKeys = Set<String>()
 
         for (sortOrder, snapshot) in snapshots.enumerated() {
+            if sortOrder > 0, sortOrder.isMultiple(of: Self.syncYieldStride) {
+                await Task.yield()
+            }
             let remoteTrackKey = snapshot.catalogID ?? snapshot.libraryID ?? snapshot.id
             guard seenRemoteTrackKeys.insert(remoteTrackKey).inserted else {
                 summary.skippedCount += 1

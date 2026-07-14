@@ -7,7 +7,7 @@ import Testing
 @Suite("Playlist sync reconciliation")
 struct PlaylistSyncReconciliationTests {
     @Test("reconcile inserts tracks and playlist items")
-    func reconcileInsertsTracksAndPlaylistItems() throws {
+    func reconcileInsertsTracksAndPlaylistItems() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let musicPlaylistID = "playlist-\(UUID().uuidString)"
@@ -18,7 +18,7 @@ struct PlaylistSyncReconciliationTests {
         )
         context.insert(playlist)
 
-        let summary = try PlaylistSyncService().reconcile(
+        let summary = try await PlaylistSyncService().reconcile(
             snapshots: [
                 snapshot(id: "track-1", title: "First"),
                 snapshot(id: "track-2", title: "Second")
@@ -44,7 +44,7 @@ struct PlaylistSyncReconciliationTests {
     }
 
     @Test("repeated reconcile does not duplicate tracks or playlist items")
-    func repeatedReconcileDoesNotDuplicateTracksOrPlaylistItems() throws {
+    func repeatedReconcileDoesNotDuplicateTracksOrPlaylistItems() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let playlist = PlaylistRecord(
@@ -58,7 +58,7 @@ struct PlaylistSyncReconciliationTests {
             snapshot(id: "track-2", title: "Second")
         ]
 
-        let firstSummary = try PlaylistSyncService().reconcile(
+        let firstSummary = try await PlaylistSyncService().reconcile(
             snapshots: snapshots,
             playlistRecord: playlist,
             syncedAt: Date(timeIntervalSince1970: 100),
@@ -74,7 +74,7 @@ struct PlaylistSyncReconciliationTests {
         let itemUpdatedAt = firstItem.updatedAt
         let itemLastSeenInPlaylistAt = firstItem.lastSeenInPlaylistAt
 
-        let secondSummary = try PlaylistSyncService().reconcile(
+        let secondSummary = try await PlaylistSyncService().reconcile(
             snapshots: snapshots,
             playlistRecord: playlist,
             syncedAt: Date(timeIntervalSince1970: 200),
@@ -95,7 +95,7 @@ struct PlaylistSyncReconciliationTests {
     }
 
     @Test("reconcile reports changed metadata and newly inserted tracks")
-    func reconcileReportsChangedMetadataAndNewlyInsertedTracks() throws {
+    func reconcileReportsChangedMetadataAndNewlyInsertedTracks() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let playlist = PlaylistRecord(
@@ -104,7 +104,7 @@ struct PlaylistSyncReconciliationTests {
             role: .oneTruePlaylist
         )
         context.insert(playlist)
-        try PlaylistSyncService().reconcile(
+        try await PlaylistSyncService().reconcile(
             snapshots: [
                 snapshot(id: "track-1", title: "First")
             ],
@@ -120,7 +120,7 @@ struct PlaylistSyncReconciliationTests {
         ))
         let itemLastSeenInPlaylistAt = item.lastSeenInPlaylistAt
 
-        let summary = try PlaylistSyncService().reconcile(
+        let summary = try await PlaylistSyncService().reconcile(
             snapshots: [
                 snapshot(id: "track-1", title: "First Updated"),
                 snapshot(id: "track-2", title: "Second")
@@ -141,7 +141,7 @@ struct PlaylistSyncReconciliationTests {
     }
 
     @Test("reconcile ignores remote sort order changes")
-    func reconcileIgnoresRemoteSortOrderChanges() throws {
+    func reconcileIgnoresRemoteSortOrderChanges() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let musicPlaylistID = "playlist-\(UUID().uuidString)"
@@ -151,7 +151,7 @@ struct PlaylistSyncReconciliationTests {
             role: .oneTruePlaylist
         )
         context.insert(playlist)
-        try PlaylistSyncService().reconcile(
+        try await PlaylistSyncService().reconcile(
             snapshots: [
                 snapshot(id: "track-1", title: "First"),
                 snapshot(id: "track-2", title: "Second")
@@ -165,7 +165,7 @@ struct PlaylistSyncReconciliationTests {
             musicPlaylistID: musicPlaylistID
         ).orderedTrackIDs
 
-        let summary = try PlaylistSyncService().reconcile(
+        let summary = try await PlaylistSyncService().reconcile(
             snapshots: [
                 snapshot(id: "track-2", title: "Second"),
                 snapshot(id: "track-1", title: "First")
@@ -189,7 +189,7 @@ struct PlaylistSyncReconciliationTests {
     }
 
     @Test("reconcile collapses duplicate remote tracks")
-    func reconcileCollapsesDuplicateRemoteTracks() throws {
+    func reconcileCollapsesDuplicateRemoteTracks() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let musicPlaylistID = "playlist-\(UUID().uuidString)"
@@ -200,7 +200,7 @@ struct PlaylistSyncReconciliationTests {
         )
         context.insert(playlist)
 
-        let summary = try PlaylistSyncService().reconcile(
+        let summary = try await PlaylistSyncService().reconcile(
             snapshots: [
                 snapshot(id: "track-1", title: "First"),
                 snapshot(id: "track-1", title: "First Duplicate"),
@@ -223,7 +223,7 @@ struct PlaylistSyncReconciliationTests {
     }
 
     @Test("reconcile remote removals keeps local item playable")
-    func reconcileRemoteRemovalsKeepsLocalItemPlayable() throws {
+    func reconcileRemoteRemovalsKeepsLocalItemPlayable() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let playlist = PlaylistRecord(
@@ -233,7 +233,7 @@ struct PlaylistSyncReconciliationTests {
         )
         context.insert(playlist)
 
-        try PlaylistSyncService().reconcile(
+        try await PlaylistSyncService().reconcile(
             snapshots: [
                 snapshot(id: "track-1", title: "First"),
                 snapshot(id: "track-2", title: "Second")
@@ -242,7 +242,7 @@ struct PlaylistSyncReconciliationTests {
             syncedAt: Date(timeIntervalSince1970: 100),
             in: context
         )
-        try PlaylistSyncService().reconcile(
+        try await PlaylistSyncService().reconcile(
             snapshots: [
                 snapshot(id: "track-1", title: "First")
             ],
@@ -266,7 +266,7 @@ struct PlaylistSyncReconciliationTests {
     }
 
     @Test("remote removal preserves existing local eviction details")
-    func remoteRemovalPreservesExistingLocalEvictionDetails() throws {
+    func remoteRemovalPreservesExistingLocalEvictionDetails() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let playlist = PlaylistRecord(
@@ -275,7 +275,7 @@ struct PlaylistSyncReconciliationTests {
             role: .oneTruePlaylist
         )
         context.insert(playlist)
-        try PlaylistSyncService().reconcile(
+        try await PlaylistSyncService().reconcile(
             snapshots: [
                 snapshot(id: "track-1", title: "First")
             ],
@@ -288,7 +288,7 @@ struct PlaylistSyncReconciliationTests {
         item.evictionReason = .skipCount
         item.evictionSource = .playbackRule
 
-        try PlaylistSyncService().reconcile(
+        try await PlaylistSyncService().reconcile(
             snapshots: [],
             playlistRecord: playlist,
             syncedAt: Date(timeIntervalSince1970: 200),
