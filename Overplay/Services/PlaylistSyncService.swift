@@ -151,6 +151,7 @@ struct PlaylistSyncService {
                 items: sourceTracks
             )
         }
+        CachingMusicLibraryPlaylistFetcher.shared.invalidate()
         let libraryPlaylists = try await fetchAppleMusicLibraryPlaylists()
         let canonicalID = PlaylistLibraryIDResolver.resolvedMusicPlaylistID(
             storedID: createdPlaylist.id.rawValue,

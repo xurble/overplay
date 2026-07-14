@@ -8,7 +8,7 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
 
     private let playlistFetcher: any MusicLibraryPlaylistFetching
 
-    init(playlistFetcher: any MusicLibraryPlaylistFetching = MusicKitLibraryPlaylistFetcher()) {
+    init(playlistFetcher: any MusicLibraryPlaylistFetching = CachingMusicLibraryPlaylistFetcher.shared) {
         self.playlistFetcher = playlistFetcher
     }
 
