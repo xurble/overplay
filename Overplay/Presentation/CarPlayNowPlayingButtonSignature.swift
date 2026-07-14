@@ -7,7 +7,6 @@ struct CarPlayNowPlayingButtonSignature: Equatable {
     var skipCount: Int
     var isProtected: Bool
     var isEvicted: Bool
-    var skipForwardIntent: PlaybackSkipForwardIntent
 
     static func make(
         playbackController: PlaybackController,

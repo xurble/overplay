@@ -37,7 +37,6 @@ struct NowPlayingPresentation: Equatable, Sendable {
         skipThresholdPercentage: Double = 50,
         minimumSkipListeningSeconds: Double = 10,
         playthroughThresholdPercentage: Double = 90,
-        playthroughResetsSkipCount: Bool = true,
         skipCount: Int,
         playthroughCount: Int = 0,
         evictAfterSkips: Int,
@@ -57,8 +56,7 @@ struct NowPlayingPresentation: Equatable, Sendable {
             durationSeconds: durationSeconds,
             skipThresholdPercentage: skipThresholdPercentage,
             minimumSkipListeningSeconds: minimumSkipListeningSeconds,
-            playthroughThresholdPercentage: playthroughThresholdPercentage,
-            playthroughResetsSkipCount: playthroughResetsSkipCount
+            playthroughThresholdPercentage: playthroughThresholdPercentage
         )
         self.elapsedText = Self.formatTime(elapsedSeconds)
         self.durationText = Self.formatTime(durationSeconds ?? 0)
@@ -86,8 +84,7 @@ struct NowPlayingPresentation: Equatable, Sendable {
         durationSeconds: Double?,
         skipThresholdPercentage: Double,
         minimumSkipListeningSeconds: Double,
-        playthroughThresholdPercentage: Double,
-        playthroughResetsSkipCount: Bool
+        playthroughThresholdPercentage: Double
     ) -> NowPlayingProgressPhase {
         guard let durationSeconds, durationSeconds > 0 else {
             return .normal
@@ -97,7 +94,6 @@ struct NowPlayingPresentation: Equatable, Sendable {
             elapsedSeconds: elapsedSeconds,
             durationSeconds: durationSeconds
         )
-        _ = playthroughResetsSkipCount
         if progressPercentage >= playthroughThresholdPercentage {
             return .safe
         }

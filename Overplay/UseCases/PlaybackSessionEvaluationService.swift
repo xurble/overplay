@@ -77,19 +77,6 @@ enum PlaybackSessionEvaluationService {
         return session
     }
 
-    static func skipForwardIntent(
-        session: TrackPlaySession?,
-        item: PlaylistItemRecord?,
-        playlist: PlaylistRecord?,
-        settings: OverplaySettings
-    ) -> PlaybackSkipForwardIntent {
-        _ = session
-        _ = item
-        _ = playlist
-        _ = settings
-        return .standard
-    }
-
     static func skipWouldCount(session: TrackPlaySession, settings: OverplaySettings) -> Bool {
         skipWouldCount(
             elapsedSeconds: session.lastObservedPlaybackTime,
@@ -107,16 +94,6 @@ enum PlaybackSessionEvaluationService {
     ) -> Bool {
         elapsedSeconds >= minimumSkipListeningSeconds
             && progressPercentage(elapsedSeconds: elapsedSeconds, durationSeconds: durationSeconds) < skipThresholdPercentage
-    }
-
-    static func playthroughWouldResetSkipCount(
-        session: TrackPlaySession,
-        item: PlaylistItemRecord,
-        settings: OverplaySettings
-    ) -> Bool {
-        settings.playthroughResetsSkipCount
-            && item.skipCount > 0
-            && playthroughThresholdReached(session: session, settings: settings)
     }
 
     static func playthroughThresholdReached(session: TrackPlaySession, settings: OverplaySettings) -> Bool {

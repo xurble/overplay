@@ -135,7 +135,7 @@ struct EvictionEngineTests {
     func playthroughIncrementsCountWithoutResettingSkips() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let settings = OverplaySettings(playthroughResetsSkipCount: true)
+        let settings = OverplaySettings()
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-1",
             name: "Main",

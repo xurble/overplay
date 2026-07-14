@@ -68,11 +68,7 @@ struct PlaybackControlsView: View {
     }
 
     private var controlsPresentation: PlaybackControlsPresentation {
-        NowPlayingPresentationFactory.playbackControlsPresentation(
-            playbackController: playbackController,
-            settings: settings,
-            context: modelContext
-        )
+        NowPlayingPresentationFactory.playbackControlsPresentation(playbackController: playbackController)
     }
 
     private func primaryPlaybackAction() async {

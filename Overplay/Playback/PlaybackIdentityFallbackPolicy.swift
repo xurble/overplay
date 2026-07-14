@@ -3,11 +3,9 @@ import Foundation
 enum PlaybackIdentityFallbackPolicy {
     static func shouldUseActiveQueueFallback(
         queueReportedTrackID: String,
-        activeQueueMusicItemID: String?,
-        isModeQueueRebuildPending: Bool
+        activeQueueMusicItemID: String?
     ) -> Bool {
-        guard !isModeQueueRebuildPending else { return false }
-        return queueReportedTrackID == activeQueueMusicItemID
+        queueReportedTrackID == activeQueueMusicItemID
     }
 
     /// Whether the resolved playback identity moved to a different track.

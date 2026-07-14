@@ -6,12 +6,6 @@ import SwiftData
 @MainActor
 @Observable
 final class PlaybackController {
-    private struct PendingModeQueueRebuild {
-        var playlistID: String
-        var currentMusicItemID: String
-        var currentLocalTrackID: String?
-    }
-
     private struct LocalPlaybackStateIdentity: Equatable {
         var playlistID: String
         var musicItemID: String
@@ -55,7 +49,6 @@ final class PlaybackController {
     @ObservationIgnored private var hasRestoredLocalPlaybackState = false
     @ObservationIgnored private var prefetchedArtworkTrackID: String?
     @ObservationIgnored private var isRestartingQueue = false
-    @ObservationIgnored private var pendingModeQueueRebuild: PendingModeQueueRebuild?
     @ObservationIgnored private var pendingQueueAdvanceLocalTrackID: String?
     @ObservationIgnored private var pendingQueueAdvanceFromLocalTrackID: String?
     @ObservationIgnored private var pendingQueueAdvanceStartedAt: Date?
@@ -215,7 +208,6 @@ final class PlaybackController {
         activeQueueIndex = nil
         activePlaylistSnapshot = nil
         prefetchedArtworkTrackID = nil
-        pendingModeQueueRebuild = nil
         pendingQueueAdvanceLocalTrackID = nil
         pendingQueueAdvanceFromLocalTrackID = nil
         pendingQueueAdvanceStartedAt = nil
@@ -228,105 +220,6 @@ final class PlaybackController {
         LocalPlaybackStateStore.clear(flushImmediately: true)
         PlaybackIdentityStore.clearAll(flushImmediately: true)
         NowPlayingMetadataService.update(track: nil, elapsed: 0, isPlaying: false)
-    }
-
-    func restoreLocalPlaybackState(context: ModelContext) async {
-        guard !hasRestoredLocalPlaybackState else { return }
-        hasRestoredLocalPlaybackState = true
-
-        guard let state = LocalPlaybackStateStore.load() else {
-            return
-        }
-
-        do {
-            guard let playlist = try PlaylistRepository.playlist(musicPlaylistID: state.playlistID, in: context) else {
-                return
-            }
-
-            let tracks = try await playableTracksForRestoration(
-                playlist,
-                preferFreshTracks: state.wasPlaying,
-                context: context
-            )
-            let restoredLocalTrackID = state.localTrackID ?? localTrackID(
-                matching: state.musicItemID,
-                playlistID: state.playlistID,
-                context: context
-            )
-            let restorationItems = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
-            let restorationTracks = try TrackRecordRepository.tracks(ids: restorationItems.map(\.trackID), in: context)
-            let tracksByID = restorationTracks.firstValueDictionary(keyedBy: \.id)
-            let musicTracksByLocalID = PlaybackQueueBuilder.musicTracksByLocalID(
-                tracks,
-                tracksByID: tracksByID
-            )
-            guard let startingTrack = restoredLocalTrackID.flatMap({ musicTracksByLocalID[$0] })
-                ?? tracks.first(where: { $0.id.rawValue == state.musicItemID }) else {
-                return
-            }
-            let restoredMusicItemID = startingTrack.id.rawValue
-
-            warmUpTask?.cancel()
-            warmUpTask = nil
-
-            currentPlaylistID = state.playlistID
-            elapsedSeconds = state.elapsedSeconds
-            isPlaying = false
-            currentPlaylistItem = try restoredLocalTrackID.flatMap { try playlistItem(localTrackID: $0, context: context) }
-                ?? playlistItem(matching: restoredMusicItemID, context: context)
-            currentTrack = currentPlaybackTrack(
-                musicItemID: restoredMusicItemID,
-                playlistItem: currentPlaylistItem,
-                context: context
-            )
-            durationSeconds = currentTrack?.durationSeconds
-            statusMessage = nil
-            disableMusicKitPlaybackModes()
-            let startingLocalTrackID = currentPlaylistItem?.trackID.uuidString ?? restoredLocalTrackID
-            let queueEntries = try PlaybackQueueOrchestrator.orderedQueueEntries(
-                from: tracks,
-                playlistID: state.playlistID,
-                playerID: playerID,
-                startingTrackID: startingLocalTrackID,
-                in: context
-            )
-            guard !queueEntries.isEmpty else {
-                statusMessage = "Could not restore playback because the local queue is unavailable."
-                return
-            }
-            pendingModeQueueRebuild = nil
-            let materialization = materializeActiveQueue(entries: queueEntries, startingAt: startingLocalTrackID)
-            player.queue = ApplicationMusicPlayer.Queue(
-                materialization.queueEntries,
-                startingAt: materialization.startingEntry
-            )
-            if state.wasPlaying {
-                let isPrepared = await prepareRestoredQueue(seekTo: state.elapsedSeconds)
-                if isPrepared {
-                    do {
-                        try await player.play()
-                        startMonitoring(context: context)
-                        isPlaying = true
-                    } catch {
-                        player.pause()
-                        isPlaying = false
-                        statusMessage = "Restored playback paused: \(error.localizedDescription)"
-                    }
-                } else {
-                    player.pause()
-                    isPlaying = false
-                }
-            } else {
-                player.pause()
-                player.playbackTime = state.elapsedSeconds
-            }
-            updateMusicKitNowPlayingTrack()
-            rebuildActivePlaylistSnapshot(context: context)
-            NowPlayingMetadataService.update(track: nowPlayingDisplayTrack, elapsed: elapsedSeconds, isPlaying: isPlaying)
-            prefetchCurrentArtworkIfNeeded(musicItemID: restoredMusicItemID, playlistID: state.playlistID)
-        } catch {
-            statusMessage = "Could not restore playback: \(error.localizedDescription)"
-        }
     }
 
     func restoreLocalPlaybackDisplay(context: ModelContext) {
@@ -416,32 +309,6 @@ final class PlaybackController {
         }
     }
 
-    private func cachedPlayableMusicTracks(for playlist: PlaylistRecord, in context: ModelContext) throws -> [Track] {
-        try PlaybackQueueOrchestrator.cachedPlayableMusicTracks(for: playlist, in: context)
-    }
-
-    private func playableTracksForRestoration(
-        _ playlist: PlaylistRecord,
-        preferFreshTracks: Bool = false,
-        context: ModelContext
-    ) async throws -> [Track] {
-        _ = preferFreshTracks
-        return try cachedPlayableMusicTracks(for: playlist, in: context)
-    }
-
-    private func prepareRestoredQueue(seekTo elapsedSeconds: Double) async -> Bool {
-        do {
-            try await player.prepareToPlay()
-            player.playbackTime = elapsedSeconds
-            return true
-        } catch {
-            player.pause()
-            self.elapsedSeconds = elapsedSeconds
-            statusMessage = "Restored playback paused: \(error.localizedDescription)"
-            return false
-        }
-    }
-
     private var activeQueueCurrentLocalTrackID: String? {
         activeQueueCurrentEntry?.localTrackID
     }
@@ -525,7 +392,6 @@ final class PlaybackController {
         warmUpTask = nil
 
         disableMusicKitPlaybackModes()
-        pendingModeQueueRebuild = nil
         let materialization = materializeActiveQueue(entries: queueEntries, startingAt: localTrackID)
         player.queue = ApplicationMusicPlayer.Queue(
             materialization.queueEntries,
@@ -773,45 +639,6 @@ final class PlaybackController {
         try? currentPlaylist(in: context)?.role
     }
 
-    func skipForwardIntent(
-        settings: OverplaySettings,
-        context: ModelContext,
-        requiresControllableQueue: Bool = true
-    ) -> PlaybackSkipForwardIntent {
-        _ = playbackItemMetadataVersion
-        guard currentPlaylistID != nil, currentTrack != nil else { return .standard }
-        if requiresControllableQueue, !canControlPlayback {
-            return .standard
-        }
-
-        let currentTrackID = activeSession?.trackID ?? currentTrack?.id
-        let baseSession: TrackPlaySession?
-        if let activeSession {
-            baseSession = activeSession
-        } else {
-            baseSession = PlaybackSessionEvaluationService.bootstrapSession(
-                trackID: currentTrackID,
-                localTrackID: currentPlaylistItem?.trackID.uuidString ?? activeQueueCurrentLocalTrackID,
-                elapsedSeconds: elapsedSeconds,
-                durationSeconds: durationSeconds ?? currentTrack?.durationSeconds
-            )
-        }
-        let session = baseSession.map {
-            PlaybackSessionEvaluationService.updateObservedProgress(
-                $0,
-                elapsedSeconds: elapsedSeconds,
-                durationSeconds: durationSeconds ?? currentTrack?.durationSeconds
-            )
-        }
-        let playlist = try? currentPlaylist(in: context)
-        return PlaybackSessionEvaluationService.skipForwardIntent(
-            session: session,
-            item: session.flatMap { playlistItemForSkipForwardIntent(session: $0, playlist: playlist, context: context) },
-            playlist: playlist,
-            settings: settings
-        )
-    }
-
     func displayedPlaylistItem(context: ModelContext) -> PlaylistItemRecord? {
         guard let musicItemID = currentTrack?.id,
               let playlist = try? currentPlaylist(in: context) else {
@@ -902,7 +729,6 @@ final class PlaybackController {
                 ?? currentMusicItemID.flatMap { localTrackID(matching: $0, context: context) }
 
             disableMusicKitPlaybackModes()
-            pendingModeQueueRebuild = nil
             let materialization = materializeActiveQueue(entries: queueEntries, startingAt: startingLocalTrackID)
             player.queue = ApplicationMusicPlayer.Queue(
                 materialization.queueEntries,
@@ -1658,8 +1484,7 @@ final class PlaybackController {
                 if let activeQueueCurrentEntry,
                    PlaybackIdentityFallbackPolicy.shouldUseActiveQueueFallback(
                        queueReportedTrackID: queueReportedTrackID,
-                       activeQueueMusicItemID: activeQueueCurrentEntry.queuedMusicItemID,
-                       isModeQueueRebuildPending: pendingModeQueueRebuild != nil
+                       activeQueueMusicItemID: activeQueueCurrentEntry.queuedMusicItemID
                    ) {
                     return CurrentPlaybackIdentity(
                         musicItemID: activeQueueCurrentEntry.queuedMusicItemID,
@@ -1680,7 +1505,7 @@ final class PlaybackController {
             }
         }
 
-        if let activeQueueCurrentEntry, pendingModeQueueRebuild == nil {
+        if let activeQueueCurrentEntry {
             return CurrentPlaybackIdentity(
                 musicItemID: activeQueueCurrentEntry.queuedMusicItemID,
                 localTrackID: activeQueueCurrentEntry.localTrackID,
@@ -1796,42 +1621,6 @@ final class PlaybackController {
         TrackMetadataDiagnostics.log("playback refresh identity \(signature)")
     }
 
-    private func playlistItemForSkipForwardIntent(
-        session: TrackPlaySession,
-        playlist: PlaylistRecord?,
-        context: ModelContext
-    ) -> PlaylistItemRecord? {
-        guard let playlist else { return nil }
-
-        if let localTrackID = session.localTrackID ?? activeQueueCurrentLocalTrackID,
-           let item = try? playlistItem(localTrackID: localTrackID, context: context),
-           item.playlistID == playlist.id {
-            return item
-        }
-
-        if let item = try? PlaybackSessionSupport.resolvePlaylistItem(
-            forMusicItemID: session.trackID,
-            currentPlaylistItem: currentPlaylistItem,
-            playlist: playlist,
-            in: context
-        ) {
-            return item
-        }
-
-        if let localTrackID = activeQueueCurrentLocalTrackID,
-           let item = try? playlistItem(localTrackID: localTrackID, context: context),
-           item.playlistID == playlist.id,
-           (try? PlaybackSessionSupport.itemMatchesMusicItemID(
-               item,
-               musicItemID: session.trackID,
-               in: context
-           )) == true {
-            return item
-        }
-
-        return nil
-    }
-
     private func syncPlaybackMetadata(
         for musicItemID: String,
         trustedPlaylistItem: PlaylistItemRecord? = nil,
@@ -1932,67 +1721,6 @@ final class PlaybackController {
         persistLocalPlaybackState(
             musicItemID: activeQueueCurrentEntry.queuedMusicItemID,
             localTrackID: activeQueueCurrentEntry.localTrackID
-        )
-    }
-
-    private func stagePendingModeQueueRebuild(after currentLocalTrackID: String, context: ModelContext) async {
-        guard let currentPlaylistID,
-              let currentQueueEntry = player.queue.currentEntry else {
-            return
-        }
-
-        do {
-            let queueEntries = try PlaybackQueueOrchestrator.orderedCachedQueueEntries(
-                for: currentPlaylistID,
-                playerID: playerID,
-                retainedTrackID: currentLocalTrackID,
-                in: context
-            )
-            let transitionEntries = PlaybackQueueCoordinator.transitionEntries(
-                from: queueEntries,
-                startingAt: currentLocalTrackID
-            )
-            let upcomingEntries = Array(transitionEntries.dropFirst())
-            guard !upcomingEntries.isEmpty else { return }
-
-            let upcomingTracks = upcomingEntries.map(\.musicTrack)
-            try await player.queue.insert(upcomingTracks, position: .afterCurrentEntry)
-
-            if let currentRealizedEntry = currentRealizedQueueEntry(
-                queueEntryID: currentQueueEntry.id,
-                localTrackID: currentLocalTrackID,
-                context: context
-            ) {
-                activeQueueEntries = [currentRealizedEntry]
-                activeQueueIndex = 0
-            }
-        } catch {
-            TrackMetadataDiagnostics.log(
-                "pending mode queue staging failed currentLocalTrackID=\(currentLocalTrackID) error=\(error.localizedDescription)"
-            )
-        }
-    }
-
-    private func currentRealizedQueueEntry(
-        queueEntryID: String,
-        localTrackID: String,
-        context: ModelContext
-    ) -> RealizedPlaybackQueueEntry? {
-        guard let item = try? playlistItem(localTrackID: localTrackID, context: context) else {
-            return nil
-        }
-
-        guard let musicItemID = player.queue.currentEntry?.item?.id.rawValue
-            ?? currentTrack?.id
-            ?? activeQueueCurrentEntry?.queuedMusicItemID else {
-            return nil
-        }
-
-        return RealizedPlaybackQueueEntry(
-            queueEntryID: queueEntryID,
-            playlistItemID: item.id,
-            localTrackID: localTrackID,
-            queuedMusicItemID: musicItemID
         )
     }
 
@@ -2118,18 +1846,6 @@ final class PlaybackController {
             statusMessage = error.localizedDescription
             return false
         }
-    }
-
-    private func applyPendingModeQueueRebuild(
-        after lastMusicItemID: String,
-        movingForward: Bool,
-        context: ModelContext
-    ) async -> Bool {
-        _ = lastMusicItemID
-        _ = movingForward
-        _ = context
-        pendingModeQueueRebuild = nil
-        return false
     }
 
     func reconcileStoredOrder(for playlist: PlaylistRecord, context: ModelContext) {

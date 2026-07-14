@@ -32,7 +32,6 @@ enum NowPlayingPresentationFactory {
             skipThresholdPercentage: settings.skipThresholdPercentage,
             minimumSkipListeningSeconds: settings.minimumSkipListeningSeconds,
             playthroughThresholdPercentage: settings.playthroughThresholdPercentage,
-            playthroughResetsSkipCount: settings.playthroughResetsSkipCount,
             skipCount: playbackController.displayedSkipCount,
             playthroughCount: playbackController.displayedPlaythroughCount,
             evictAfterSkips: settings.evictAfterSkips,
@@ -74,7 +73,6 @@ enum NowPlayingPresentationFactory {
             skipThresholdPercentage: settings.skipThresholdPercentage,
             minimumSkipListeningSeconds: settings.minimumSkipListeningSeconds,
             playthroughThresholdPercentage: settings.playthroughThresholdPercentage,
-            playthroughResetsSkipCount: settings.playthroughResetsSkipCount,
             skipCount: displayedSkipCount,
             playthroughCount: playbackController.displayedPlaythroughCount(context: context),
             evictAfterSkips: settings.evictAfterSkips,
@@ -128,41 +126,18 @@ enum NowPlayingPresentationFactory {
         )
     }
 
-    static func playbackControlsPresentation(
-        playbackController: PlaybackController,
-        settings: OverplaySettings,
-        context: ModelContext,
-        requiresControllableQueueForSkipIntent: Bool = true
-    ) -> PlaybackControlsPresentation {
-        PlaybackControlsPresentation(
-            isPlaying: playbackController.isPlaying,
-            skipForwardIntent: playbackController.skipForwardIntent(
-                settings: settings,
-                context: context,
-                requiresControllableQueue: requiresControllableQueueForSkipIntent
-            )
-        )
-    }
-
     static func carPlayButtonSignature(
         playbackController: PlaybackController,
         settings: OverplaySettings,
         context: ModelContext
     ) -> CarPlayNowPlayingButtonSignature {
         let nowPlaying = presentation(playbackController: playbackController, settings: settings, context: context)
-        let controls = playbackControlsPresentation(
-            playbackController: playbackController,
-            settings: settings,
-            context: context,
-            requiresControllableQueueForSkipIntent: false
-        )
         return CarPlayNowPlayingButtonSignature(
             trackID: nowPlaying.trackID,
             playlistRole: playbackController.currentPlaylistRole(context: context),
             skipCount: nowPlaying.skipCount,
             isProtected: nowPlaying.isProtected,
-            isEvicted: nowPlaying.isEvicted,
-            skipForwardIntent: controls.skipForwardIntent
+            isEvicted: nowPlaying.isEvicted
         )
     }
 

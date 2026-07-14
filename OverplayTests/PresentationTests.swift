@@ -167,8 +167,7 @@ struct NowPlayingPresentationTests {
             durationSeconds: 100,
             skipThresholdPercentage: 50,
             minimumSkipListeningSeconds: 10,
-            playthroughThresholdPercentage: 90,
-            playthroughResetsSkipCount: true
+            playthroughThresholdPercentage: 90
         ) == .normal)
 
         #expect(NowPlayingPresentation.progressPhase(
@@ -176,8 +175,7 @@ struct NowPlayingPresentationTests {
             durationSeconds: 100,
             skipThresholdPercentage: 50,
             minimumSkipListeningSeconds: 10,
-            playthroughThresholdPercentage: 90,
-            playthroughResetsSkipCount: true
+            playthroughThresholdPercentage: 90
         ) == .danger)
 
         #expect(NowPlayingPresentation.progressPhase(
@@ -185,8 +183,7 @@ struct NowPlayingPresentationTests {
             durationSeconds: 100,
             skipThresholdPercentage: 50,
             minimumSkipListeningSeconds: 10,
-            playthroughThresholdPercentage: 90,
-            playthroughResetsSkipCount: true
+            playthroughThresholdPercentage: 90
         ) == .normal)
 
         #expect(NowPlayingPresentation.progressPhase(
@@ -194,8 +191,7 @@ struct NowPlayingPresentationTests {
             durationSeconds: 100,
             skipThresholdPercentage: 50,
             minimumSkipListeningSeconds: 10,
-            playthroughThresholdPercentage: 90,
-            playthroughResetsSkipCount: true
+            playthroughThresholdPercentage: 90
         ) == .safe)
 
         #expect(NowPlayingPresentation.progressPhase(
@@ -203,8 +199,7 @@ struct NowPlayingPresentationTests {
             durationSeconds: 100,
             skipThresholdPercentage: 50,
             minimumSkipListeningSeconds: 10,
-            playthroughThresholdPercentage: 90,
-            playthroughResetsSkipCount: false
+            playthroughThresholdPercentage: 90
         ) == .safe)
     }
 }

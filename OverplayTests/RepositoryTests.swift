@@ -19,7 +19,6 @@ struct SettingsRepositoryTests {
         #expect(settings.skipThresholdPercentage == 50)
         #expect(settings.minimumSkipListeningSeconds == 10)
         #expect(settings.playthroughThresholdPercentage == 90)
-        #expect(settings.playthroughResetsSkipCount)
         #expect(!settings.protectKeptTracks)
         #expect(!settings.triageAutoEvictsOnSkipCount)
     }

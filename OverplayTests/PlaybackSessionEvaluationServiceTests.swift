@@ -38,8 +38,7 @@ struct PlaybackSessionEvaluationServiceTests {
     func naturalCompletionCountsPlaythrough() throws {
         let fixture = try makeFixture(skipCount: 2)
         let settings = OverplaySettings(
-            playthroughThresholdPercentage: 80,
-            playthroughResetsSkipCount: true
+            playthroughThresholdPercentage: 80
         )
 
         let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
@@ -65,8 +64,7 @@ struct PlaybackSessionEvaluationServiceTests {
     func playthroughThresholdEvaluatesObservedActiveSession() throws {
         let fixture = try makeFixture(skipCount: 2)
         let settings = OverplaySettings(
-            playthroughThresholdPercentage: 80,
-            playthroughResetsSkipCount: true
+            playthroughThresholdPercentage: 80
         )
         let session = TrackPlaySession(
             trackID: "library-1",
@@ -95,8 +93,7 @@ struct PlaybackSessionEvaluationServiceTests {
     func manualNextAfterPlaythroughThresholdCountsPlaythroughWithoutResettingSkipCount() throws {
         let fixture = try makeFixture(skipCount: 2)
         let settings = OverplaySettings(
-            playthroughThresholdPercentage: 80,
-            playthroughResetsSkipCount: true
+            playthroughThresholdPercentage: 80
         )
 
         let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
@@ -592,90 +589,6 @@ struct PlaybackSessionEvaluationServiceTests {
         #expect(fixture.item.skipCount == 3)
         #expect(fixture.item.evictedAt == nil)
         #expect(history.first?.eventType == .skipCounted)
-    }
-
-    @Test("skip forward intent stays standard")
-    func skipForwardIntentStaysStandard() throws {
-        let fixture = try makeFixture(skipCount: 0)
-        let settings = OverplaySettings(
-            evictAfterSkips: 3,
-            skipThresholdPercentage: 50,
-            minimumSkipListeningSeconds: 10
-        )
-
-        let intent = PlaybackSessionEvaluationService.skipForwardIntent(
-            session: session(elapsedSeconds: 15, durationSeconds: 100),
-            item: fixture.item,
-            playlist: fixture.playlist,
-            settings: settings
-        )
-
-        #expect(intent == .standard)
-        #expect(intent.systemImage == "forward.fill")
-
-        fixture.item.skipCount = 1
-        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
-            session: session(elapsedSeconds: 15, durationSeconds: 100),
-            item: fixture.item,
-            playlist: fixture.playlist,
-            settings: settings
-        ) == .standard)
-
-        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
-            session: session(elapsedSeconds: 4, durationSeconds: 100),
-            item: fixture.item,
-            playlist: fixture.playlist,
-            settings: settings
-        ) == .standard)
-        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
-            session: session(elapsedSeconds: 60, durationSeconds: 100),
-            item: fixture.item,
-            playlist: fixture.playlist,
-            settings: settings
-        ) == .standard)
-        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
-            session: session(elapsedSeconds: 15, durationSeconds: 100, hasEvaluated: true),
-            item: fixture.item,
-            playlist: fixture.playlist,
-            settings: settings
-        ) == .standard)
-        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
-            session: nil,
-            item: fixture.item,
-            playlist: fixture.playlist,
-            settings: settings
-        ) == .standard)
-
-        fixture.item.protected = true
-        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
-            session: session(elapsedSeconds: 15, durationSeconds: 100),
-            item: fixture.item,
-            playlist: fixture.playlist,
-            settings: settings
-        ) == .standard)
-
-        fixture.item.protected = false
-        fixture.item.evictedAt = .now
-        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
-            session: session(elapsedSeconds: 15, durationSeconds: 100),
-            item: fixture.item,
-            playlist: fixture.playlist,
-            settings: settings
-        ) == .standard)
-
-        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
-            session: session(elapsedSeconds: 15, durationSeconds: 100, hasEvaluated: true),
-            item: fixture.item,
-            playlist: fixture.playlist,
-            settings: settings
-        ) == .standard)
-
-        #expect(PlaybackSessionEvaluationService.skipForwardIntent(
-            session: nil,
-            item: fixture.item,
-            playlist: fixture.playlist,
-            settings: settings
-        ) == .standard)
     }
 
     private func makeFixture(

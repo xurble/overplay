@@ -62,7 +62,6 @@ struct CarPlayNowPlayingButtonSignatureTests {
         #expect(signature.skipCount == nowPlaying.skipCount)
         #expect(signature.isProtected == nowPlaying.isProtected)
         #expect(signature.isEvicted == nowPlaying.isEvicted)
-        #expect(signature.skipForwardIntent == .standard)
         #expect(health.title == "Protected")
     }
 
@@ -163,6 +162,5 @@ struct CarPlayNowPlayingButtonSignatureTests {
         )
 
         #expect(signature.playlistRole == .triage)
-        #expect(signature.skipForwardIntent == .standard)
     }
 }

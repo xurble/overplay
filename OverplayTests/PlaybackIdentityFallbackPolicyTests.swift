@@ -6,23 +6,12 @@ struct PlaybackIdentityFallbackPolicyTests {
     func activeQueueFallbackRequiresMatchingReportedItem() {
         #expect(PlaybackIdentityFallbackPolicy.shouldUseActiveQueueFallback(
             queueReportedTrackID: "music-current",
-            activeQueueMusicItemID: "music-current",
-            isModeQueueRebuildPending: false
+            activeQueueMusicItemID: "music-current"
         ))
 
         #expect(!PlaybackIdentityFallbackPolicy.shouldUseActiveQueueFallback(
             queueReportedTrackID: "music-carplay-advanced",
-            activeQueueMusicItemID: "music-stale",
-            isModeQueueRebuildPending: false
-        ))
-    }
-
-    @Test("active queue fallback is disabled during mode queue rebuilds")
-    func activeQueueFallbackWaitsForModeRebuild() {
-        #expect(!PlaybackIdentityFallbackPolicy.shouldUseActiveQueueFallback(
-            queueReportedTrackID: "music-current",
-            activeQueueMusicItemID: "music-current",
-            isModeQueueRebuildPending: true
+            activeQueueMusicItemID: "music-stale"
         ))
     }
 
