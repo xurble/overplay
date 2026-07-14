@@ -204,6 +204,31 @@ struct PlaybackControllerDisplayRestoreTests {
         #expect(fixture.targetItem.skipCount == 0)
     }
 
+    @Test("stored order reconcile rebuilds the active snapshot only when the order changes")
+    func storedOrderReconcileRebuildsTheActiveSnapshotOnlyWhenTheOrderChanges() throws {
+        let fixture = try makeTwoTrackFixture()
+        let controller = PlaybackController(playerID: "test-\(UUID().uuidString)")
+        defer {
+            PlaybackOrderStore.clear(
+                playerID: controller.playerID,
+                musicPlaylistID: fixture.playlist.musicPlaylistID,
+                flushImmediately: true
+            )
+        }
+        controller.currentPlaylistID = fixture.playlist.musicPlaylistID
+
+        controller.reconcileStoredOrder(for: fixture.playlist, context: fixture.context)
+
+        let orderState = controller.playbackOrderState(for: fixture.playlist.musicPlaylistID)
+        #expect(orderState.orderedTrackIDs.count == 2)
+        #expect(controller.activePlaylistSnapshot != nil)
+
+        controller.activePlaylistSnapshot = nil
+        controller.reconcileStoredOrder(for: fixture.playlist, context: fixture.context)
+
+        #expect(controller.activePlaylistSnapshot == nil)
+    }
+
     @Test("display restore state builds a non-countable session")
     func displayRestoreStateBuildsANonCountableSession() throws {
         let fixture = try makeTwoPlaylistFixture()

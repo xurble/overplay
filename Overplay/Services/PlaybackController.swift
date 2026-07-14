@@ -1029,7 +1029,6 @@ final class PlaybackController {
             }
 
             evaluatePlaythroughIfNeeded(context: context)
-            reconcileCurrentPlaybackOrder(context: context)
         } else if currentTrack != nil || currentPlaylistID != nil {
             if let activeSession {
                 self.activeSession = PlaybackSessionEvaluationService.updateObservedProgress(
@@ -1848,10 +1847,14 @@ final class PlaybackController {
         }
     }
 
+    /// Reconciles the stored local order with current playlist membership.
+    /// Called on membership-changing events (sync completion, link changes,
+    /// manual add, promotion) — not from the playback tick, which only needs
+    /// to track the current entry. Duplicate cleanup happens in the track
+    /// identity merge pass at startup and after sync, not here.
     func reconcileStoredOrder(for playlist: PlaylistRecord, context: ModelContext) {
         let currentLocalTrackID = currentPlaylistID == playlist.musicPlaylistID ? currentPlaylistItem?.trackID.uuidString : nil
         do {
-            _ = try PlaylistItemRepository.mergeDuplicateItems(in: context)
             let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
             let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: items)
             let previousState = PlaybackOrderStore.state(playerID: playerID, musicPlaylistID: playlist.musicPlaylistID)
@@ -1888,9 +1891,9 @@ final class PlaybackController {
                         )
                     }
                 }
-            }
-            if currentPlaylistID == playlist.musicPlaylistID {
-                rebuildActivePlaylistSnapshot(context: context)
+                if currentPlaylistID == playlist.musicPlaylistID {
+                    rebuildActivePlaylistSnapshot(context: context)
+                }
             }
         } catch {
             statusMessage = error.localizedDescription
@@ -1919,15 +1922,6 @@ final class PlaybackController {
         } catch {
             statusMessage = "Added tracks locally, but updating the live queue failed: \(error.localizedDescription)"
         }
-    }
-
-    private func reconcileCurrentPlaybackOrder(context: ModelContext) {
-        guard currentPlaylistID != nil,
-              let playlist = try? currentPlaylist(in: context) else {
-            return
-        }
-
-        reconcileStoredOrder(for: playlist, context: context)
     }
 
     private func rebuildActivePlaylistSnapshot(context: ModelContext) {
