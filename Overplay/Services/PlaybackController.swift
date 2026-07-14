@@ -518,6 +518,12 @@ final class PlaybackController {
             )
         }
 
+        // The outgoing session has had its chance to be evaluated. Whatever
+        // plays next deserves a fresh countable session — in particular a
+        // track resumed from a display-restored session, which is created
+        // already evaluated so relaunches can never fabricate counts.
+        activeSession = nil
+
         warmUpTask?.cancel()
         warmUpTask = nil
 

@@ -34,12 +34,17 @@ enum PlaybackRestorationService {
             ),
             elapsedSeconds: state.elapsedSeconds,
             durationSeconds: restored.track.durationSeconds,
+            // Display restore exists to repopulate the Now Playing surface,
+            // not to resurrect a countable play session: the persisted state
+            // predates this launch, so evaluating it would fabricate a skip
+            // or double-count a playthrough.
             activeSession: PlaybackSessionSupport.makeSession(
                 trackID: state.musicItemID,
                 localTrackID: state.localTrackID,
                 elapsedSeconds: state.elapsedSeconds,
                 durationSeconds: restored.track.durationSeconds,
-                sessionStartDate: state.updatedAt
+                sessionStartDate: state.updatedAt,
+                hasEvaluated: true
             )
         )
     }

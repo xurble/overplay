@@ -204,6 +204,68 @@ struct PlaybackControllerDisplayRestoreTests {
         #expect(fixture.targetItem.skipCount == 0)
     }
 
+    @Test("display restore state builds a non-countable session")
+    func displayRestoreStateBuildsANonCountableSession() throws {
+        let fixture = try makeTwoPlaylistFixture()
+        let state = LocalPlaybackState(
+            playlistID: fixture.currentPlaylist.musicPlaylistID,
+            musicItemID: "current-library",
+            elapsedSeconds: 42,
+            wasPlaying: false,
+            updatedAt: Date(timeIntervalSince1970: 100),
+            localTrackID: fixture.currentTrack.id.uuidString
+        )
+
+        let restored = try PlaybackRestorationService.displayRestoreState(from: state, in: fixture.context)
+
+        #expect(restored?.activeSession.hasEvaluated == true)
+        #expect(restored?.activeSession.lastObservedAt == Date(timeIntervalSince1970: 100))
+        #expect(restored?.playlistItem?.id == fixture.currentItem.id)
+    }
+
+    @Test("display-restored session never counts when playback moves elsewhere")
+    func displayRestoredSessionNeverCountsWhenPlaybackMovesElsewhere() async throws {
+        let previousState = LocalPlaybackStateStore.load()
+        defer {
+            if let previousState {
+                LocalPlaybackStateStore.save(previousState)
+            } else {
+                LocalPlaybackStateStore.clear()
+            }
+        }
+
+        let fixture = try makeTwoPlaylistFixture()
+        let controller = PlaybackController()
+        let settings = OverplaySettings(
+            evictAfterSkips: 3,
+            skipThresholdPercentage: 50,
+            minimumSkipListeningSeconds: 0
+        )
+        LocalPlaybackStateStore.save(LocalPlaybackState(
+            playlistID: fixture.currentPlaylist.musicPlaylistID,
+            musicItemID: "current-library",
+            elapsedSeconds: 42,
+            wasPlaying: false,
+            updatedAt: Date(timeIntervalSince1970: 100),
+            localTrackID: fixture.currentTrack.id.uuidString
+        ))
+
+        controller.restoreLocalPlaybackDisplay(context: fixture.context)
+        #expect(controller.currentPlaylistItem?.id == fixture.currentItem.id)
+
+        await controller.evaluateOutgoingSessionBeforePlaybackReplacement(
+            settings: settings,
+            context: fixture.context,
+            targetPlaylistID: fixture.targetPlaylist.musicPlaylistID,
+            targetLocalTrackID: fixture.targetTrack.id.uuidString
+        )
+
+        let history = try fixture.context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(fixture.currentItem.skipCount == 0)
+        #expect(fixture.currentItem.playthroughCount == 0)
+        #expect(history.isEmpty)
+    }
+
     @Test("restores mini player display from local database state")
     func restoresMiniPlayerDisplayFromLocalDatabaseState() throws {
         let previousState = LocalPlaybackStateStore.load()
