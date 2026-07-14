@@ -155,6 +155,28 @@ Within one linked playlist, a song identity may appear at most once. Duplicate
 remote entries, repeated manual adds, and promotion of an already-present song
 should collapse to the existing playlist item for that playlist.
 
+### Track identity
+
+Apple Music exposes two identifier domains for the same song: catalog IDs and
+library IDs (prefixed with `i.`). Overplay stores them in separate fields and
+never mirrors one into the other. When MusicKit exposes a library track's
+catalog correspondence through its play parameters, sync captures it so the
+two domains link and the same song fetched from search, sync, or the playback
+queue resolves to one local track record.
+
+Identifier fields are fill-and-heal only: an update may add a missing
+identifier or replace a wrongly-domained legacy value, but a source that sees
+only one domain must never erase the other.
+
+Duplicate track records describing the same song (legacy mirrored IDs, or
+CloudKit insert races, which cannot enforce unique constraints) are collapsed
+by an identity merge pass that runs at startup and after each sync. The
+oldest record wins; playlist items and history events repoint to it. When two
+items for the same playlist collapse, skip and playthrough counts are summed
+and eviction/protection state follows the most recently updated item — merge
+must never discard counts. Device-local order, alias, and playback-state
+stores rekey their local track IDs in the same pass.
+
 ### Album artwork cache
 
 Overplay stores artwork source metadata in SwiftData, but not artwork image
@@ -304,12 +326,23 @@ A skip is counted when all are true:
 
 - The current play session has not already been evaluated.
 - The playlist item is active and not locally evicted.
-- The user listened for at least `minimumSkipListeningSeconds`.
+- The user listened for at least `minimumSkipListeningSeconds`, measured as
+  witnessed listening time accumulated from playback observation, not as raw
+  playback position. Seeking or resuming mid-track contributes nothing.
 - Playback progress is less than `skipThresholdPercentage`.
-- The transition was not natural completion.
+- The transition was not a natural completion — either reported explicitly or
+  inferred because the last observed position was within a few seconds of the
+  track duration.
+- The playback observation is fresh. Playback continues out-of-process while
+  Overplay is suspended, so a transition judged from a stale observation
+  counts nothing: an unobserved interval must never produce a skip. A
+  playthrough threshold that was genuinely observed before the observation
+  went stale still counts as a playthrough.
 
 Manual Next should evaluate the outgoing track. Previous should generally not
-count as a skip.
+count as a skip. Starting a different playlist or track evaluates the
+outgoing track by the same rules. Sessions restored for display after a
+relaunch are never evaluated.
 
 If the user skips after the skip threshold but before the playthrough
 threshold, neither the skip count nor the playthrough count changes.
@@ -430,6 +463,10 @@ Repeat behavior:
 - When the last track is played through or skipped past, Overplay evaluates the
   outgoing track, creates a fresh shuffled order using the same placement rules,
   saves it, sends the full queue to MusicKit, and starts from the first track.
+- Queue end is detected from the player state (no current entry while the
+  player is stopped or paused) and only triggers the repeat rebuild when the
+  outgoing track was observed near its end, so an external stop mid-track or a
+  queue that ended unobserved during suspension does not restart playback.
 - Platform/system UI may still expose repeat or shuffle concepts, but Overplay
   should keep its own MusicKit shuffle and repeat modes off and treat local
   order as authoritative.

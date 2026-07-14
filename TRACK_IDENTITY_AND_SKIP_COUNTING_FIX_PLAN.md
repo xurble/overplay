@@ -23,7 +23,7 @@ correctness next (Steps 3-5); transition races (Step 6); hardening
 (Step 7); cleanup (Step 8); performance (Step 9); refinements (Step 10);
 documentation and final verification last.
 
-## Step 0 - Land Current Working-Tree Change
+## Step 0 - Land Current Working-Tree Change - Complete
 
 The working tree has an uncommitted, coherent change: stale evaluation
 outcomes now refresh the active playlist snapshot without replacing the
@@ -38,7 +38,7 @@ Verification:
 - App target builds.
 - Unit tests pass.
 
-## Step 1 - Capture Distinct Catalog and Library Identity at the Source
+## Step 1 - Capture Distinct Catalog and Library Identity at the Source - Complete
 
 Problem: every `TrackSnapshot` construction site sets
 `catalogID = libraryID = track.id.rawValue`
@@ -93,7 +93,7 @@ Verification:
 - App target builds; unit tests pass.
 - Manual: search-add a track, sync the playlist, confirm a single row.
 
-## Step 2 - Song-Identity Merge Pass and Stat-Preserving Dedup
+## Step 2 - Song-Identity Merge Pass and Stat-Preserving Dedup - Complete
 
 Problem: existing stores already contain duplicate `TrackRecord`s for the
 same song (catalog vs. library keyed), and CloudKit multi-device races can
@@ -150,7 +150,7 @@ Verification:
 - Manual: a store with known duplicate rows heals on next launch/sync and
   the surviving row shows combined counts.
 
-## Step 3 - Staleness-Aware Session Evaluation (Suspension Phantom Skips)
+## Step 3 - Staleness-Aware Session Evaluation (Suspension Phantom Skips) - Complete
 
 Problem: `ApplicationMusicPlayer` plays out-of-process, so music continues
 while Overplay is suspended and the 1-second monitor stops. On resume,
@@ -191,7 +191,7 @@ Verification:
 - Manual: start a track, lock the phone, let 2-3 tracks play, unlock —
   history shows no new skips for the suspended interval.
 
-## Step 4 - Restore Sessions Are Display-Only
+## Step 4 - Restore Sessions Are Display-Only - Complete
 
 Problem: `PlaybackRestorationService.displayRestoreState` seeds
 `activeSession` with `hasEvaluated: false` from persisted state that can
@@ -221,7 +221,7 @@ Verification:
 - Manual: pause mid-track, force-quit, relaunch, play another playlist —
   history gains no event for the restored track.
 
-## Step 5 - Explicit Natural-Completion Detection and End-of-Queue Repeat
+## Step 5 - Explicit Natural-Completion Detection and End-of-Queue Repeat - Complete
 
 Problem: `naturalCompletion: true` is only passed in the queue-ended
 branch of `refresh()`, which is unreachable because
@@ -271,7 +271,7 @@ Verification:
   top five; stopping playback from the Music app mid-track does not
   restart it.
 
-## Step 6 - Fix Next/Previous Index Race and Pending-Advance Clearing
+## Step 6 - Fix Next/Previous Index Race and Pending-Advance Clearing - Complete
 
 Problem: `try await player.skipToNextEntry()` is a suspension point; a
 monitor tick can land inside it, observe the advanced player entry, and
@@ -320,7 +320,7 @@ Verification:
   current-row highlight, and lock-screen metadata in agreement; history
   gains no `skipIgnored` entries for tracks that never played.
 
-## Step 7 - Harden Identity-Change Detection Against Domain Flips
+## Step 7 - Harden Identity-Change Detection Against Domain Flips - Complete
 
 Problem: `playbackIdentityDidChange` falls back to comparing raw music
 item IDs when either side lacks a local track ID. A catalog↔library
@@ -351,7 +351,7 @@ Verification:
 - Manual: extended playback session produces no "suppressed stale
   evaluation outcome" or spurious mid-track skip diagnostics.
 
-## Step 8 - Remove Dead Machinery and Resolve the Skip-Reset Contradiction
+## Step 8 - Remove Dead Machinery and Resolve the Skip-Reset Contradiction - Complete
 
 Problem: several vestigial mechanisms complicate the exact code paths
 being fixed. `pendingModeQueueRebuild` is never set non-nil, so
@@ -387,7 +387,7 @@ Verification:
 
 - App target builds; unit tests pass; no remaining references.
 
-## Step 9 - Move Heavy Per-Tick Work Off the Refresh Path
+## Step 9 - Move Heavy Per-Tick Work Off the Refresh Path - Complete
 
 Problem: every 1-second `refresh()` tick during playback calls
 `reconcileCurrentPlaybackOrder` → `reconcileStoredOrder`, which runs
@@ -421,7 +421,7 @@ Verification:
 - Manual: CPU/energy during playback visibly drops; playlist rows still
   update after sync, eviction, and promotion while playing.
 
-## Step 10 - Count Listening Time, Not Playback Position
+## Step 10 - Count Listening Time, Not Playback Position - Complete
 
 Problem: the minimum-listening check uses playback position
 (`session.lastObservedPlaybackTime >= minimumSkipListeningSeconds`).
@@ -451,7 +451,7 @@ Verification:
 
 - App target builds; unit tests pass.
 
-## Step 11 - Update Spec and Audit Documents
+## Step 11 - Update Spec and Audit Documents - Complete
 
 Changes:
 

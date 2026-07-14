@@ -51,3 +51,45 @@ Compared `OVERPLAY_DESIGN_SPEC.md` with the implementation on 2026-06-24.
 24. **[Implemented Differently] History presentation.** History is implemented as a filtered list everywhere, not as a Mac-style sortable/filterable table.
 
 25. **[Implemented Differently] Settings reset model.** The implementation has “Reset All Local Overplay Stats” and “Nuke Database” actions rather than separate reset-local-playback-state and reset-shared-stats/history controls.
+
+## Remediation Addendum (2026-07-14)
+
+The track identification and skip counting remediation
+(`TRACK_IDENTITY_AND_SKIP_COUNTING_FIX_PLAN.md`) changed the implementation
+after this audit:
+
+1. **Track identity.** Catalog and library IDs are now captured distinctly at
+   every snapshot source (never mirrored), with the catalog correspondence of
+   library tracks decoded from play parameters. Track record upserts use
+   fill-and-heal identifier semantics.
+2. **Identity merge pass.** `TrackIdentityMergeService` collapses duplicate
+   track records for the same song at startup and after each sync, repoints
+   playlist items and history, sums per-playlist stats, and rekeys the
+   device-local order/alias/playback-state stores. Duplicate playlist items
+   merge stat-preservingly (`mergeDuplicateItems`) instead of discarding the
+   newer item's counts.
+3. **Stale observations.** `TrackPlaySession` records when its playback
+   position was observed. Transitions judged from stale observations (app
+   suspension) count nothing; an already-observed playthrough threshold still
+   counts.
+4. **Display restores.** Sessions restored for display after relaunch are
+   created already evaluated and can never fabricate counts; every playback
+   start clears the session so the incoming track gets a fresh countable one.
+5. **Natural completion.** Evaluation infers natural completion when the last
+   observation is within seconds of the track duration. Queue end is detected
+   from player state and triggers the reshuffle-repeat only when the outgoing
+   track was observed near its end.
+6. **Transition races.** User next/previous reconciles the queue index against
+   the player-reported entry instead of blind offsets; optimistic advances are
+   pinned by a from/to-aware policy with a 2-second backstop. A transition
+   flag stops the monitor from racing in-flight skips.
+7. **Identity flips.** A catalog-vs-library raw ID flip for the same track no
+   longer registers as a track change (and records an alias instead).
+8. **Playback tick.** Order reconciliation and duplicate cleanup left the
+   1-second refresh path; they run on membership-changing events.
+9. **Listening time.** The minimum-skip listening requirement measures
+   witnessed listening accumulated across polls, not playback position.
+10. **Removed.** The dead `playthroughResetsSkipCount` setting (behavior is
+    spec-correct: playthroughs never reset skips), the always-standard
+    `skipForwardIntent` chain, the never-armed pending-mode-queue-rebuild
+    machinery, and the uncalled full playback-state restore path.
