@@ -14,6 +14,8 @@ struct AppStartupViewModelTests {
             events.append("authorization")
         } installRemoteCommands: {
             events.append("remote")
+        } mergeDuplicateTrackIdentities: {
+            events.append("merge")
         } restoreLocalPlaybackDisplay: {
             events.append("restore")
         } startPlaybackMonitoring: {
@@ -27,7 +29,7 @@ struct AppStartupViewModelTests {
         await viewModel.bootstrap(isReady: true, dependencies: dependencies)
 
         #expect(viewModel.hasStartedAuthorizedServices)
-        #expect(events == ["settings", "authorization", "remote", "restore", "monitor", "sync-start"])
+        #expect(events == ["settings", "authorization", "remote", "merge", "restore", "monitor", "sync-start"])
     }
 
     @Test("repeated authorized startup does not restart services")
@@ -37,6 +39,7 @@ struct AppStartupViewModelTests {
         let dependencies = AppStartupViewModel.Dependencies {
         } refreshAuthorization: {
         } installRemoteCommands: {
+        } mergeDuplicateTrackIdentities: {
         } restoreLocalPlaybackDisplay: {
         } startPlaybackMonitoring: {
         } startPeriodicPlaylistSync: {
@@ -59,6 +62,7 @@ struct AppStartupViewModelTests {
         let dependencies = AppStartupViewModel.Dependencies {
         } refreshAuthorization: {
         } installRemoteCommands: {
+        } mergeDuplicateTrackIdentities: {
         } restoreLocalPlaybackDisplay: {
         } startPlaybackMonitoring: {
         } startPeriodicPlaylistSync: {

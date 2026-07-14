@@ -105,6 +105,7 @@ struct PlaylistSyncService {
         summary.skippedCount += fetchResult.skippedCount
         summary.skippedReason = fetchResult.skippedReason
         try context.save()
+        try TrackIdentityMergeService.mergeDuplicates(in: context)
         logSyncSummary(summary, playlistRecord: playlistRecord)
         warmUpArtworkThemes(for: summary.artworkWarmupSnapshots)
         return summary.fetchedCount

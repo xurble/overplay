@@ -9,6 +9,7 @@ final class AppStartupViewModel {
         var loadSettings: () throws -> Void
         var refreshAuthorization: () async -> Void
         var installRemoteCommands: () -> Void
+        var mergeDuplicateTrackIdentities: () -> Void
         var restoreLocalPlaybackDisplay: () -> Void
         var startPlaybackMonitoring: () -> Void
         var startPeriodicPlaylistSync: () -> Void
@@ -72,6 +73,12 @@ final class AppStartupViewModel {
             await authorizationService.refresh()
         } installRemoteCommands: {
             runtime.remoteCommandService.activate(playbackController: playbackController, context: modelContext)
+        } mergeDuplicateTrackIdentities: {
+            do {
+                try TrackIdentityMergeService.mergeDuplicates(in: modelContext)
+            } catch {
+                StartupProfiler.mark("Track identity merge failed: \(error.localizedDescription)")
+            }
         } restoreLocalPlaybackDisplay: {
             playbackController.restoreLocalPlaybackDisplay(context: modelContext)
         } startPlaybackMonitoring: {
@@ -89,6 +96,10 @@ final class AppStartupViewModel {
     private func startAuthorizedServices(dependencies: Dependencies) {
         guard !hasStartedAuthorizedServices else { return }
         hasStartedAuthorizedServices = true
+
+        StartupProfiler.measure("Track identity merge") {
+            dependencies.mergeDuplicateTrackIdentities()
+        }
 
         StartupProfiler.measure("Local playback display restore") {
             dependencies.restoreLocalPlaybackDisplay()

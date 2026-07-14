@@ -2006,7 +2006,7 @@ final class PlaybackController {
     func reconcileStoredOrder(for playlist: PlaylistRecord, context: ModelContext) {
         let currentLocalTrackID = currentPlaylistID == playlist.musicPlaylistID ? currentPlaylistItem?.trackID.uuidString : nil
         do {
-            _ = try PlaylistItemRepository.removeDuplicateItems(in: context)
+            _ = try PlaylistItemRepository.mergeDuplicateItems(in: context)
             let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
             let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: items)
             let previousState = PlaybackOrderStore.state(playerID: playerID, musicPlaylistID: playlist.musicPlaylistID)

@@ -148,6 +148,44 @@ enum PlaybackIdentityStore {
         save(updatedStates, to: defaults, flushImmediately: flushImmediately)
     }
 
+    /// Rewrites alias keys after a track identity merge, combining alias
+    /// lists when duplicates collapse onto the same canonical track.
+    static func rekeyLocalTrackIDs(
+        _ mapping: [String: String],
+        from defaults: UserDefaults = .standard,
+        flushImmediately: Bool = false
+    ) {
+        guard !mapping.isEmpty else { return }
+
+        let storedStates = states(from: defaults)
+        var updatedStates = storedStates
+        var didChange = false
+
+        for (key, var state) in storedStates {
+            guard state.aliasesByLocalTrackID.keys.contains(where: { mapping[$0] != nil }) else { continue }
+
+            var mergedAliases: [String: [String]] = [:]
+            for (localTrackID, aliases) in state.aliasesByLocalTrackID {
+                let newKey = mapping[localTrackID] ?? localTrackID
+                var combined = mergedAliases[newKey] ?? []
+                for alias in aliases where !combined.contains(alias) {
+                    combined.append(alias)
+                }
+                if combined.count > maximumAliasesPerTrack {
+                    combined.removeFirst(combined.count - maximumAliasesPerTrack)
+                }
+                mergedAliases[newKey] = combined
+            }
+            state.aliasesByLocalTrackID = mergedAliases
+            updatedStates[key] = state
+            didChange = true
+        }
+
+        if didChange {
+            save(updatedStates, to: defaults, flushImmediately: flushImmediately)
+        }
+    }
+
     private static func storageKey(playerID: String, musicPlaylistID: String) -> String {
         "\(playerID)::\(musicPlaylistID)"
     }

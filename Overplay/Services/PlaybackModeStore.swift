@@ -88,6 +88,34 @@ enum PlaybackOrderStore {
         save(updatedStates, to: defaults, flushImmediately: flushImmediately)
     }
 
+    /// Rewrites local track IDs after a track identity merge, deduplicating
+    /// while preserving the first occurrence's position.
+    static func rekeyLocalTrackIDs(
+        _ mapping: [String: String],
+        from defaults: UserDefaults = .standard,
+        flushImmediately: Bool = false
+    ) {
+        guard !mapping.isEmpty else { return }
+
+        let storedStates = states(from: defaults)
+        var updatedStates = storedStates
+        var didChange = false
+
+        for (key, var state) in storedStates {
+            let remapped = state.orderedTrackIDs.map { mapping[$0] ?? $0 }
+            var seen = Set<String>()
+            let deduped = remapped.filter { seen.insert($0).inserted }
+            guard deduped != state.orderedTrackIDs else { continue }
+            state.orderedTrackIDs = deduped
+            updatedStates[key] = state
+            didChange = true
+        }
+
+        if didChange {
+            save(updatedStates, to: defaults, flushImmediately: flushImmediately)
+        }
+    }
+
     private static func storageKey(playerID: String, musicPlaylistID: String) -> String {
         "\(playerID)::\(musicPlaylistID)"
     }

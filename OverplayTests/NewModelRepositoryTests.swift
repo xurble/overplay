@@ -454,8 +454,8 @@ struct NewModelRepositoryTests {
         #expect(try PlaylistItemRepository.item(id: evictedItem.id, in: context)?.id == evictedItem.id)
     }
 
-    @Test("playlist item repository removes duplicate memberships")
-    func playlistItemRepositoryRemovesDuplicateMemberships() throws {
+    @Test("playlist item repository merges duplicate memberships preserving stats")
+    func playlistItemRepositoryMergesDuplicateMembershipsPreservingStats() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let playlistID = UUID()
@@ -464,13 +464,25 @@ struct NewModelRepositoryTests {
             playlistID: playlistID,
             trackID: trackID,
             musicPlaylistEntryID: "entry-kept",
-            createdAt: Date(timeIntervalSince1970: 10)
+            skipCount: 3,
+            playthroughCount: 2,
+            lastPlayedAt: Date(timeIntervalSince1970: 100),
+            createdAt: Date(timeIntervalSince1970: 10),
+            updatedAt: Date(timeIntervalSince1970: 100)
         )
         let duplicateItem = PlaylistItemRecord(
             playlistID: playlistID,
             trackID: trackID,
             musicPlaylistEntryID: "entry-duplicate",
-            createdAt: Date(timeIntervalSince1970: 20)
+            skipCount: 2,
+            playthroughCount: 1,
+            lastPlayedAt: Date(timeIntervalSince1970: 300),
+            lastSkippedAt: Date(timeIntervalSince1970: 250),
+            evictedAt: Date(timeIntervalSince1970: 350),
+            evictionReason: .manual,
+            evictionSource: .user,
+            createdAt: Date(timeIntervalSince1970: 20),
+            updatedAt: Date(timeIntervalSince1970: 350)
         )
         let otherItem = PlaylistItemRecord(
             playlistID: playlistID,
@@ -482,11 +494,20 @@ struct NewModelRepositoryTests {
         context.insert(otherItem)
         context.insert(keptItem)
 
-        let removedCount = try PlaylistItemRepository.removeDuplicateItems(in: context)
+        let mergedCount = try PlaylistItemRepository.mergeDuplicateItems(in: context)
         let items = try PlaylistItemRepository.items(forPlaylistID: playlistID, in: context)
 
-        #expect(removedCount == 1)
+        #expect(mergedCount == 1)
         #expect(items.map(\.id) == [keptItem.id, otherItem.id])
+        #expect(keptItem.skipCount == 5)
+        #expect(keptItem.playthroughCount == 3)
+        #expect(keptItem.lastPlayedAt == Date(timeIntervalSince1970: 300))
+        #expect(keptItem.lastSkippedAt == Date(timeIntervalSince1970: 250))
+        #expect(keptItem.evictedAt == Date(timeIntervalSince1970: 350))
+        #expect(keptItem.evictionReason == .manual)
+        #expect(keptItem.evictionSource == .user)
+        #expect(keptItem.musicPlaylistEntryID == "entry-kept")
+        #expect(keptItem.updatedAt == Date(timeIntervalSince1970: 350))
     }
 
     @Test("track repository fetches scoped tracks by predicate")

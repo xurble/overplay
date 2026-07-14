@@ -81,4 +81,21 @@ enum LocalPlaybackStateStore {
         state.playlistID = newID
         save(state, to: defaults, flushImmediately: flushImmediately)
     }
+
+    /// Rewrites the persisted local track ID after a track identity merge.
+    static func rekeyLocalTrackIDs(
+        _ mapping: [String: String],
+        from defaults: UserDefaults = .standard,
+        flushImmediately: Bool = false
+    ) {
+        guard !mapping.isEmpty,
+              var state = load(from: defaults),
+              let localTrackID = state.localTrackID,
+              let newID = mapping[localTrackID] else {
+            return
+        }
+
+        state.localTrackID = newID
+        save(state, to: defaults, flushImmediately: flushImmediately)
+    }
 }

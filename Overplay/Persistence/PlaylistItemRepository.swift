@@ -135,12 +135,16 @@ enum PlaylistItemRepository {
         )
     }
 
+    /// Collapses items that share a `(playlistID, trackID)` pair into the
+    /// oldest item, merging stats instead of discarding them: skip and
+    /// playthrough counts are summed, and eviction/protection state follows
+    /// the most recently updated duplicate.
     @discardableResult
-    static func removeDuplicateItems(in context: ModelContext) throws -> Int {
+    static func mergeDuplicateItems(in context: ModelContext, save: Bool = true) throws -> Int {
         let groupedItems = Dictionary(grouping: try allItems(in: context)) { item in
             "\(item.playlistID.uuidString)::\(item.trackID.uuidString)"
         }
-        var removedCount = 0
+        var mergedCount = 0
 
         for items in groupedItems.values where items.count > 1 {
             let orderedItems = items.sorted {
@@ -149,16 +153,44 @@ enum PlaylistItemRepository {
                 }
                 return $0.id.uuidString < $1.id.uuidString
             }
+            let keeper = orderedItems[0]
+            let duplicates = orderedItems.dropFirst()
 
-            for duplicate in orderedItems.dropFirst() {
+            let latestUpdatedItem = orderedItems.max { $0.updatedAt < $1.updatedAt }
+            if let latestUpdatedItem, latestUpdatedItem !== keeper {
+                keeper.evictedAt = latestUpdatedItem.evictedAt
+                keeper.evictionReason = latestUpdatedItem.evictionReason
+                keeper.evictionSource = latestUpdatedItem.evictionSource
+                keeper.protected = latestUpdatedItem.protected
+            }
+
+            for duplicate in duplicates {
+                keeper.skipCount += duplicate.skipCount
+                keeper.playthroughCount += duplicate.playthroughCount
+                keeper.lastPlayedAt = latestDate(keeper.lastPlayedAt, duplicate.lastPlayedAt)
+                keeper.lastSkippedAt = latestDate(keeper.lastSkippedAt, duplicate.lastSkippedAt)
+                keeper.lastSeenInPlaylistAt = latestDate(keeper.lastSeenInPlaylistAt, duplicate.lastSeenInPlaylistAt)
+                if keeper.musicPlaylistEntryID == nil {
+                    keeper.musicPlaylistEntryID = duplicate.musicPlaylistEntryID
+                }
+                keeper.updatedAt = max(keeper.updatedAt, duplicate.updatedAt)
                 context.delete(duplicate)
-                removedCount += 1
+                mergedCount += 1
             }
         }
 
-        if removedCount > 0 {
+        if mergedCount > 0, save {
             try context.save()
         }
-        return removedCount
+        return mergedCount
+    }
+
+    private static func latestDate(_ left: Date?, _ right: Date?) -> Date? {
+        switch (left, right) {
+        case let (left?, right?):
+            max(left, right)
+        default:
+            left ?? right
+        }
     }
 }
