@@ -183,6 +183,62 @@ struct ArtworkCacheServiceTests {
         #expect(persisted.entries.count == 1)
     }
 
+    @Test("orphaned disk files are re-adopted without downloading")
+    func orphanedDiskFilesAreReAdoptedWithoutDownloading() async throws {
+        let rootDirectory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootDirectory) }
+
+        let sourceURL = "https://example.com/artwork.jpg"
+        let key = ArtworkCacheService.cacheKey(sourceURL: sourceURL, pixelSize: 512)
+        try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
+        let orphanURL = rootDirectory.appendingPathComponent("\(key).jpg")
+        try Data("orphaned-artwork".utf8).write(to: orphanURL)
+
+        let service = ArtworkCacheService(
+            rootDirectory: rootDirectory,
+            downloader: { _ in throw URLError(.notConnectedToInternet) }
+        )
+
+        let adoptedURL = try #require(await service.artworkFileURL(
+            for: sourceURL,
+            pixelSize: 512,
+            playlistID: "playlist-1"
+        ))
+        let manifest = try await service.manifestSnapshot()
+
+        #expect(adoptedURL == orphanURL)
+        #expect(try Data(contentsOf: adoptedURL) == Data("orphaned-artwork".utf8))
+        #expect(manifest.entries[key]?.byteSize == Data("orphaned-artwork".utf8).count)
+        #expect(manifest.entries[key]?.associatedPlaylistIDs.contains("playlist-1") == true)
+        #expect(manifest.playlistUsage["playlist-1"] != nil)
+    }
+
+    @Test("read-only cached lookup re-adopts orphaned disk files")
+    func readOnlyCachedLookupReAdoptsOrphanedDiskFiles() async throws {
+        let rootDirectory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootDirectory) }
+
+        let sourceURL = "https://example.com/artwork.jpg"
+        let key = ArtworkCacheService.cacheKey(sourceURL: sourceURL, pixelSize: 512)
+        try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
+        let orphanURL = rootDirectory.appendingPathComponent("\(key).jpg")
+        try Data("orphaned-artwork".utf8).write(to: orphanURL)
+
+        let service = ArtworkCacheService(
+            rootDirectory: rootDirectory,
+            downloader: { _ in throw URLError(.notConnectedToInternet) }
+        )
+
+        let adoptedURL = try #require(await service.cachedArtworkFileURL(
+            for: sourceURL,
+            pixelSize: 512
+        ))
+        let manifest = try await service.manifestSnapshot()
+
+        #expect(adoptedURL == orphanURL)
+        #expect(manifest.entries[key] != nil)
+    }
+
     @Test("concurrent downloads do not clobber each other's manifest entries")
     func concurrentDownloadsDoNotClobberEachOthersManifestEntries() async throws {
         let rootDirectory = temporaryDirectory()

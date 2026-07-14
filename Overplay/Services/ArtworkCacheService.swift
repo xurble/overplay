@@ -78,6 +78,17 @@ actor ArtworkCacheService {
                 return cachedURL
             }
 
+            if let adopted = try adoptedDiskEntry(
+                key: key,
+                sourceURL: normalizedSourceURL,
+                pixelSize: pixelSize,
+                playlistID: playlistID,
+                accessedAt: accessedAt
+            ) {
+                scheduleManifestSave()
+                return fileURL(for: adopted)
+            }
+
             let data = try await downloadedData(for: remoteURL, cacheKey: key, priority: priority)
             // The download suspended this actor, so other requests may have
             // mutated the manifest meanwhile. Re-check fresh actor state.
@@ -121,7 +132,15 @@ actor ArtworkCacheService {
         do {
             try ensureCacheDirectoryExists()
             let key = Self.cacheKey(sourceURL: normalizedSourceURL, pixelSize: pixelSize)
-            guard let entry = try loadManifest().entries[key] else { return nil }
+            guard let entry = try loadManifest().entries[key] ?? adoptedDiskEntry(
+                key: key,
+                sourceURL: normalizedSourceURL,
+                pixelSize: pixelSize,
+                playlistID: nil,
+                accessedAt: .now
+            ) else {
+                return nil
+            }
             let url = fileURL(for: entry)
 
             guard FileManager.default.fileExists(atPath: url.path) else {
@@ -219,6 +238,46 @@ actor ArtworkCacheService {
 
     private func persistManifest() throws {
         try saveManifest(loadManifest())
+    }
+
+    /// The cache key and file name are deterministic, so an image whose
+    /// manifest entry was lost (historical manifest clobbering, partial
+    /// purges) can be re-adopted from disk instead of re-downloaded.
+    private func adoptedDiskEntry(
+        key: String,
+        sourceURL: String,
+        pixelSize: Int,
+        playlistID: String?,
+        accessedAt: Date
+    ) throws -> ArtworkCacheEntry? {
+        let fileName = "\(key).\(fileExtension(for: sourceURL))"
+        let url = rootDirectory.appendingPathComponent(fileName)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let byteSize = (attributes?[.size] as? NSNumber)?.intValue ?? 0
+        var associatedPlaylistIDs = Set<String>()
+        if let playlistID {
+            associatedPlaylistIDs.insert(playlistID)
+        }
+
+        let entry = ArtworkCacheEntry(
+            cacheKey: key,
+            sourceURL: sourceURL,
+            pixelSize: pixelSize,
+            associatedPlaylistIDs: associatedPlaylistIDs,
+            lastAccessedAt: accessedAt,
+            byteSize: byteSize,
+            fileName: fileName
+        )
+        try withManifest { manifest in
+            manifest.entries[key] = entry
+            if let playlistID {
+                manifest.playlistUsage[playlistID] = accessedAt
+            }
+        }
+        scheduleManifestSave()
+        return entry
     }
 
     private func refreshedCachedFileURL(
