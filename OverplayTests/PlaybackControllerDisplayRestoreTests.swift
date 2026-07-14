@@ -62,6 +62,55 @@ struct PlaybackControllerDisplayRestoreTests {
         #expect(!controller.evaluationOutcomeMatchesDisplayedPlayback(staleOutcome))
     }
 
+    @Test("stale evaluation refreshes active playlist snapshot without replacing display")
+    func staleEvaluationRefreshesActivePlaylistSnapshotWithoutReplacingDisplay() throws {
+        let fixture = try makeTwoTrackFixture()
+        let controller = PlaybackController()
+        controller.currentPlaylistID = fixture.playlist.musicPlaylistID
+        controller.currentPlaylistItem = fixture.nextItem
+        controller.currentTrack = CurrentPlaybackTrack(
+            id: "next-library",
+            title: fixture.nextTrack.title,
+            artistName: fixture.nextTrack.artistName,
+            durationSeconds: 180
+        )
+        controller.activePlaylistSnapshot = ActivePlaylistSnapshot(
+            playlist: fixture.playlist,
+            items: [fixture.previousItem, fixture.nextItem],
+            tracks: [fixture.previousTrack, fixture.nextTrack],
+            playbackOrderState: PlaybackOrderState(
+                playerID: controller.playerID,
+                musicPlaylistID: fixture.playlist.musicPlaylistID
+            ),
+            currentPlaylistItemID: fixture.nextItem.id
+        )
+        fixture.previousItem.skipCount = 1
+        try fixture.context.save()
+
+        let staleOutcome = PlaybackSessionEvaluationService.EvaluationOutcome(
+            session: TrackPlaySession(
+                trackID: "previous-library",
+                localTrackID: fixture.previousTrack.id.uuidString,
+                sessionStartDate: Date(timeIntervalSince1970: 100),
+                lastObservedPlaybackTime: 12,
+                durationSeconds: 120,
+                hasEvaluated: true
+            ),
+            playlist: fixture.playlist,
+            item: fixture.previousItem,
+            evictedDuringEvaluation: false,
+            shouldSyncPlaybackMetadata: true
+        )
+
+        controller.applyEvaluationOutcome(staleOutcome, context: fixture.context)
+
+        #expect(controller.currentPlaylistItem?.id == fixture.nextItem.id)
+        #expect(controller.currentTrack?.id == "next-library")
+        #expect(controller.activePlaylistSnapshot?.rows.first { $0.id == fixture.previousItem.id }?.skipCount == 1)
+        #expect(controller.activePlaylistSnapshot?.rows.first { $0.id == fixture.previousItem.id }?.isCurrent == false)
+        #expect(controller.activePlaylistSnapshot?.rows.first { $0.id == fixture.nextItem.id }?.isCurrent == true)
+    }
+
     @Test("playlist row playback evaluates outgoing track before target track")
     func playlistRowPlaybackEvaluatesOutgoingTrackBeforeTargetTrack() async throws {
         let fixture = try makeTwoTrackFixture()

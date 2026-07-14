@@ -1298,10 +1298,11 @@ final class PlaybackController {
         }
     }
 
-    private func applyEvaluationOutcome(_ outcome: PlaybackSessionEvaluationService.EvaluationOutcome?, context: ModelContext) {
+    func applyEvaluationOutcome(_ outcome: PlaybackSessionEvaluationService.EvaluationOutcome?, context: ModelContext) {
         guard let outcome else { return }
         activeSession = outcome.session
         let shouldApplyToDisplayedPlayback = evaluationOutcomeMatchesDisplayedPlayback(outcome)
+        let shouldRefreshActivePlaylist = evaluationOutcomeAffectsActivePlaylist(outcome)
         if let item = outcome.item, shouldApplyToDisplayedPlayback {
             currentPlaylistItem = item
             bumpPlaybackItemMetadataVersion()
@@ -1317,9 +1318,18 @@ final class PlaybackController {
                 context: context
             )
         }
-        if shouldApplyToDisplayedPlayback {
+        if shouldRefreshActivePlaylist {
             rebuildActivePlaylistSnapshot(context: context)
         }
+    }
+
+    func evaluationOutcomeAffectsActivePlaylist(_ outcome: PlaybackSessionEvaluationService.EvaluationOutcome) -> Bool {
+        guard let currentPlaylistID,
+              let outcomePlaylistID = outcome.playlist?.musicPlaylistID else {
+            return false
+        }
+
+        return outcome.item != nil && outcomePlaylistID == currentPlaylistID
     }
 
     func evaluationOutcomeMatchesDisplayedPlayback(_ outcome: PlaybackSessionEvaluationService.EvaluationOutcome) -> Bool {
