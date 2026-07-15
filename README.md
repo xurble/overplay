@@ -1,8 +1,10 @@
 # Overplay
 
-Overplay is an Apple Music companion app for iPhone, iPad, and Mac. It helps
-keep a main playlist fresh by tracking how often you play through or skip
-tracks, then evicting songs that keep getting skipped.
+Overplay is an Apple Music companion app that helps keep a main playlist
+fresh. It tracks how often you play through or skip each track, presents that
+per-playlist track health, and makes it easy to evict tracks that keep
+getting skipped. It currently runs on iPhone (with CarPlay support); iPad
+layouts exist via the adaptive shell, and a native Mac target is planned.
 
 The app is built around a **One True Playlist** plus optional **triage
 playlists**. The One True Playlist is the main playlist Overplay manages.
@@ -14,37 +16,65 @@ songs into the main playlist.
 
 Overplay syncs linked Apple Music playlists into its own SwiftData store. It
 tracks skip counts, playthrough counts, playlist membership, promotions, and
-eviction history separately from Apple Music's global play count or skip count.
+eviction history separately from Apple Music's global play count or skip
+count. Skips and playthroughs are counted per playlist item, from witnessed
+listening time — a transition only counts as a skip if the app actually
+observed enough of the session, so playback that happens while Overplay is
+suspended never produces phantom skips.
 
-Count-based eviction applies only to the One True Playlist. Triage playlists
-still track skips and playthroughs, but songs are promoted or removed manually.
+Eviction is a **manual user action**: Overplay surfaces track health
+(playthroughs versus skips) for every linked playlist, and the user decides
+when to evict. Promotion moves a track from a triage playlist into the One
+True Playlist.
 
 When a track is evicted, Overplay always records the event locally. If Apple
 Music allows the app to remove the track from the linked playlist, Overplay
-should try to do that too. If remote deletion is unavailable or fails, Overplay
+tries to do that too. If remote deletion is unavailable or fails, Overplay
 keeps the local eviction and filters the track out of future playback.
+
+## Playback
+
+Playback uses MusicKit's application music player with a shared playback
+controller behind every surface: the in-app Now Playing UI and mini player,
+CarPlay, Lock Screen, Control Center, and headset/remote commands. All
+surfaces route through the same controller, queue policies, and
+skip/playthrough evaluation, so a skip from CarPlay or the Lock Screen counts
+the same as a skip in the app.
 
 ## Sync and Data
 
-Shared app data is backed by iCloud/CloudKit so devices on the same account can
-share playlist definitions, track stats, promotions, and eviction history.
+Shared app data is backed by iCloud/CloudKit so devices on the same account
+can share playlist definitions, track stats, promotions, and eviction
+history. Linked playlists are periodically re-synced from Apple Music, with
+additions, removals, and reordering reconciled into the local store.
 
-Playback state stays local to each device. The currently playing track, queue,
-position, selected view, shuffle/repeat state, and window-specific navigation
-state should not sync across devices. This lets an iPhone, iPad, and Mac share
-Overplay data without controlling each other's playback.
+Playback state stays local to each device. The currently playing track,
+queue, position, selected view, shuffle/repeat state, and window-specific
+navigation state do not sync across devices. This lets an iPhone, iPad, and
+Mac share Overplay data without controlling each other's playback.
 
 ## Project Shape
 
-- Swift 6
-- SwiftUI
-- iOS 26, iPadOS 26, and macOS 26 or later
+- Swift 6, SwiftUI
+- iOS 26 and iPadOS 26 or later (native macOS target planned)
 - MusicKit-first Apple Music integration
 - SwiftData with CloudKit-backed shared state
-- Liquid Glass UI direction across Apple platforms
+- CarPlay music player scene
+- Adaptive shell: compact navigation on iPhone, split view/sidebar on iPad
+- Liquid Glass UI direction
+- Swift Testing unit test target (`OverplayTests`) covering repositories,
+  playback policies, sync reconciliation, and presentation logic
 
-The full product and technical direction lives in
-[OVERPLAY_DESIGN_SPEC.md](OVERPLAY_DESIGN_SPEC.md).
+## Documentation
+
+- [OVERPLAY_DESIGN_SPEC.md](OVERPLAY_DESIGN_SPEC.md) — full product and
+  technical direction.
+- [TODO.md](TODO.md) — the single living roadmap for remaining platform,
+  product, verification, performance, and release-hardening work.
+- [AGENTS.md](AGENTS.md) — rules for AI agents working in this repo,
+  including the shared playback-surface requirements.
+- [Overplay/CarPlaySupport/README-CarPlay.md](Overplay/CarPlaySupport/README-CarPlay.md)
+  — current CarPlay surface structure and verification notes.
 
 ## Local Configuration
 
@@ -63,7 +93,12 @@ Developer portal and in the Xcode target for the identifiers you use.
 
 ## Current Status
 
-This codebase is evolving from the initial implementation toward the long-term
-design in the spec. Expect some existing models and screens to lag behind the
-new multi-playlist, iCloud-backed, multi-platform design while the app is
-reworked incrementally.
+The core product loop is in place: linked playlist management, periodic sync
+with reconciliation, playback with per-playlist shuffle order, skip and
+playthrough tracking, manual eviction and promotion, unified history, search
+and manual add, CarPlay, and the adaptive iPhone/iPad shell. Remaining
+roadmap work is iPad experience refinement and the native Mac target
+alongside the open product, verification, performance, and release-hardening
+items tracked in `TODO.md`. The app is pre-release: the schema may still reset
+between builds (see the pre-release data policy in `AGENTS.md` and the release
+hardening section in `TODO.md`).
