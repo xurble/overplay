@@ -27,6 +27,7 @@ struct AppStartupViewModelTests {
         }
 
         await viewModel.bootstrap(isReady: true, dependencies: dependencies)
+        await viewModel.authorizedServicesTask?.value
 
         #expect(viewModel.hasStartedAuthorizedServices)
         #expect(events == ["settings", "authorization", "remote", "merge", "restore", "monitor", "sync-start"])
@@ -49,6 +50,7 @@ struct AppStartupViewModelTests {
 
         await viewModel.bootstrap(isReady: true, dependencies: dependencies)
         viewModel.authorizationReadinessChanged(isReady: true, dependencies: dependencies)
+        await viewModel.authorizedServicesTask?.value
 
         #expect(viewModel.hasStartedAuthorizedServices)
         #expect(startCount == 1)
@@ -72,6 +74,7 @@ struct AppStartupViewModelTests {
         }
 
         await viewModel.bootstrap(isReady: true, dependencies: dependencies)
+        await viewModel.authorizedServicesTask?.value
         viewModel.authorizationReadinessChanged(isReady: false, dependencies: dependencies)
 
         #expect(!viewModel.hasStartedAuthorizedServices)

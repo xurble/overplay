@@ -9,7 +9,7 @@ final class AppStartupViewModel {
         var loadSettings: () throws -> Void
         var refreshAuthorization: () async -> Void
         var installRemoteCommands: () -> Void
-        var mergeDuplicateTrackIdentities: () -> Void
+        var mergeDuplicateTrackIdentities: () async -> Void
         var restoreLocalPlaybackDisplay: () -> Void
         var startPlaybackMonitoring: () -> Void
         var startPeriodicPlaylistSync: () -> Void
@@ -17,6 +17,7 @@ final class AppStartupViewModel {
     }
 
     private(set) var hasStartedAuthorizedServices = false
+    @ObservationIgnored private(set) var authorizedServicesTask: Task<Void, Never>?
 
     func shouldShowPermissionView(
         readiness: AppleMusicReadiness,
@@ -97,20 +98,25 @@ final class AppStartupViewModel {
         guard !hasStartedAuthorizedServices else { return }
         hasStartedAuthorizedServices = true
 
-        StartupProfiler.measure("Track identity merge") {
-            dependencies.mergeDuplicateTrackIdentities()
-        }
+        // The launch UI presents immediately; authorized services start
+        // behind it in main-actor slices. Ordering still matters: the merge
+        // rekeys the device-local stores that display restore reads.
+        authorizedServicesTask = Task { @MainActor in
+            await StartupProfiler.measure("Track identity merge") {
+                await dependencies.mergeDuplicateTrackIdentities()
+            }
 
-        StartupProfiler.measure("Local playback display restore") {
-            dependencies.restoreLocalPlaybackDisplay()
-        }
+            StartupProfiler.measure("Local playback display restore") {
+                dependencies.restoreLocalPlaybackDisplay()
+            }
 
-        StartupProfiler.measure("Playback monitoring startup") {
-            dependencies.startPlaybackMonitoring()
-        }
+            StartupProfiler.measure("Playback monitoring startup") {
+                dependencies.startPlaybackMonitoring()
+            }
 
-        StartupProfiler.measure("Periodic playlist sync startup") {
-            dependencies.startPeriodicPlaylistSync()
+            StartupProfiler.measure("Periodic playlist sync startup") {
+                dependencies.startPeriodicPlaylistSync()
+            }
         }
     }
 }
