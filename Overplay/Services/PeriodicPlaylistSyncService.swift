@@ -14,6 +14,7 @@ final class PeriodicPlaylistSyncService {
     let initialDelay: Duration
     let interval: Duration
     let automaticSyncFreshnessInterval: TimeInterval
+    let interPlaylistDelay: Duration
 
     @ObservationIgnored private var syncTask: Task<Void, Never>?
     @ObservationIgnored private let syncPlaylist: @MainActor (PlaylistRecord, ModelContext) async throws -> PlaylistSyncSummary
@@ -23,6 +24,7 @@ final class PeriodicPlaylistSyncService {
         initialDelay: Duration = .seconds(10),
         interval: Duration = .seconds(30 * 60),
         automaticSyncFreshnessInterval: TimeInterval = 30 * 60,
+        interPlaylistDelay: Duration = .milliseconds(500),
         syncPlaylist: @escaping @MainActor (PlaylistRecord, ModelContext) async throws -> PlaylistSyncSummary = { playlist, context in
             try await PlaylistSyncService().syncPlaylist(playlist, in: context, runIdentityMerge: false)
         },
@@ -33,6 +35,7 @@ final class PeriodicPlaylistSyncService {
         self.initialDelay = initialDelay
         self.interval = interval
         self.automaticSyncFreshnessInterval = automaticSyncFreshnessInterval
+        self.interPlaylistDelay = interPlaylistDelay
         self.syncPlaylist = syncPlaylist
         self.mergeDuplicateTrackIdentities = mergeDuplicateTrackIdentities
     }
@@ -77,12 +80,29 @@ final class PeriodicPlaylistSyncService {
             return
         }
 
+        let orderedPlaylists = Self.prioritized(
+            playlists,
+            currentPlaylistID: playbackController?.currentPlaylistID,
+            selectedPlaylistID: try? SettingsRepository.settings(in: context).selectedPlaylistID
+        )
+
         var didMutateRecords = false
-        for playlist in playlists {
+        var didSyncAnyPlaylist = false
+        for playlist in orderedPlaylists {
+            guard !Task.isCancelled else { return }
             guard shouldSync(playlist, now: now, force: force) else {
                 logSkippedSync(for: playlist, now: now)
                 continue
             }
+
+            // Space playlists out so a catch-up cycle after long idle never
+            // occupies the main actor back-to-back; stale playlists are
+            // preferable to an unresponsive app.
+            if didSyncAnyPlaylist, interPlaylistDelay > .zero {
+                try? await Task.sleep(for: interPlaylistDelay)
+                guard !Task.isCancelled else { return }
+            }
+            didSyncAnyPlaylist = true
 
             do {
                 let summary = try await syncPlaylist(playlist, context)
@@ -100,6 +120,33 @@ final class PeriodicPlaylistSyncService {
         if didMutateRecords {
             try? await mergeDuplicateTrackIdentities(context)
         }
+    }
+
+    /// Catch-up ordering: the playlist the user is listening to first, then
+    /// the selected default playlist, then the rest in stored order.
+    nonisolated static func prioritized(
+        _ playlists: [PlaylistRecord],
+        currentPlaylistID: String?,
+        selectedPlaylistID: String?
+    ) -> [PlaylistRecord] {
+        playlists.sorted { left, right in
+            priorityRank(left, currentPlaylistID: currentPlaylistID, selectedPlaylistID: selectedPlaylistID)
+                < priorityRank(right, currentPlaylistID: currentPlaylistID, selectedPlaylistID: selectedPlaylistID)
+        }
+    }
+
+    private nonisolated static func priorityRank(
+        _ playlist: PlaylistRecord,
+        currentPlaylistID: String?,
+        selectedPlaylistID: String?
+    ) -> Int {
+        if playlist.musicPlaylistID == currentPlaylistID {
+            return 0
+        }
+        if playlist.musicPlaylistID == selectedPlaylistID {
+            return 1
+        }
+        return 2
     }
 
     func shouldSync(_ playlist: PlaylistRecord, now: Date = .now, force: Bool = false) -> Bool {

@@ -116,13 +116,60 @@ struct PeriodicPlaylistSyncServiceTests {
         #expect(recorder.mergeCount == 0)
     }
 
+    @Test("catch-up sync prioritizes the playing playlist then the selected one")
+    func catchUpSyncPrioritizesThePlayingPlaylistThenTheSelectedOne() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let now = Date(timeIntervalSince1970: 15_000)
+        context.insert(playlist(musicPlaylistID: "triage-a", lastSyncedAt: nil, lastSyncError: nil))
+        context.insert(playlist(musicPlaylistID: "selected", lastSyncedAt: nil, lastSyncError: nil))
+        context.insert(playlist(musicPlaylistID: "playing", lastSyncedAt: nil, lastSyncError: nil))
+        let settings = try SettingsRepository.settings(in: context)
+        settings.selectedPlaylistID = "selected"
+        let playbackController = PlaybackController()
+        playbackController.currentPlaylistID = "playing"
+        let recorder = SyncRecorder()
+        let service = makeService(recorder: recorder)
+
+        await service.syncLinkedPlaylists(
+            context: context,
+            playbackController: playbackController,
+            now: now
+        )
+
+        #expect(recorder.syncedIDs.first == "playing")
+        #expect(recorder.syncedIDs.dropFirst().first == "selected")
+        #expect(recorder.syncedIDs.count == 3)
+    }
+
+    @Test("prioritized ordering keeps stored order for unranked playlists")
+    func prioritizedOrderingKeepsStoredOrderForUnrankedPlaylists() {
+        let first = playlist(musicPlaylistID: "a", lastSyncedAt: nil, lastSyncError: nil)
+        let second = playlist(musicPlaylistID: "b", lastSyncedAt: nil, lastSyncError: nil)
+        let selected = playlist(musicPlaylistID: "selected", lastSyncedAt: nil, lastSyncError: nil)
+        let playing = playlist(musicPlaylistID: "playing", lastSyncedAt: nil, lastSyncError: nil)
+
+        let ordered = PeriodicPlaylistSyncService.prioritized(
+            [first, selected, second, playing],
+            currentPlaylistID: "playing",
+            selectedPlaylistID: "selected"
+        )
+
+        #expect(ordered.map(\.musicPlaylistID) == ["playing", "selected", "a", "b"])
+        #expect(PeriodicPlaylistSyncService.prioritized(
+            [first, second],
+            currentPlaylistID: nil,
+            selectedPlaylistID: nil
+        ).map(\.musicPlaylistID) == ["a", "b"])
+    }
+
     private final class SyncRecorder {
         var syncedIDs: [String] = []
         var mergeCount = 0
     }
 
     private func makeService(recorder: SyncRecorder, insertedCount: Int = 1) -> PeriodicPlaylistSyncService {
-        PeriodicPlaylistSyncService { playlist, _ in
+        PeriodicPlaylistSyncService(interPlaylistDelay: .zero) { playlist, _ in
             recorder.syncedIDs.append(playlist.musicPlaylistID)
             return PlaylistSyncSummary(fetchedCount: 1, insertedCount: insertedCount)
         } mergeDuplicateTrackIdentities: { _ in
