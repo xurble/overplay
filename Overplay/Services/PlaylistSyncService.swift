@@ -32,6 +32,12 @@ struct PlaylistSyncSummary: Equatable {
     var skippedReason: String?
     var insertedLocalTrackIDs: [String] = []
     var artworkWarmupSnapshots: [TrackSnapshot] = []
+
+    /// Whether this sync changed durable records, and therefore whether a
+    /// track identity merge pass could have anything to do.
+    var didMutateRecords: Bool {
+        insertedCount > 0 || updatedCount > 0
+    }
 }
 
 @MainActor
@@ -84,10 +90,15 @@ struct PlaylistSyncService {
             role: existingRecord?.role ?? .oneTruePlaylist,
             in: context
         )
-        return try await syncPlaylist(record, in: context)
+        return try await syncPlaylist(record, in: context).fetchedCount
     }
 
-    func syncPlaylist(_ playlistRecord: PlaylistRecord, in context: ModelContext) async throws -> Int {
+    @discardableResult
+    func syncPlaylist(
+        _ playlistRecord: PlaylistRecord,
+        in context: ModelContext,
+        runIdentityMerge: Bool = true
+    ) async throws -> PlaylistSyncSummary {
         let adapter = sourceRegistry.adapter(for: playlistRecord)
         let fetchResult = try await adapter.fetchTrackSnapshots(
             playlistID: playlistRecord.musicPlaylistID,
@@ -105,18 +116,27 @@ struct PlaylistSyncService {
         summary.skippedCount += fetchResult.skippedCount
         summary.skippedReason = fetchResult.skippedReason
         try context.save()
-        try TrackIdentityMergeService.mergeDuplicates(in: context)
+        if runIdentityMerge {
+            try await TrackIdentityMergeService.mergeDuplicates(in: context)
+        }
         logSyncSummary(summary, playlistRecord: playlistRecord)
         warmUpArtworkThemes(for: summary.artworkWarmupSnapshots)
-        return summary.fetchedCount
+        return summary
     }
 
     func syncAllLinkedPlaylists(in context: ModelContext) async throws -> Int {
         let playlists = try PlaylistRepository.activePlaylists(in: context)
         var syncedCount = 0
+        var didMutateRecords = false
 
         for playlist in playlists {
-            syncedCount += try await syncPlaylist(playlist, in: context)
+            let summary = try await syncPlaylist(playlist, in: context, runIdentityMerge: false)
+            syncedCount += summary.fetchedCount
+            didMutateRecords = didMutateRecords || summary.didMutateRecords
+        }
+
+        if didMutateRecords {
+            try await TrackIdentityMergeService.mergeDuplicates(in: context)
         }
 
         return syncedCount

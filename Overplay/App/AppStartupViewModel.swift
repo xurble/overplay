@@ -76,7 +76,7 @@ final class AppStartupViewModel {
             runtime.remoteCommandService.activate(playbackController: playbackController, context: modelContext)
         } mergeDuplicateTrackIdentities: {
             do {
-                try TrackIdentityMergeService.mergeDuplicates(in: modelContext)
+                try await TrackIdentityMergeService.mergeDuplicates(in: modelContext)
             } catch {
                 StartupProfiler.mark("Track identity merge failed: \(error.localizedDescription)")
             }

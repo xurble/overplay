@@ -31,14 +31,20 @@ final class PlaylistSelectionViewModel {
                     try await PlaylistSyncService().createManagedOneTruePlaylist(named: name, in: context)
                 }
             } syncPlaylist: { playlist, context in
-                try await PlaylistSyncService().syncPlaylist(playlist, in: context)
+                try await PlaylistSyncService().syncPlaylist(playlist, in: context).fetchedCount
             } syncPlaylistID: { playlistID, context in
                 try await PlaylistSyncService().syncPlaylist(id: playlistID, source: .appleMusic, in: context)
             } syncAllLinkedPlaylists: { playlists, context in
                 let syncService = PlaylistSyncService()
                 var syncedCount = 0
+                var didMutateRecords = false
                 for playlist in playlists {
-                    syncedCount += try await syncService.syncPlaylist(playlist, in: context)
+                    let summary = try await syncService.syncPlaylist(playlist, in: context, runIdentityMerge: false)
+                    syncedCount += summary.fetchedCount
+                    didMutateRecords = didMutateRecords || summary.didMutateRecords
+                }
+                if didMutateRecords {
+                    try await TrackIdentityMergeService.mergeDuplicates(in: context)
                 }
                 return syncedCount
             } reconcileStoredOrder: { playlist, context in

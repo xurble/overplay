@@ -20,15 +20,20 @@ enum TrackIdentityMergeService {
         }
     }
 
+    /// How many per-track decodes run between yields; the grouping pass
+    /// JSON-decodes every track's playback data, so it must not occupy the
+    /// main actor in one contiguous slice.
+    private static let yieldStride = 50
+
     @discardableResult
     static func mergeDuplicates(
         in context: ModelContext,
         defaults: UserDefaults = .standard
-    ) throws -> MergeSummary {
+    ) async throws -> MergeSummary {
         var summary = MergeSummary()
         let tracks = try TrackRecordRepository.allTracks(in: context)
 
-        for group in duplicateGroups(tracks: tracks) {
+        for group in await duplicateGroups(tracks: tracks) {
             let ordered = group.sorted(by: canonicalPrecedes)
             let canonical = ordered[0]
 
@@ -61,11 +66,14 @@ enum TrackIdentityMergeService {
         return summary
     }
 
-    private static func duplicateGroups(tracks: [TrackRecord]) -> [[TrackRecord]] {
+    private static func duplicateGroups(tracks: [TrackRecord]) async -> [[TrackRecord]] {
         var unionFind = UnionFind(count: tracks.count)
         var firstIndexByMusicItemID: [String: Int] = [:]
 
         for (index, track) in tracks.enumerated() {
+            if index > 0, index.isMultiple(of: yieldStride) {
+                await Task.yield()
+            }
             for musicItemID in PlaybackQueueBuilder.musicItemIDs(for: track) {
                 if let firstIndex = firstIndexByMusicItemID[musicItemID] {
                     unionFind.union(firstIndex, index)

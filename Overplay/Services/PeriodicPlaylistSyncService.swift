@@ -16,20 +16,25 @@ final class PeriodicPlaylistSyncService {
     let automaticSyncFreshnessInterval: TimeInterval
 
     @ObservationIgnored private var syncTask: Task<Void, Never>?
-    @ObservationIgnored private let syncPlaylist: @MainActor (PlaylistRecord, ModelContext) async throws -> Int
+    @ObservationIgnored private let syncPlaylist: @MainActor (PlaylistRecord, ModelContext) async throws -> PlaylistSyncSummary
+    @ObservationIgnored private let mergeDuplicateTrackIdentities: @MainActor (ModelContext) async throws -> Void
 
     init(
         initialDelay: Duration = .seconds(10),
         interval: Duration = .seconds(30 * 60),
         automaticSyncFreshnessInterval: TimeInterval = 30 * 60,
-        syncPlaylist: @escaping @MainActor (PlaylistRecord, ModelContext) async throws -> Int = { playlist, context in
-            try await PlaylistSyncService().syncPlaylist(playlist, in: context)
+        syncPlaylist: @escaping @MainActor (PlaylistRecord, ModelContext) async throws -> PlaylistSyncSummary = { playlist, context in
+            try await PlaylistSyncService().syncPlaylist(playlist, in: context, runIdentityMerge: false)
+        },
+        mergeDuplicateTrackIdentities: @escaping @MainActor (ModelContext) async throws -> Void = { context in
+            try await TrackIdentityMergeService.mergeDuplicates(in: context)
         }
     ) {
         self.initialDelay = initialDelay
         self.interval = interval
         self.automaticSyncFreshnessInterval = automaticSyncFreshnessInterval
         self.syncPlaylist = syncPlaylist
+        self.mergeDuplicateTrackIdentities = mergeDuplicateTrackIdentities
     }
 
     func start(
@@ -72,6 +77,7 @@ final class PeriodicPlaylistSyncService {
             return
         }
 
+        var didMutateRecords = false
         for playlist in playlists {
             guard shouldSync(playlist, now: now, force: force) else {
                 logSkippedSync(for: playlist, now: now)
@@ -79,13 +85,20 @@ final class PeriodicPlaylistSyncService {
             }
 
             do {
-                _ = try await syncPlaylist(playlist, context)
+                let summary = try await syncPlaylist(playlist, context)
+                didMutateRecords = didMutateRecords || summary.didMutateRecords
                 playbackController?.reconcileStoredOrder(for: playlist, context: context)
             } catch {
                 playlist.lastSyncError = error.localizedDescription
                 playlist.updatedAt = .now
                 try? context.save()
             }
+        }
+
+        // The identity merge scans the whole library, so one gated pass per
+        // cycle: only after a sync actually changed durable records.
+        if didMutateRecords {
+            try? await mergeDuplicateTrackIdentities(context)
         }
     }
 

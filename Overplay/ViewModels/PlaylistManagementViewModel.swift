@@ -39,7 +39,7 @@ final class PlaylistManagementViewModel {
                     await playbackController.playPlaylist(playlist, settings: settings, context: context)
                 },
                 syncPlaylist: { playlist, context in
-                    try await PlaylistSyncService().syncPlaylist(playlist, in: context)
+                    try await PlaylistSyncService().syncPlaylist(playlist, in: context).fetchedCount
                 },
                 reconcileStoredOrder: { playlist, context in
                     playbackController.reconcileStoredOrder(for: playlist, context: context)
