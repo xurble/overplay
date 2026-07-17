@@ -138,6 +138,46 @@ enum PlaybackOrderCoordinator {
         }
     }
 
+    static func moveTrackIDToBottom(
+        _ trackID: String,
+        playerID: String,
+        playlistID: String,
+        items: [PlaylistItemRecord],
+        targetScope: PlaylistPlaybackScope,
+        flushImmediately: Bool = true,
+        defaults: UserDefaults = .standard
+    ) {
+        for scope in PlaylistPlaybackScope.allCases {
+            let scopedPlaylistID = scope.playbackOrderPlaylistID(for: playlistID)
+            let scopedItems = items.filter { scope.includes($0) }
+            let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: scopedItems, scope: scope)
+            let storedOrder = PlaybackOrderStore.state(
+                playerID: playerID,
+                musicPlaylistID: scopedPlaylistID,
+                from: defaults
+            ).orderedTrackIDs
+            var orderedTrackIDs = PlaybackOrderEngine.reconciledOrder(
+                storedOrder: storedOrder,
+                tracks: orderTracks
+            ).filter { $0 != trackID }
+
+            if scope == targetScope,
+               scopedItems.contains(where: { $0.trackID.uuidString == trackID }) {
+                orderedTrackIDs.append(trackID)
+            }
+
+            PlaybackOrderStore.save(
+                PlaybackOrderState(
+                    playerID: playerID,
+                    musicPlaylistID: scopedPlaylistID,
+                    orderedTrackIDs: orderedTrackIDs
+                ),
+                to: defaults,
+                flushImmediately: flushImmediately
+            )
+        }
+    }
+
     static func adjacentAvailableID(
         to localTrackID: String,
         orderedLocalTrackIDs: [String],

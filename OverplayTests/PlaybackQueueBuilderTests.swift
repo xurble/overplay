@@ -39,6 +39,23 @@ struct PlaybackQueueBuilderTests {
         #expect(identifiers == Set(["catalog-active", "library-active"]))
     }
 
+    @Test("retired playback order treats evicted items as eligible")
+    func retiredPlaybackOrderTreatsEvictedItemsAsEligible() {
+        let playlistID = UUID()
+        let activeTrackID = UUID()
+        let retiredTrackID = UUID()
+        let items = [
+            PlaylistItemRecord(playlistID: playlistID, trackID: activeTrackID),
+            PlaylistItemRecord(playlistID: playlistID, trackID: retiredTrackID, evictedAt: .now)
+        ]
+
+        let activeOrderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: items, scope: .active)
+        let retiredOrderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: items, scope: .retired)
+
+        #expect(activeOrderTracks.map(\.isPlayable) == [true, false])
+        #expect(retiredOrderTracks.map(\.isPlayable) == [false, true])
+    }
+
     @Test("playlist item can be matched by catalog or library identifier")
     func playlistItemCanBeMatchedByCatalogOrLibraryIdentifier() throws {
         let playlistID = UUID()

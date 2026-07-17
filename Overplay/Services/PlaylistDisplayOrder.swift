@@ -3,10 +3,11 @@ import Foundation
 enum PlaylistDisplayOrder {
     static func orderedItems(
         _ items: [PlaylistItemRecord],
-        state: PlaybackOrderState
+        state: PlaybackOrderState,
+        scope: PlaylistPlaybackScope = .active
     ) -> [PlaylistItemRecord] {
         let displayOrder = PlaybackOrderEngine.displayOrder(
-            for: PlaybackQueueBuilder.playbackOrderTracks(items: items),
+            for: PlaybackQueueBuilder.playbackOrderTracks(items: items, scope: scope),
             storedOrder: state.orderedTrackIDs
         )
         let displayIndex = displayOrder.enumerated().firstValueDictionary(

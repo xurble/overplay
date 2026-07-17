@@ -2,22 +2,26 @@ import Foundation
 @preconcurrency import MusicKit
 
 enum PlaybackQueueBuilder {
-    static func playbackOrderTracks(items: [PlaylistItemRecord]) -> [PlaybackOrderTrack] {
+    static func playbackOrderTracks(
+        items: [PlaylistItemRecord],
+        scope: PlaylistPlaybackScope = .active
+    ) -> [PlaybackOrderTrack] {
         items.map { item in
             PlaybackOrderTrack(
                 id: item.trackID.uuidString,
                 createdAt: item.createdAt,
-                isPlayable: item.isPlayable
+                isPlayable: scope.includes(item)
             )
         }
     }
 
     static func cachedPlayableMusicTracks(
         items: [PlaylistItemRecord],
-        tracksByID: [UUID: TrackRecord]
+        tracksByID: [UUID: TrackRecord],
+        scope: PlaylistPlaybackScope = .active
     ) -> [Track] {
         items.compactMap { item in
-            guard item.isPlayable,
+            guard scope.includes(item),
                   let track = tracksByID[item.trackID],
                   let playbackData = track.musicKitPlaybackData else {
                 return nil

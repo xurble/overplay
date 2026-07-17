@@ -20,7 +20,7 @@ struct HistoryViewModelTests {
         let rows = viewModel.rows(events: events, playlists: [], tracks: [])
 
         #expect(rows.map(\.eventType) == [.evicted])
-        #expect(viewModel.emptyTitle == "No Evictions")
+        #expect(viewModel.emptyTitle == "No Retired")
     }
 
     @Test("restorable item requires matching evicted playlist item")

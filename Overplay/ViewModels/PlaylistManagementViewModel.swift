@@ -20,23 +20,25 @@ final class PlaylistManagementViewModel {
         var summary: TrackSummaryPresentation
         var isCurrent: Bool
         var isPlayable: Bool
+        var isRetired: Bool
     }
 
     struct Dependencies {
-        var playPlaylistFromTrack: (PlaylistRecord, TrackRecord, OverplaySettings, ModelContext) async -> Void
-        var playPlaylist: (PlaylistRecord, OverplaySettings, ModelContext) async -> Void
+        var playPlaylistFromTrack: (PlaylistRecord, TrackRecord, PlaylistPlaybackScope, OverplaySettings, ModelContext) async -> Void
+        var playPlaylist: (PlaylistRecord, PlaylistPlaybackScope, OverplaySettings, ModelContext) async -> Void
         var syncPlaylist: (PlaylistRecord, ModelContext) async throws -> Int
         var reconcileStoredOrder: (PlaylistRecord, ModelContext) -> Void
-        var promote: (PlaylistItemRecord, ModelContext) async throws -> Void
+        var promote: (PlaylistItemRecord, PlaylistRecord, ModelContext) async throws -> Void
         var evict: (PlaylistItemRecord, PlaylistRecord, ModelContext) throws -> Void
+        var restore: (PlaylistItemRecord, PlaylistRecord, ModelContext) throws -> Void
 
         static func live(playbackController: PlaybackController) -> Self {
             Self(
-                playPlaylistFromTrack: { playlist, track, settings, context in
-                    await playbackController.playPlaylist(playlist, startingAt: track, settings: settings, context: context)
+                playPlaylistFromTrack: { playlist, track, scope, settings, context in
+                    await playbackController.playPlaylist(playlist, startingAt: track, scope: scope, settings: settings, context: context)
                 },
-                playPlaylist: { playlist, settings, context in
-                    await playbackController.playPlaylist(playlist, settings: settings, context: context)
+                playPlaylist: { playlist, scope, settings, context in
+                    await playbackController.playPlaylist(playlist, scope: scope, settings: settings, context: context)
                 },
                 syncPlaylist: { playlist, context in
                     try await PlaylistSyncService().syncPlaylist(playlist, in: context).fetchedCount
@@ -44,16 +46,19 @@ final class PlaylistManagementViewModel {
                 reconcileStoredOrder: { playlist, context in
                     playbackController.reconcileStoredOrder(for: playlist, context: context)
                 },
-                promote: { item, context in
-                    _ = try await PlaylistMutationService().promote(item: item, in: context)
+                promote: { item, playlist, context in
+                    _ = try await playbackController.promoteTrack(item, playlist: playlist, context: context)
                 },
                 evict: { item, playlist, context in
-                    try TrackHealthActionService.evictTrack(
+                    try playbackController.retireTrack(
                         item,
                         playlist: playlist,
-                        message: "Evicted manually",
-                        in: context
+                        message: "Retired manually",
+                        context: context
                     )
+                },
+                restore: { item, playlist, context in
+                    try playbackController.restoreTrack(item, playlist: playlist, context: context)
                 }
             )
         }
@@ -62,6 +67,7 @@ final class PlaylistManagementViewModel {
     var isSyncing = false
     var promotingItemIDs = Set<UUID>()
     var evictingItemIDs = Set<UUID>()
+    var restoringItemIDs = Set<UUID>()
     var message: String?
 
     func detailPresentation(
@@ -75,24 +81,26 @@ final class PlaylistManagementViewModel {
         currentTrack: CurrentPlaybackTrack?,
         playbackItemMetadataVersion: Int = 0,
         activePlaylistSnapshot: ActivePlaylistSnapshot? = nil,
-        evictAfterSkips: Int
+        scope: PlaylistPlaybackScope = .active
     ) -> DetailPresentation {
         _ = playbackItemMetadataVersion
         if let activePlaylistSnapshot,
            activePlaylistSnapshot.musicPlaylistID == playlist.musicPlaylistID,
+           activePlaylistSnapshot.playbackScope == scope,
            currentPlaylistID == playlist.musicPlaylistID {
             return activeDetailPresentation(
                 for: playlist,
                 snapshot: activePlaylistSnapshot,
-                evictAfterSkips: evictAfterSkips
+                scope: scope
             )
         }
 
-        let visibleItems = visibleItems(for: playlist, playlistItems: playlistItems)
-        let orderedItems = PlaylistDisplayOrder.orderedItems(visibleItems, state: playbackOrderState)
+        let visibleItems = visibleItems(for: playlist, playlistItems: playlistItems, scope: scope)
+        let orderedItems = PlaylistDisplayOrder.orderedItems(visibleItems, state: playbackOrderState, scope: scope)
         let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
         let rows = orderedItems.compactMap { item -> TrackRowPresentation? in
             guard let track = tracksByID[item.trackID] else { return nil }
+            let isPlayableInScope = scope == .retired || item.isPlayable
 
             return TrackRowPresentation(
                 id: item.id,
@@ -110,7 +118,8 @@ final class PlaylistManagementViewModel {
                     artworkURLString: track.artworkURLTemplate,
                     skipCount: item.skipCount,
                     playthroughCount: item.playthroughCount,
-                    isPlayable: item.isPlayable
+                    isPlayable: isPlayableInScope,
+                    isRetired: item.evictedAt != nil
                 ),
                 isCurrent: isCurrentItem(
                     item,
@@ -121,15 +130,15 @@ final class PlaylistManagementViewModel {
                     currentLocalTrackID: currentLocalTrackID,
                     currentTrack: currentTrack
                 ),
-                isPlayable: item.isPlayable
+                isPlayable: isPlayableInScope,
+                isRetired: item.evictedAt != nil
             )
         }
         let builder = PlaylistPresentationBuilder(
             playlists: [playlist],
-            items: visibleItems,
+            items: playlistItems.filter { $0.playlistID == playlist.id },
             tracks: tracks,
-            currentPlaylistID: currentTrack == nil && currentLocalTrackID == nil ? nil : currentPlaylistID,
-            evictAfterSkips: evictAfterSkips
+            currentPlaylistID: currentTrack == nil && currentLocalTrackID == nil ? nil : currentPlaylistID
         )
 
         return DetailPresentation(
@@ -142,9 +151,12 @@ final class PlaylistManagementViewModel {
     private func activeDetailPresentation(
         for playlist: PlaylistRecord,
         snapshot: ActivePlaylistSnapshot,
-        evictAfterSkips: Int
+        scope: PlaylistPlaybackScope
     ) -> DetailPresentation {
-        let rows = snapshot.rows.map { row in
+        let visibleRows = snapshot.rows.filter { row in
+            scope == .active ? !row.isEvicted : row.isEvicted
+        }
+        let rows = visibleRows.map { row in
             TrackRowPresentation(
                 id: row.id,
                 item: nil,
@@ -161,10 +173,12 @@ final class PlaylistManagementViewModel {
                     artworkURLString: row.artworkURLString,
                     skipCount: row.skipCount,
                     playthroughCount: row.playthroughCount,
-                    isPlayable: row.isPlayable
+                    isPlayable: scope == .retired || row.isPlayable,
+                    isRetired: row.isEvicted
                 ),
                 isCurrent: row.isCurrent,
-                isPlayable: row.isPlayable
+                isPlayable: scope == .retired || row.isPlayable,
+                isRetired: row.isEvicted
             )
         }
         let playlistPresentation = PlaylistSummaryPresentation(
@@ -183,7 +197,7 @@ final class PlaylistManagementViewModel {
 
         return DetailPresentation(
             playlist: playlistPresentation,
-            summary: DashboardSummary(activeRows: snapshot.rows, evictAfterSkips: evictAfterSkips),
+            summary: DashboardSummary(activeRows: snapshot.rows),
             rows: rows
         )
     }
@@ -194,8 +208,9 @@ final class PlaylistManagementViewModel {
         playbackOrderState: PlaybackOrderState
     ) -> [PlaylistItemRecord] {
         PlaylistDisplayOrder.orderedItems(
-            visibleItems(for: playlist, playlistItems: playlistItems),
-            state: playbackOrderState
+            visibleItems(for: playlist, playlistItems: playlistItems, scope: .active),
+            state: playbackOrderState,
+            scope: .active
         )
     }
 
@@ -207,15 +222,13 @@ final class PlaylistManagementViewModel {
         for playlist: PlaylistRecord,
         playlistItems: [PlaylistItemRecord],
         tracks: [TrackRecord],
-        currentPlaylistID: String?,
-        evictAfterSkips: Int
+        currentPlaylistID: String?
     ) -> DashboardSummary {
         presentationBuilder(
             for: playlist,
             playlistItems: playlistItems,
             tracks: tracks,
-            currentPlaylistID: currentPlaylistID,
-            evictAfterSkips: evictAfterSkips
+            currentPlaylistID: currentPlaylistID
         )
         .dashboardSummary(forPlaylistID: playlist.id)
     }
@@ -224,15 +237,13 @@ final class PlaylistManagementViewModel {
         for playlist: PlaylistRecord,
         playlistItems: [PlaylistItemRecord],
         tracks: [TrackRecord],
-        currentPlaylistID: String?,
-        evictAfterSkips: Int
+        currentPlaylistID: String?
     ) -> PlaylistSummaryPresentation {
         presentationBuilder(
             for: playlist,
             playlistItems: playlistItems,
             tracks: tracks,
-            currentPlaylistID: currentPlaylistID,
-            evictAfterSkips: evictAfterSkips
+            currentPlaylistID: currentPlaylistID
         )
         .summary(for: playlist)
     }
@@ -266,22 +277,24 @@ final class PlaylistManagementViewModel {
         track: TrackRecord,
         playlist: PlaylistRecord,
         settings: OverplaySettings,
+        scope: PlaylistPlaybackScope = .active,
         context: ModelContext,
         dependencies: Dependencies
     ) async {
-        guard item.isPlayable else { return }
-        await dependencies.playPlaylistFromTrack(playlist, track, settings, context)
+        guard scope == .retired || item.isPlayable else { return }
+        await dependencies.playPlaylistFromTrack(playlist, track, scope, settings, context)
     }
 
     func playPlaylist(
         playlist: PlaylistRecord,
         settings: OverplaySettings,
+        scope: PlaylistPlaybackScope = .active,
         isCurrentPlaylist: Bool,
         context: ModelContext,
         dependencies: Dependencies
     ) async {
         guard !isCurrentPlaylist else { return }
-        await dependencies.playPlaylist(playlist, settings, context)
+        await dependencies.playPlaylist(playlist, scope, settings, context)
     }
 
     func syncPlaylist(
@@ -313,7 +326,7 @@ final class PlaylistManagementViewModel {
         defer { promotingItemIDs.remove(item.id) }
 
         do {
-            try await dependencies.promote(item, context)
+            try await dependencies.promote(item, playlist, context)
             dependencies.reconcileStoredOrder(playlist, context)
             message = "Promoted \(track.title)."
         } catch {
@@ -335,7 +348,27 @@ final class PlaylistManagementViewModel {
         do {
             try dependencies.evict(item, playlist, context)
             dependencies.reconcileStoredOrder(playlist, context)
-            message = "Evicted \(track.title)."
+            message = "Retired \(track.title)."
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    func restore(
+        _ item: PlaylistItemRecord,
+        track: TrackRecord,
+        playlist: PlaylistRecord,
+        context: ModelContext,
+        dependencies: Dependencies
+    ) async {
+        guard item.evictedAt != nil else { return }
+        restoringItemIDs.insert(item.id)
+        defer { restoringItemIDs.remove(item.id) }
+
+        do {
+            try dependencies.restore(item, playlist, context)
+            dependencies.reconcileStoredOrder(playlist, context)
+            message = "Restored \(track.title)."
         } catch {
             message = error.localizedDescription
         }
@@ -343,24 +376,23 @@ final class PlaylistManagementViewModel {
 
     private func visibleItems(
         for playlist: PlaylistRecord,
-        playlistItems: [PlaylistItemRecord]
+        playlistItems: [PlaylistItemRecord],
+        scope: PlaylistPlaybackScope
     ) -> [PlaylistItemRecord] {
-        playlistItems.filter { $0.playlistID == playlist.id }
+        playlistItems.filter { $0.playlistID == playlist.id && scope.includes($0) }
     }
 
     private func presentationBuilder(
         for playlist: PlaylistRecord,
         playlistItems: [PlaylistItemRecord],
         tracks: [TrackRecord],
-        currentPlaylistID: String?,
-        evictAfterSkips: Int
+        currentPlaylistID: String?
     ) -> PlaylistPresentationBuilder {
         PlaylistPresentationBuilder(
             playlists: [playlist],
             items: playlistItems,
             tracks: tracks,
-            currentPlaylistID: currentPlaylistID,
-            evictAfterSkips: evictAfterSkips
+            currentPlaylistID: currentPlaylistID
         )
     }
 }

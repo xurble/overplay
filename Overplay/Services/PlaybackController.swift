@@ -35,6 +35,7 @@ final class PlaybackController {
     var durationSeconds: Double?
     var isPlaying = false
     var currentPlaylistID: String?
+    var currentPlaylistScope: PlaylistPlaybackScope = .active
     var activePlaylistSnapshot: ActivePlaylistSnapshot?
     var statusMessage: String?
     private(set) var playbackItemMetadataVersion = 0
@@ -154,9 +155,26 @@ final class PlaybackController {
         "All"
     }
 
-    func playbackOrderState(for musicPlaylistID: String) -> PlaybackOrderState {
+    func playbackOrderState(
+        for musicPlaylistID: String,
+        scope: PlaylistPlaybackScope = .active,
+        items: [PlaylistItemRecord]? = nil
+    ) -> PlaybackOrderState {
         _ = playbackModeVersion
-        return PlaybackOrderStore.state(playerID: playerID, musicPlaylistID: musicPlaylistID)
+        let scopedPlaylistID = scope.playbackOrderPlaylistID(for: musicPlaylistID)
+        if let items {
+            let scopedItems = items.filter { scope.includes($0) }
+            return PlaybackOrderCoordinator.reconciledState(
+                orderTracks: PlaybackQueueBuilder.playbackOrderTracks(items: scopedItems, scope: scope),
+                playerID: playerID,
+                playlistID: scopedPlaylistID
+            )
+        }
+
+        return PlaybackOrderStore.state(
+            playerID: playerID,
+            musicPlaylistID: scopedPlaylistID
+        )
     }
 
     func startMonitoring(context: ModelContext) {
@@ -203,6 +221,7 @@ final class PlaybackController {
         durationSeconds = nil
         isPlaying = false
         currentPlaylistID = nil
+        currentPlaylistScope = .active
         activeSession = nil
         activeQueueEntries = []
         activeQueueIndex = nil
@@ -232,6 +251,7 @@ final class PlaybackController {
             }
 
             currentPlaylistID = restored.musicPlaylistID
+            currentPlaylistScope = .active
             currentPlaylistItem = restored.playlistItem
             currentTrack = restored.track
             elapsedSeconds = restored.elapsedSeconds
@@ -261,12 +281,23 @@ final class PlaybackController {
         }
     }
 
-    func playPlaylist(_ playlist: PlaylistRecord, settings: OverplaySettings, context: ModelContext) async {
-        await startPlaylistPlayback(playlist, startingAt: nil, settings: settings, context: context)
+    func playPlaylist(
+        _ playlist: PlaylistRecord,
+        scope: PlaylistPlaybackScope = .active,
+        settings: OverplaySettings,
+        context: ModelContext
+    ) async {
+        await startPlaylistPlayback(playlist, startingAt: nil, scope: scope, settings: settings, context: context)
     }
 
-    func playPlaylist(_ playlist: PlaylistRecord, startingAt track: TrackRecord, settings: OverplaySettings, context: ModelContext) async {
-        await startPlaylistPlayback(playlist, startingAt: track, settings: settings, context: context)
+    func playPlaylist(
+        _ playlist: PlaylistRecord,
+        startingAt track: TrackRecord,
+        scope: PlaylistPlaybackScope = .active,
+        settings: OverplaySettings,
+        context: ModelContext
+    ) async {
+        await startPlaylistPlayback(playlist, startingAt: track, scope: scope, settings: settings, context: context)
     }
 
     func isCurrentPlaylist(_ playlist: PlaylistRecord) -> Bool {
@@ -276,6 +307,7 @@ final class PlaybackController {
     private func startPlaylistPlayback(
         _ playlist: PlaylistRecord,
         startingAt trackRecord: TrackRecord?,
+        scope: PlaylistPlaybackScope,
         settings: OverplaySettings,
         context: ModelContext
     ) async {
@@ -285,21 +317,23 @@ final class PlaybackController {
                 for: playlist.musicPlaylistID,
                 playerID: playerID,
                 startingTrackID: startingTrackID,
+                scope: scope,
                 in: context
             )
             guard !queueEntries.isEmpty else {
-                statusMessage = "No locally cached playable tracks for \(playlist.name). Sync this playlist before playing."
+                statusMessage = "No locally cached \(scope.title.lowercased()) tracks for \(playlist.name)."
                 return
             }
             if let startingTrackID,
                !queueEntries.contains(where: { $0.localTrackID == startingTrackID }) {
-                statusMessage = "That track is not playable in this playlist."
+                statusMessage = "That track is not in the \(scope.title.lowercased()) playlist."
                 return
             }
 
             try await startPlayback(
                 queueEntries: queueEntries,
                 playlistID: playlist.musicPlaylistID,
+                scope: scope,
                 startingAt: startingTrackID,
                 outgoingSessionSettings: settings,
                 context: context
@@ -364,12 +398,13 @@ final class PlaybackController {
     private func startPlayback(
         queueEntries: [PlaybackQueueEntry],
         playlistID: String,
+        scope: PlaylistPlaybackScope = .active,
         startingAt localTrackID: String?,
         outgoingSessionSettings: OverplaySettings? = nil,
         context: ModelContext
     ) async throws {
         guard !queueEntries.isEmpty else {
-            statusMessage = "No playable tracks remain after local evictions."
+            statusMessage = "No playable tracks remain after local retirements."
             return
         }
 
@@ -399,6 +434,7 @@ final class PlaybackController {
         )
         try await player.play()
         currentPlaylistID = playlistID
+        currentPlaylistScope = scope
         await ArtworkCacheService.shared.touchPlaylistUsage(playlistID)
         statusMessage = nil
         rebuildActivePlaylistSnapshot(context: context)
@@ -608,18 +644,19 @@ final class PlaybackController {
 
         do {
             let inputs = try PlaybackQueueOrchestrator.playlistInputs(for: currentPlaylistID, in: context)
+            let scopedItems = inputs.items.filter { currentPlaylistScope.includes($0) }
             let currentLocalTrackID = currentPlaylistItem?.trackID.uuidString
                 ?? activeQueueCurrentLocalTrackID
                 ?? currentTrack.flatMap { localTrackID(matching: $0.id, context: context) }
             let orderedTrackIDs = PlaybackOrderCoordinator.reshuffle(
                 playerID: playerID,
-                playlistID: currentPlaylistID,
-                orderTracks: PlaybackQueueBuilder.playbackOrderTracks(items: inputs.items),
+                playlistID: currentPlaylistScope.playbackOrderPlaylistID(for: currentPlaylistID),
+                orderTracks: PlaybackQueueBuilder.playbackOrderTracks(items: scopedItems, scope: currentPlaylistScope),
                 avoiding: currentLocalTrackID
             )
             let queueEntries = PlaybackQueueOrchestrator.cachedQueueEntries(
                 orderedTrackIDs: orderedTrackIDs,
-                itemsByTrackID: inputs.items.firstValueDictionary(keyedBy: \.trackID),
+                itemsByTrackID: scopedItems.firstValueDictionary(keyedBy: \.trackID),
                 tracksByID: inputs.tracksByID
             )
             disableMusicKitPlaybackModes()
@@ -627,6 +664,7 @@ final class PlaybackController {
             try await startPlayback(
                 queueEntries: queueEntries,
                 playlistID: currentPlaylistID,
+                scope: currentPlaylistScope,
                 startingAt: queueEntries.first?.localTrackID,
                 context: context
             )
@@ -721,6 +759,7 @@ final class PlaybackController {
             let queueEntries = try PlaybackQueueOrchestrator.orderedCachedQueueEntries(
                 for: currentPlaylistID,
                 playerID: playerID,
+                scope: currentPlaylistScope,
                 retainedTrackID: currentLocalTrackID,
                 in: context
             )
@@ -761,7 +800,7 @@ final class PlaybackController {
         }
 
         do {
-            try TrackHealthActionService.keepCurrentTrack(
+            try TrackActionService.keepCurrentTrack(
                 target.item,
                 playlist: target.playlist,
                 protect: settings.protectKeptTracks,
@@ -784,7 +823,7 @@ final class PlaybackController {
         }
 
         do {
-            _ = try await PlaylistMutationService().promote(item: target.item, in: context)
+            try await promoteTrack(target.item, playlist: target.playlist, context: context)
         } catch {
             statusMessage = error.localizedDescription
             return
@@ -804,7 +843,7 @@ final class PlaybackController {
         }
 
         do {
-            try TrackHealthActionService.protectTrack(
+            try TrackActionService.protectTrack(
                 target.item,
                 playlist: target.playlist,
                 message: message,
@@ -833,7 +872,7 @@ final class PlaybackController {
 
         let shouldProtect = !target.item.protected
         do {
-            try TrackHealthActionService.setProtected(
+            try TrackActionService.setProtected(
                 target.item,
                 playlist: target.playlist,
                 isProtected: shouldProtect,
@@ -858,7 +897,7 @@ final class PlaybackController {
         }
 
         do {
-            try TrackHealthActionService.resetSkipCount(
+            try TrackActionService.resetSkipCount(
                 target.item,
                 playlist: target.playlist,
                 message: message,
@@ -885,23 +924,74 @@ final class PlaybackController {
         playlist: PlaylistRecord?,
         context: ModelContext
     ) throws {
-        try TrackHealthActionService.restoreTrack(item, playlist: playlist, in: context)
+        try TrackActionService.restoreTrack(item, playlist: playlist, in: context)
+        if let playlist {
+            movePlaylistItemToBottom(item, playlist: playlist, scope: .active, context: context)
+        }
         refreshCurrentPlaybackMetadata(context: context)
         rebuildActivePlaylistSnapshot(context: context)
     }
 
+    @discardableResult
+    func promoteTrack(
+        _ item: PlaylistItemRecord,
+        playlist: PlaylistRecord,
+        context: ModelContext
+    ) async throws -> PlaylistItemRecord {
+        let promotedItem = try await PlaylistMutationService().promote(item: item, in: context)
+        if item.evictedAt != nil {
+            movePlaylistItemToBottom(item, playlist: playlist, scope: .retired, context: context)
+        }
+        refreshCurrentPlaybackMetadata(context: context)
+        rebuildActivePlaylistSnapshot(context: context)
+        return promotedItem
+    }
+
+    func retireTrack(
+        _ item: PlaylistItemRecord,
+        playlist: PlaylistRecord,
+        message: String,
+        context: ModelContext
+    ) throws {
+        try TrackActionService.evictTrack(item, playlist: playlist, message: message, in: context)
+        movePlaylistItemToBottom(item, playlist: playlist, scope: .retired, context: context)
+        refreshCurrentPlaybackMetadata(context: context)
+        rebuildActivePlaylistSnapshot(context: context)
+    }
+
+    @discardableResult
+    func restoreCurrent(context: ModelContext) -> Bool {
+        guard let target = currentPlaybackTarget(context: context) else {
+            statusMessage = "Choose a retired track to restore."
+            return false
+        }
+
+        do {
+            try TrackActionService.restoreTrack(target.item, playlist: target.playlist, in: context)
+        } catch {
+            statusMessage = error.localizedDescription
+            return false
+        }
+        movePlaylistItemToBottom(target.item, playlist: target.playlist, scope: .active, context: context)
+        currentPlaylistItem = target.item
+        syncPlaybackMetadata(for: target.musicItemID, trustedPlaylistItem: target.item, context: context)
+        rebuildActivePlaylistSnapshot(context: context)
+        statusMessage = "Restored \(currentTrack?.title ?? "track")."
+        return true
+    }
+
     func evictCurrent(settings: OverplaySettings, context: ModelContext) async {
         guard let target = currentPlaybackTarget(context: context) else {
-            statusMessage = "Choose a linked playlist track to evict."
+            statusMessage = "Choose a linked playlist track to retire."
             return
         }
 
         do {
-            try TrackHealthActionService.evictTrack(
+            try retireTrack(
                 target.item,
                 playlist: target.playlist,
-                message: "Evicted manually",
-                in: context
+                message: "Retired manually",
+                context: context
             )
         } catch {
             statusMessage = error.localizedDescription
@@ -911,6 +1001,27 @@ final class PlaybackController {
         rebuildActivePlaylistSnapshot(context: context)
         await removeEvictedItemFromPlaylist(target.item, playlist: target.playlist, context: context)
         await next(settings: settings, context: context)
+    }
+
+    private func movePlaylistItemToBottom(
+        _ item: PlaylistItemRecord,
+        playlist: PlaylistRecord,
+        scope: PlaylistPlaybackScope,
+        context: ModelContext
+    ) {
+        do {
+            let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
+            PlaybackOrderCoordinator.moveTrackIDToBottom(
+                item.trackID.uuidString,
+                playerID: playerID,
+                playlistID: playlist.musicPlaylistID,
+                items: items,
+                targetScope: scope
+            )
+            playbackModeVersion += 1
+        } catch {
+            statusMessage = "Updated \(item.trackID.uuidString), but refreshing playlist order failed: \(error.localizedDescription)"
+        }
     }
 
     private func refresh(context: ModelContext) async {
@@ -1048,6 +1159,7 @@ final class PlaybackController {
             activeQueueEntries = []
             activeQueueIndex = nil
             currentPlaylistID = nil
+            currentPlaylistScope = .active
             activePlaylistSnapshot = nil
             prefetchedArtworkTrackID = nil
         }
@@ -1179,9 +1291,9 @@ final class PlaybackController {
         guard item.evictedAt != nil else { return }
         guard PlaylistRemoteMutationPolicy.shouldDeleteRemotelyAfterEviction(item: item, playlist: playlist) else {
             statusMessage = if playlist.role != .oneTruePlaylist {
-                "Evicted locally. Remote deletes only apply to the One True Playlist."
+                "Retired locally. Remote deletes only apply to the One True Playlist."
             } else {
-                "Evicted locally. \(playlist.name) is incoming only, so Apple Music was not changed."
+                "Retired locally. \(playlist.name) is incoming only, so Apple Music was not changed."
             }
             return
         }
@@ -1194,7 +1306,7 @@ final class PlaybackController {
             try await PlaylistSyncService().removeTrackFromPlaylist(trackID: trackID, playlistID: playlist.musicPlaylistID)
             statusMessage = "Removed \(currentTrack?.title ?? "track") from the Apple Music playlist."
         } catch {
-            statusMessage = "Evicted locally, but Apple Music playlist removal failed: \(error.localizedDescription)"
+            statusMessage = "Retired locally, but Apple Music playlist removal failed: \(error.localizedDescription)"
         }
     }
 
@@ -1253,6 +1365,11 @@ final class PlaybackController {
                 trustedPlaylistItem: outcome.item,
                 context: context
             )
+        }
+        if outcome.evictedDuringEvaluation,
+           let item = outcome.item,
+           let playlist = outcome.playlist {
+            movePlaylistItemToBottom(item, playlist: playlist, scope: .retired, context: context)
         }
         if shouldRefreshActivePlaylist {
             rebuildActivePlaylistSnapshot(context: context)
@@ -1821,6 +1938,7 @@ final class PlaybackController {
             let queueEntries = try PlaybackQueueOrchestrator.reshuffledQueueEntries(
                 playlistID: currentPlaylistID,
                 playerID: playerID,
+                scope: currentPlaylistScope,
                 avoiding: lastLocalTrackID ?? localTrackID(
                     matching: lastMusicItemID,
                     playlistID: currentPlaylistID,
@@ -1853,14 +1971,22 @@ final class PlaybackController {
     /// to track the current entry. Duplicate cleanup happens in the track
     /// identity merge pass at startup and after sync, not here.
     func reconcileStoredOrder(for playlist: PlaylistRecord, context: ModelContext) {
-        let currentLocalTrackID = currentPlaylistID == playlist.musicPlaylistID ? currentPlaylistItem?.trackID.uuidString : nil
+        let currentLocalTrackID = currentPlaylistID == playlist.musicPlaylistID && currentPlaylistScope == .active
+            ? currentPlaylistItem?.trackID.uuidString
+            : nil
         do {
             let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
-            let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: items)
-            let previousState = PlaybackOrderStore.state(playerID: playerID, musicPlaylistID: playlist.musicPlaylistID)
+            let activeItems = items.filter { PlaylistPlaybackScope.active.includes($0) }
+            let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: activeItems)
+            let previousState = PlaybackOrderStore.state(
+                playerID: playerID,
+                musicPlaylistID: PlaylistPlaybackScope.active.playbackOrderPlaylistID(for: playlist.musicPlaylistID)
+            )
             let playableOrder = PlaybackOrderEngine.normalOrder(for: orderTracks, includeUnplayableTrackID: currentLocalTrackID)
             let reconciledOrder: [String]
-            if currentPlaylistID == playlist.musicPlaylistID, !previousState.orderedTrackIDs.isEmpty {
+            if currentPlaylistID == playlist.musicPlaylistID,
+               currentPlaylistScope == .active,
+               !previousState.orderedTrackIDs.isEmpty {
                 let existingSet = Set(previousState.orderedTrackIDs)
                 reconciledOrder = previousState.orderedTrackIDs + playableOrder.filter { !existingSet.contains($0) }
             } else {
@@ -1882,7 +2008,9 @@ final class PlaybackController {
                 playbackModeVersion += 1
                 let previousSet = Set(previousState.orderedTrackIDs)
                 let appendedIDs = reconciledOrder.filter { !previousSet.contains($0) }
-                if currentPlaylistID == playlist.musicPlaylistID, !appendedIDs.isEmpty {
+                if currentPlaylistID == playlist.musicPlaylistID,
+                   currentPlaylistScope == .active,
+                   !appendedIDs.isEmpty {
                     Task { @MainActor [weak self] in
                         await self?.appendLiveQueueEntries(
                             localTrackIDs: appendedIDs,
@@ -1940,8 +2068,9 @@ final class PlaybackController {
                 tracks: tracks,
                 playbackOrderState: PlaybackOrderStore.state(
                     playerID: playerID,
-                    musicPlaylistID: currentPlaylistID
+                    musicPlaylistID: currentPlaylistScope.playbackOrderPlaylistID(for: currentPlaylistID)
                 ),
+                playbackScope: currentPlaylistScope,
                 currentPlaylistItemID: currentPlaylistItem?.id,
                 currentLocalTrackID: nowPlayingDisplayLocalTrackID,
                 currentMusicItemID: nowPlayingDisplayTrack?.id ?? currentTrack?.id

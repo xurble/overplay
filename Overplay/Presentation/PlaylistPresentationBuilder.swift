@@ -5,20 +5,17 @@ struct PlaylistPresentationBuilder {
     private let items: [PlaylistItemRecord]
     private let tracksByID: [UUID: TrackRecord]
     private let currentPlaylistID: String?
-    private let evictAfterSkips: Int
 
     init(
         playlists: [PlaylistRecord],
         items: [PlaylistItemRecord],
         tracks: [TrackRecord],
-        currentPlaylistID: String? = nil,
-        evictAfterSkips: Int
+        currentPlaylistID: String? = nil
     ) {
         self.playlists = playlists
         self.items = items
         self.tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
         self.currentPlaylistID = currentPlaylistID
-        self.evictAfterSkips = evictAfterSkips
     }
 
     func activePlaylistSummaries() -> [PlaylistSummaryPresentation] {
@@ -35,17 +32,18 @@ struct PlaylistPresentationBuilder {
     }
 
     func dashboardSummary(forPlaylistID playlistID: UUID) -> DashboardSummary {
-        DashboardSummary(items: itemsForPlaylist(playlistID), evictAfterSkips: evictAfterSkips)
+        DashboardSummary(items: itemsForPlaylist(playlistID))
     }
 
     func trackSummaries(
         forPlaylistID playlistID: UUID,
-        playbackOrderState: PlaybackOrderState? = nil
+        playbackOrderState: PlaybackOrderState? = nil,
+        scope: PlaylistPlaybackScope = .active
     ) -> [TrackSummaryPresentation] {
-        let playableItems = itemsForPlaylist(playlistID).filter(\.isPlayable)
+        let scopedItems = itemsForPlaylist(playlistID).filter { scope.includes($0) }
         let orderedItems = playbackOrderState.map {
-            PlaylistDisplayOrder.orderedItems(playableItems, state: $0)
-        } ?? playableItems.sorted(by: areItemsInPlaylistOrder)
+            PlaylistDisplayOrder.orderedItems(scopedItems, state: $0, scope: scope)
+        } ?? scopedItems.sorted(by: areItemsInPlaylistOrder)
 
         return orderedItems.compactMap { item in
             guard let track = tracksByID[item.trackID] else { return nil }
@@ -60,7 +58,8 @@ struct PlaylistPresentationBuilder {
                 artworkURLString: track.artworkURLTemplate,
                 skipCount: item.skipCount,
                 playthroughCount: item.playthroughCount,
-                isPlayable: item.isPlayable
+                isPlayable: scope == .retired || item.isPlayable,
+                isRetired: item.evictedAt != nil
             )
         }
     }

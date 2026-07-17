@@ -1,7 +1,7 @@
 import Foundation
 import SwiftData
 
-enum TrackHealthActionService {
+enum TrackActionService {
     static func keepCurrentTrack(
         _ item: PlaylistItemRecord,
         playlist: PlaylistRecord,

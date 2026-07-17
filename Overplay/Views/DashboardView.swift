@@ -119,8 +119,7 @@ struct DashboardView: View {
             playlists: playlists,
             items: playlistItems,
             tracks: tracks,
-            currentPlaylistID: playbackController.currentTrack != nil ? playbackController.currentPlaylistID : nil,
-            evictAfterSkips: settings.evictAfterSkips
+            currentPlaylistID: playbackController.currentTrack != nil ? playbackController.currentPlaylistID : nil
         )
     }
 

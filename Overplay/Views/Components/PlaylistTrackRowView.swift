@@ -38,7 +38,7 @@ struct PlaylistTrackRowView: View {
 
             Spacer()
 
-            Text(summary.healthMetricLabel)
+            Text(summary.playSkipMetricLabel)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

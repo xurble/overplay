@@ -21,7 +21,7 @@ struct NowPlayingPresentation: Equatable, Sendable {
     let skipCount: Int
     let playthroughCount: Int
     let skipCountText: String
-    let healthMetricText: String
+    let playSkipMetricText: String
     let isEvicted: Bool
     let isProtected: Bool
 
@@ -39,7 +39,6 @@ struct NowPlayingPresentation: Equatable, Sendable {
         playthroughThresholdPercentage: Double = 90,
         skipCount: Int,
         playthroughCount: Int = 0,
-        evictAfterSkips: Int,
         isEvicted: Bool,
         isProtected: Bool
     ) {
@@ -63,8 +62,7 @@ struct NowPlayingPresentation: Equatable, Sendable {
         self.skipCount = skipCount
         self.playthroughCount = playthroughCount
         self.skipCountText = Self.pluralized(skipCount, singular: "skip")
-        self.healthMetricText = "\(Self.pluralized(playthroughCount, singular: "play")) / \(Self.pluralized(skipCount, singular: "skip"))"
-        _ = evictAfterSkips
+        self.playSkipMetricText = "\(Self.pluralized(playthroughCount, singular: "play")) / \(Self.pluralized(skipCount, singular: "skip"))"
         self.isEvicted = isEvicted
         self.isProtected = isProtected
     }

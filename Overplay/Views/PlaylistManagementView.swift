@@ -13,6 +13,7 @@ struct PlaylistManagementView: View {
     @State private var viewModel = PlaylistManagementViewModel()
     @State private var tracks: [TrackRecord] = []
     @State private var isScrolling = false
+    @State private var selectedScope: PlaylistPlaybackScope = .active
 
     init(settings: OverplaySettings, playlist: PlaylistRecord) {
         self.settings = settings
@@ -45,33 +46,39 @@ struct PlaylistManagementView: View {
             }
 
             Section {
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    StatCardView(title: "Known", value: "\(detail.summary.knownCount)", systemImage: "music.note.list", tint: .pink)
-                    StatCardView(title: "Playable", value: "\(detail.summary.playableCount)", systemImage: "play.circle.fill", tint: .green)
-                    StatCardView(title: "Evicted", value: "\(detail.summary.evictedCount)", systemImage: "trash.fill", tint: .red)
-                    StatCardView(title: "Skipped", value: "\(detail.summary.atRiskCount)", systemImage: "forward.end.fill", tint: .orange)
+                Picker("Playlist Tracks", selection: $selectedScope) {
+                    ForEach(PlaylistPlaybackScope.allCases) { scope in
+                        Text(scope.title).tag(scope)
+                    }
                 }
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .pickerStyle(.segmented)
             }
 
-            Section("Tracks") {
+            Section(selectedScope.title) {
                 if detail.rows.isEmpty {
                     ContentUnavailableView(
-                        "No Tracks",
+                        "No \(selectedScope.title) Tracks",
                         systemImage: "music.note.list",
-                        description: Text("Sync this playlist to load its tracks.")
+                        description: Text(selectedScope == .active ? "Sync this playlist to load its tracks." : "Retired tracks will appear here.")
                     )
                 }
 
                 ForEach(detail.rows) { row in
                     playlistTrackButton(for: row)
                         .swipeActions(edge: .trailing) {
-                            if row.isPlayable {
+                            if row.isRetired {
+                                Button {
+                                    Task { await restore(row) }
+                                } label: {
+                                    Label("Restore", systemImage: "arrow.uturn.backward.circle.fill")
+                                }
+                                .tint(.green)
+                                .disabled(viewModel.restoringItemIDs.contains(row.id))
+                            } else if row.isPlayable {
                                 Button(role: .destructive) {
                                     Task { await evict(row) }
                                 } label: {
-                                    Label("Evict Now", systemImage: "trash.fill")
+                                    Label("Retire", systemImage: "trash.fill")
                                 }
                                 .disabled(viewModel.evictingItemIDs.contains(row.id))
 
@@ -114,7 +121,10 @@ struct PlaylistManagementView: View {
                     Button {
                         Task { await playPlaylist() }
                     } label: {
-                        Label(viewModel.playButtonTitle(isCurrentPlaylist: playbackController.isCurrentPlaylist(playlist)), systemImage: "play.fill")
+                        Label(
+                            viewModel.playButtonTitle(isCurrentPlaylist: isCurrentPlaylistScope),
+                            systemImage: "play.fill"
+                        )
                     }
 
                     Button {
@@ -151,19 +161,31 @@ struct PlaylistManagementView: View {
         }
     }
 
+    private var selectedPlaybackOrderState: PlaybackOrderState {
+        playbackController.playbackOrderState(
+            for: playlist.musicPlaylistID,
+            scope: selectedScope,
+            items: playlistItems
+        )
+    }
+
+    private var isCurrentPlaylistScope: Bool {
+        playbackController.isCurrentPlaylist(playlist) && playbackController.currentPlaylistScope == selectedScope
+    }
+
     private var detailPresentation: PlaylistManagementViewModel.DetailPresentation {
         viewModel.detailPresentation(
             for: playlist,
             playlistItems: playlistItems,
             tracks: tracks,
-            playbackOrderState: playbackController.playbackOrderState(for: playlist.musicPlaylistID),
+            playbackOrderState: selectedPlaybackOrderState,
             currentPlaylistID: playbackController.currentPlaylistID,
             currentPlaylistItem: playbackController.currentPlaylistItem,
             currentLocalTrackID: playbackController.nowPlayingDisplayLocalTrackID,
             currentTrack: playbackController.nowPlayingDisplayTrack,
             playbackItemMetadataVersion: playbackController.playbackItemMetadataVersion,
             activePlaylistSnapshot: playbackController.activePlaylistSnapshot,
-            evictAfterSkips: settings.evictAfterSkips
+            scope: selectedScope
         )
     }
 
@@ -233,6 +255,7 @@ struct PlaylistManagementView: View {
             track: track,
             playlist: playlist,
             settings: settings,
+            scope: selectedScope,
             context: modelContext,
             dependencies: dependencies
         )
@@ -242,7 +265,8 @@ struct PlaylistManagementView: View {
         await viewModel.playPlaylist(
             playlist: playlist,
             settings: settings,
-            isCurrentPlaylist: playbackController.isCurrentPlaylist(playlist),
+            scope: selectedScope,
+            isCurrentPlaylist: isCurrentPlaylistScope,
             context: modelContext,
             dependencies: dependencies
         )
@@ -275,6 +299,21 @@ struct PlaylistManagementView: View {
 
     private func evict(_ item: PlaylistItemRecord, track: TrackRecord) async {
         await viewModel.evict(
+            item,
+            track: track,
+            playlist: playlist,
+            context: modelContext,
+            dependencies: dependencies
+        )
+    }
+
+    private func restore(_ row: PlaylistManagementViewModel.TrackRowPresentation) async {
+        guard let resolved = resolvedItemAndTrack(for: row) else { return }
+        await restore(resolved.item, track: resolved.track)
+    }
+
+    private func restore(_ item: PlaylistItemRecord, track: TrackRecord) async {
+        await viewModel.restore(
             item,
             track: track,
             playlist: playlist,

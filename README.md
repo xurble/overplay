@@ -2,7 +2,7 @@
 
 Overplay is an Apple Music companion app that helps keep a main playlist
 fresh. It tracks how often you play through or skip each track, presents that
-per-playlist track health, and makes it easy to evict tracks that keep
+per-playlist play/skip history, and makes it easy to retire tracks that keep
 getting skipped. It currently runs on iPhone (with CarPlay support); iPad
 layouts exist via the adaptive shell, and a native Mac target is planned.
 
@@ -16,21 +16,28 @@ songs into the main playlist.
 
 Overplay syncs linked Apple Music playlists into its own SwiftData store. It
 tracks skip counts, playthrough counts, playlist membership, promotions, and
-eviction history separately from Apple Music's global play count or skip
+retirement history separately from Apple Music's global play count or skip
 count. Skips and playthroughs are counted per playlist item, from witnessed
 listening time — a transition only counts as a skip if the app actually
 observed enough of the session, so playback that happens while Overplay is
 suspended never produces phantom skips.
 
-Eviction is a **manual user action**: Overplay surfaces track health
-(playthroughs versus skips) for every linked playlist, and the user decides
-when to evict. Promotion moves a track from a triage playlist into the One
-True Playlist.
+Retirement is the user-facing state for tracks removed from Active playback:
+Overplay surfaces playthroughs versus skips for every linked
+playlist, and tracks are retired by explicit user action. Promotion moves a
+track from a triage playlist into the One True Playlist.
 
-When a track is evicted, Overplay always records the event locally. If Apple
+Playlist detail on iOS is split into **Active** and **Retired** views. Active
+contains the playable playlist; Retired contains locally retired tracks and can
+be played as its own playlist context in the app. Restoring a retired track
+makes it active again. Both Active and Retired lists follow device-local
+persisted playback order, seeded by the last randomization, rather than raw
+database order.
+
+When a track is retired, Overplay always records the event locally. If Apple
 Music allows the app to remove the track from the linked playlist, Overplay
 tries to do that too. If remote deletion is unavailable or fails, Overplay
-keeps the local eviction and filters the track out of future playback.
+keeps the local retirement and filters the track out of Active playback.
 
 ## Playback
 
@@ -44,7 +51,7 @@ the same as a skip in the app.
 ## Sync and Data
 
 Shared app data is backed by iCloud/CloudKit so devices on the same account
-can share playlist definitions, track stats, promotions, and eviction
+can share playlist definitions, track stats, promotions, and retirement
 history. Linked playlists are periodically re-synced from Apple Music, with
 additions, removals, and reordering reconciled into the local store.
 
@@ -95,7 +102,7 @@ Developer portal and in the Xcode target for the identifiers you use.
 
 The core product loop is in place: linked playlist management, periodic sync
 with reconciliation, playback with per-playlist shuffle order, skip and
-playthrough tracking, manual eviction and promotion, unified history, search
+playthrough tracking, manual retirement and promotion, unified history, search
 and manual add, CarPlay, and the adaptive iPhone/iPad shell. Remaining
 roadmap work is iPad experience refinement and the native Mac target
 alongside the open product, verification, performance, and release-hardening

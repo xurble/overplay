@@ -116,7 +116,6 @@ struct PlaybackControllerDisplayRestoreTests {
         let fixture = try makeTwoTrackFixture()
         let controller = PlaybackController()
         let settings = OverplaySettings(
-            evictAfterSkips: 3,
             skipThresholdPercentage: 50,
             minimumSkipListeningSeconds: 0
         )
@@ -147,7 +146,6 @@ struct PlaybackControllerDisplayRestoreTests {
         let fixture = try makeTwoTrackFixture()
         let controller = PlaybackController()
         let settings = OverplaySettings(
-            evictAfterSkips: 3,
             skipThresholdPercentage: 50,
             minimumSkipListeningSeconds: 0
         )
@@ -178,7 +176,6 @@ struct PlaybackControllerDisplayRestoreTests {
         let fixture = try makeTwoPlaylistFixture()
         let controller = PlaybackController()
         let settings = OverplaySettings(
-            evictAfterSkips: 3,
             skipThresholdPercentage: 50,
             minimumSkipListeningSeconds: 0
         )
@@ -262,7 +259,6 @@ struct PlaybackControllerDisplayRestoreTests {
         let fixture = try makeTwoPlaylistFixture()
         let controller = PlaybackController()
         let settings = OverplaySettings(
-            evictAfterSkips: 3,
             skipThresholdPercentage: 50,
             minimumSkipListeningSeconds: 0
         )
@@ -750,5 +746,88 @@ struct PlaybackControllerDisplayRestoreTests {
         #expect(!controller.displayedIsEvicted)
         #expect(controller.activePlaylistSnapshot?.rows.first?.isEvicted == false)
         #expect(controller.playbackItemMetadataVersion > previousMetadataVersion)
+    }
+
+    @Test("retire and restore move tracks to bottom of destination order")
+    func retireAndRestoreMoveTracksToBottomOfDestinationOrder() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playerID = "test-\(UUID().uuidString)"
+        let controller = PlaybackController(playerID: playerID)
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "playlist-\(UUID().uuidString)",
+            name: "Main",
+            role: .oneTruePlaylist
+        )
+        let activeFirst = TrackRecord(title: "First", artistName: "Artist")
+        let activeSecond = TrackRecord(title: "Second", artistName: "Artist")
+        let changedTrack = TrackRecord(title: "Changed", artistName: "Artist")
+        let retiredTrack = TrackRecord(title: "Retired", artistName: "Artist")
+        let activeFirstItem = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: activeFirst.id,
+            createdAt: Date(timeIntervalSince1970: 10)
+        )
+        let activeSecondItem = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: activeSecond.id,
+            createdAt: Date(timeIntervalSince1970: 20)
+        )
+        let changedItem = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: changedTrack.id,
+            createdAt: Date(timeIntervalSince1970: 30)
+        )
+        let retiredItem = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: retiredTrack.id,
+            evictedAt: Date(timeIntervalSince1970: 100),
+            createdAt: Date(timeIntervalSince1970: 5)
+        )
+        context.insert(playlist)
+        [activeFirst, activeSecond, changedTrack, retiredTrack].forEach(context.insert)
+        [activeFirstItem, activeSecondItem, changedItem, retiredItem].forEach(context.insert)
+        try context.save()
+
+        let activePlaylistID = playlist.musicPlaylistID
+        let retiredPlaylistID = PlaylistPlaybackScope.retired.playbackOrderPlaylistID(for: activePlaylistID)
+        defer {
+            PlaybackOrderStore.clear(playerID: playerID, musicPlaylistID: activePlaylistID)
+            PlaybackOrderStore.clear(playerID: playerID, musicPlaylistID: retiredPlaylistID)
+        }
+
+        PlaybackOrderStore.save(
+            PlaybackOrderState(
+                playerID: playerID,
+                musicPlaylistID: activePlaylistID,
+                orderedTrackIDs: [
+                    changedTrack.id.uuidString,
+                    activeSecond.id.uuidString,
+                    activeFirst.id.uuidString
+                ]
+            )
+        )
+
+        try controller.retireTrack(changedItem, playlist: playlist, message: "Retired manually", context: context)
+
+        #expect(PlaybackOrderStore.state(playerID: playerID, musicPlaylistID: activePlaylistID).orderedTrackIDs == [
+            activeSecond.id.uuidString,
+            activeFirst.id.uuidString
+        ])
+        #expect(PlaybackOrderStore.state(playerID: playerID, musicPlaylistID: retiredPlaylistID).orderedTrackIDs == [
+            retiredTrack.id.uuidString,
+            changedTrack.id.uuidString
+        ])
+
+        try controller.restoreTrack(changedItem, playlist: playlist, context: context)
+
+        #expect(PlaybackOrderStore.state(playerID: playerID, musicPlaylistID: activePlaylistID).orderedTrackIDs == [
+            activeSecond.id.uuidString,
+            activeFirst.id.uuidString,
+            changedTrack.id.uuidString
+        ])
+        #expect(PlaybackOrderStore.state(playerID: playerID, musicPlaylistID: retiredPlaylistID).orderedTrackIDs == [
+            retiredTrack.id.uuidString
+        ])
     }
 }

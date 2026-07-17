@@ -22,7 +22,7 @@ struct NowPlayingView: View {
 
                     NowPlayingTrackTextView(presentation: nowPlayingPresentation)
                     NowPlayingProgressView(presentation: nowPlayingPresentation)
-                    TrackHealthStatusView(presentation: nowPlayingPresentation)
+                    TrackPlaybackFactsView(presentation: nowPlayingPresentation)
                     PlaybackControlsView(settings: settings)
                     secondaryControls(settings: settings)
 

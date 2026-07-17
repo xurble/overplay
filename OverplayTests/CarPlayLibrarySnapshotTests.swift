@@ -33,7 +33,6 @@ struct CarPlayLibrarySnapshotTests {
             playlists: [oneTrue, triage],
             items: try PlaylistItemRepository.allItems(in: context),
             tracks: [playableTrack, evictedTrack, inactiveTrack],
-            evictAfterSkips: 0
         )
         .activePlaylistSummaries()
 
@@ -88,7 +87,6 @@ struct CarPlayLibrarySnapshotTests {
             playlists: [playlist],
             items: try PlaylistItemRepository.playableItems(forPlaylistID: playlist.id, in: context),
             tracks: [firstTrack, secondTrack, evictedTrack],
-            evictAfterSkips: 3
         )
         .trackSummaries(forPlaylistID: playlist.id)
 

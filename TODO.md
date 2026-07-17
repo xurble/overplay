@@ -68,9 +68,10 @@ Verification:
 
 ### CarPlay
 
-- Add at-risk tracks if the interaction fits safely within CarPlay templates.
-- Add recently evicted tracks if useful while driving.
-- Continue routing all controls through shared playback and track-health
+- Add skip-history browsing if the interaction fits safely within CarPlay templates.
+- Keep browsing focused on Active playlists; Retired content should only appear
+  when it is the current playback context started elsewhere.
+- Continue routing all controls through shared playback and track action
   services.
 
 ### Now Playing Metadata
@@ -84,15 +85,12 @@ The implementation currently differs from the design spec in these areas.
 Resolve each by either updating the spec to match the product decision or
 changing the implementation.
 
-- Default `evictAfterSkips` is `6`; the spec says `3`.
-- Triage playlists can auto-evict when `triageAutoEvictsOnSkipCount` is enabled;
-  the spec says count-based eviction applies only to the One True Playlist.
-- Promotion locally evicts the source triage item after a successful promotion;
-  the spec says leave the source unchanged unless a future setting says
-  otherwise.
+- Promotion locally retires the source triage item after a successful
+  promotion; the spec says leave the source unchanged unless a future setting
+  says otherwise.
 - Remote deletion is attempted only for managed Apple Music One True Playlist
-  items; the spec says manual eviction should attempt removal when supported.
-- Playlist-row eviction is local-only and does not use the current-track remote
+  items; the spec says manual retirement should attempt removal when supported.
+- Playlist-row retirement is local-only and does not use the current-track remote
   deletion path.
 - Search only offers active playlists that allow remote writes; the spec says
   users can add tracks to any linked playlist.
@@ -146,7 +144,7 @@ physical device with an Apple Music subscription.
   events.
 - Last track finishes naturally: reshuffled repeat starts; recently played
   track is not in the new top five.
-- Evict the current track: playback advances and remote removal is attempted per
+- Retire the current track: playback advances and remote removal is attempted per
   policy.
 - Two devices on one account: playback remains independent and counts converge
   without duplicate rows.

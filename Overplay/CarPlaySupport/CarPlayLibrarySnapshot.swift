@@ -9,8 +9,7 @@ enum CarPlayLibrarySnapshot {
         let builder = PlaylistPresentationBuilder(
             playlists: playlists,
             items: items,
-            tracks: tracks,
-            evictAfterSkips: 0
+            tracks: tracks
         )
 
         return builder.activePlaylistSummaries()
@@ -19,6 +18,7 @@ enum CarPlayLibrarySnapshot {
     static func trackSummaries(
         forPlaylistID playlistID: UUID,
         playbackOrderState: PlaybackOrderState? = nil,
+        scope: PlaylistPlaybackScope = .active,
         in context: ModelContext
     ) throws -> [TrackSummaryPresentation] {
         let items = try PlaylistItemRepository.items(forPlaylistID: playlistID, in: context)
@@ -26,8 +26,7 @@ enum CarPlayLibrarySnapshot {
         return PlaylistPresentationBuilder(
             playlists: [],
             items: items,
-            tracks: tracks,
-            evictAfterSkips: 0
-        ).trackSummaries(forPlaylistID: playlistID, playbackOrderState: playbackOrderState)
+            tracks: tracks
+        ).trackSummaries(forPlaylistID: playlistID, playbackOrderState: playbackOrderState, scope: scope)
     }
 }

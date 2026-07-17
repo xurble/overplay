@@ -84,20 +84,34 @@ struct PlaylistManagementViewModelTests {
             currentPlaylistID: playlist.musicPlaylistID,
             currentPlaylistItem: secondItem,
             currentTrack: CurrentPlaybackTrack(id: "second", title: "Second", artistName: "Artist"),
-            evictAfterSkips: 3
         )
 
-        #expect(detail.rows.map(\.id) == [secondItem.id, firstItem.id, evictedItem.id])
-        #expect(detail.rows.map(\.summary.title) == ["Second", "First", "Evicted"])
+        #expect(detail.rows.map(\.id) == [secondItem.id, firstItem.id])
+        #expect(detail.rows.map(\.summary.title) == ["Second", "First"])
         #expect(detail.rows[1].summary.subtitle == "Artist - Album")
         #expect(detail.rows[1].summary.artworkURLString == "https://example.com/first.jpg")
-        #expect(detail.rows[2].summary.isPlayable == false)
         #expect(detail.rows[0].isCurrent)
         #expect(detail.summary.knownCount == 3)
         #expect(detail.summary.playableCount == 2)
         #expect(detail.summary.evictedCount == 1)
         #expect(detail.playlist.playableTrackCount == 2)
         #expect(detail.playlist.isCurrentPlaybackPlaylist)
+
+        let retiredDetail = viewModel.detailPresentation(
+            for: playlist,
+            playlistItems: [firstItem, otherItem, secondItem, evictedItem],
+            tracks: [otherTrack, evictedTrack, firstTrack, secondTrack],
+            playbackOrderState: state,
+            currentPlaylistID: playlist.musicPlaylistID,
+            currentPlaylistItem: secondItem,
+            currentTrack: CurrentPlaybackTrack(id: "second", title: "Second", artistName: "Artist"),
+            scope: .retired,
+        )
+
+        #expect(retiredDetail.rows.map(\.id) == [evictedItem.id])
+        #expect(retiredDetail.rows.first?.summary.title == "Evicted")
+        #expect(retiredDetail.rows.first?.summary.isPlayable == true)
+        #expect(retiredDetail.rows.first?.summary.isRetired == true)
     }
 
     @Test("row summary changes when skip count changes")
@@ -116,7 +130,6 @@ struct PlaylistManagementViewModelTests {
             currentPlaylistItem: item,
             currentTrack: CurrentPlaybackTrack(id: "track", title: "Track", artistName: "Artist"),
             playbackItemMetadataVersion: 0,
-            evictAfterSkips: 3
         )
 
         item.skipCount = 2
@@ -130,7 +143,6 @@ struct PlaylistManagementViewModelTests {
             currentPlaylistItem: item,
             currentTrack: CurrentPlaybackTrack(id: "track", title: "Track", artistName: "Artist"),
             playbackItemMetadataVersion: 1,
-            evictAfterSkips: 3
         )
 
         #expect(before.rows.first?.id == after.rows.first?.id)
@@ -153,7 +165,6 @@ struct PlaylistManagementViewModelTests {
             currentPlaylistID: playlist.musicPlaylistID,
             currentPlaylistItem: nil,
             currentTrack: nil,
-            evictAfterSkips: 3
         )
 
         let after = viewModel.detailPresentation(
@@ -164,7 +175,6 @@ struct PlaylistManagementViewModelTests {
             currentPlaylistID: playlist.musicPlaylistID,
             currentPlaylistItem: item,
             currentTrack: CurrentPlaybackTrack(id: "track", title: "Track", artistName: "Artist"),
-            evictAfterSkips: 3
         )
 
         #expect(before.rows.first?.id == after.rows.first?.id)
@@ -198,7 +208,6 @@ struct PlaylistManagementViewModelTests {
             currentPlaylistItem: item,
             currentTrack: CurrentPlaybackTrack(id: "fresh", title: "Fresh", artistName: "Artist"),
             activePlaylistSnapshot: snapshot,
-            evictAfterSkips: 3
         )
 
         #expect(detail.rows.map(\.id) == [item.id])
@@ -206,8 +215,58 @@ struct PlaylistManagementViewModelTests {
         #expect(detail.rows.first?.summary.title == "Fresh")
         #expect(detail.rows.first?.summary.skipCount == 4)
         #expect(detail.rows.first?.isCurrent == true)
-        #expect(detail.summary.atRiskCount == 1)
+        #expect(detail.summary.skippedCount == 1)
         #expect(detail.playlist.isCurrentPlaybackPlaylist)
+    }
+
+    @Test("scope mismatch ignores active snapshot and uses selected persisted order")
+    func scopeMismatchIgnoresActiveSnapshotAndUsesSelectedPersistedOrder() {
+        let viewModel = PlaylistManagementViewModel()
+        let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main", role: .oneTruePlaylist)
+        let retiredFirstTrack = TrackRecord(catalogID: "retired-first", title: "Retired First", artistName: "Artist")
+        let retiredSecondTrack = TrackRecord(catalogID: "retired-second", title: "Retired Second", artistName: "Artist")
+        let retiredFirstItem = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: retiredFirstTrack.id,
+            evictedAt: Date(timeIntervalSince1970: 100),
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let retiredSecondItem = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: retiredSecondTrack.id,
+            evictedAt: Date(timeIntervalSince1970: 200),
+            createdAt: Date(timeIntervalSince1970: 2)
+        )
+        let activeSnapshot = ActivePlaylistSnapshot(
+            playlist: playlist,
+            items: [retiredFirstItem, retiredSecondItem],
+            tracks: [retiredFirstTrack, retiredSecondTrack],
+            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
+            playbackScope: .active
+        )
+        let retiredOrder = PlaybackOrderState(
+            playerID: "player",
+            musicPlaylistID: PlaylistPlaybackScope.retired.playbackOrderPlaylistID(for: playlist.musicPlaylistID),
+            orderedTrackIDs: [
+                retiredSecondTrack.id.uuidString,
+                retiredFirstTrack.id.uuidString
+            ]
+        )
+
+        let detail = viewModel.detailPresentation(
+            for: playlist,
+            playlistItems: [retiredFirstItem, retiredSecondItem],
+            tracks: [retiredFirstTrack, retiredSecondTrack],
+            playbackOrderState: retiredOrder,
+            currentPlaylistID: playlist.musicPlaylistID,
+            currentPlaylistItem: nil,
+            currentTrack: CurrentPlaybackTrack(id: "retired-second", title: "Retired Second", artistName: "Artist"),
+            activePlaylistSnapshot: activeSnapshot,
+            scope: .retired,
+        )
+
+        #expect(detail.rows.map(\.id) == [retiredSecondItem.id, retiredFirstItem.id])
+        #expect(detail.rows.map(\.summary.title) == ["Retired Second", "Retired First"])
     }
 
     @Test("non-current playlist detail ignores active snapshot")
@@ -236,7 +295,6 @@ struct PlaylistManagementViewModelTests {
             currentPlaylistItem: activeItem,
             currentTrack: CurrentPlaybackTrack(id: "active", title: "Active", artistName: "Artist"),
             activePlaylistSnapshot: snapshot,
-            evictAfterSkips: 3
         )
 
         #expect(detail.rows.first?.item?.id == item.id)
@@ -278,7 +336,6 @@ struct PlaylistManagementViewModelTests {
             currentPlaylistItem: nil,
             currentLocalTrackID: track.id.uuidString,
             currentTrack: CurrentPlaybackTrack(id: "runtime-only", title: "Track", artistName: "Artist"),
-            evictAfterSkips: 3
         )
 
         #expect(detail.rows.first?.isCurrent == true)
@@ -322,7 +379,7 @@ struct PlaylistManagementViewModelTests {
         let viewModel = PlaylistManagementViewModel()
         var playCallCount = 0
         let dependencies = makeDependencies(
-            playPlaylistFromTrack: { _, _, _, _ in
+            playPlaylistFromTrack: { _, _, _, _, _ in
                 playCallCount += 1
             }
         )
@@ -339,6 +396,35 @@ struct PlaylistManagementViewModelTests {
         #expect(playCallCount == 0)
     }
 
+    @Test("play allows retired items in retired scope")
+    func playAllowsRetiredItemsInRetiredScope() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main")
+        let settings = OverplaySettings()
+        let track = TrackRecord(catalogID: "track", title: "Track", artistName: "Artist")
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id, evictedAt: .now)
+        let viewModel = PlaylistManagementViewModel()
+        var playedScope: PlaylistPlaybackScope?
+        let dependencies = makeDependencies(
+            playPlaylistFromTrack: { _, _, scope, _, _ in
+                playedScope = scope
+            }
+        )
+
+        await viewModel.play(
+            item,
+            track: track,
+            playlist: playlist,
+            settings: settings,
+            scope: .retired,
+            context: context,
+            dependencies: dependencies
+        )
+
+        #expect(playedScope == .retired)
+    }
+
     @Test("promote triage item reports success and clears progress state")
     func promoteTriageItemReportsSuccessAndClearsProgressState() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
@@ -349,7 +435,7 @@ struct PlaylistManagementViewModelTests {
         let viewModel = PlaylistManagementViewModel()
         var promotedItemID: UUID?
         let dependencies = makeDependencies(
-            promote: { item, _ in
+            promote: { item, _, _ in
                 promotedItemID = item.id
             }
         )
@@ -377,7 +463,7 @@ struct PlaylistManagementViewModelTests {
         let viewModel = PlaylistManagementViewModel()
         var promoteCallCount = 0
         let dependencies = makeDependencies(
-            promote: { _, _ in
+            promote: { _, _, _ in
                 promoteCallCount += 1
             }
         )
@@ -423,16 +509,17 @@ struct PlaylistManagementViewModelTests {
         #expect(evictedItemID == item.id)
         #expect(evictedPlaylistID == playlist.id)
         #expect(viewModel.evictingItemIDs.isEmpty)
-        #expect(viewModel.message == "Evicted Track.")
+        #expect(viewModel.message == "Retired Track.")
     }
 
     private func makeDependencies(
-        playPlaylistFromTrack: @escaping (PlaylistRecord, TrackRecord, OverplaySettings, ModelContext) async -> Void = { _, _, _, _ in },
-        playPlaylist: @escaping (PlaylistRecord, OverplaySettings, ModelContext) async -> Void = { _, _, _ in },
+        playPlaylistFromTrack: @escaping (PlaylistRecord, TrackRecord, PlaylistPlaybackScope, OverplaySettings, ModelContext) async -> Void = { _, _, _, _, _ in },
+        playPlaylist: @escaping (PlaylistRecord, PlaylistPlaybackScope, OverplaySettings, ModelContext) async -> Void = { _, _, _, _ in },
         syncPlaylist: @escaping (PlaylistRecord, ModelContext) async throws -> Int = { _, _ in 0 },
         reconcileStoredOrder: @escaping (PlaylistRecord, ModelContext) -> Void = { _, _ in },
-        promote: @escaping (PlaylistItemRecord, ModelContext) async throws -> Void = { _, _ in },
-        evict: @escaping (PlaylistItemRecord, PlaylistRecord, ModelContext) throws -> Void = { _, _, _ in }
+        promote: @escaping (PlaylistItemRecord, PlaylistRecord, ModelContext) async throws -> Void = { _, _, _ in },
+        evict: @escaping (PlaylistItemRecord, PlaylistRecord, ModelContext) throws -> Void = { _, _, _ in },
+        restore: @escaping (PlaylistItemRecord, PlaylistRecord, ModelContext) throws -> Void = { _, _, _ in }
     ) -> PlaylistManagementViewModel.Dependencies {
         PlaylistManagementViewModel.Dependencies(
             playPlaylistFromTrack: playPlaylistFromTrack,
@@ -440,7 +527,8 @@ struct PlaylistManagementViewModelTests {
             syncPlaylist: syncPlaylist,
             reconcileStoredOrder: reconcileStoredOrder,
             promote: promote,
-            evict: evict
+            evict: evict,
+            restore: restore
         )
     }
 }

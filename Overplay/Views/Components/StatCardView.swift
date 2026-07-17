@@ -25,6 +25,6 @@ struct StatCardView: View {
 }
 
 #Preview {
-    StatCardView(title: "At risk", value: "4", systemImage: "exclamationmark.triangle.fill", tint: .orange)
+    StatCardView(title: "Skipped", value: "4", systemImage: "forward.end.fill", tint: .orange)
         .padding()
 }

@@ -98,7 +98,7 @@ struct TrackSummaryPresentationTests {
         #expect(track(skipCount: 0).skipCountLabel == nil)
         #expect(track(skipCount: 1).skipCountLabel == "1 skip")
         #expect(track(skipCount: 2).skipCountLabel == "2 skips")
-        #expect(track(skipCount: 2).healthMetricLabel == "0 plays / 2 skips")
+        #expect(track(skipCount: 2).playSkipMetricLabel == "0 plays / 2 skips")
         #expect(track(skipCount: 2).detailText == "Artist - 0 plays / 2 skips")
     }
 
@@ -113,20 +113,20 @@ struct TrackSummaryPresentationTests {
     }
 }
 
-@Suite("Track health presentation")
-struct TrackHealthPresentationTests {
-    @Test("health labels and icons prioritize protected and evicted state")
-    func healthLabelsAndIcons() {
-        let protected = TrackHealthPresentation(status: .critical, isEvicted: true, isProtected: true)
-        let evicted = TrackHealthPresentation(status: .healthy, isEvicted: true, isProtected: false)
-        let caution = TrackHealthPresentation(status: .caution, isEvicted: false, isProtected: false)
+@Suite("Track state badge presentation")
+struct TrackStateBadgePresentationTests {
+    @Test("labels and icons prioritize protected and retired state")
+    func labelsAndIcons() {
+        let protected = TrackStateBadgePresentation(isEvicted: true, isProtected: true)
+        let evicted = TrackStateBadgePresentation(isEvicted: true, isProtected: false)
+        let active = TrackStateBadgePresentation(isEvicted: false, isProtected: false)
 
         #expect(protected.title == "Protected")
         #expect(protected.systemImage == "shield.fill")
-        #expect(evicted.title == "Evicted")
+        #expect(evicted.title == "Retired")
         #expect(evicted.systemImage == "trash.fill")
-        #expect(caution.title == "Caution")
-        #expect(caution.systemImage == "exclamationmark.triangle.fill")
+        #expect(active.title == "Active")
+        #expect(active.systemImage == "music.note")
     }
 }
 
@@ -147,7 +147,6 @@ struct NowPlayingPresentationTests {
             durationSeconds: nil,
             skipCount: 2,
             playthroughCount: 1,
-            evictAfterSkips: 3,
             isEvicted: false,
             isProtected: false
         )
@@ -157,7 +156,7 @@ struct NowPlayingPresentationTests {
         #expect(presentation.elapsedText == "2:05")
         #expect(presentation.durationText == "0:00")
         #expect(presentation.skipCountText == "2 skips")
-        #expect(presentation.healthMetricText == "1 play / 2 skips")
+        #expect(presentation.playSkipMetricText == "1 play / 2 skips")
     }
 
     @Test("progress phase follows skip and playthrough thresholds")
@@ -206,13 +205,12 @@ struct NowPlayingPresentationTests {
 
 @Suite("Now playing presentation factory")
 struct NowPlayingPresentationFactoryTests {
-    @Test("factory resolves protected evicted and at-risk health states")
+    @Test("factory resolves protected retired and active badge states")
     @MainActor
-    func factoryHealthStates() throws {
+    func factoryBadgeStates() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let settings = try SettingsRepository.settings(in: context)
-        settings.evictAfterSkips = 3
         let controller = PlaybackController()
         controller.currentTrack = CurrentPlaybackTrack(id: "music-1", title: "Track", artistName: "Artist")
         let track = TrackRecord(title: "Track", artistName: "Artist")
@@ -220,25 +218,11 @@ struct NowPlayingPresentationFactoryTests {
         let playlistID = UUID()
 
         controller.currentPlaylistItem = PlaylistItemRecord(playlistID: playlistID, trackID: track.id, skipCount: 0)
-        let healthy = NowPlayingPresentationFactory.trackHealthPresentation(
+        let active = NowPlayingPresentationFactory.trackStateBadgePresentation(
             playbackController: controller,
             settings: settings
         )
-        #expect(healthy.status == .healthy)
-
-        controller.currentPlaylistItem = PlaylistItemRecord(playlistID: playlistID, trackID: track.id, skipCount: 1)
-        let caution = NowPlayingPresentationFactory.trackHealthPresentation(
-            playbackController: controller,
-            settings: settings
-        )
-        #expect(caution.status == .caution)
-
-        controller.currentPlaylistItem = PlaylistItemRecord(playlistID: playlistID, trackID: track.id, skipCount: 2)
-        let critical = NowPlayingPresentationFactory.trackHealthPresentation(
-            playbackController: controller,
-            settings: settings
-        )
-        #expect(critical.status == .critical)
+        #expect(active.title == "Active")
 
         controller.currentPlaylistItem = PlaylistItemRecord(
             playlistID: playlistID,
@@ -246,11 +230,23 @@ struct NowPlayingPresentationFactoryTests {
             skipCount: 0,
             protected: true
         )
-        let protected = NowPlayingPresentationFactory.trackHealthPresentation(
+        let protected = NowPlayingPresentationFactory.trackStateBadgePresentation(
             playbackController: controller,
             settings: settings
         )
         #expect(protected.title == "Protected")
+
+        controller.currentPlaylistItem = PlaylistItemRecord(
+            playlistID: playlistID,
+            trackID: track.id,
+            skipCount: 2,
+            evictedAt: .now
+        )
+        let retired = NowPlayingPresentationFactory.trackStateBadgePresentation(
+            playbackController: controller,
+            settings: settings
+        )
+        #expect(retired.title == "Retired")
     }
 
     @Test("factory handles missing current track")
@@ -305,7 +301,7 @@ struct NowPlayingPresentationFactoryTests {
             durationSeconds: 100
         )
         controller.elapsedSeconds = 25
-        let settings = OverplaySettings(evictAfterSkips: 5)
+        let settings = OverplaySettings()
 
         let presentation = NowPlayingPresentationFactory.presentation(
             playbackController: controller,
@@ -356,7 +352,6 @@ struct NowPlayingPresentationFactoryTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let settings = try SettingsRepository.settings(in: context)
-        settings.evictAfterSkips = 3
         let controller = PlaybackController()
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-1",
@@ -389,7 +384,7 @@ struct NowPlayingPresentationFactoryTests {
 
         #expect(presentation.skipCount == 1)
         #expect(presentation.skipCountText == "1 skip")
-        #expect(presentation.healthMetricText == "0 plays / 1 skip")
+        #expect(presentation.playSkipMetricText == "0 plays / 1 skip")
     }
 
     @Test("context factory refreshes stale cached playlist item before presenting skip count")
@@ -398,7 +393,6 @@ struct NowPlayingPresentationFactoryTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let settings = try SettingsRepository.settings(in: context)
-        settings.evictAfterSkips = 3
         let controller = PlaybackController()
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-1",
@@ -438,6 +432,6 @@ struct NowPlayingPresentationFactoryTests {
 
         #expect(presentation.skipCount == 1)
         #expect(presentation.skipCountText == "1 skip")
-        #expect(presentation.healthMetricText == "0 plays / 1 skip")
+        #expect(presentation.playSkipMetricText == "0 plays / 1 skip")
     }
 }

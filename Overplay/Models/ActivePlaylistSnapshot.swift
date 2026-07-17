@@ -24,6 +24,7 @@ struct ActivePlaylistSnapshot: Equatable, Sendable {
 
     var playlistID: UUID
     var musicPlaylistID: String
+    var playbackScope: PlaylistPlaybackScope
     var rows: [Row]
     var updatedAt: Date
 
@@ -32,6 +33,7 @@ struct ActivePlaylistSnapshot: Equatable, Sendable {
         items: [PlaylistItemRecord],
         tracks: [TrackRecord],
         playbackOrderState: PlaybackOrderState,
+        playbackScope: PlaylistPlaybackScope = .active,
         currentPlaylistItemID: UUID? = nil,
         currentLocalTrackID: String? = nil,
         currentMusicItemID: String? = nil,
@@ -40,11 +42,13 @@ struct ActivePlaylistSnapshot: Equatable, Sendable {
         let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
         let orderedItems = PlaylistDisplayOrder.orderedItems(
             items.filter { $0.playlistID == playlist.id },
-            state: playbackOrderState
+            state: playbackOrderState,
+            scope: playbackScope
         )
 
         self.playlistID = playlist.id
         self.musicPlaylistID = playlist.musicPlaylistID
+        self.playbackScope = playbackScope
         self.rows = orderedItems.compactMap { item in
             guard let track = tracksByID[item.trackID] else { return nil }
             let localTrackID = item.trackID.uuidString

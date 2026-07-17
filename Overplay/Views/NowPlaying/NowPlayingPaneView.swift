@@ -49,7 +49,7 @@ struct NowPlayingPaneView: View {
                     presentation: presentation,
                     foreground: activeArtworkTheme?.artistName
                 )
-                TrackHealthStatusView(presentation: presentation, artworkTheme: activeArtworkTheme)
+                TrackPlaybackFactsView(presentation: presentation, artworkTheme: activeArtworkTheme)
                 PlaybackModeControlsView(artworkTheme: activeArtworkTheme)
                 TrackActionControlsView(settings: settings, artworkTheme: activeArtworkTheme)
                 if showsArtworkThemeDebugButton {

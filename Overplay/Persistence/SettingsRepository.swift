@@ -33,7 +33,6 @@ enum SettingsRepository {
     }
 
     static func save(_ settings: OverplaySettings, in context: ModelContext) throws {
-        settings.evictAfterSkips = min(max(settings.evictAfterSkips, 1), 20)
         settings.skipThresholdPercentage = min(max(settings.skipThresholdPercentage, 1), 99)
         settings.minimumSkipListeningSeconds = max(settings.minimumSkipListeningSeconds, 0)
         settings.playthroughThresholdPercentage = min(max(settings.playthroughThresholdPercentage, 1), 100)

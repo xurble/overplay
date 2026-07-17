@@ -11,6 +11,7 @@ struct TrackSummaryPresentation: Equatable, Identifiable, Sendable {
     let skipCount: Int
     var playthroughCount: Int = 0
     var isPlayable: Bool = true
+    var isRetired: Bool = false
 
     var subtitle: String {
         guard let albumTitle, !albumTitle.isEmpty else {
@@ -25,12 +26,16 @@ struct TrackSummaryPresentation: Equatable, Identifiable, Sendable {
         return skipCount == 1 ? "1 skip" : "\(skipCount) skips"
     }
 
-    var healthMetricLabel: String {
+    var playSkipMetricLabel: String {
         "\(Self.pluralized(playthroughCount, singular: "play")) / \(Self.pluralized(skipCount, singular: "skip"))"
     }
 
     var detailText: String {
-        "\(artistName) - \(healthMetricLabel)"
+        if isRetired {
+            "\(artistName) - Retired - \(playSkipMetricLabel)"
+        } else {
+            "\(artistName) - \(playSkipMetricLabel)"
+        }
     }
 
     private static func pluralized(_ count: Int, singular: String) -> String {

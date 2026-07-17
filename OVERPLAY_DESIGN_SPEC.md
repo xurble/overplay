@@ -8,7 +8,7 @@ intake and triage sources.
 
 The core playlist is the user's **One True Playlist**. Overplay plays it,
 tracks the user's own skip and playthrough behaviour, and exposes manual
-eviction. Additional linked playlists are tracked as triage playlists. They
+retirement. Additional linked playlists are tracked as triage playlists. They
 can represent sources such as TikTok saves, Shazam discoveries, a friend's
 playlist, or any other Apple Music playlist the user wants to review before
 promoting songs into the One True Playlist.
@@ -26,7 +26,7 @@ Music's global play count or skip count.
 - Language: Swift 6.
 - UI framework: SwiftUI.
 - Persistence: SwiftData backed by iCloud/CloudKit for shared playlist,
-  track, statistics, and eviction data.
+  track, statistics, and retirement data.
 - Device-local state: `AppStorage` for playback and navigation state that
   should not sync between devices.
 - Apple Music integration: MusicKit first; Apple Music API only where MusicKit
@@ -41,7 +41,7 @@ Music's global play count or skip count.
 
 Overplay should use one shared SwiftUI app architecture across iPhone, iPad,
 and Mac. Product rules, sync, persistence, search, playlist mutation, playback
-tracking, and eviction logic should live in shared services and models.
+tracking, and retirement logic should live in shared services and models.
 Platform-specific code should be limited to presentation shell, scene
 configuration, keyboard/menu commands, entitlement differences, and media
 integration differences.
@@ -52,7 +52,7 @@ iPhone is the focused playback and quick-triage experience.
 
 - Use compact navigation with a dashboard-first flow.
 - Keep Now Playing as the strongest visual surface.
-- Prioritize fast actions: play, skip, keep, evict, promote, sync.
+- Prioritize fast actions: play, skip, keep, retire, promote, sync.
 - Support lock-screen metadata, remote commands, and the CarPlay music player.
 
 ### iPad
@@ -87,8 +87,8 @@ Mac is the power-user library management and background playback experience.
 - All three targets must read and write the same iCloud-backed Overplay data.
 - All three targets must keep transient playback and selection state local to
   the device.
-- A sync, promotion, eviction, or settings change made on one device should
-  eventually appear on the others.
+- A sync, promotion, retirement, restore, or settings change made on one device
+  should eventually appear on the others.
 - A play, pause, queue, currently selected screen, or current playback position
   change on one device must not control another device.
 - Platform conditionals should be small and isolated.
@@ -100,7 +100,7 @@ Mac is the power-user library management and background playback experience.
 Overplay tracks multiple Apple Music playlists:
 
 - **One True Playlist**: the main playlist Overplay manages and plays by
-  default. Tracks can be manually evicted from this playlist.
+  default. Tracks can be manually retired from this playlist.
 
   When no One True Playlist is linked, the playlist management UI offers two
   setup paths. The user can create a new Apple Music playlist named "Overplay"
@@ -112,7 +112,7 @@ Overplay tracks multiple Apple Music playlists:
 
 - **Triage playlists**: additional playlists used as intake sources. Overplay
   tracks skips and playthroughs for these playlists. Tracks can be manually
-  promoted to the One True Playlist or manually evicted from triage playback.
+  promoted to the One True Playlist or manually retired from triage playback.
 
 Each linked playlist stores:
 
@@ -144,12 +144,12 @@ For every tracked playlist item, store:
 - Last played date.
 - Last skipped date.
 - Last seen in Apple Music sync date.
-- Eviction state.
+- Retirement state.
 - Created and updated dates.
 
 When a single catalogue song appears in multiple linked playlists, Overplay may
 share metadata, but playlist membership, skip count, playthrough count, and
-eviction state must remain playlist-specific.
+retirement state must remain playlist-specific.
 
 Within one linked playlist, a song identity may appear at most once. Duplicate
 remote entries, repeated manual adds, and promotion of an already-present song
@@ -173,7 +173,7 @@ CloudKit insert races, which cannot enforce unique constraints) are collapsed
 by an identity merge pass that runs at startup and after each sync. The
 oldest record wins; playlist items and history events repoint to it. When two
 items for the same playlist collapse, skip and playthrough counts are summed
-and eviction/protection state follows the most recently updated item — merge
+and retirement/protection state follows the most recently updated item — merge
 must never discard counts. Device-local order, alias, and playback-state
 stores rekey their local track IDs in the same pass.
 
@@ -214,7 +214,7 @@ Playlist detail screens should use one shared UI with two row data sources:
 non-playing playlists render from SwiftData records, while the currently
 playing playlist may render from the playback controller's active in-memory
 playlist projection. This projection is a fresh read model only; durable
-membership, metadata, skip/playthrough counts, eviction state, history, and
+membership, metadata, skip/playthrough counts, retirement state, history, and
 settings are still written through SwiftData.
 
 ### Additions from Apple Music
@@ -225,7 +225,7 @@ playlist:
 - Add or reactivate the local playlist item.
 - Preserve any prior history if the same playlist item can be matched.
 - Set `lastSeenInPlaylistAt`.
-- Do not reset historical skip, playthrough, or eviction records.
+- Do not reset historical skip, playthrough, or retirement records.
 
 ### Removals from Apple Music
 
@@ -233,26 +233,28 @@ When a track that Overplay previously tracked is no longer present in the
 linked Apple Music playlist:
 
 - Leave the local playlist item in place.
-- Preserve skip, playthrough, and eviction history.
-- Keep the item playable unless it has been locally evicted.
+- Preserve skip, playthrough, and retirement history.
+- Keep the item playable unless it has been locally retired.
 
 Overplay does not currently model Apple Music deletions as a separate local
-removal state. Local eviction remains the only way to exclude a track from
-playback.
+removal state. Local retirement remains the only way to exclude a track from
+Active playback.
 
-### Local evictions
+### Local retirements
 
-When Overplay evicts a track locally:
+When Overplay retires a track locally:
 
-- Always record a historic eviction event.
-- Store whether the eviction was count-based or manual.
-- Store the triggering count or manual source where applicable.
-- Exclude the track from future Overplay playback for that playlist.
+- Always record a historic retirement event. The current data model may store
+  this as an eviction event while Retired remains the user-facing term.
+- Store the manual source where applicable.
+- Move the track from the Active list to the bottom of the Retired list for
+  that playlist.
+- Exclude the track from future Active playback for that playlist.
 
 If Apple Music playlist mutation is available and reliable, Overplay should
 also attempt to remove the item from the linked Apple Music playlist. If the
-remote deletion fails or is unsupported, local eviction remains authoritative
-inside Overplay and the track is filtered out of Overplay playback.
+remote deletion fails or is unsupported, local retirement remains authoritative
+inside Overplay and the track is filtered out of Active playback.
 
 ### Periodic sync
 
@@ -306,11 +308,12 @@ Add behaviour:
 
 Manual add should support both the One True Playlist and triage playlists.
 
-## Track Health Tracking
+## Play/Skip History
 
-Overplay does not automatically evict tracks. It records a playlist-specific
-track health metric made from playthrough count versus skip count. Promotion
-from triage and eviction from any playlist are manual user actions.
+Overplay records playlist-specific playthrough and skip counts. Promotion from
+triage and retirement from any playlist are manual user actions. Skip counts
+are displayed as history only; they do not imply an automatic status, and
+retirement remains an explicit user action.
 
 ### Defaults
 
@@ -325,7 +328,7 @@ playthroughThresholdPercentage = 90
 A skip is counted when all are true:
 
 - The current play session has not already been evaluated.
-- The playlist item is active and not locally evicted.
+- The playlist item is active and not locally retired.
 - The user listened for at least `minimumSkipListeningSeconds`, measured as
   witnessed listening time accumulated from playback observation, not as raw
   playback position. Seeking or resuming mid-track contributes nothing.
@@ -355,14 +358,20 @@ A playthrough is counted when the track reaches
 Playthroughs and skips accumulate independently. A playthrough does not reset
 the playlist item's skip count.
 
-### Manual eviction
+### Manual retirement
 
-The user can manually evict a track from any linked playlist. Manual eviction:
+The user can manually retire a track from any linked playlist. Manual
+retirement:
 
-- Marks the local playlist item evicted.
-- Records a manual eviction event.
+- Marks the local playlist item retired.
+- Records a manual retirement event. The current data model may store this as
+  an eviction event while Retired remains the user-facing term.
 - Attempts Apple Music removal if supported.
 - Falls back to local filtering if remote removal fails.
+
+The user can restore a retired track. Restore clears the local retirement
+state, moves the item to the bottom of the Active list for that playlist, and
+makes it eligible for Active playback again.
 
 ## Shared vs Device-Local State
 
@@ -371,18 +380,19 @@ share:
 
 - Linked playlist definitions.
 - Track metadata snapshots.
-- Playlist membership state.
+- Playlist membership and retirement state.
 - Skip and playthrough counts.
-- Eviction history.
+- Retirement history.
 - Promotion history.
-- User-configurable eviction settings.
+- User-configurable retirement settings.
 
 The following must remain device-local in `AppStorage` or equivalent local
 storage:
 
 - Currently playing track/session.
 - Current playback queue.
-- Current local playback order for each player and playlist.
+- Current local playback order for each player, playlist, and Active/Retired
+  scope.
 - Current playback position.
 - Current selected screen or playlist view.
 - Now Playing UI state.
@@ -394,45 +404,50 @@ other scene-local storage when a platform supports multiple windows. This is
 especially important on iPad and Mac, where two windows may legitimately show
 different playlists or views at the same time.
 
-Two devices should be able to share playlist and eviction data without
+Two devices should be able to share playlist and retirement data without
 interfering with each other's playback.
 
 ## Playback Order, Shuffle, and Repeat
 
 Overplay owns playback order. SwiftData tracks playlist membership, track
-metadata, health, and history; it does not own playback order or playlist sort
-order. Playback order is local, disposable, and keyed by player and Apple Music
-playlist. Each playlist has exactly one current local order at a time. There is
-no separate unshuffled order to restore during playback.
+metadata, play/skip history, and retirement state; it does not own playback order or playlist sort
+order. Playback order is local, disposable, and keyed by player, Apple Music
+playlist, and playlist scope. Each linked playlist has separate **Active** and
+**Retired** local orders. There is no separate unshuffled order to restore
+during playback.
 
 MusicKit should receive an explicit full queue from Overplay, while MusicKit
 shuffle and repeat modes remain off. Overplay owns repeat by reshuffling and
 rebuilding the queue when the end is reached. This keeps skip tracking,
-eviction filtering, playlist display order, CarPlay, system controls, and
+retirement filtering, playlist display order, CarPlay, system controls, and
 remote commands aligned to the same source of truth.
 
 During playback, the shared playback controller should maintain an active
 playlist projection for the currently playing playlist. It should contain
 stable playlist item IDs, local track IDs, display metadata, artwork source,
-skip and playthrough counts, protected/evicted/playable state, and current-row
+skip and playthrough counts, protected/retired/playable state, and current-row
 state. Playlist views use this projection only when it matches the displayed
-current playlist; otherwise they fall back to SwiftData records.
+current playlist and selected Active/Retired scope; otherwise they fall back to
+SwiftData records ordered by the selected scope's local order state.
 
 Local order state:
 
 - Store only the ordered local track IDs and an update date.
-- Seed missing local order from the current unique playable playlist
-  membership.
+- Seed missing local order from the current unique membership for the selected
+  scope. Active order contains active playable items. Retired order contains
+  retired items.
 - Treat old sort-order, shuffle-mode, and repeat-mode state as disposable.
 - Playlist display order should mirror the current local playback order for
-  that player and playlist.
+  that player, playlist, and scope. The UI should reconcile and persist missing
+  IDs into that scope order instead of showing raw SwiftData query order.
 - A playlist must not contain duplicate songs. Sync, manual add, and promotion
   should reuse or reactivate the existing playlist item for a song instead of
   creating a duplicate.
 
 Starting playback:
 
-- Starting a playlist sends the full current local order to MusicKit.
+- Starting a playlist sends the full current local order for the selected scope
+  to MusicKit.
 - If the user starts at a specific track, MusicKit should start at that track
   within the full queue.
 - If no track is requested, playback starts at the first track in local order.
@@ -471,24 +486,27 @@ Repeat behavior:
   should keep its own MusicKit shuffle and repeat modes off and treat local
   order as authoritative.
 
-Additions and removals:
+Additions, retirements, and restores:
 
 - Playlist additions from MusicKit sync, SwiftData sync, manual add, or
-  promotion append to the end of the current local order.
+  promotion append to the end of the current Active local order.
 - If the changed playlist is currently playing, playable additions should also
   be appended to the live MusicKit queue when possible without restarting
   playback.
 - If the changed playlist is currently playing, refresh the active playlist
   projection immediately after the durable SwiftData/local-order mutation so
   visible rows do not wait for SwiftData query invalidation.
-- For non-playing playlists, deletions and evictions remove the track from
-  local order immediately.
-- For the currently playing playlist, deletion or eviction is recorded in
-  SwiftData, but the active MusicKit queue is left alone for the current
-  playthrough. The track disappears on the next shuffle, rebuild, or switch
-  back to that playlist.
+- Retiring a track removes it from Active order and appends it to the bottom of
+  Retired order.
+- Restoring a track removes it from Retired order and appends it to the bottom
+  of Active order.
+- For the currently playing playlist, deletion or retirement is recorded in
+  SwiftData and local order immediately, but the active MusicKit queue may be
+  left alone for the current playthrough. The track disappears on the next
+  shuffle, rebuild, or switch back to that playlist.
 - When switching away from a playlist, reconcile its local order so already
-  evicted or otherwise unplayable tracks are removed before it is played again.
+  retired or otherwise unplayable tracks are removed from Active order before
+  it is played again.
 
 All playback surfaces must use the same behavior: Now Playing, mini player,
 lock-screen and remote commands, CarPlay, keyboard/media keys, and playlist row
@@ -500,7 +518,7 @@ Active playlist projection updates:
 
 - Track changes update current-row state immediately.
 - Skip increments, playthrough counts, playthrough skip resets, keep/protect
-  changes, manual resets, evictions, restores, promotions, queue rebuilds, and
+  changes, manual resets, retirements, restores, promotions, queue rebuilds, and
   shuffle/order changes refresh the projection after their shared controller or
   use-case mutation succeeds.
 - When playback switches to another playlist or clears, discard the old
@@ -532,7 +550,7 @@ through the same reconciliation path that updates:
 
 The actual player-reported current item is authoritative when it is available.
 Local queue order and cached active-queue entries may help correlate playlist
-items and health state, but they must not hide a concrete MusicKit current-entry
+items and track state, but they must not hide a concrete MusicKit current-entry
 change from another surface. If MusicKit reports a new current item that cannot
 be correlated to local queue identity, Overplay should still update the visible
 now-playing display from that player item rather than continuing to show a stale
@@ -540,7 +558,7 @@ local queue entry.
 
 When playback leaves a track, the outgoing session should be evaluated before
 shared current-track state is replaced with the incoming track. This keeps skip,
-playthrough, eviction, and health updates attached to the track that actually
+playthrough, retirement, and track updates attached to the track that actually
 finished or was skipped, regardless of whether the transition started from the
 app, CarPlay, a remote command, or MusicKit itself.
 
@@ -601,7 +619,7 @@ Show:
 - One True Playlist name.
 - Active playable count.
 - Count of playable tracks with one or more logged skips.
-- Evicted count.
+- Retired count.
 - Recently promoted count.
 - Triage playlists with unreviewed or high-skip items.
 - Actions for play, sync, search, settings, and history.
@@ -618,18 +636,22 @@ Purpose: inspect any linked playlist.
 
 Show:
 
-- Active tracks.
+- Segmented Active and Retired lists on iOS.
+- Active tracks ordered by the device-local Active playback order.
+- Retired tracks ordered by the device-local Retired playback order and
+  playable as a playlist context from iOS.
 - Skip and playthrough counts.
-- Eviction state.
+- Retirement state.
 - Last seen in Apple Music.
 - Promote action for triage playlist tracks.
-- Manual evict/remove action.
+- Manual retire/remove action for active tracks.
+- Restore action for retired tracks.
 - Search/add action scoped to that playlist.
 
 Platform notes:
 
 - iPad and Mac should support table-like scanning and selection.
-- Mac should support context menu actions for promote, evict, restore, and
+- Mac should support context menu actions for promote, retire, restore, and
   reveal in Apple Music where possible.
 
 ### Now Playing
@@ -644,7 +666,8 @@ Show:
 - Progress.
 - Playthrough count versus skip count.
 - Playback controls.
-- Manual evict action.
+- Manual retire action for active tracks.
+- Restore action for retired tracks.
 - Promote action when playing from a triage playlist.
 
 The standard media controls should call into a shared playback controller.
@@ -664,13 +687,15 @@ templates connected to the shared playback controller.
 Show:
 
 - One True Playlist playback entry point.
-- Playable linked playlists.
-- Recently evicted tracks.
+- Active linked playlists.
+- The currently playing Retired playlist context if playback was started from
+  Retired on iOS.
 - Current track title, artist, album, and artwork where CarPlay templates
   support it.
 - Play, pause, next, previous, and Now Playing controls.
-- Direct Evict button in Now Playing, with a direct Promote button when the
-  current track belongs to a triage playlist.
+- Direct Retire button in Now Playing for active tracks.
+- Direct Restore button in Now Playing for retired tracks.
+- Direct Promote button when the current track belongs to a triage playlist.
 
 Platform notes:
 
@@ -697,9 +722,9 @@ Platform notes:
 - iPad and Mac should support faster triage with keyboard focus, return-to-add
   where appropriate, and persistent destination selection.
 
-### Eviction and history
+### Retirement and history
 
-Purpose: show historic evictions, removals, and promotions.
+Purpose: show historic retirements, removals, and promotions.
 
 Show:
 
@@ -753,7 +778,7 @@ window through the standard app settings command as well as in-app navigation.
 - Fetch tracks for each linked playlist.
 - Reconcile additions and removals.
 - Preserve history.
-- Mark external removals as manual eviction/removal events.
+- Mark external removals as manual retirement/removal events.
 - Publish sync status.
 
 ### PlaybackController
@@ -764,25 +789,25 @@ window through the standard app settings command as well as in-app navigation.
   end-of-playlist repeat by rebuilding from a fresh shuffled order.
 - Track play sessions.
 - Publish current playback state.
-- Forward transitions to the eviction engine.
+- Forward transitions to shared playback evaluation and track action services.
 - Keep playback/session state device-local.
 - Isolate platform-specific playback or media-session differences behind a
   small adapter if iPhone, iPad, and Mac APIs diverge.
 
-### EvictionEngine
+### TrackActionService / EvictionEngine
 
 - Apply skip and playthrough rules.
 - Increment/reset counts.
-- Evict One True Playlist items by count.
-- Manually evict items from any linked playlist.
-- Record eviction events.
+- Manually retire or restore items from any linked playlist.
+- Record retirement events. The current implementation may still use eviction
+  naming internally.
 - Request remote playlist deletion for managed playlists.
 
 ### PlaylistMutationService
 
 - Add tracks to managed linked Apple Music playlists.
 - Promote tracks from triage playlists to a managed One True Playlist.
-- Attempt remote playlist deletion for local evictions.
+- Attempt remote playlist deletion for local retirements when policy allows.
 - Return explicit success/failure results.
 
 ### SearchService
@@ -870,9 +895,9 @@ Local JSON file only:
 - `lastPlayedAt: Date?`
 - `lastSkippedAt: Date?`
 - `lastSeenInPlaylistAt: Date?`
-- `evictedAt: Date?`
-- `evictionReason: EvictionReason?`
-- `evictionSource: EvictionSource?`
+- `evictedAt: Date?` (local retirement timestamp in current code)
+- `evictionReason: EvictionReason?` (retirement reason in current code)
+- `evictionSource: EvictionSource?` (retirement source in current code)
 - `protected: Bool`
 - `createdAt: Date`
 - `updatedAt: Date`
@@ -917,7 +942,11 @@ Local JSON file only:
 - Natural completion must not count as skip.
 - Network failure during sync, search, add, promotion, or deletion.
 - Remote playlist mutation succeeds but later sync returns stale data.
-- Remote playlist mutation fails after local eviction.
+- Remote playlist mutation fails after local retirement.
+- Retired tracks are restored while another surface is showing the same
+  playlist.
+- Active and Retired tabs are switched repeatedly while playback is active.
+- A Retired playlist is started on iOS while CarPlay is connected.
 - iCloud data arrives while a device is actively playing.
 - The same iCloud account uses Overplay on iPhone, iPad, and Mac at the same
   time.
@@ -939,10 +968,12 @@ services as the phone UI.
 CarPlay should support:
 
 - Play One True Playlist.
-- Browse triage playlists.
+- Browse active triage playlists.
 - Review tracks with logged skips.
-- View recently evicted tracks.
+- Show the current Retired playlist context when the user started Retired
+  playback from iOS.
 - Now Playing controls.
+- Restore the current track when it belongs to a Retired playlist context.
 
 CarPlay UI logic should remain isolated from the iPhone/iPad SwiftUI shell.
 iPad and Mac targets must not depend on CarPlay-specific types or entitlements.
@@ -978,11 +1009,11 @@ The product is healthy when a user can:
 5. Sync all linked playlists.
 6. Play any linked playlist in Overplay.
 7. Track skips and playthroughs for all linked playlists.
-8. Automatically evict over-skipped tracks from the One True Playlist.
-9. Manually evict tracks from any linked playlist.
+8. Surface skip/playthrough history while leaving retirement to explicit user actions.
+9. Manually retire and restore tracks from any linked playlist.
 10. Promote triage tracks into the One True Playlist.
 11. Search Apple Music and add tracks to any linked playlist.
-12. Share playlist, stats, and eviction data across devices through iCloud.
+12. Share playlist, stats, and retirement data across devices through iCloud.
 13. Keep each device's current playback state independent.
 14. Use native iPad layouts for triage and management.
 15. Use native Mac windows, menus, keyboard shortcuts, and media controls for

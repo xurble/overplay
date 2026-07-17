@@ -203,23 +203,23 @@ private struct NowPlayingProgressBar: View {
     }
 }
 
-struct TrackHealthStatusView: View {
+struct TrackPlaybackFactsView: View {
     var presentation: NowPlayingPresentation
     var artworkTheme: AlbumArtworkTheme? = nil
 
     var body: some View {
         HStack(spacing: 14) {
-            Label(presentation.healthMetricText, systemImage: "waveform.path.ecg")
+            Label(presentation.playSkipMetricText, systemImage: "waveform.path.ecg")
 
             if presentation.isEvicted {
-                let healthPresentation = TrackHealthPresentation(status: .critical, isEvicted: true, isProtected: false)
-                Label(healthPresentation.title, systemImage: healthPresentation.systemImage)
+                let badge = TrackStateBadgePresentation(isEvicted: true, isProtected: false)
+                Label(badge.title, systemImage: badge.systemImage)
                     .foregroundStyle(.red)
             }
 
             if presentation.isProtected {
-                let healthPresentation = TrackHealthPresentation(status: .healthy, isEvicted: false, isProtected: true)
-                Label(healthPresentation.title, systemImage: healthPresentation.systemImage)
+                let badge = TrackStateBadgePresentation(isEvicted: false, isProtected: true)
+                Label(badge.title, systemImage: badge.systemImage)
                     .foregroundStyle(.green)
             }
         }
@@ -279,11 +279,11 @@ struct TrackActionControlsView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            if currentPlaylistRole == .triage {
+            if isCurrentTrackRetired {
                 Button {
-                    Task { await playbackController.promoteCurrent(settings: settings, context: modelContext) }
+                    Task { playbackController.restoreCurrent(context: modelContext) }
                 } label: {
-                    Label("Promote", systemImage: "star.fill")
+                    Label("Restore", systemImage: "arrow.uturn.backward.circle.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .disabled(playbackController.currentTrack == nil)
@@ -292,20 +292,35 @@ struct TrackActionControlsView: View {
                     prominence: .secondary,
                     fallbackStyle: .bordered
                 )
-            }
+            } else {
+                if currentPlaylistRole == .triage {
+                    Button {
+                        Task { await playbackController.promoteCurrent(settings: settings, context: modelContext) }
+                    } label: {
+                        Label("Promote", systemImage: "star.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(playbackController.currentTrack == nil)
+                    .fullScreenPlayerControlStyle(
+                        palette: controlPalette,
+                        prominence: .secondary,
+                        fallbackStyle: .bordered
+                    )
+                }
 
-            Button(role: .destructive) {
-                Task { await playbackController.evictCurrent(settings: settings, context: modelContext) }
-            } label: {
-                Label("Evict Now", systemImage: "trash.fill")
-                    .frame(maxWidth: .infinity)
+                Button {
+                    Task { await playbackController.evictCurrent(settings: settings, context: modelContext) }
+                } label: {
+                    Label("Retire", systemImage: "trash.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .disabled(playbackController.currentTrack == nil)
+                .fullScreenPlayerControlStyle(
+                    palette: controlPalette,
+                    prominence: .destructive,
+                    fallbackStyle: .bordered
+                )
             }
-            .disabled(playbackController.currentTrack == nil)
-            .fullScreenPlayerControlStyle(
-                palette: controlPalette,
-                prominence: .destructive,
-                fallbackStyle: .bordered
-            )
         }
     }
 
@@ -315,6 +330,10 @@ struct TrackActionControlsView: View {
 
     private var currentPlaylistRole: PlaylistRole? {
         playbackController.currentPlaylistRole(context: modelContext)
+    }
+
+    private var isCurrentTrackRetired: Bool {
+        playbackController.displayedIsEvicted(context: modelContext)
     }
 }
 

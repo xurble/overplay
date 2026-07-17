@@ -15,7 +15,7 @@ enum HistoryEventFilter: String, CaseIterable, Identifiable, Sendable {
         case .all:
             "All"
         case .evictions:
-            "Evictions"
+            "Retired"
         case .removals:
             "Removals"
         case .promotions:
@@ -142,7 +142,7 @@ extension HistoryEventType {
         case .playthrough:
             "Playthrough"
         case .evicted:
-            "Evicted"
+            "Retired"
         case .restored:
             "Restored"
         case .promoted:

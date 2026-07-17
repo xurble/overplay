@@ -126,12 +126,16 @@ final class CarPlayCoordinator: NSObject {
         return item
     }
 
-    private func trackItem(_ summary: TrackSummaryPresentation, playlist: PlaylistRecord) -> CPListItem {
+    private func trackItem(
+        _ summary: TrackSummaryPresentation,
+        playlist: PlaylistRecord,
+        scope: PlaylistPlaybackScope = .active
+    ) -> CPListItem {
         let item = CPListItem(text: summary.title, detailText: summary.detailText)
         item.isPlaying = isCurrentTrack(summary, in: playlist)
         item.handler = { [weak self] _, completion in
             Task { @MainActor in
-                await self?.play(summary, in: playlist)
+                await self?.play(summary, in: playlist, scope: scope)
                 completion()
             }
         }
@@ -199,9 +203,11 @@ final class CarPlayCoordinator: NSObject {
 
     private func playlistSections(for playlist: PlaylistRecord) throws -> [CPListSection] {
         guard let modelContext else { return [] }
+        let scope = carPlayDisplayScope(for: playlist)
         let tracks = try CarPlayLibrarySnapshot.trackSummaries(
             forPlaylistID: playlist.id,
-            playbackOrderState: playbackController?.playbackOrderState(for: playlist.musicPlaylistID),
+            playbackOrderState: playbackController?.playbackOrderState(for: playlist.musicPlaylistID, scope: scope),
+            scope: scope,
             in: modelContext
         )
 
@@ -214,11 +220,24 @@ final class CarPlayCoordinator: NSObject {
         }
 
         return [
-            CPListSection(items: tracks.map { trackItem($0, playlist: playlist) })
+            CPListSection(items: tracks.map { trackItem($0, playlist: playlist, scope: scope) })
         ]
     }
 
-    private func play(_ summary: TrackSummaryPresentation, in playlist: PlaylistRecord) async {
+    private func carPlayDisplayScope(for playlist: PlaylistRecord) -> PlaylistPlaybackScope {
+        guard let playbackController,
+              playbackController.currentPlaylistID == playlist.musicPlaylistID else {
+            return .active
+        }
+
+        return playbackController.currentPlaylistScope
+    }
+
+    private func play(
+        _ summary: TrackSummaryPresentation,
+        in playlist: PlaylistRecord,
+        scope: PlaylistPlaybackScope = .active
+    ) async {
         guard let playbackController, let modelContext else { return }
 
         do {
@@ -229,7 +248,7 @@ final class CarPlayCoordinator: NSObject {
             }
 
             let settings = try SettingsRepository.settings(in: modelContext)
-            await playbackController.playPlaylist(playlist, startingAt: track, settings: settings, context: modelContext)
+            await playbackController.playPlaylist(playlist, startingAt: track, scope: scope, settings: settings, context: modelContext)
             refreshLibraryLists()
             updateNowPlayingButtons(force: true)
             showNowPlaying()
@@ -306,6 +325,10 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func nowPlayingActionButtons(for signature: CarPlayNowPlayingButtonSignature) -> [CPNowPlayingButton] {
+        if signature.isEvicted {
+            return [makeRestoreButton()]
+        }
+
         if signature.playlistRole == .triage {
             return [
                 makePromoteButton(),
@@ -393,6 +416,16 @@ final class CarPlayCoordinator: NSObject {
         return button
     }
 
+    private func makeRestoreButton() -> CPNowPlayingImageButton {
+        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "arrow.uturn.backward.circle.fill")) { [weak self] _ in
+            Task { @MainActor in
+                self?.restoreCurrentTrack()
+            }
+        }
+        button.isEnabled = playbackController?.currentTrack != nil
+        return button
+    }
+
     private func makePromoteButton() -> CPNowPlayingImageButton {
         let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "star.fill")) { [weak self] _ in
             Task { @MainActor in
@@ -420,9 +453,9 @@ final class CarPlayCoordinator: NSObject {
         do {
             let settings = try SettingsRepository.settings(in: modelContext)
             await playbackController.evictCurrent(settings: settings, context: modelContext)
-            refreshAfterHealthAction()
+            refreshAfterTrackAction()
         } catch {
-            showError(title: "Health action failed", message: error.localizedDescription)
+            showError(title: "Track action failed", message: error.localizedDescription)
         }
     }
 
@@ -432,13 +465,20 @@ final class CarPlayCoordinator: NSObject {
         do {
             let settings = try SettingsRepository.settings(in: modelContext)
             await playbackController.promoteCurrent(settings: settings, context: modelContext)
-            refreshAfterHealthAction()
+            refreshAfterTrackAction()
         } catch {
-            showError(title: "Health action failed", message: error.localizedDescription)
+            showError(title: "Track action failed", message: error.localizedDescription)
         }
     }
 
-    private func refreshAfterHealthAction() {
+    private func restoreCurrentTrack() {
+        guard let playbackController, let modelContext else { return }
+
+        _ = playbackController.restoreCurrent(context: modelContext)
+        refreshAfterTrackAction()
+    }
+
+    private func refreshAfterTrackAction() {
         refreshLibraryLists()
         updateNowPlayingButtons(force: true)
     }

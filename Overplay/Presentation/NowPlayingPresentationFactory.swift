@@ -34,7 +34,6 @@ enum NowPlayingPresentationFactory {
             playthroughThresholdPercentage: settings.playthroughThresholdPercentage,
             skipCount: playbackController.displayedSkipCount,
             playthroughCount: playbackController.displayedPlaythroughCount,
-            evictAfterSkips: settings.evictAfterSkips,
             isEvicted: playbackController.displayedIsEvicted,
             isProtected: playbackController.displayedIsProtected
         )
@@ -75,44 +74,31 @@ enum NowPlayingPresentationFactory {
             playthroughThresholdPercentage: settings.playthroughThresholdPercentage,
             skipCount: displayedSkipCount,
             playthroughCount: playbackController.displayedPlaythroughCount(context: context),
-            evictAfterSkips: settings.evictAfterSkips,
             isEvicted: playbackController.displayedIsEvicted(context: context),
             isProtected: playbackController.displayedIsProtected(context: context)
         )
     }
 
-    static func trackHealthPresentation(
+    static func trackStateBadgePresentation(
         playbackController: PlaybackController,
         settings: OverplaySettings
-    ) -> TrackHealthPresentation {
-        let status = TrackHealthStatus.resolve(
-            skipCount: playbackController.displayedSkipCount,
-            evictAfterSkips: settings.evictAfterSkips,
-            isEvicted: playbackController.displayedIsEvicted,
-            isProtected: playbackController.displayedIsProtected
-        )
-        return TrackHealthPresentation(
-            status: status,
+    ) -> TrackStateBadgePresentation {
+        _ = settings
+        return TrackStateBadgePresentation(
             isEvicted: playbackController.displayedIsEvicted,
             isProtected: playbackController.displayedIsProtected
         )
     }
 
-    static func trackHealthPresentation(
+    static func trackStateBadgePresentation(
         playbackController: PlaybackController,
         settings: OverplaySettings,
         context: ModelContext
-    ) -> TrackHealthPresentation {
+    ) -> TrackStateBadgePresentation {
+        _ = settings
         let isEvicted = playbackController.displayedIsEvicted(context: context)
         let isProtected = playbackController.displayedIsProtected(context: context)
-        let status = TrackHealthStatus.resolve(
-            skipCount: playbackController.displayedSkipCount(context: context),
-            evictAfterSkips: settings.evictAfterSkips,
-            isEvicted: isEvicted,
-            isProtected: isProtected
-        )
-        return TrackHealthPresentation(
-            status: status,
+        return TrackStateBadgePresentation(
             isEvicted: isEvicted,
             isProtected: isProtected
         )

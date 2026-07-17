@@ -19,7 +19,7 @@ struct SettingsView: View {
                         Text(settings.selectedPlaylistName ?? "None")
                             .font(.body)
                         SettingsSubtitle(
-                            "Your One True Playlist. Evictions and triage promotions are manual."
+                            "Your One True Playlist. Retirements and triage promotions are manual."
                         )
                     }
                     Spacer()
@@ -68,7 +68,7 @@ struct SettingsView: View {
                 } label: {
                     SettingsActionLabel(
                         title: "Reset All Local Overplay Stats",
-                        subtitle: "Clears skip, playthrough, protection, and eviction state without changing Apple Music playlists.",
+                        subtitle: "Clears skip, playthrough, protection, and retired state without changing Apple Music playlists.",
                         systemImage: "arrow.counterclockwise"
                     )
                 }
@@ -127,7 +127,7 @@ struct SettingsView: View {
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("This clears Overplay skip, playthrough, protection, and eviction state. It does not delete Apple Music playlist content.")
+            Text("This clears Overplay skip, playthrough, protection, and retired state. It does not delete Apple Music playlist content.")
         }
         .confirmationDialog("Nuke local and iCloud data?", isPresented: $showNukeConfirmation, titleVisibility: .visible) {
             Button("Nuke Database", role: .destructive) {

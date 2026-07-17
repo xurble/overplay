@@ -225,8 +225,7 @@ struct PlaylistSelectionView: View {
             playlists: linkedPlaylists,
             items: playlistItems,
             tracks: tracks,
-            currentPlaylistID: playbackController.currentTrack != nil ? playbackController.currentPlaylistID : nil,
-            evictAfterSkips: OverplaySettings().evictAfterSkips
+            currentPlaylistID: playbackController.currentTrack != nil ? playbackController.currentPlaylistID : nil
         )
     }
 

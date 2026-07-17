@@ -10,7 +10,6 @@ struct PlaybackSessionEvaluationServiceTests {
     func skipTransitionIncrementsSkipCount() throws {
         let fixture = try makeFixture(skipCount: 0)
         let settings = OverplaySettings(
-            evictAfterSkips: 3,
             skipThresholdPercentage: 50,
             minimumSkipListeningSeconds: 0
         )
@@ -465,7 +464,6 @@ struct PlaybackSessionEvaluationServiceTests {
     func alreadyEvaluatedSessionDoesNotMutateNewlyCurrentItem() throws {
         let fixture = try makeTwoTrackFixture()
         let settings = OverplaySettings(
-            evictAfterSkips: 3,
             skipThresholdPercentage: 50,
             minimumSkipListeningSeconds: 0
         )
@@ -500,7 +498,6 @@ struct PlaybackSessionEvaluationServiceTests {
     func manualSkipEvaluatesOutgoingFallbackLocalTrackInsteadOfCurrentItem() throws {
         let fixture = try makeTwoTrackFixture()
         let settings = OverplaySettings(
-            evictAfterSkips: 3,
             skipThresholdPercentage: 50,
             minimumSkipListeningSeconds: 0
         )
@@ -533,7 +530,6 @@ struct PlaybackSessionEvaluationServiceTests {
     func skipTransitionDoesNotUseCurrentItemWhenSessionIdentityMismatches() throws {
         let fixture = try makeTwoTrackFixture()
         let settings = OverplaySettings(
-            evictAfterSkips: 3,
             skipThresholdPercentage: 50,
             minimumSkipListeningSeconds: 0
         )
@@ -566,7 +562,6 @@ struct PlaybackSessionEvaluationServiceTests {
     func skipTransitionResolvesPlaylistItemFromFallbackLocalTrackID() throws {
         let fixture = try makeFixture(skipCount: 0)
         let settings = OverplaySettings(
-            evictAfterSkips: 3,
             skipThresholdPercentage: 50,
             minimumSkipListeningSeconds: 0
         )
@@ -623,7 +618,6 @@ struct PlaybackSessionEvaluationServiceTests {
         context.insert(localItem)
         context.insert(musicIDItem)
         let settings = OverplaySettings(
-            evictAfterSkips: 3,
             skipThresholdPercentage: 50,
             minimumSkipListeningSeconds: 0
         )
@@ -656,7 +650,6 @@ struct PlaybackSessionEvaluationServiceTests {
     func protectedTrackSkipsAreCounted() throws {
         let fixture = try makeFixture(skipCount: 2, protected: true)
         let settings = OverplaySettings(
-            evictAfterSkips: 3,
             skipThresholdPercentage: 50,
             minimumSkipListeningSeconds: 0
         )

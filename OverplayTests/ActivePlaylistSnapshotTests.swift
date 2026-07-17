@@ -90,8 +90,8 @@ struct ActivePlaylistSnapshotTests {
         #expect(updated.rows.first { $0.id == secondItem.id }?.isCurrent == true)
     }
 
-    @Test("rebuilt snapshot reflects health mutations")
-    func rebuiltSnapshotReflectsHealthMutations() {
+    @Test("rebuilt snapshot reflects track action mutations")
+    func rebuiltSnapshotReflectsTrackActionMutations() {
         let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main")
         let track = TrackRecord(catalogID: "track", libraryID: "track", title: "Track", artistName: "Artist")
         let item = PlaylistItemRecord(

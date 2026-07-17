@@ -4,8 +4,8 @@ import Testing
 @testable import Overplay
 
 @MainActor
-@Suite("Track health action service")
-struct TrackHealthActionServiceTests {
+@Suite("Track action service")
+struct TrackActionServiceTests {
     @Test("keep current track resets skip count and optionally protects")
     func keepCurrentTrackResetsSkipCountAndOptionallyProtects() throws {
         let container = try OverplayTestSupport.makeModelContainer()
@@ -15,7 +15,7 @@ struct TrackHealthActionServiceTests {
         context.insert(playlist)
         context.insert(item)
 
-        try TrackHealthActionService.keepCurrentTrack(
+        try TrackActionService.keepCurrentTrack(
             item,
             playlist: playlist,
             protect: true,
@@ -41,7 +41,7 @@ struct TrackHealthActionServiceTests {
         context.insert(playlist)
         context.insert(item)
 
-        try TrackHealthActionService.resetSkipCount(
+        try TrackActionService.resetSkipCount(
             item,
             playlist: playlist,
             message: "Skip count reset in CarPlay",
@@ -66,7 +66,7 @@ struct TrackHealthActionServiceTests {
         context.insert(playlist)
         context.insert(item)
 
-        try TrackHealthActionService.protectTrack(
+        try TrackActionService.protectTrack(
             item,
             playlist: playlist,
             message: "Protected in CarPlay",
@@ -90,14 +90,14 @@ struct TrackHealthActionServiceTests {
         context.insert(playlist)
         context.insert(item)
 
-        try TrackHealthActionService.setProtected(
+        try TrackActionService.setProtected(
             item,
             playlist: playlist,
             isProtected: true,
             message: "Keep turned on in CarPlay",
             in: context
         )
-        try TrackHealthActionService.setProtected(
+        try TrackActionService.setProtected(
             item,
             playlist: playlist,
             isProtected: false,
@@ -125,7 +125,7 @@ struct TrackHealthActionServiceTests {
         context.insert(playlist)
         context.insert(item)
 
-        try TrackHealthActionService.evictTrack(
+        try TrackActionService.evictTrack(
             item,
             playlist: playlist,
             message: "Evicted manually",
@@ -157,7 +157,7 @@ struct TrackHealthActionServiceTests {
         context.insert(playlist)
         context.insert(item)
 
-        try TrackHealthActionService.restoreTrack(item, playlist: playlist, in: context)
+        try TrackActionService.restoreTrack(item, playlist: playlist, in: context)
 
         let history = try context.fetch(FetchDescriptor<HistoryEvent>())
         #expect(item.evictedAt == nil)

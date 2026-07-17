@@ -60,7 +60,7 @@ struct PlaylistPresentationBuilderTests {
         #expect(summary.artworkURLString == "https://example.com/art.jpg")
     }
 
-    @Test("track summaries include playable tracks in created order with health")
+    @Test("track summaries include playable tracks in created order with history")
     func trackSummaries() {
         let playlistID = UUID()
         let firstTrack = TrackRecord(title: "First", artistName: "Artist", albumTitle: "Album")
@@ -89,7 +89,7 @@ struct PlaylistPresentationBuilderTests {
             )
         ]
 
-        let summaries = builder(items: items, tracks: [firstTrack, secondTrack, evictedTrack], evictAfterSkips: 3)
+        let summaries = builder(items: items, tracks: [firstTrack, secondTrack, evictedTrack])
             .trackSummaries(forPlaylistID: playlistID)
 
         #expect(summaries.map(\.title) == ["First", "Second"])
@@ -139,15 +139,13 @@ struct PlaylistPresentationBuilderTests {
         playlists: [PlaylistRecord] = [],
         items: [PlaylistItemRecord] = [],
         tracks: [TrackRecord] = [],
-        currentPlaylistID: String? = nil,
-        evictAfterSkips: Int = 3
+        currentPlaylistID: String? = nil
     ) -> PlaylistPresentationBuilder {
         PlaylistPresentationBuilder(
             playlists: playlists,
             items: items,
             tracks: tracks,
-            currentPlaylistID: currentPlaylistID,
-            evictAfterSkips: evictAfterSkips
+            currentPlaylistID: currentPlaylistID
         )
     }
 }

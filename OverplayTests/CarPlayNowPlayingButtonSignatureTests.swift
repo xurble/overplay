@@ -6,7 +6,7 @@ import Testing
 @MainActor
 @Suite("CarPlay now playing button signature", .serialized)
 struct CarPlayNowPlayingButtonSignatureTests {
-    @Test("reflects presentation state for track health")
+    @Test("reflects presentation state for track facts")
     func reflectsPresentationState() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
@@ -51,7 +51,7 @@ struct CarPlayNowPlayingButtonSignatureTests {
             settings: settings,
             context: context
         )
-        let health = NowPlayingPresentationFactory.trackHealthPresentation(
+        let badge = NowPlayingPresentationFactory.trackStateBadgePresentation(
             playbackController: controller,
             settings: settings,
             context: context
@@ -62,15 +62,14 @@ struct CarPlayNowPlayingButtonSignatureTests {
         #expect(signature.skipCount == nowPlaying.skipCount)
         #expect(signature.isProtected == nowPlaying.isProtected)
         #expect(signature.isEvicted == nowPlaying.isEvicted)
-        #expect(health.title == "Protected")
+        #expect(badge.title == "Protected")
     }
 
-    @Test("changes when evicted and at-risk presentation state changes")
-    func changesWithHealthPresentation() throws {
+    @Test("changes when retired presentation state changes")
+    func changesWithRetiredPresentation() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let settings = try SettingsRepository.settings(in: context)
-        settings.evictAfterSkips = 3
         let controller = PlaybackController()
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-1",
@@ -91,18 +90,18 @@ struct CarPlayNowPlayingButtonSignatureTests {
         controller.currentTrack = CurrentPlaybackTrack(id: "music-1", title: "Track", artistName: "Artist")
         controller.currentPlaylistItem = item
 
-        let atRisk = CarPlayNowPlayingButtonSignature.make(
+        let active = CarPlayNowPlayingButtonSignature.make(
             playbackController: controller,
             settings: settings,
             context: context
         )
-        let atRiskHealth = NowPlayingPresentationFactory.trackHealthPresentation(
+        let activeBadge = NowPlayingPresentationFactory.trackStateBadgePresentation(
             playbackController: controller,
             settings: settings,
             context: context
         )
-        #expect(atRiskHealth.status == .critical)
-        #expect(!atRisk.isEvicted)
+        #expect(activeBadge.title == "Active")
+        #expect(!active.isEvicted)
 
         item.evictedAt = Date.now
         controller.currentPlaylistItem = item
@@ -112,14 +111,14 @@ struct CarPlayNowPlayingButtonSignatureTests {
             settings: settings,
             context: context
         )
-        let evictedHealth = NowPlayingPresentationFactory.trackHealthPresentation(
+        let evictedBadge = NowPlayingPresentationFactory.trackStateBadgePresentation(
             playbackController: controller,
             settings: settings,
             context: context
         )
         #expect(evicted.isEvicted)
-        #expect(evictedHealth.title == "Evicted")
-        #expect(evicted != atRisk)
+        #expect(evictedBadge.title == "Retired")
+        #expect(evicted != active)
     }
 
     @Test("factory reflects triage playlist role for direct CarPlay actions")
