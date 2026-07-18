@@ -18,6 +18,19 @@ struct PlaylistPresentationBuilderTests {
         #expect(summaries.map(\.musicPlaylistID) == ["one", "triage-a", "triage-b"])
     }
 
+    @Test("display ordering keeps every candidate and sorts by role then case-insensitive title")
+    func displayOrderedPlaylistsKeepsAllCandidates() {
+        let inactive = PlaylistRecord(musicPlaylistID: "inactive", name: "Hidden", role: .triage, isActive: false)
+        let triageB = PlaylistRecord(musicPlaylistID: "triage-b", name: "zeta", role: .triage)
+        let triageA = PlaylistRecord(musicPlaylistID: "triage-a", name: "Alpha", role: .triage)
+        let oneTrue = PlaylistRecord(musicPlaylistID: "one", name: "Main", role: .oneTruePlaylist)
+        let candidates = [inactive, triageB, triageA, oneTrue]
+
+        let ordered = builder(playlists: candidates).displayOrderedPlaylists(candidates)
+
+        #expect(ordered.map(\.name) == ["Main", "Alpha", "Hidden", "zeta"])
+    }
+
     @Test("playlist summaries include counts role grouping and current playback intent")
     func playlistSummariesIncludeCountsAndCurrentIntent() {
         let playlist = PlaylistRecord(musicPlaylistID: "triage", name: "Inbox", role: .triage)

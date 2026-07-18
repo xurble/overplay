@@ -31,6 +31,13 @@ struct PlaylistPresentationBuilder {
         summary(playlist)
     }
 
+    func displayOrderedPlaylists(_ candidates: [PlaylistRecord]) -> [PlaylistRecord] {
+        candidates
+            .map { (playlist: $0, summary: summary($0)) }
+            .sorted { PlaylistSummaryPresentation.areInDisplayOrder($0.summary, $1.summary) }
+            .map(\.playlist)
+    }
+
     func dashboardSummary(forPlaylistID playlistID: UUID) -> DashboardSummary {
         DashboardSummary(items: itemsForPlaylist(playlistID))
     }

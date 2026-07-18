@@ -1,71 +1,42 @@
 {
   "fill" : {
-    "linear-gradient" : [
-      "extended-srgb:1.00000,0.21961,0.23529,1.00000",
-      "extended-srgb:0.00000,0.53333,1.00000,1.00000"
-    ],
-    "orientation" : {
-      "start" : {
-        "x" : 0.5,
-        "y" : 0
-      },
-      "stop" : {
-        "x" : 0.5,
-        "y" : 0.7
-      }
-    }
+    "solid" : "display-p3:0.53600,0.17834,0.66090,1.00000"
   },
   "groups" : [
     {
+      "blur-material" : 0.5,
       "layers" : [
         {
-          "hidden" : false,
-          "image-name" : "02_glass_disc_glow.png",
-          "name" : "02_glass_disc_glow"
-        },
-        {
-          "glass" : false,
-          "hidden" : false,
-          "image-name" : "03_translucent_disc.png",
-          "name" : "03_translucent_disc"
-        },
-        {
-          "glass" : false,
-          "hidden" : false,
-          "image-name" : "04_groove_rings_highlights.png",
-          "name" : "04_groove_rings_highlights"
-        },
-        {
+          "fill" : {
+            "solid" : "extended-gray:1.00000,1.00000"
+          },
           "glass" : true,
           "hidden" : false,
-          "image-name" : "05_centre_glass_label.png",
-          "name" : "05_centre_glass_label"
-        },
-        {
-          "glass" : true,
-          "hidden" : false,
-          "image-name" : "06_play_triangle.png",
-          "name" : "06_play_triangle"
-        },
-        {
-          "hidden" : true,
-          "image-name" : "07_skip_chevrons.png",
-          "name" : "07_skip_chevrons"
-        },
-        {
-          "glass" : false,
-          "hidden" : false,
-          "image-name" : "01_album_art_gradient_background.png",
-          "name" : "01_album_art_gradient_background"
+          "image-name" : "overplay.svg",
+          "name" : "overplay",
+          "opacity-specializations" : [
+            {
+              "appearance" : "tinted",
+              "value" : 0.4
+            }
+          ],
+          "position" : {
+            "scale" : 0.95,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
         }
       ],
       "shadow" : {
-        "kind" : "neutral",
+        "kind" : "none",
         "opacity" : 0.5
       },
+      "specular" : true,
       "translucency" : {
         "enabled" : true,
-        "value" : 0.5
+        "value" : 0.4
       }
     }
   ],

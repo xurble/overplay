@@ -7,8 +7,8 @@ struct PlaylistSelectionView: View {
     @Environment(PlaybackController.self) private var playbackController
 
     @Query(sort: \PlaylistRecord.name) private var linkedPlaylists: [PlaylistRecord]
-    @Query(sort: \PlaylistItemRecord.createdAt) private var playlistItems: [PlaylistItemRecord]
-    @Query(sort: \TrackRecord.title) private var tracks: [TrackRecord]
+    @State private var playlistItems: [PlaylistItemRecord] = []
+    @State private var tracks: [TrackRecord] = []
 
     @State private var viewModel = PlaylistSelectionViewModel()
 
@@ -92,17 +92,25 @@ struct PlaylistSelectionView: View {
         .task {
             await viewModel.loadPlaylists(dependencies: dependencies)
         }
+        .task(id: playlistDataKey) {
+            reloadPlaylistData()
+        }
     }
 
     private var sortedLinkedPlaylists: [PlaylistRecord] {
-        linkedPlaylists.sorted { left, right in
-            let leftSummary = presentation(for: left)
-            let rightSummary = presentation(for: right)
-            if leftSummary.displayPriority != rightSummary.displayPriority {
-                return leftSummary.displayPriority < rightSummary.displayPriority
-            }
-            return leftSummary.title.localizedCaseInsensitiveCompare(rightSummary.title) == .orderedAscending
-        }
+        presentationBuilder.displayOrderedPlaylists(linkedPlaylists)
+    }
+
+    private var playlistDataKey: String {
+        linkedPlaylists
+            .map { "\($0.id.uuidString):\($0.updatedAt.timeIntervalSinceReferenceDate)" }
+            .joined(separator: "-")
+    }
+
+    private func reloadPlaylistData() {
+        let playlistIDs = linkedPlaylists.map(\.id)
+        playlistItems = (try? PlaylistItemRepository.items(forPlaylistIDs: playlistIDs, in: modelContext)) ?? []
+        tracks = (try? TrackRecordRepository.tracks(ids: playlistItems.map(\.trackID), in: modelContext)) ?? []
     }
 
     private var oneTruePlaylist: PlaylistRecord? {

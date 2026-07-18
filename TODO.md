@@ -99,16 +99,6 @@ changing the implementation.
 
 ## Performance And Responsiveness Follow-Ups
 
-### Playlist Selection Query Load
-
-`PlaylistSelectionView` still holds broad `@Query` properties for playlists,
-playlist items, and tracks. During sync, each `context.save()` can re-evaluate
-and re-diff more library state than the screen needs.
-
-- Replace with filtered or aggregated queries, or repository-backed counts.
-- Keep the UI behavior unchanged.
-- Add focused tests around any extracted count or presentation logic.
-
 ### Background Sync Context
 
 Playlist sync currently runs on the MainActor against the main `ModelContext`,

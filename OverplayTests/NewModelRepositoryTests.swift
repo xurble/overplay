@@ -644,6 +644,6 @@ struct NewModelRepositoryTests {
         await controller.playPlaylist(triagePlaylist, settings: settings, context: context)
 
         #expect(controller.currentPlaylistID == nil)
-        #expect(controller.statusMessage == "No locally cached playable tracks for Triage. Sync this playlist before playing.")
+        #expect(controller.statusMessage == "No locally cached active tracks for Triage.")
     }
 }
