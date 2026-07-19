@@ -383,10 +383,11 @@ Agents may:
 -   implement features
 -   improve layouts and animations
 -   refactor code safely
+-   commit code between steps of large pieces of work
 
 Agents must **not**:
 
--   commit code
+-   push code
 -   change git history
 -   introduce large dependencies without approval
 -   restructure the project without confirmation

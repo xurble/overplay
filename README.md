@@ -53,7 +53,10 @@ the same as a skip in the app.
 Shared app data is backed by iCloud/CloudKit so devices on the same account
 can share playlist definitions, track stats, promotions, and retirement
 history. Linked playlists are periodically re-synced from Apple Music, with
-additions, removals, and reordering reconciled into the local store.
+additions and updated track metadata reconciled into the local store. Tracks
+that disappear from the remote playlist are left in place locally with their
+history preserved; local retirement remains the only way to exclude a track
+from Active playback.
 
 Playback state stays local to each device. The currently playing track,
 queue, position, selected view, shuffle/repeat state, and window-specific
@@ -85,12 +88,13 @@ Mac share Overplay data without controlling each other's playback.
 
 ## Local Configuration
 
-Shared build settings live in `Config/Shared.xcconfig`. Local developer
-identifiers should live in `Config/Local.xcconfig`, which is ignored by git.
+Shared build settings live in `Overplay/Config/Shared.xcconfig`. Local
+developer identifiers should live in `Overplay/Config/Local.xcconfig`, which
+is ignored by git.
 
 To configure a local checkout:
 
-1. Copy `Config/Local.example.xcconfig` to `Config/Local.xcconfig`.
+1. Copy `Overplay/Config/Local.example.xcconfig` to `Overplay/Config/Local.xcconfig`.
 2. Set `DEVELOPMENT_TEAM`.
 3. Set `PRODUCT_BUNDLE_IDENTIFIER`.
 4. Set `ICLOUD_CONTAINER_IDENTIFIER`.

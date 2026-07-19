@@ -38,6 +38,12 @@ final class PlaybackController {
     var currentPlaylistScope: PlaylistPlaybackScope = .active
     var activePlaylistSnapshot: ActivePlaylistSnapshot?
     var statusMessage: String?
+    /// True while streaming delivery is failing (mid-track stall, player
+    /// interruption, or a restart the player refused). Cleared by witnessed
+    /// playback progress or a successful user-initiated play. CarPlay
+    /// watches this to surface an alert — statusMessage renders only in the
+    /// iPhone/iPad Now Playing views.
+    private(set) var isDeliveryStalled = false
     private(set) var playbackItemMetadataVersion = 0
     private var playbackModeVersion = 0
 
@@ -58,6 +64,18 @@ final class PlaybackController {
     @ObservationIgnored private var lastLocalPlaybackStateIdentity: LocalPlaybackStateIdentity?
     @ObservationIgnored private var lastLoggedPlaybackRefreshSignature: String?
     @ObservationIgnored private var didLogQueueEndWithoutRestart = false
+    @ObservationIgnored private var deliveryStallState = PlaybackDeliveryStallPolicy.State()
+    @ObservationIgnored private var deliveryRecoveryAttempts = 0
+    @ObservationIgnored private var isAttemptingDeliveryRecovery = false
+    /// True while the user's last playback command was play-like. Gates
+    /// stall auto-recovery so it can never auto-play after an intended stop.
+    @ObservationIgnored private var playbackIntended = false
+    @ObservationIgnored var isNetworkReachable: () -> Bool = { NetworkReachabilityMonitor.shared.isReachable }
+
+    static let deliveryStallMessage =
+        "Playback stalled — check your network connection. Overplay will retry when the connection returns."
+    static let playbackStoppedMessage =
+        "Playback stopped before the track finished — possibly a connection problem. Press play to resume."
 
     init(playerID: String = "main") {
         self.playerID = playerID
@@ -234,6 +252,10 @@ final class PlaybackController {
         lastLocalPlaybackStateIdentity = nil
         lastLoggedPlaybackRefreshSignature = nil
         didLogQueueEndWithoutRestart = false
+        deliveryStallState = PlaybackDeliveryStallPolicy.State()
+        deliveryRecoveryAttempts = 0
+        isDeliveryStalled = false
+        playbackIntended = false
         statusMessage = "Overplay data reset."
         hasRestoredLocalPlaybackState = false
         LocalPlaybackStateStore.clear(flushImmediately: true)
@@ -433,6 +455,8 @@ final class PlaybackController {
             startingAt: materialization.startingEntry
         )
         try await player.play()
+        playbackIntended = true
+        clearDeliveryFailure()
         currentPlaylistID = playlistID
         currentPlaylistScope = scope
         await ArtworkCacheService.shared.touchPlaylistUsage(playlistID)
@@ -472,8 +496,11 @@ final class PlaybackController {
         do {
             if player.state.playbackStatus == .playing {
                 player.pause()
+                playbackIntended = false
             } else {
                 try await player.play()
+                playbackIntended = true
+                clearDeliveryFailure()
                 startMonitoring(context: context)
             }
             await refresh(context: context)
@@ -527,6 +554,8 @@ final class PlaybackController {
     func play(context: ModelContext) async {
         do {
             try await player.play()
+            playbackIntended = true
+            clearDeliveryFailure()
             startMonitoring(context: context)
             await refresh(context: context)
         } catch {
@@ -536,6 +565,7 @@ final class PlaybackController {
 
     func pause() {
         player.pause()
+        playbackIntended = false
         elapsedSeconds = player.playbackTime
         isPlaying = false
         if let musicItemID = currentTrack?.id {
@@ -582,6 +612,17 @@ final class PlaybackController {
             await refresh(context: context)
         } catch {
             isPerformingTransition = false
+            guard PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
+                activeQueueIndex: activeQueueIndex,
+                activeQueueCount: activeQueueEntries.count,
+                hasCurrentEntry: player.queue.currentEntry != nil
+            ) else {
+                // Mid-queue with a live entry, the skip can only have failed
+                // because the player couldn't deliver the next track — don't
+                // even attempt the queue-end restart while delivery is down.
+                reportDeliveryFailure(message: musicPlaybackFailureMessage(for: error))
+                return
+            }
             if let skippedTrackID,
                await handleQueueEnded(
                    lastMusicItemID: skippedTrackID,
@@ -590,7 +631,9 @@ final class PlaybackController {
                ) {
                 return
             }
-            statusMessage = error.localizedDescription
+            if !isDeliveryStalled {
+                statusMessage = error.localizedDescription
+            }
         }
     }
 
@@ -1046,6 +1089,12 @@ final class PlaybackController {
         elapsedSeconds = currentPlaybackTime
         isPlaying = player.state.playbackStatus == .playing
 
+        await trackDeliveryHealth(
+            status: player.state.playbackStatus,
+            hasCurrentEntry: player.queue.currentEntry != nil,
+            playbackTime: currentPlaybackTime
+        )
+
         // Queue end never surfaces as a nil resolved identity, because
         // identity resolution falls back to the cached active queue entry
         // and session. Detect it from the player state directly, and only
@@ -1085,6 +1134,15 @@ final class PlaybackController {
                     return
                 }
             } else {
+                // The player abandoned the queue mid-track and the
+                // anti-surprise-restart guard declined to restart. If
+                // Overplay believed it was playing, this is a delivery
+                // failure the user deserves to hear about — but it is
+                // indistinguishable from an external stop, so never
+                // auto-resume from here.
+                if !didLogQueueEndWithoutRestart, playbackIntended {
+                    reportDeliveryFailure(message: Self.playbackStoppedMessage)
+                }
                 logQueueEndWithoutRestartIfNeeded()
             }
         } else {
@@ -1935,7 +1993,7 @@ final class PlaybackController {
         defer { isRestartingQueue = false }
 
         do {
-            let queueEntries = try PlaybackQueueOrchestrator.reshuffledQueueEntries(
+            let reshuffled = try PlaybackQueueOrchestrator.previewedReshuffledQueue(
                 playlistID: currentPlaylistID,
                 playerID: playerID,
                 scope: currentPlaylistScope,
@@ -1946,22 +2004,150 @@ final class PlaybackController {
                 ),
                 in: context
             )
-            playbackModeVersion += 1
-            guard !queueEntries.isEmpty else { return false }
+            guard !reshuffled.entries.isEmpty else { return false }
 
             disableMusicKitPlaybackModes()
-            let startingLocalTrackID = queueEntries.first?.localTrackID
-            let materialization = materializeActiveQueue(entries: queueEntries, startingAt: startingLocalTrackID)
+            let startingLocalTrackID = reshuffled.entries.first?.localTrackID
+            let materialization = PlaybackQueueMaterializer.materialize(
+                reshuffled.entries,
+                startingAt: startingLocalTrackID
+            )
             player.queue = ApplicationMusicPlayer.Queue(
                 materialization.queueEntries,
                 startingAt: materialization.startingEntry
             )
-            try await player.play()
+            do {
+                try await player.play()
+            } catch {
+                // The player refused the new queue (offline, Music app dead).
+                // Nothing has been persisted or adopted yet: put the player
+                // queue back where the user was so a later manual play
+                // resumes there instead of at a random reshuffled track.
+                restorePlayerQueueAfterFailedRestart(
+                    resumeLocalTrackID: activeQueueCurrentLocalTrackID ?? lastLocalTrackID,
+                    context: context
+                )
+                reportDeliveryFailure(message: musicPlaybackFailureMessage(for: error))
+                return false
+            }
+
+            // Play is confirmed: only now adopt the new queue and persist
+            // the reshuffled order.
+            updateActiveQueue(realizedEntries: materialization.realizedEntries, startingAt: startingLocalTrackID)
+            PlaybackQueueOrchestrator.persistReshuffledOrder(
+                reshuffled.orderedTrackIDs,
+                playlistID: currentPlaylistID,
+                playerID: playerID,
+                scope: currentPlaylistScope
+            )
+            playbackModeVersion += 1
+            playbackIntended = true
             await refresh(context: context)
             return true
         } catch {
             statusMessage = error.localizedDescription
             return false
+        }
+    }
+
+    /// A restart replaced the live player queue before `play()` failed. The
+    /// stored order was deliberately not overwritten, so rebuild the queue
+    /// from it, positioned at the track the user was on, and re-correlate
+    /// the active queue with the restored player entries.
+    private func restorePlayerQueueAfterFailedRestart(resumeLocalTrackID: String?, context: ModelContext) {
+        guard let currentPlaylistID else { return }
+        guard let entries = try? PlaybackQueueOrchestrator.orderedCachedQueueEntries(
+            for: currentPlaylistID,
+            playerID: playerID,
+            startingTrackID: resumeLocalTrackID,
+            scope: currentPlaylistScope,
+            in: context
+        ), !entries.isEmpty else { return }
+
+        let materialization = materializeActiveQueue(entries: entries, startingAt: resumeLocalTrackID)
+        player.queue = ApplicationMusicPlayer.Queue(
+            materialization.queueEntries,
+            startingAt: materialization.startingEntry
+        )
+    }
+
+    private func trackDeliveryHealth(
+        status: MusicPlayer.PlaybackStatus,
+        hasCurrentEntry: Bool,
+        playbackTime: Double
+    ) async {
+        guard currentPlaylistID != nil, !activeQueueEntries.isEmpty else {
+            deliveryStallState = PlaybackDeliveryStallPolicy.State()
+            return
+        }
+
+        deliveryStallState = PlaybackDeliveryStallPolicy.assess(
+            deliveryStallState,
+            tick: PlaybackDeliveryStallPolicy.Tick(
+                playbackStatus: status,
+                hasCurrentEntry: hasCurrentEntry,
+                playbackTime: playbackTime
+            )
+        )
+
+        if deliveryStallState.isProgressing {
+            clearDeliveryFailure()
+            return
+        }
+
+        guard deliveryStallState.isStalled else { return }
+
+        if !isDeliveryStalled {
+            reportDeliveryFailure(message: Self.deliveryStallMessage)
+            TrackMetadataDiagnostics.log(
+                "playback delivery stalled status=\(status) time=\(String(format: "%.1f", playbackTime)) interrupted=\(deliveryStallState.interruptedTicks) frozen=\(deliveryStallState.frozenTicks)"
+            )
+        }
+
+        await attemptDeliveryRecoveryIfNeeded()
+    }
+
+    private func attemptDeliveryRecoveryIfNeeded() async {
+        guard !isAttemptingDeliveryRecovery,
+              PlaybackDeliveryStallPolicy.shouldAttemptRecovery(
+                  state: deliveryStallState,
+                  playbackIntended: playbackIntended,
+                  isNetworkReachable: isNetworkReachable(),
+                  attemptsMade: deliveryRecoveryAttempts
+              ) else {
+            return
+        }
+
+        isAttemptingDeliveryRecovery = true
+        defer { isAttemptingDeliveryRecovery = false }
+        deliveryRecoveryAttempts += 1
+        let attempt = deliveryRecoveryAttempts
+        do {
+            try await player.prepareToPlay()
+            try await player.play()
+            // The next progressing tick confirms recovery and clears the
+            // surfaced failure; reset the detector so its stale counters
+            // don't immediately re-trip it.
+            deliveryStallState = PlaybackDeliveryStallPolicy.State()
+            TrackMetadataDiagnostics.log("playback delivery recovery attempt \(attempt) resumed playback")
+        } catch {
+            TrackMetadataDiagnostics.log(
+                "playback delivery recovery attempt \(attempt) failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
+    private func reportDeliveryFailure(message: String) {
+        isDeliveryStalled = true
+        statusMessage = message
+    }
+
+    private func clearDeliveryFailure() {
+        deliveryRecoveryAttempts = 0
+        guard isDeliveryStalled else { return }
+        isDeliveryStalled = false
+        if statusMessage == Self.deliveryStallMessage || statusMessage == Self.playbackStoppedMessage {
+            statusMessage = nil
         }
     }
 

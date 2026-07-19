@@ -56,6 +56,39 @@ struct PlaybackQueueEndPolicyTests {
         #expect(!PlaybackQueueEndPolicy.shouldRestartAfterQueueEnd(session: nil))
     }
 
+    @Test("a thrown skip only means queue end at the final entry or with no live entry")
+    func aThrownSkipOnlyMeansQueueEndAtTheFinalEntryOrWithNoLiveEntry() {
+        // Mid-queue with a live entry: a delivery failure, not queue end.
+        #expect(!PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
+            activeQueueIndex: 3,
+            activeQueueCount: 10,
+            hasCurrentEntry: true
+        ))
+        // On the final entry, skipping past the end throws — queue end.
+        #expect(PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
+            activeQueueIndex: 9,
+            activeQueueCount: 10,
+            hasCurrentEntry: true
+        ))
+        // The player abandoned its entry — cannot rule out queue end.
+        #expect(PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
+            activeQueueIndex: 3,
+            activeQueueCount: 10,
+            hasCurrentEntry: false
+        ))
+        // Unknown queue position — cannot rule out queue end.
+        #expect(PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
+            activeQueueIndex: nil,
+            activeQueueCount: 10,
+            hasCurrentEntry: true
+        ))
+        #expect(PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
+            activeQueueIndex: 3,
+            activeQueueCount: 0,
+            hasCurrentEntry: true
+        ))
+    }
+
     private func session(elapsedSeconds: Double, durationSeconds: Double) -> TrackPlaySession {
         TrackPlaySession(
             trackID: "library-1",

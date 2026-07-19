@@ -21,6 +21,7 @@ final class CarPlayCoordinator: NSObject {
     private var playbackObservationGeneration = 0
     private var lastNowPlayingButtonSignature: CarPlayNowPlayingButtonSignature?
     private var visiblePlaylistID: UUID?
+    private var didPresentDeliveryStallAlert = false
 
     func connect(interfaceController: CPInterfaceController, runtime: AppRuntime) {
         self.interfaceController = interfaceController
@@ -297,15 +298,46 @@ final class CarPlayCoordinator: NSObject {
             _ = playbackController.displayedSkipCount
             _ = playbackController.displayedIsProtected
             _ = playbackController.displayedIsEvicted
+            _ = playbackController.isDeliveryStalled
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, generation == self.playbackObservationGeneration else { return }
                 if self.updateNowPlayingButtons(force: false) {
                     self.refreshLibraryLists()
                 }
+                self.presentDeliveryStallAlertIfNeeded()
                 self.observePlaybackController(generation: generation)
             }
         }
+    }
+
+    /// Delivery failures used to be invisible from CarPlay — statusMessage
+    /// renders only on iPhone/iPad. Present one dismissible alert per stall
+    /// episode; the flag resets when playback recovers.
+    private func presentDeliveryStallAlertIfNeeded() {
+        guard let playbackController else { return }
+        guard playbackController.isDeliveryStalled else {
+            didPresentDeliveryStallAlert = false
+            return
+        }
+        guard !didPresentDeliveryStallAlert,
+              let interfaceController,
+              interfaceController.presentedTemplate == nil else {
+            return
+        }
+
+        didPresentDeliveryStallAlert = true
+        let action = CPAlertAction(title: "OK", style: .default) { [weak interfaceController] _ in
+            interfaceController?.dismissTemplate(animated: true, completion: nil)
+        }
+        let template = CPAlertTemplate(
+            titleVariants: [
+                "Playback stalled — check the network connection. Overplay will retry automatically.",
+                "Playback stalled"
+            ],
+            actions: [action]
+        )
+        interfaceController.presentTemplate(template, animated: true, completion: nil)
     }
 
     @discardableResult

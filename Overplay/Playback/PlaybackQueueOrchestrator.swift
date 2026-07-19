@@ -167,26 +167,55 @@ enum PlaybackQueueOrchestrator {
         PlaybackQueueCoordinator.queueTracks(from: entries, fallback: tracks)
     }
 
-    static func reshuffledQueueEntries(
+    struct ReshuffledQueue {
+        var orderedTrackIDs: [String]
+        var entries: [PlaybackQueueEntry]
+    }
+
+    /// Computes a reshuffled order and its playable entries without saving
+    /// the order. A restart that replaces the live player queue must not
+    /// destroy the stored order until the player has confirmed it can play
+    /// the new queue — persist via `persistReshuffledOrder` only after
+    /// `play()` succeeds.
+    static func previewedReshuffledQueue(
         playlistID: String,
         playerID: String,
         scope: PlaylistPlaybackScope = .active,
         avoiding avoidedLocalTrackID: String?,
         in context: ModelContext
-    ) throws -> [PlaybackQueueEntry] {
+    ) throws -> ReshuffledQueue {
         let inputs = try playlistInputs(for: playlistID, in: context)
         let scopedItems = inputs.items.filter { scope.includes($0) }
         let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: scopedItems, scope: scope)
-        let orderedTrackIDs = PlaybackOrderCoordinator.reshuffle(
-            playerID: playerID,
-            playlistID: scope.playbackOrderPlaylistID(for: playlistID),
-            orderTracks: orderTracks,
+        let orderedTrackIDs = PlaybackOrderEngine.reshuffledOrder(
+            for: orderTracks,
             avoiding: avoidedLocalTrackID
         )
-        return cachedQueueEntries(
+        return ReshuffledQueue(
             orderedTrackIDs: orderedTrackIDs,
-            itemsByTrackID: scopedItems.firstValueDictionary(keyedBy: \.trackID),
-            tracksByID: inputs.tracksByID
+            entries: cachedQueueEntries(
+                orderedTrackIDs: orderedTrackIDs,
+                itemsByTrackID: scopedItems.firstValueDictionary(keyedBy: \.trackID),
+                tracksByID: inputs.tracksByID
+            )
+        )
+    }
+
+    static func persistReshuffledOrder(
+        _ orderedTrackIDs: [String],
+        playlistID: String,
+        playerID: String,
+        scope: PlaylistPlaybackScope = .active,
+        defaults: UserDefaults = .standard
+    ) {
+        PlaybackOrderStore.save(
+            PlaybackOrderState(
+                playerID: playerID,
+                musicPlaylistID: scope.playbackOrderPlaylistID(for: playlistID),
+                orderedTrackIDs: orderedTrackIDs
+            ),
+            to: defaults,
+            flushImmediately: true
         )
     }
 }

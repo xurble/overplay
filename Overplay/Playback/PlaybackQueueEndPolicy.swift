@@ -26,4 +26,21 @@ enum PlaybackQueueEndPolicy {
         guard let session else { return false }
         return PlaybackSessionEvaluationService.inferredNaturalCompletion(session: session)
     }
+
+    /// A thrown skipToNextEntry is ambiguous: skipping past the final entry
+    /// throws (queue exhausted — restart per the always-repeat model), but a
+    /// delivery failure mid-queue throws identically. Only treat the throw
+    /// as queue end when the active queue says there was nothing left to
+    /// skip to, or the player has already abandoned its entry. An unknown
+    /// queue position cannot rule out queue end, so it keeps the restart
+    /// path (which is non-destructive until play() succeeds).
+    static func skipFailureIndicatesQueueEnd(
+        activeQueueIndex: Int?,
+        activeQueueCount: Int,
+        hasCurrentEntry: Bool
+    ) -> Bool {
+        guard hasCurrentEntry else { return true }
+        guard let activeQueueIndex, activeQueueCount > 0 else { return true }
+        return activeQueueIndex >= activeQueueCount - 1
+    }
 }
