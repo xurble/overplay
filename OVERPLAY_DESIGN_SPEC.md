@@ -358,6 +358,35 @@ A playthrough is counted when the track reaches
 Playthroughs and skips accumulate independently. A playthrough does not reset
 the playlist item's skip count.
 
+### Suspended-playback reconciliation
+
+Playback continues out-of-process while Overplay is suspended, so the live
+monitor cannot witness it. Skips are NEVER reconstructed for suspended
+spans — an unobserved interval must never produce a skip. Playthroughs are
+recovered retroactively on any wake (a background refresh grant, scene
+foregrounding, or entering the background, which records the exact baseline
+waypoint) under two proof rules; anything ambiguous counts nothing:
+
+- Point-proof: an observation showing the current track at or past
+  `playthroughThresholdPercentage` counts the playthrough outright.
+  Playthroughs are position-based, so a single trusted position observation
+  is sufficient proof.
+- Continuity-proof: between two waypoints, if elapsed wall time accounts for
+  the durations of every traversed track in the stored playback order
+  (small per-boundary tolerance), each completed track counts. Any pause,
+  skip, stall, unknown duration, or playlist change fails the equation and
+  nothing in that span is counted.
+
+Reconciled events are logged with the `reconciled` history source so the
+History screen distinguishes them from witnessed counts. Background wakes
+are aimed at the playthrough-threshold crossing of the current track — the
+earliest instant a single snapshot is self-sufficient proof; iOS delivers
+refresh grants late and allows one pending request, so aiming at the start
+of the proof window maximises retention and a late grant still pins the
+track boundary for continuity. Double counting is prevented by the live
+session's evaluated flag, a counted-track ledger on the waypoint, and the
+item's `lastPlayedAt` recency.
+
 ### Manual retirement
 
 The user can manually retire a track from any linked playlist. Manual

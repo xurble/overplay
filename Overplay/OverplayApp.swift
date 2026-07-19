@@ -59,6 +59,7 @@ struct OverplayApp: App {
     }
 
     private let modelContainer: ModelContainer
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         do {
@@ -67,6 +68,10 @@ struct OverplayApp: App {
         } catch {
             fatalError("Could not create Overplay model container: \(error)")
         }
+
+        if !Self.isRunningTests {
+            PlaybackBackgroundRefreshService.shared.register()
+        }
     }
 
     var body: some Scene {
@@ -74,5 +79,27 @@ struct OverplayApp: App {
             ContentView(runtime: .shared)
         }
         .modelContainer(modelContainer)
+        .onChange(of: scenePhase) { _, newPhase in
+            handleScenePhaseChange(newPhase)
+        }
+    }
+
+    /// Suspended-playback reconciliation runs at both edges of a
+    /// suspension: entering the background records the exact baseline
+    /// waypoint and arms the aimed refresh wake; returning to the
+    /// foreground reconciles whatever played while suspended before the
+    /// monitor's staleness rules would discard it.
+    private func handleScenePhaseChange(_ phase: ScenePhase) {
+        guard !Self.isRunningTests else { return }
+        guard phase == .background || phase == .active else { return }
+        guard let context = AppRuntime.shared.makeModelContext() else { return }
+
+        let result = PlaybackReconciliationService.reconcileAndCaptureWaypoint(
+            playbackController: AppRuntime.shared.playbackController,
+            context: context
+        )
+        if phase == .background {
+            PlaybackBackgroundRefreshService.shared.scheduleNextWake(at: result.nextWakeTarget)
+        }
     }
 }

@@ -259,6 +259,7 @@ final class PlaybackController {
         statusMessage = "Overplay data reset."
         hasRestoredLocalPlaybackState = false
         LocalPlaybackStateStore.clear(flushImmediately: true)
+        PlaybackWaypointStore.clear(flushImmediately: true)
         PlaybackIdentityStore.clearAll(flushImmediately: true)
         NowPlayingMetadataService.update(track: nil, elapsed: 0, isPlaying: false)
     }
@@ -2149,6 +2150,59 @@ final class PlaybackController {
         if statusMessage == Self.deliveryStallMessage || statusMessage == Self.playbackStoppedMessage {
             statusMessage = nil
         }
+    }
+
+    /// A trusted point-in-time observation of the out-of-process player for
+    /// suspended-playback reconciliation. Reads live player state rather
+    /// than the cached display, which may be stale during a background wake.
+    func capturePlaybackObservation(context: ModelContext) -> PlaybackReconciliationPolicy.Observation? {
+        guard let queueEntry = player.queue.currentEntry else { return nil }
+        guard let playlistID = currentPlaylistID ?? LocalPlaybackStateStore.load()?.playlistID else {
+            return nil
+        }
+
+        var localTrackID = activeQueueEntries.first(where: { $0.queueEntryID == queueEntry.id })?.localTrackID
+        if localTrackID == nil, let musicItemID = queueEntry.item?.id.rawValue {
+            localTrackID = self.localTrackID(matching: musicItemID, playlistID: playlistID, context: context)
+        }
+        guard let localTrackID else { return nil }
+
+        let duration = durationSeconds
+            ?? currentTrack?.durationSeconds
+            ?? UUID(uuidString: localTrackID)
+                .flatMap { try? TrackRecordRepository.track(id: $0, in: context) }?
+                .durationSeconds
+
+        return PlaybackReconciliationPolicy.Observation(
+            playlistID: playlistID,
+            localTrackID: localTrackID,
+            positionSeconds: player.playbackTime,
+            durationSeconds: duration,
+            observedAt: .now
+        )
+    }
+
+    /// Suspended-playback reconciliation counted the currently playing
+    /// track; mark the live session evaluated so the monitor cannot count
+    /// the same play again.
+    func markActiveSessionPlaythroughCounted(localTrackID: String) {
+        guard var session = activeSession, !session.hasEvaluated else { return }
+        let sessionLocalTrackID = session.localTrackID
+            ?? currentPlaylistItem?.trackID.uuidString
+            ?? activeQueueCurrentLocalTrackID
+        guard sessionLocalTrackID == localTrackID else { return }
+        session.hasEvaluated = true
+        activeSession = session
+    }
+
+    /// True when the live session for this track has already been counted,
+    /// so reconciliation must not count the same play again.
+    func activeSessionHasEvaluated(localTrackID: String) -> Bool {
+        guard let session = activeSession, session.hasEvaluated else { return false }
+        let sessionLocalTrackID = session.localTrackID
+            ?? currentPlaylistItem?.trackID.uuidString
+            ?? activeQueueCurrentLocalTrackID
+        return sessionLocalTrackID == localTrackID
     }
 
     /// Reconciles the stored local order with current playlist membership.

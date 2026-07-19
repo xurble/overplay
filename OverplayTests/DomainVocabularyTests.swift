@@ -43,6 +43,7 @@ struct DomainVocabularyTests {
         #expect(HistoryEventSource.sync.rawValue == "sync")
         #expect(HistoryEventSource.appleMusic.rawValue == "appleMusic")
         #expect(HistoryEventSource.overplay.rawValue == "overplay")
+        #expect(HistoryEventSource.reconciled.rawValue == "reconciled")
     }
 
     @Test("eviction raw values are stable")

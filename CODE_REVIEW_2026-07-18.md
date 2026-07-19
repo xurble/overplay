@@ -141,6 +141,12 @@ Findings:
   never fabricated, but playthroughs completed while suspended are LOST by
   design. README wording is accurate but one-sided; consider stating the
   playthrough side explicitly.
+  RESOLVED (2026-07-19, implemented): suspended playthroughs are recovered
+  via BGAppRefresh wakes aimed at the playthrough-threshold crossing of the
+  current track, plus point/continuity reconciliation on every wake. Skips
+  stay unwitnessed-never-counted. Full design + implementation notes under
+  synthesis item 4. On-device verification of MusicKit state readability in
+  background wakes still pending.
 - PERF-3 (low): PlaybackSessionSupport.resolvePlaylistItem's fallback
   (:62-63) fetches ALL items + ALL tracks of the playlist; only hit when
   scoped/current-item resolution fails, so rarely hot. Fine for now.
@@ -198,6 +204,13 @@ Findings:
   (no skip, no playthrough). Same root cause as SURF-1. Whether iOS keeps
   Overplay's handlers reachable while backgrounded-but-not-suspended is
   device-verifiable only (TODO.md checklist already covers it).
+  RESOLVED (2026-07-19, implemented): same reconciliation implementation as
+  SURF-1 (see synthesis item 4) — Lock Screen presses while suspended still
+  bypass live counting, but completed tracks in the suspended span are
+  recovered when provable. Note the driving case may largely be covered
+  already: while Overplay's CarPlay scene is on the car display the process
+  is foreground on that screen and the 1 Hz monitor runs — the CarPlay
+  device check on the TODO.md checklist should confirm this.
 - BUG-4 (low): after CarPlay disconnects, RemoteCommandService keeps the
   CarPlay-created ModelContext forever (CarPlayCoordinator.connect calls
   activate→update with its own context (:33); disconnect (:48) never
@@ -409,7 +422,73 @@ double-count-proof. No high-severity correctness bug was found. Ranked:
 4. SURF-1/SURF-2 — playback while Overplay is suspended is uncounted by
    design (no phantom skips — correct; but playthroughs completed while
    suspended are lost, and Lock Screen presses while suspended bypass
-   counting). Document as product behavior; device checklist confirms.
+   counting). RESOLVED (2026-07-19, IMPLEMENTED): background-wake
+   reconciliation that recovers suspended playthroughs while preserving the
+   unwitnessed-skips-never-count guarantee. Implementation:
+   PlaybackReconciliationPolicy + PlaybackWaypointStore (pure policy +
+   UserDefaults waypoint with counted-track ledger),
+   PlaybackReconciliationService (counts via EvictionEngine.countPlaythrough
+   with new source/message params, logs HistoryEventSource.reconciled,
+   lastPlayedAt + live-session dedupe guards),
+   PlaybackBackgroundRefreshService (BGTaskScheduler registration + aimed
+   re-arm), OverplayApp scenePhase hooks (background = exact baseline
+   waypoint + arm wake; active = reconcile before staleness discard),
+   Info.plist fetch background mode + BGTaskSchedulerPermittedIdentifiers,
+   PlaybackController.capturePlaybackObservation/
+   markActiveSessionPlaythroughCounted. Tests:
+   PlaybackReconciliationPolicyTests (point/continuity proofs, tolerance,
+   dedupe, wake aiming). REMAINING DEVICE VERIFICATION: whether
+   ApplicationMusicPlayer state is readable during a BGAppRefresh wake
+   (diagnostics logged per wake); actual grant cadence. Design rationale
+   kept below for the record.
+   - Proof rules (either counts a playthrough; anything ambiguous counts
+     nothing): POINT-PROOF — any snapshot showing the current track at
+     position >= playthroughThresholdPercentage (90) counts it outright,
+     consistent with the existing position-based rule (BUG-2: seeks
+     already count); immune to earlier pauses/stalls. CONTINUITY-PROOF —
+     between two waypoints, if elapsed wall time matches the sum of
+     traversed track durations (queue order from PlaybackOrderStore,
+     durations from TrackRecord.durationSeconds; tolerance ~3s per
+     boundary + 5s base), every completed track in the span counts; any
+     mismatch (pause, skip, stall, unknown duration) means nothing in that
+     span is counted. Skips: never reconstructed.
+   - Wake scheduling: BGTaskScheduler allows ONE pending BGAppRefresh
+     request per identifier and grant delay is one-sided (late only), so
+     each wake aims earliestBeginDate at the 90% CROSSING OF THE CURRENT
+     TRACK: now + (0.9*dur - pos), or if already past it,
+     now + (dur - pos) + 0.9*durNext; +5s margin, clamped >= 60s. A grant
+     landing inside the [90%, end] window point-proves; a late grant lands
+     early in the next track, pinning the boundary tightly for continuity.
+     A 50% "skip-neutral" wake is deliberately omitted — suspended skips
+     are never counted, so it yields no retainable data and would displace
+     the higher-value 90% request.
+   - Wake cycle (BG grant, foregrounding, or scenePhase->background
+     flush): snapshot player state -> point-proof current track ->
+     continuity-reconcile the span since the last waypoint -> persist new
+     waypoint -> re-arm at the next 90% crossing.
+   - Components: pure PlaybackReconciliationPolicy (+tests),
+     PlaybackWaypointStore (UserDefaults, LocalPlaybackStateStore pattern),
+     PlaybackReconciliationService counting via the existing
+     EvictionEngine.countPlaythrough(item:...) (already takes an explicit
+     item) and logging history with a new HistoryEventSource.reconciled;
+     BGTaskScheduler registration in OverplayApp + Info.plist additions
+     (UIBackgroundModes fetch, BGTaskSchedulerPermittedIdentifiers);
+     scenePhase handler force-flushing LocalPlaybackStateStore on
+     background (exact baseline instead of the 15s pacing). Double-count
+     guard: reconciliation marks the live activeSession hasEvaluated when
+     it point-proves the current track; the relaunch restore path already
+     builds sessions with hasEvaluated: true.
+   - Open risks: whether ApplicationMusicPlayer state is readable from a
+     BGAppRefresh wake (device-verify with diagnostics; fallback
+     MPMusicPlayerController.systemMusicPlayer, worst case
+     foreground-only reconciliation — still a win given the exact
+     background-flush baseline); BG grant cadence will be sparser than one
+     per track (degrades to longer continuity spans, never wrong counts);
+     requires the user's Background App Refresh setting (the foreground
+     path works regardless). The CarPlay-scene device check (TODO.md)
+     should run first — while Overplay's CarPlay template is on the car
+     display the process is foreground there and counting already works,
+     which may cover the driving case outright.
 5. DOC-2 + BUG-6 — remote removals are NOT reconciled (README fixed; spec
    self-contradicts at ~line 230 vs ~line 779); lastSeenInPlaylistAt goes
    stale for unchanged items and would poison future pruning.

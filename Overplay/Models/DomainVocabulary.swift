@@ -33,6 +33,9 @@ enum HistoryEventSource: String, CaseIterable, Codable, Hashable, Sendable {
     case sync
     case appleMusic
     case overplay
+    /// Counted retroactively by suspended-playback reconciliation rather
+    /// than witnessed live.
+    case reconciled
 }
 
 enum EvictionReason: String, CaseIterable, Codable, Hashable, Sendable {

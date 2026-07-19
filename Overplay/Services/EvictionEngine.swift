@@ -135,6 +135,8 @@ enum EvictionEngine {
         playlist: PlaylistRecord,
         session: TrackPlaySession,
         settings: OverplaySettings,
+        source: HistoryEventSource = .playback,
+        message: String? = nil,
         context: ModelContext
     ) {
         let previousSkipCount = item.skipCount
@@ -149,9 +151,9 @@ enum EvictionEngine {
             item: item,
             playlist: playlist,
             eventType: .playthrough,
-            source: .playback,
+            source: source,
             session: session,
-            message: "Reached \(Int(settings.playthroughThresholdPercentage))%",
+            message: message ?? "Reached \(Int(settings.playthroughThresholdPercentage))%",
             context: context
         )
     }

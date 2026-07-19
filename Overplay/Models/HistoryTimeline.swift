@@ -191,6 +191,8 @@ extension HistoryEventSource {
             "Apple Music"
         case .overplay:
             "Overplay"
+        case .reconciled:
+            "Reconciled"
         }
     }
 }

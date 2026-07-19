@@ -20,7 +20,11 @@ retirement history separately from Apple Music's global play count or skip
 count. Skips and playthroughs are counted per playlist item, from witnessed
 listening time — a transition only counts as a skip if the app actually
 observed enough of the session, so playback that happens while Overplay is
-suspended never produces phantom skips.
+suspended never produces phantom skips. Playthroughs completed while
+suspended are recovered on the next wake (a scheduled background refresh or
+simply reopening the app) whenever they can be proven — either a snapshot
+catching the track past the playthrough threshold, or wall-clock accounting
+showing the span played continuously. Anything ambiguous counts nothing.
 
 Retirement is the user-facing state for tracks removed from Active playback:
 Overplay surfaces playthroughs versus skips for every linked
