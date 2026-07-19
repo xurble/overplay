@@ -99,6 +99,25 @@ enum PlaybackOrderCoordinator {
         return orderedTrackIDs
     }
 
+    /// Read-only variant of `reconciledState` for presentation code: the
+    /// reconciled order is computed in memory and never saved, so views can
+    /// call this from `body` without a UserDefaults write side effect.
+    static func previewedReconciledState(
+        orderTracks: [PlaybackOrderTrack],
+        playerID: String,
+        playlistID: String,
+        retainedTrackID: String? = nil,
+        defaults: UserDefaults = .standard
+    ) -> PlaybackOrderState {
+        var state = PlaybackOrderStore.state(playerID: playerID, musicPlaylistID: playlistID, from: defaults)
+        state.orderedTrackIDs = PlaybackOrderEngine.reconciledOrder(
+            storedOrder: state.orderedTrackIDs,
+            tracks: orderTracks,
+            includeUnplayableTrackID: retainedTrackID
+        )
+        return state
+    }
+
     @discardableResult
     static func reconciledState(
         orderTracks: [PlaybackOrderTrack],

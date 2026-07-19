@@ -292,14 +292,19 @@ what makes the CarPlay secondary context safe).
   everything else after 365, capped at 500 deletions per run so backlogs
   drain across launches without stalling startup. Tests:
   HistoryRetentionServiceTests.
-- PERF-8 (low-medium): PlaylistManagementView computes `detailPresentation`
-  (full row-model build for all items) at the top of every body evaluation
-  (:34, :176-190), and `selectedPlaybackOrderState` (:164-170) runs
-  PlaybackOrderCoordinator.reconciledState, which can WRITE to UserDefaults
-  — a side effect inside body. Body re-runs on every observed
-  playbackController change (metadata version bumps per transition), not
-  per-second, so it's tolerable; memoizing on (items, scope, version) would
-  remove the churn and the body-time write.
+- PERF-8 (low-medium, FIXED 2026-07-19): PlaylistManagementView rebuilt the
+  full row-model presentation at the top of every body evaluation (scroll
+  phase changes and messages re-run body too), and its order-state read ran
+  PlaybackOrderCoordinator.reconciledState, which can WRITE UserDefaults —
+  a side effect inside body. Now: the presentation is memoized in @State
+  keyed on detailPresentationKey (playlist, scope, membership, track count,
+  metadata + mode versions, current track, snapshot timestamp) with a
+  synchronous side-effect-free fallback for the first pass; the order state
+  comes from new read-only previewedReconciledState /
+  previewedPlaybackOrderState APIs (persisting reconcile still happens on
+  membership events via reconcileStoredOrder). playbackModeVersion exposed
+  read-only for the key. Tests: PlaybackOrderStoreTests (preview never
+  persists).
 - NOTE (good): ArtworkView decodes thumbnails off-main via ImageIO with an
   actor LRU (300 images) and defers loads while scrolling
   (loadsArtworkImmediately: !isScrolling). Progress bar isolation keeps

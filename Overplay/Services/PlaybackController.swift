@@ -45,7 +45,7 @@ final class PlaybackController {
     /// iPhone/iPad Now Playing views.
     private(set) var isDeliveryStalled = false
     private(set) var playbackItemMetadataVersion = 0
-    private var playbackModeVersion = 0
+    private(set) var playbackModeVersion = 0
 
     @ObservationIgnored private lazy var player = ApplicationMusicPlayer.shared
     @ObservationIgnored private var monitorTask: Task<Void, Never>?
@@ -204,6 +204,23 @@ final class PlaybackController {
         return PlaybackOrderStore.state(
             playerID: playerID,
             musicPlaylistID: scopedPlaylistID
+        )
+    }
+
+    /// Read-only counterpart of `playbackOrderState(for:scope:items:)` for
+    /// presentation code — never persists the reconciled order, so it is
+    /// safe to call while building view state.
+    func previewedPlaybackOrderState(
+        for musicPlaylistID: String,
+        scope: PlaylistPlaybackScope = .active,
+        items: [PlaylistItemRecord]
+    ) -> PlaybackOrderState {
+        _ = playbackModeVersion
+        let scopedItems = items.filter { scope.includes($0) }
+        return PlaybackOrderCoordinator.previewedReconciledState(
+            orderTracks: PlaybackQueueBuilder.playbackOrderTracks(items: scopedItems, scope: scope),
+            playerID: playerID,
+            playlistID: scope.playbackOrderPlaylistID(for: musicPlaylistID)
         )
     }
 

@@ -14,6 +14,11 @@ struct PlaylistManagementView: View {
     @State private var tracks: [TrackRecord] = []
     @State private var isScrolling = false
     @State private var selectedScope: PlaylistPlaybackScope = .active
+    // Memoized row build: body re-runs for reasons that don't change the
+    // rows (scroll phase, messages), and rebuilding every presentation
+    // model per pass was measurable churn. detailPresentationKey names
+    // every input the rows depend on.
+    @State private var cachedDetail: PlaylistManagementViewModel.DetailPresentation?
 
     init(settings: OverplaySettings, playlist: PlaylistRecord) {
         self.settings = settings
@@ -31,7 +36,7 @@ struct PlaylistManagementView: View {
     }
 
     var body: some View {
-        let detail = detailPresentation
+        let detail = cachedDetail ?? detailPresentation
 
         List {
             Section {
@@ -115,6 +120,9 @@ struct PlaylistManagementView: View {
         .task(id: playlistTrackIDsKey) {
             reloadPlaylistTracks()
         }
+        .task(id: detailPresentationKey) {
+            cachedDetail = detailPresentation
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
@@ -161,8 +169,11 @@ struct PlaylistManagementView: View {
         }
     }
 
+    // Read-only on purpose: the persisting reconcile
+    // (playbackOrderState(for:scope:items:)) used to run inside body, which
+    // meant a UserDefaults write as a view-update side effect.
     private var selectedPlaybackOrderState: PlaybackOrderState {
-        playbackController.playbackOrderState(
+        playbackController.previewedPlaybackOrderState(
             for: playlist.musicPlaylistID,
             scope: selectedScope,
             items: playlistItems
@@ -194,6 +205,24 @@ struct PlaylistManagementView: View {
             .map(\.trackID.uuidString)
             .sorted()
             .joined(separator: "|")
+    }
+
+    /// Every input the row models are derived from. Reading the observable
+    /// controller versions here (from body) also keeps observation firing
+    /// when counters, order, or the current track change.
+    private var detailPresentationKey: String {
+        [
+            playlist.id.uuidString,
+            selectedScope.rawValue,
+            String(playlistItems.count),
+            playlistTrackIDsKey,
+            String(tracks.count),
+            String(playbackController.playbackItemMetadataVersion),
+            String(playbackController.playbackModeVersion),
+            playbackController.currentPlaylistID ?? "none",
+            playbackController.nowPlayingDisplayLocalTrackID ?? "none",
+            playbackController.activePlaylistSnapshot.map { "\($0.updatedAt.timeIntervalSinceReferenceDate)" } ?? "none"
+        ].joined(separator: "-")
     }
 
     private func reloadPlaylistTracks() {

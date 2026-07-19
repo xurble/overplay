@@ -173,6 +173,33 @@ struct PlaybackOrderStoreTests {
     }
 
     @MainActor
+    @Test("previewed playback order state reconciles without persisting")
+    func previewedPlaybackOrderStateReconcilesWithoutPersisting() {
+        let playerID = "test-\(UUID().uuidString)"
+        let playlistMusicID = "playlist-\(UUID().uuidString)"
+        let controller = PlaybackController(playerID: playerID)
+        let playlistID = UUID()
+        let trackID = UUID()
+        let items = [
+            PlaylistItemRecord(
+                playlistID: playlistID,
+                trackID: trackID,
+                createdAt: Date(timeIntervalSince1970: 1)
+            )
+        ]
+
+        let state = controller.previewedPlaybackOrderState(
+            for: playlistMusicID,
+            scope: .active,
+            items: items
+        )
+
+        #expect(state.orderedTrackIDs == [trackID.uuidString])
+        // The reconciled order is a preview only — nothing was saved.
+        #expect(PlaybackOrderStore.state(playerID: playerID, musicPlaylistID: playlistMusicID).orderedTrackIDs.isEmpty)
+    }
+
+    @MainActor
     @Test("playback order state reconciles and persists selected scope order")
     func playbackOrderStateReconcilesAndPersistsSelectedScopeOrder() {
         let playerID = "test-\(UUID().uuidString)"
