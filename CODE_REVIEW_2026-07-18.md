@@ -243,22 +243,23 @@ PeriodicPlaylistSyncService is well designed: 30-min cadence + freshness
 gate, current/selected playlist prioritized, 500ms inter-playlist pacing,
 gated once-per-cycle identity merge, cancellation checks. No issues.
 
-- DOC-2 (medium, README FIXED / spec still inconsistent): remote REMOVALS
-  are not reconciled — PlaylistSyncService.reconcile only upserts; nothing
-  ever prunes or marks items missing from the remote playlist, and
-  `lastSeenInPlaylistAt` is written but never read. README claimed
-  "additions, removals, and reordering reconciled" — corrected to describe
-  actual leave-in-place behavior. The DESIGN SPEC contradicts itself:
-  "Removals from Apple Music" (line ~230) says leave items in place
-  (matches code), but the PlaylistSyncService component summary (line ~779)
-  says "Reconcile additions and removals. Mark external removals as manual
-  retirement/removal events" (not implemented). Spec needs one answer;
-  TODO.md "Behavior Decisions" is the right place to log it.
-- BUG-6 (low): `lastSeenInPlaylistAt` is stamped only when the item upsert
-  reports didChange (PlaylistSyncService.swift:265-267), so for unchanged
-  items it stays at first-insert time forever. Spec says every sync sighting
-  should set it. Harmless today (nothing reads it), but it poisons any
-  future missing-from-remote logic. Stamp it unconditionally.
+- DOC-2 (medium, FIXED 2026-07-19): remote REMOVALS are not reconciled —
+  PlaylistSyncService.reconcile only upserts. README was corrected during
+  the review; the DESIGN SPEC self-contradiction is now resolved: the
+  PlaylistSyncService component summary matches "Removals from Apple Music"
+  (leave items in place, history preserved, no local removal state) and
+  documents the lastSeenInPlaylistAt stamping rule. The decision is logged
+  in TODO.md "Behavior Decisions" with the rationale that BUG-6's fix keeps
+  the data accurate for a future missing-from-remote feature.
+- BUG-6 (low, FIXED 2026-07-19): `lastSeenInPlaylistAt` was stamped only
+  when the item upsert reported didChange, so for unchanged items it stayed
+  at first-insert time forever, poisoning any future missing-from-remote
+  logic. Now stamped via PlaylistSyncService.shouldRefreshLastSeen: on any
+  change, on first sighting, and for unchanged items whenever the stamp is
+  older than 24h — deliberately NOT unconditionally, because a fresh date
+  every 30-minute cycle would dirty every item record and churn CloudKit;
+  day resolution is enough for any pruning decision. Tests added in
+  PlaylistSyncReconciliationTests.
 - PERF-6 (low-medium): reconcile does 2 extra indexed fetches PER TRACK
   purely to feed a .debug log line (existingTrack/existingItem,
   PlaylistSyncService.swift:236-247), even when debug logging is off, and
@@ -499,9 +500,10 @@ double-count-proof. No high-severity correctness bug was found. Ranked:
      should run first — while Overplay's CarPlay template is on the car
      display the process is foreground there and counting already works,
      which may cover the driving case outright.
-5. DOC-2 + BUG-6 — remote removals are NOT reconciled (README fixed; spec
-   self-contradicts at ~line 230 vs ~line 779); lastSeenInPlaylistAt goes
-   stale for unchanged items and would poison future pruning.
+5. DOC-2 + BUG-6 — FIXED 2026-07-19 (spec component summary now matches the
+   leave-in-place removals behavior, decision logged in TODO.md;
+   lastSeenInPlaylistAt refreshes on change/first sighting/daily for
+   unchanged items — not every cycle, to avoid CloudKit write churn).
 6. PERF-4 — worst-case per-tick full TrackRecord table scan when an
    unresolvable track is playing (needs a negative cache).
 7. PERF-6 — sync reconcile burns 2 fetches/track feeding disabled debug logs

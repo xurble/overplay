@@ -94,6 +94,63 @@ struct PlaylistSyncReconciliationTests {
         #expect(playlist.lastSyncedAt == Date(timeIntervalSince1970: 200))
     }
 
+    @Test("an unchanged item's lastSeenInPlaylistAt refreshes once the stamp is a day old")
+    func anUnchangedItemsLastSeenInPlaylistAtRefreshesOnceTheStampIsADayOld() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "playlist-1",
+            name: "Main",
+            role: .oneTruePlaylist
+        )
+        context.insert(playlist)
+        let snapshots = [snapshot(id: "track-1", title: "First")]
+        let firstSync = Date(timeIntervalSince1970: 100)
+        try await PlaylistSyncService().reconcile(
+            snapshots: snapshots,
+            playlistRecord: playlist,
+            syncedAt: firstSync,
+            in: context
+        )
+
+        let staleSync = firstSync.addingTimeInterval(PlaylistSyncService.lastSeenRefreshInterval + 1)
+        try await PlaylistSyncService().reconcile(
+            snapshots: snapshots,
+            playlistRecord: playlist,
+            syncedAt: staleSync,
+            in: context
+        )
+
+        let track = try #require(try TrackRecordRepository.track(musicItemID: "track-1", in: context))
+        let item = try #require(try PlaylistItemRepository.item(
+            playlistID: playlist.id,
+            trackID: track.id,
+            in: context
+        ))
+        #expect(item.lastSeenInPlaylistAt == staleSync)
+    }
+
+    @Test("last-seen refresh rule stamps on change, first sighting, and a stale stamp")
+    func lastSeenRefreshRuleStampsOnChangeFirstSightingAndAStaleStamp() {
+        let syncedAt = Date(timeIntervalSince1970: 1_000_000)
+        #expect(PlaylistSyncService.shouldRefreshLastSeen(current: nil, syncedAt: syncedAt, didChange: false))
+        #expect(PlaylistSyncService.shouldRefreshLastSeen(
+            current: syncedAt.addingTimeInterval(-10),
+            syncedAt: syncedAt,
+            didChange: true
+        ))
+        #expect(!PlaylistSyncService.shouldRefreshLastSeen(
+            current: syncedAt.addingTimeInterval(-10),
+            syncedAt: syncedAt,
+            didChange: false
+        ))
+        #expect(PlaylistSyncService.shouldRefreshLastSeen(
+            current: syncedAt.addingTimeInterval(-PlaylistSyncService.lastSeenRefreshInterval),
+            syncedAt: syncedAt,
+            didChange: false
+        ))
+    }
+
     @Test("reconcile reports changed metadata and newly inserted tracks")
     func reconcileReportsChangedMetadataAndNewlyInsertedTracks() async throws {
         let container = try OverplayTestSupport.makeModelContainer()

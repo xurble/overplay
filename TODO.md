@@ -85,6 +85,12 @@ The implementation currently differs from the design spec in these areas.
 Resolve each by either updating the spec to match the product decision or
 changing the implementation.
 
+- Remote removals are not reconciled: a track deleted from the Apple Music
+  playlist keeps its local item, history, and playability. Decided 2026-07-19
+  — the spec's component summary previously contradicted this and now
+  matches "Removals from Apple Music". `lastSeenInPlaylistAt` is kept
+  accurate (daily resolution) so a missing-from-remote feature can be built
+  later without a data backfill.
 - Promotion locally retires the source triage item after a successful
   promotion; the spec says leave the source unchanged unless a future setting
   says otherwise.

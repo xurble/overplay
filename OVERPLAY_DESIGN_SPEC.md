@@ -816,9 +816,13 @@ window through the standard app settings command as well as in-app navigation.
 - Copy tracks from a source Apple Music playlist into a new managed One True
   Playlist when requested.
 - Fetch tracks for each linked playlist.
-- Reconcile additions and removals.
+- Reconcile additions. Remote removals leave the local item in place with
+  its history preserved (see "Removals from Apple Music") — Overplay does
+  not model Apple Music deletions as a local removal state.
+- Stamp `lastSeenInPlaylistAt` on every sighting (refreshed at most daily
+  for unchanged items) so future missing-from-remote logic has accurate
+  data.
 - Preserve history.
-- Mark external removals as manual retirement/removal events.
 - Publish sync status.
 
 ### PlaybackController

@@ -47,6 +47,23 @@ struct PlaylistSyncService {
         category: "PlaylistSync"
     )
 
+    /// `lastSeenInPlaylistAt` must track every sync sighting so future
+    /// missing-from-remote logic has accurate data, but stamping a fresh
+    /// date on every 30-minute cycle would dirty every item record and
+    /// churn CloudKit. Day resolution is enough for any pruning decision,
+    /// so an unchanged item is restamped only once its stamp is a day old.
+    static let lastSeenRefreshInterval: TimeInterval = 24 * 60 * 60
+
+    static func shouldRefreshLastSeen(current: Date?, syncedAt: Date, didChange: Bool) -> Bool {
+        if didChange {
+            return true
+        }
+        guard let current else {
+            return true
+        }
+        return syncedAt.timeIntervalSince(current) >= lastSeenRefreshInterval
+    }
+
     private let sourceRegistry: PlaylistSourceSyncRegistry
     private let appleMusicSource: AppleMusicPlaylistSourceSync
 
@@ -262,7 +279,11 @@ struct PlaylistSyncService {
                     in: context
                 )
 
-                if itemResult.mutation.didChange {
+                if Self.shouldRefreshLastSeen(
+                    current: itemResult.record.lastSeenInPlaylistAt,
+                    syncedAt: syncedAt,
+                    didChange: itemResult.mutation.didChange
+                ) {
                     itemResult.record.lastSeenInPlaylistAt = syncedAt
                 }
 
