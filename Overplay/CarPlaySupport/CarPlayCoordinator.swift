@@ -16,6 +16,7 @@ final class CarPlayCoordinator: NSObject {
     private weak var interfaceController: CPInterfaceController?
     private var playbackController: PlaybackController?
     private var remoteCommandService: RemoteCommandService?
+    private weak var runtime: AppRuntime?
     private var modelContext: ModelContext?
     private var refreshTask: Task<Void, Never>?
     private var playbackObservationGeneration = 0
@@ -25,6 +26,7 @@ final class CarPlayCoordinator: NSObject {
 
     func connect(interfaceController: CPInterfaceController, runtime: AppRuntime) {
         self.interfaceController = interfaceController
+        self.runtime = runtime
         playbackController = runtime.playbackController
         remoteCommandService = runtime.remoteCommandService
         modelContext = runtime.makeModelContext()
@@ -50,7 +52,19 @@ final class CarPlayCoordinator: NSObject {
         refreshTask?.cancel()
         refreshTask = nil
         stopPlaybackObservation()
+
+        // Lock Screen handlers keep running after CarPlay disconnects —
+        // re-point them at the main context instead of leaving them on the
+        // orphaned CarPlay-created one.
+        if let runtime, let mainContext = runtime.mainModelContext {
+            runtime.remoteCommandService.update(
+                playbackController: runtime.playbackController,
+                context: mainContext
+            )
+        }
+
         interfaceController = nil
+        runtime = nil
         modelContext = nil
         playbackController = nil
         remoteCommandService = nil
@@ -291,10 +305,12 @@ final class CarPlayCoordinator: NSObject {
         }
 
         withObservationTracking {
+            // Deliberately excludes elapsed/duration: they change every
+            // second, the button signature doesn't use them, and tracking
+            // them made every tick re-run settings + signature fetches.
+            // CarPlay's progress bar reads Now Playing metadata, not this.
             _ = playbackController.currentPlaylistID
             _ = playbackController.currentTrack?.id
-            _ = playbackController.elapsedSeconds
-            _ = playbackController.durationSeconds
             _ = playbackController.displayedSkipCount
             _ = playbackController.displayedIsProtected
             _ = playbackController.displayedIsEvicted

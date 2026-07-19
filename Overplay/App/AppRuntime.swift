@@ -23,4 +23,11 @@ final class AppRuntime {
         guard let modelContainer else { return nil }
         return ModelContext(modelContainer)
     }
+
+    /// The container's main-actor context — the one app startup hands to
+    /// long-lived services. Secondary contexts (e.g. CarPlay's) should be
+    /// swapped back to this when their surface goes away.
+    var mainModelContext: ModelContext? {
+        modelContainer?.mainContext
+    }
 }

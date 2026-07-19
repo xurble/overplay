@@ -214,22 +214,20 @@ Findings:
   already: while Overplay's CarPlay scene is on the car display the process
   is foreground on that screen and the 1 Hz monitor runs — the CarPlay
   device check on the TODO.md checklist should confirm this.
-- BUG-4 (low): after CarPlay disconnects, RemoteCommandService keeps the
-  CarPlay-created ModelContext forever (CarPlayCoordinator.connect calls
-  activate→update with its own context (:33); disconnect (:48) never
-  re-points it at the main context). Works today because every downstream
-  path refetches by ID and saves explicitly, but Lock Screen mutations then
-  persist through an orphaned secondary context and reach the UI only via
-  cross-context merge. Cheap fix: on disconnect, update(playbackController:
-  context:) back to the main context (or have AppStartupViewModel re-assert
-  on foreground).
-- PERF-5 (low-medium): CarPlayCoordinator.observePlaybackController
-  (:292-299) tracks elapsedSeconds/durationSeconds, which change EVERY
-  second, but the button signature (trackID, role, skipCount, protected,
-  evicted) doesn't use them. Each tick re-runs currentSettings() (SwiftData
-  fetch) + carPlayButtonSignature (displayed* context fetches) just to
-  compare an unchanged signature. Drop elapsed/duration from the tracked
-  set.
+- BUG-4 (low, FIXED 2026-07-19): after CarPlay disconnected,
+  RemoteCommandService kept the CarPlay-created ModelContext forever, so
+  Lock Screen mutations persisted through an orphaned secondary context.
+  Now CarPlayCoordinator.disconnect re-points the service at the main
+  context (new AppRuntime.mainModelContext accessor) before tearing down
+  its own references; RemoteCommandServiceTests already cover
+  update(playbackController:context:) re-pointing.
+- PERF-5 (low-medium, FIXED 2026-07-19): CarPlayCoordinator's observation
+  tracked elapsedSeconds/durationSeconds, which change EVERY second, though
+  the button signature never uses them — each tick re-ran a settings fetch
+  plus the signature's context fetches just to compare an unchanged value.
+  Both dropped from the tracked set (CarPlay's progress bar reads Now
+  Playing metadata, not this observation); the handler now fires only on
+  track/metadata/stall changes, which also drives the stall alert.
 - NOTE (already in TODO.md): NowPlayingMetadataService publishes
   title/artist/album/duration/elapsed/rate but NOT artwork — known gap,
   listed under "Now Playing Metadata".
@@ -512,10 +510,10 @@ double-count-proof. No high-severity correctness bug was found. Ranked:
    OSLog.isEnabled(.debug)). Was: sync reconcile burned 2 fetches/track
    feeding disabled debug logs (~1000 wasted main-actor fetches per
    500-track sync).
-8. PERF-5 — CarPlay observes elapsedSeconds it never uses → per-second
-   settings+signature fetches while connected.
-9. BUG-4 — RemoteCommandService keeps the orphaned CarPlay ModelContext
-   after disconnect (works, but re-point on disconnect).
+8. PERF-5 — FIXED 2026-07-19 (elapsed/duration dropped from the CarPlay
+   observation set; per-second settings+signature fetches gone).
+9. BUG-4 — FIXED 2026-07-19 (disconnect re-points RemoteCommandService at
+   the main context via AppRuntime.mainModelContext).
 10. BUG-2/BUG-3 — playthrough counts on seek past threshold (position-based,
     product decision); UI skip-hint uses position while engine uses witnessed
     listening (can disagree after seeks).
