@@ -70,6 +70,14 @@ final class PlaybackController {
     /// True while the user's last playback command was play-like. Gates
     /// stall auto-recovery so it can never auto-play after an intended stop.
     @ObservationIgnored private var playbackIntended = false
+    @ObservationIgnored private var monitorIdleSince: Date?
+    /// The settings row is a live singleton model object, so a cached
+    /// reference reflects value changes; it only needs replacing after a
+    /// database reset deletes the row.
+    @ObservationIgnored private var cachedSettings: OverplaySettings?
+    /// Known music item IDs of the current track, cached per local track ID
+    /// — the 1 Hz refresh consults these once or twice per tick.
+    @ObservationIgnored private var knownMusicItemIDsCache: (localTrackID: UUID, ids: Set<String>)?
     @ObservationIgnored var isNetworkReachable: () -> Bool = { NetworkReachabilityMonitor.shared.isReachable }
 
     static let deliveryStallMessage =
@@ -198,12 +206,36 @@ final class PlaybackController {
     func startMonitoring(context: ModelContext) {
         guard monitorTask == nil else { return }
         disableMusicKitPlaybackModes()
+        monitorIdleSince = nil
         monitorTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 await self?.refresh(context: context)
+                if await self?.suspendMonitoringIfIdle() != false {
+                    return
+                }
             }
         }
+    }
+
+    /// Ticking while playback has been paused/stopped for a long time is
+    /// pure waste — each tick runs SwiftData fetches on the main actor.
+    /// Every play path calls startMonitoring, which resumes the loop.
+    private func suspendMonitoringIfIdle() -> Bool {
+        monitorIdleSince = PlaybackMonitorIdlePolicy.updatedIdleStart(
+            current: monitorIdleSince,
+            isPlaying: isPlaying,
+            isDeliveryStalled: isDeliveryStalled,
+            now: .now
+        )
+        guard PlaybackMonitorIdlePolicy.shouldSuspend(idleSince: monitorIdleSince, now: .now) else {
+            return false
+        }
+
+        TrackMetadataDiagnostics.log("playback monitor suspended after idle timeout")
+        monitorTask = nil
+        monitorIdleSince = nil
+        return true
     }
 
     func schedulePostLaunchWarmUp() {
@@ -252,6 +284,9 @@ final class PlaybackController {
         lastLocalPlaybackStateIdentity = nil
         lastLoggedPlaybackRefreshSignature = nil
         didLogQueueEndWithoutRestart = false
+        cachedSettings = nil
+        knownMusicItemIDsCache = nil
+        monitorIdleSince = nil
         deliveryStallState = PlaybackDeliveryStallPolicy.State()
         deliveryRecoveryAttempts = 0
         isDeliveryStalled = false
@@ -1116,7 +1151,7 @@ final class PlaybackController {
                     "queue ended naturally status=\(player.state.playbackStatus) lastTrackID=\(oldTrackID) lastLocalTrackID=\(queueEndLocalTrackID ?? "nil")"
                 )
                 didLogQueueEndWithoutRestart = false
-                if let settings = try? SettingsRepository.settings(in: context) {
+                if let settings = monitoredSettings(context: context) {
                     await evaluateActiveSession(
                         settings: settings,
                         context: context,
@@ -1158,7 +1193,7 @@ final class PlaybackController {
             context: context
         )
 
-        if didChangeTrack, let settings = try? SettingsRepository.settings(in: context) {
+        if didChangeTrack, let settings = monitoredSettings(context: context) {
             await evaluateActiveSession(
                 settings: settings,
                 context: context,
@@ -1311,12 +1346,34 @@ final class PlaybackController {
         let localTrackID = currentPlaylistItem?.trackID
             ?? (activeSession?.localTrackID).flatMap(UUID.init(uuidString:))
             ?? activeQueueCurrentLocalTrackID.flatMap(UUID.init(uuidString:))
-        guard let localTrackID,
-              let record = try? TrackRecordRepository.track(id: localTrackID, in: context) else {
+        guard let localTrackID else { return [] }
+        return knownMusicItemIDs(forLocalTrackID: localTrackID, context: context)
+    }
+
+    private func knownMusicItemIDs(forLocalTrackID localTrackID: UUID, context: ModelContext) -> Set<String> {
+        if let knownMusicItemIDsCache, knownMusicItemIDsCache.localTrackID == localTrackID {
+            return knownMusicItemIDsCache.ids
+        }
+
+        // A missing record is not cached: sync or an identity merge may
+        // create it, and bumpPlaybackItemMetadataVersion (called on every
+        // metadata change) invalidates positive entries.
+        guard let record = try? TrackRecordRepository.track(id: localTrackID, in: context) else {
             return []
         }
 
-        return Set(PlaybackQueueBuilder.musicItemIDs(for: record))
+        let ids = Set(PlaybackQueueBuilder.musicItemIDs(for: record))
+        knownMusicItemIDsCache = (localTrackID, ids)
+        return ids
+    }
+
+    private func monitoredSettings(context: ModelContext) -> OverplaySettings? {
+        if let cachedSettings, !cachedSettings.isDeleted {
+            return cachedSettings
+        }
+
+        cachedSettings = try? SettingsRepository.settings(in: context)
+        return cachedSettings
     }
 
     private func session(_ session: TrackPlaySession, matches identity: CurrentPlaybackIdentity) -> Bool {
@@ -1329,7 +1386,7 @@ final class PlaybackController {
     }
 
     private func evaluatePlaythroughIfNeeded(context: ModelContext) {
-        guard let settings = try? SettingsRepository.settings(in: context) else { return }
+        guard let settings = monitoredSettings(context: context) else { return }
         do {
             let outcome = try PlaybackSessionEvaluationService.evaluatePlaythroughIfNeeded(
                 session: activeSession,
@@ -1558,8 +1615,7 @@ final class PlaybackController {
     ) {
         guard let currentPlaylistID else { return }
         if let trackID = UUID(uuidString: realizedEntry.localTrackID),
-           let track = try? TrackRecordRepository.track(id: trackID, in: context),
-           PlaybackQueueBuilder.musicItemIDs(for: track).contains(musicItemID) {
+           knownMusicItemIDs(forLocalTrackID: trackID, context: context).contains(musicItemID) {
             return
         }
 
@@ -1870,6 +1926,7 @@ final class PlaybackController {
     }
 
     private func bumpPlaybackItemMetadataVersion() {
+        knownMusicItemIDsCache = nil
         playbackItemMetadataVersion += 1
     }
 

@@ -52,18 +52,21 @@ Baseline: main @ 23236c1 plus uncommitted working-tree changes:
 
 ### Chunk 3 — PlaybackController
 
-- PERF-1 (medium): the 1 Hz monitor (`startMonitoring`,
-  PlaybackController.swift:180) runs for the rest of the app's life once
-  playback has started — it is never cancelled, even when playback has been
-  paused/stopped for hours. Every tick executes several SwiftData fetches on
-  the main context: `SettingsRepository.settings` (refresh →
-  evaluatePlaythroughIfNeeded:1273), `currentTrackKnownMusicItemIDs` fetches
-  the current TrackRecord (:1251-1261), and `recordTrustedRuntimeAlias`
-  fetches the TrackRecord again on the realized-entry hot path (:1495-1505).
-  ~3-4 fetch-descriptor executions per second on the MainActor while idle.
-  Fix direction: cancel/suspend the monitor after N minutes paused (resume on
-  play), and cache settings + current track's musicItemIDs keyed by identity,
-  invalidating on change.
+- PERF-1 (medium, FIXED 2026-07-19): the 1 Hz monitor ran for the rest of
+  the app's life once playback started, executing 3-4 SwiftData fetches per
+  tick (settings + current TrackRecord twice) even while paused for hours.
+  Now: (1) PlaybackMonitorIdlePolicy suspends the monitor after 5 minutes
+  of non-playing, non-stalled ticks — every play path already calls
+  startMonitoring, which resumes it; stall episodes keep it alive so
+  auto-recovery keeps ticking. (2) The settings row is cached as a live
+  model reference (singleton object — value changes are reflected; replaced
+  only if deleted, e.g. database reset). (3) The current track's known
+  music item IDs are cached per local track ID, invalidated by
+  bumpPlaybackItemMetadataVersion (every metadata change) and never caching
+  misses, covering both currentTrackKnownMusicItemIDs and
+  recordTrustedRuntimeAlias. Steady-state playing tick now does zero
+  repeat fetches; idle does nothing at all. Tests:
+  PlaybackMonitorIdlePolicyTests.
 - PERF-2 (low-medium): `rebuildActivePlaylistSnapshot`
   (PlaybackController.swift:2055) fetches ALL items + ALL tracks of the
   current playlist on the main context. Called on every track action AND on
@@ -422,8 +425,10 @@ double-count-proof. No high-severity correctness bug was found. Ranked:
    pass — skipIgnored 30d, all events 365d, 500/run cap). Was: HistoryView
    unbounded @Query over ALL events + no retention policy for HistoryEvent
    (grows forever, syncs to CloudKit).
-3. PERF-1 — 1 Hz monitor never stops once started and does 3-4 SwiftData
-   fetches per tick even while paused for hours (settings, track record ×2).
+3. PERF-1 — FIXED 2026-07-19 (monitor self-suspends after 5 idle minutes
+   and resumes on any play path; settings + known-music-ID caches remove
+   the per-tick fetches). Was: 1 Hz monitor never stopped once started and
+   did 3-4 SwiftData fetches per tick even while paused for hours.
 4. SURF-1/SURF-2 — playback while Overplay is suspended is uncounted by
    design (no phantom skips — correct; but playthroughs completed while
    suspended are lost, and Lock Screen presses while suspended bypass
