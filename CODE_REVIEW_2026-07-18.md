@@ -272,20 +272,23 @@ Repositories: clean throughout (indexed single-row fetches with fetchLimit 1
 and includePendingChanges; explicit saves on every mutation path — which is
 what makes the CarPlay secondary context safe).
 
-- PERF-7 (medium-high): HistoryView holds `@Query(sort: .createdAt,
-  .reverse)` over ALL HistoryEvent rows (HistoryView.swift:8) with no
-  fetchLimit or pagination, and `rows` re-derives presentation models from
-  the full array on every body pass (:63-69). Every playback transition
-  writes at least one event (skipCounted/skipIgnored/playthrough all log),
-  so this grows without bound; after months the History screen loads
-  thousands of models and re-diffs them on every save that occurs while
-  visible. Fix: fetchLimit + load-more, and filter via the Query predicate
-  instead of in-memory.
-- BUG-7 (medium, release-hardening): no retention policy for HistoryEvent
-  anywhere — unbounded growth in the store AND in CloudKit (records sync).
-  skipIgnored "noise" events (every pause/short-listen transition) make up
-  much of it. Add retention/compaction before beta; TODO.md release section
-  should mention it.
+- PERF-7 (medium-high, FIXED 2026-07-19): HistoryView held an unbounded
+  `@Query` over ALL HistoryEvent rows and re-derived presentation models
+  from the full array on every body pass. Now: events load through
+  EventRepository.recentEvents — predicate-filtered in the store (predicates
+  mirror HistoryEventFilter.includes, verified by a parity test), sorted
+  newest-first, fetchLimit'd to a 100-row page with a "Show More" row
+  (limit+1 fetch detects more). The recovery summary reads only reconciled
+  playthroughs via its own predicate fetch. Reloads are keyed on
+  filter/limit/metadata-version instead of the full result set. Tests:
+  EventRepositoryTests.
+- BUG-7 (medium, release-hardening, FIXED 2026-07-19): no retention policy
+  for HistoryEvent — unbounded growth in the store AND CloudKit. Now:
+  HistoryRetentionService.compact runs at startup (AppStartupViewModel
+  authorized-services sequence): skipIgnored noise expires after 30 days,
+  everything else after 365, capped at 500 deletions per run so backlogs
+  drain across launches without stalling startup. Tests:
+  HistoryRetentionServiceTests.
 - PERF-8 (low-medium): PlaylistManagementView computes `detailPresentation`
   (full row-model build for all items) at the top of every body evaluation
   (:34, :176-190), and `selectedPlaybackOrderState` (:164-170) runs
@@ -414,9 +417,11 @@ double-count-proof. No high-severity correctness bug was found. Ranked:
    before play() was confirmed. FIELD-CONFIRMED twice while driving through
    low-connectivity areas. See Chunk 12. Field re-verification on device
    (drive through a dead zone) still worthwhile.
-2. PERF-7 + BUG-7 — HistoryView unbounded @Query over ALL events + no
-   retention policy for HistoryEvent (grows forever, syncs to CloudKit).
-   Biggest real-world perf risk as usage accumulates.
+2. PERF-7 + BUG-7 — FIXED 2026-07-19 (paged, predicate-filtered history
+   loading via EventRepository.recentEvents + Show More; startup retention
+   pass — skipIgnored 30d, all events 365d, 500/run cap). Was: HistoryView
+   unbounded @Query over ALL events + no retention policy for HistoryEvent
+   (grows forever, syncs to CloudKit).
 3. PERF-1 — 1 Hz monitor never stops once started and does 3-4 SwiftData
    fetches per tick even while paused for hours (settings, track record ×2).
 4. SURF-1/SURF-2 — playback while Overplay is suspended is uncounted by

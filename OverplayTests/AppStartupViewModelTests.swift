@@ -24,13 +24,15 @@ struct AppStartupViewModelTests {
             events.append("sync-start")
         } stopPeriodicPlaylistSync: {
             events.append("sync-stop")
+        } compactHistory: {
+            events.append("compact")
         }
 
         await viewModel.bootstrap(isReady: true, dependencies: dependencies)
         await viewModel.authorizedServicesTask?.value
 
         #expect(viewModel.hasStartedAuthorizedServices)
-        #expect(events == ["settings", "authorization", "remote", "merge", "restore", "monitor", "sync-start"])
+        #expect(events == ["settings", "authorization", "remote", "merge", "restore", "monitor", "sync-start", "compact"])
     }
 
     @Test("repeated authorized startup does not restart services")
@@ -46,6 +48,7 @@ struct AppStartupViewModelTests {
         } startPeriodicPlaylistSync: {
             startCount += 1
         } stopPeriodicPlaylistSync: {
+        } compactHistory: {
         }
 
         await viewModel.bootstrap(isReady: true, dependencies: dependencies)
@@ -71,6 +74,7 @@ struct AppStartupViewModelTests {
             startCount += 1
         } stopPeriodicPlaylistSync: {
             stopCount += 1
+        } compactHistory: {
         }
 
         await viewModel.bootstrap(isReady: true, dependencies: dependencies)

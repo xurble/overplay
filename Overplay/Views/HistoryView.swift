@@ -5,7 +5,14 @@ struct HistoryView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackController.self) private var playbackController
 
-    @Query(sort: \HistoryEvent.createdAt, order: .reverse) private var events: [HistoryEvent]
+    // Events are loaded in bounded, predicate-filtered pages — the event
+    // log grows with every playback transition, so the view must never
+    // materialize all of it (an unbounded @Query did exactly that).
+    @State private var events: [HistoryEvent] = []
+    @State private var hasMoreEvents = false
+    @State private var eventLimit = EventRepository.historyPageSize
+    @State private var recoveredEvents: [HistoryEvent] = []
+    @State private var reloadToken = 0
     @State private var playlists: [PlaylistRecord] = []
     @State private var playlistItems: [PlaylistItemRecord] = []
     @State private var tracks: [TrackRecord] = []
@@ -49,6 +56,13 @@ struct HistoryView: View {
                         context: modelContext,
                         dependencies: dependencies
                     )
+                    reloadToken += 1
+                }
+            }
+
+            if hasMoreEvents {
+                Button("Show More") {
+                    eventLimit += EventRepository.historyPageSize
                 }
             }
 
@@ -60,12 +74,15 @@ struct HistoryView: View {
         .miniPlayerScrollContentInset()
         .navigationTitle("History")
         .task(id: historyDataKey) {
-            reloadHistoryReferenceData()
+            reloadHistoryData()
+        }
+        .onChange(of: viewModel.selectedFilter) {
+            eventLimit = EventRepository.historyPageSize
         }
     }
 
     private var historyDataKey: String {
-        "\(viewModel.selectedFilter.rawValue)-\(events.count)-\(events.first?.id.uuidString ?? "")"
+        "\(viewModel.selectedFilter.rawValue)-\(eventLimit)-\(reloadToken)-\(playbackController.playbackItemMetadataVersion)"
     }
 
     private var rows: [HistoryEventRowModel] {
@@ -77,7 +94,7 @@ struct HistoryView: View {
     }
 
     private var reconciliationSummary: HistoryReconciliationSummary {
-        viewModel.reconciliationSummary(events: events)
+        viewModel.reconciliationSummary(events: recoveredEvents)
     }
 
     private var emptyTitle: String {
@@ -88,10 +105,18 @@ struct HistoryView: View {
         viewModel.restorableItem(for: row, playlistItems: playlistItems)
     }
 
-    private func reloadHistoryReferenceData() {
-        let filteredEvents = events.filter { viewModel.selectedFilter.includes($0) }
-        let playlistIDs = Array(Set(filteredEvents.compactMap(\.playlistID)))
-        let trackIDs = Array(Set(filteredEvents.compactMap(\.trackID)))
+    private func reloadHistoryData() {
+        let page = try? EventRepository.recentEvents(
+            matching: viewModel.selectedFilter,
+            limit: eventLimit,
+            in: modelContext
+        )
+        events = page?.events ?? []
+        hasMoreEvents = page?.hasMore ?? false
+        recoveredEvents = (try? EventRepository.recoveredPlaythroughEvents(in: modelContext)) ?? []
+
+        let playlistIDs = Array(Set(events.compactMap(\.playlistID)))
+        let trackIDs = Array(Set(events.compactMap(\.trackID)))
 
         playlists = playlistIDs.compactMap { playlistID in
             try? PlaylistRepository.playlist(id: playlistID, in: modelContext)

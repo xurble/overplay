@@ -14,6 +14,7 @@ final class AppStartupViewModel {
         var startPlaybackMonitoring: () -> Void
         var startPeriodicPlaylistSync: () -> Void
         var stopPeriodicPlaylistSync: () -> Void
+        var compactHistory: () -> Void
     }
 
     private(set) var hasStartedAuthorizedServices = false
@@ -91,6 +92,12 @@ final class AppStartupViewModel {
             )
         } stopPeriodicPlaylistSync: {
             runtime.periodicPlaylistSyncService.stop()
+        } compactHistory: {
+            do {
+                try HistoryRetentionService.compact(in: modelContext)
+            } catch {
+                StartupProfiler.mark("History retention failed: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -116,6 +123,10 @@ final class AppStartupViewModel {
 
             StartupProfiler.measure("Periodic playlist sync startup") {
                 dependencies.startPeriodicPlaylistSync()
+            }
+
+            StartupProfiler.measure("History retention") {
+                dependencies.compactHistory()
             }
         }
     }
