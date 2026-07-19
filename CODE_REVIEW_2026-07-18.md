@@ -151,9 +151,12 @@ Findings:
   stay unwitnessed-never-counted. Full design + implementation notes under
   synthesis item 4. On-device verification of MusicKit state readability in
   background wakes still pending.
-- PERF-3 (low): PlaybackSessionSupport.resolvePlaylistItem's fallback
-  (:62-63) fetches ALL items + ALL tracks of the playlist; only hit when
-  scoped/current-item resolution fails, so rarely hot. Fine for now.
+- PERF-3 (low, FIXED 2026-07-19): PlaybackSessionSupport
+  .resolvePlaylistItem's fallback fetched ALL items + ALL tracks of the
+  playlist. A fast path now does one indexed catalog/library track lookup
+  plus one indexed item fetch; the full scan remains only as the true last
+  resort, because it also matches IDs embedded in stored MusicKit playback
+  data that the indexed fields may not cover. Cross-playlist test added.
 
 ### Chunk 5 — Queue and order machinery
 
@@ -526,9 +529,11 @@ double-count-proof. No high-severity correctness bug was found. Ranked:
 11. CLEANUP-1 — FIXED 2026-07-19 (flag + dead branches removed;
     removeEvictedItemFromPlaylist resolves item-first with a verified-
     current guard on the currentTrack fallback).
-12. PERF-2/PERF-8/PERF-3 — per-transition full-playlist snapshot rebuild;
-    PlaylistManagementView body-time presentation build + UserDefaults write
-    side effect; rare full-playlist fallback in resolvePlaylistItem.
+12. PERF-2/PERF-8/PERF-3 — ALL FIXED 2026-07-19 (evaluation outcomes patch
+    the snapshot row in place; PlaylistManagementView memoizes its
+    presentation and reads order state through non-persisting previews;
+    resolvePlaylistItem gained an indexed fast path with the full scan as
+    last resort).
 
 README: updated this review (config paths; removals claim now matches
 implementation). Remaining README claims verified against code: One True

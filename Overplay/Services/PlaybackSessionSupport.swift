@@ -59,6 +59,20 @@ enum PlaybackSessionSupport {
             }
         }
 
+        // Fast path: one indexed catalog/library track lookup plus one
+        // indexed item fetch covers the common case.
+        if let track = try TrackRecordRepository.track(musicItemID: musicItemID, in: context),
+           let item = try PlaylistItemRepository.item(
+               playlistID: playlist.id,
+               trackID: track.id,
+               in: context
+           ) {
+            return item
+        }
+
+        // True last resort: the full scan also matches IDs embedded in a
+        // record's stored MusicKit playback data, which the indexed
+        // catalog/library fields may not cover.
         let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
         let tracks = try TrackRecordRepository.tracks(ids: items.map(\.trackID), in: context)
         let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
