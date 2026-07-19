@@ -111,16 +111,15 @@ Verdict on capture correctness: SOLID. The core rules hold:
   counts. Confirmed by design comment and code.
 
 Findings:
-- BUG-1 RESOLVED→CLEANUP-1 (low): `EvictionEngine.evaluateSkip`/
-  `countPlaythrough` never set `evictedAt` since the auto-eviction removal
-  (23236c1), so `EvaluationOutcome.evictedDuringEvaluation` is ALWAYS false.
-  Dead code that should go: the evict branches in
-  PlaybackController.applyEvaluationOutcome (:1369-1373) and
-  evaluateActiveSession (:1341-1343), plus the flag itself. The hazardous
-  `currentTrack?.id`-first remote-delete ID resolution in
-  removeEvictedItemFromPlaylist (:1300) is currently only reachable from
-  evictCurrent (item IS current), so no live bug — but reorder to
-  item-derived catalog/library ID first as a safety margin when touching it.
+- BUG-1 RESOLVED→CLEANUP-1 (low, FIXED 2026-07-19): `EvictionEngine` never
+  set `evictedAt` since the auto-eviction removal (23236c1), so
+  `EvaluationOutcome.evictedDuringEvaluation` was ALWAYS false. Removed:
+  the flag, its initializer args, and the dead evict branches in
+  PlaybackController.applyEvaluationOutcome and evaluateActiveSession.
+  removeEvictedItemFromPlaylist now resolves the remote-delete ID from the
+  evicted item's own catalog/library ID first, with currentTrack only as a
+  last resort when the item is verified to be the displayed one — the
+  wrong-track deletion hazard is closed.
 - BUG-2 (low, product decision): playthroughs are position-based
   (`progressPercentage` from lastObservedPlaybackTime), so SEEKING past the
   playthrough threshold counts a playthrough with zero witnessed listening
@@ -517,9 +516,9 @@ double-count-proof. No high-severity correctness bug was found. Ranked:
 10. BUG-2/BUG-3 — playthrough counts on seek past threshold (position-based,
     product decision); UI skip-hint uses position while engine uses witnessed
     listening (can disagree after seeks).
-11. CLEANUP-1 — evictedDuringEvaluation is dead since auto-eviction removal;
-    remove the flag + branches; reorder removeEvictedItemFromPlaylist ID
-    resolution to item-first when touching it.
+11. CLEANUP-1 — FIXED 2026-07-19 (flag + dead branches removed;
+    removeEvictedItemFromPlaylist resolves item-first with a verified-
+    current guard on the currentTrack fallback).
 12. PERF-2/PERF-8/PERF-3 — per-transition full-playlist snapshot rebuild;
     PlaylistManagementView body-time presentation build + UserDefaults write
     side effect; rare full-playlist fallback in resolvePlaylistItem.

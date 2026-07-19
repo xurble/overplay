@@ -1418,9 +1418,15 @@ final class PlaybackController {
             }
             return
         }
-        let trackID = currentTrack?.id
-            ?? (try? TrackRecordRepository.track(id: item.trackID, in: context)?.catalogID)
-            ?? (try? TrackRecordRepository.track(id: item.trackID, in: context)?.libraryID)
+        // The remote-delete target must derive from the evicted item itself;
+        // currentTrack is a last resort, and only when the item is verified
+        // to be the displayed one — resolving from currentTrack first could
+        // ask Apple Music to delete the wrong track if this ever runs for a
+        // non-displayed item.
+        let itemTrack = try? TrackRecordRepository.track(id: item.trackID, in: context)
+        let trackID = itemTrack?.catalogID
+            ?? itemTrack?.libraryID
+            ?? (currentPlaylistItem?.id == item.id ? currentTrack?.id : nil)
         guard let trackID else { return }
 
         do {
@@ -1458,10 +1464,6 @@ final class PlaybackController {
                     ?? activeQueueCurrentLocalTrackID
             )
             applyEvaluationOutcome(outcome, context: context)
-
-            if let outcome, outcome.evictedDuringEvaluation, let item = outcome.item, let playlist = outcome.playlist {
-                await removeEvictedItemFromPlaylist(item, playlist: playlist, context: context)
-            }
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -1486,11 +1488,6 @@ final class PlaybackController {
                 trustedPlaylistItem: outcome.item,
                 context: context
             )
-        }
-        if outcome.evictedDuringEvaluation,
-           let item = outcome.item,
-           let playlist = outcome.playlist {
-            movePlaylistItemToBottom(item, playlist: playlist, scope: .retired, context: context)
         }
         if shouldRefreshActivePlaylist {
             rebuildActivePlaylistSnapshot(context: context)

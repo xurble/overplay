@@ -6,7 +6,6 @@ enum PlaybackSessionEvaluationService {
         var session: TrackPlaySession
         var playlist: PlaylistRecord?
         var item: PlaylistItemRecord?
-        var evictedDuringEvaluation: Bool
         var shouldSyncPlaybackMetadata: Bool
     }
 
@@ -136,7 +135,6 @@ enum PlaybackSessionEvaluationService {
                 session: session,
                 playlist: playlist,
                 item: nil,
-                evictedDuringEvaluation: false,
                 shouldSyncPlaybackMetadata: false
             )
         }
@@ -167,12 +165,10 @@ enum PlaybackSessionEvaluationService {
                 session: session,
                 playlist: playlist,
                 item: nil,
-                evictedDuringEvaluation: false,
                 shouldSyncPlaybackMetadata: false
             )
         }
 
-        let wasEvicted = item.evictedAt != nil
         let canCountPlaythrough = item.evictedAt == nil
         // MusicKit advances tracks itself at natural completion, so most
         // completions arrive here as plain track changes. An observation
@@ -207,7 +203,6 @@ enum PlaybackSessionEvaluationService {
             session: session,
             playlist: playlist,
             item: item,
-            evictedDuringEvaluation: !wasEvicted && item.evictedAt != nil,
             shouldSyncPlaybackMetadata: true
         )
     }
@@ -252,7 +247,6 @@ enum PlaybackSessionEvaluationService {
             session: session,
             playlist: playlist,
             item: item,
-            evictedDuringEvaluation: false,
             shouldSyncPlaybackMetadata: true
         )
     }

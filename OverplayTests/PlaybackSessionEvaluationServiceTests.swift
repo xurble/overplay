@@ -28,7 +28,6 @@ struct PlaybackSessionEvaluationServiceTests {
 
         let history = try fixture.context.fetch(FetchDescriptor<HistoryEvent>())
         #expect(outcome?.session.hasEvaluated == true)
-        #expect(outcome?.evictedDuringEvaluation == false)
         #expect(fixture.item.skipCount == 1)
         #expect(history.first?.eventType == .skipCounted)
     }
@@ -668,7 +667,6 @@ struct PlaybackSessionEvaluationServiceTests {
 
         let history = try fixture.context.fetch(FetchDescriptor<HistoryEvent>())
         #expect(outcome?.session.hasEvaluated == true)
-        #expect(outcome?.evictedDuringEvaluation == false)
         #expect(fixture.item.skipCount == 3)
         #expect(fixture.item.evictedAt == nil)
         #expect(history.first?.eventType == .skipCounted)

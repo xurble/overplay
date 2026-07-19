@@ -26,7 +26,6 @@ struct PlaybackControllerDisplayRestoreTests {
             ),
             playlist: playlist,
             item: item,
-            evictedDuringEvaluation: false,
             shouldSyncPlaybackMetadata: true
         )
 
@@ -55,7 +54,6 @@ struct PlaybackControllerDisplayRestoreTests {
             ),
             playlist: playlist,
             item: previousItem,
-            evictedDuringEvaluation: false,
             shouldSyncPlaybackMetadata: true
         )
 
@@ -98,7 +96,6 @@ struct PlaybackControllerDisplayRestoreTests {
             ),
             playlist: fixture.playlist,
             item: fixture.previousItem,
-            evictedDuringEvaluation: false,
             shouldSyncPlaybackMetadata: true
         )
 
