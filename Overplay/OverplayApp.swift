@@ -80,7 +80,9 @@ struct OverplayApp: App {
         }
         .modelContainer(modelContainer)
         .onChange(of: scenePhase) { _, newPhase in
-            handleScenePhaseChange(newPhase)
+            Task { @MainActor in
+                await handleScenePhaseChange(newPhase)
+            }
         }
     }
 
@@ -89,17 +91,22 @@ struct OverplayApp: App {
     /// waypoint and arms the aimed refresh wake; returning to the
     /// foreground reconciles whatever played while suspended before the
     /// monitor's staleness rules would discard it.
-    private func handleScenePhaseChange(_ phase: ScenePhase) {
+    private func handleScenePhaseChange(_ phase: ScenePhase) async {
         guard !Self.isRunningTests else { return }
         guard phase == .background || phase == .active else { return }
         guard let context = AppRuntime.shared.makeModelContext() else { return }
 
-        let result = PlaybackReconciliationService.reconcileAndCaptureWaypoint(
+        if phase == .background {
+            let target = PlaybackReconciliationService.nextWakeTarget(
+                playbackController: AppRuntime.shared.playbackController,
+                context: context
+            )
+            PlaybackBackgroundRefreshService.shared.scheduleNextWake(at: target)
+        }
+
+        _ = await PlaybackReconciliationService.reconcileAndCaptureWaypoint(
             playbackController: AppRuntime.shared.playbackController,
             context: context
         )
-        if phase == .background {
-            PlaybackBackgroundRefreshService.shared.scheduleNextWake(at: result.nextWakeTarget)
-        }
     }
 }

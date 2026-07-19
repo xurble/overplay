@@ -46,6 +46,13 @@ struct DomainVocabularyTests {
         #expect(HistoryEventSource.reconciled.rawValue == "reconciled")
     }
 
+    @Test("playback reconciliation mechanism raw values are stable")
+    func playbackReconciliationMechanismRawValuesAreStable() {
+        #expect(PlaybackReconciliationMechanism.pointObservation.rawValue == "pointObservation")
+        #expect(PlaybackReconciliationMechanism.wallClockContinuity.rawValue == "wallClockContinuity")
+        #expect(PlaybackReconciliationMechanism.musicKitPlayCount.rawValue == "musicKitPlayCount")
+    }
+
     @Test("eviction raw values are stable")
     func evictionRawValuesAreStable() {
         #expect(EvictionReason.skipCount.rawValue == "skipCount")
@@ -72,6 +79,7 @@ struct DomainVocabularyTests {
         try assertRoundTrips(PlaylistWritePolicy.incomingOnly)
         try assertRoundTrips(HistoryEventType.promoted)
         try assertRoundTrips(HistoryEventSource.sync)
+        try assertRoundTrips(PlaybackReconciliationMechanism.musicKitPlayCount)
         try assertRoundTrips(EvictionReason.skipCount)
         try assertRoundTrips(EvictionSource.appleMusicSync)
         try assertRoundTrips(RemoteMutationStatus.failed)

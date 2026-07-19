@@ -38,6 +38,17 @@ enum HistoryEventSource: String, CaseIterable, Codable, Hashable, Sendable {
     case reconciled
 }
 
+/// The evidence that allowed a suspended playthrough to be written after
+/// Overplay resumed execution.
+enum PlaybackReconciliationMechanism: String, CaseIterable, Codable, Hashable, Sendable {
+    /// A player observation landed at or beyond the configured threshold.
+    case pointObservation
+    /// Elapsed wall time matched the durations and positions across a span.
+    case wallClockContinuity
+    /// Apple Music's play count and last-played date both advanced.
+    case musicKitPlayCount
+}
+
 enum EvictionReason: String, CaseIterable, Codable, Hashable, Sendable {
     case skipCount
     case manual

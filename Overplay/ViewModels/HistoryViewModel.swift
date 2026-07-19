@@ -31,6 +31,13 @@ final class HistoryViewModel {
         )
     }
 
+    func reconciliationSummary(
+        events: [HistoryEvent],
+        now: Date = .now
+    ) -> HistoryReconciliationSummary {
+        HistoryTimeline.reconciliationSummary(events: events, now: now)
+    }
+
     var emptyTitle: String {
         selectedFilter == .all ? "No History" : "No \(selectedFilter.title)"
     }

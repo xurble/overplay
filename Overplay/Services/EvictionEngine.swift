@@ -136,6 +136,7 @@ enum EvictionEngine {
         session: TrackPlaySession,
         settings: OverplaySettings,
         source: HistoryEventSource = .playback,
+        reconciliationMechanism: PlaybackReconciliationMechanism? = nil,
         message: String? = nil,
         context: ModelContext
     ) {
@@ -152,6 +153,7 @@ enum EvictionEngine {
             playlist: playlist,
             eventType: .playthrough,
             source: source,
+            reconciliationMechanism: reconciliationMechanism,
             session: session,
             message: message ?? "Reached \(Int(settings.playthroughThresholdPercentage))%",
             context: context
@@ -206,6 +208,7 @@ enum EvictionEngine {
         playlist: PlaylistRecord,
         eventType: HistoryEventType,
         source: HistoryEventSource,
+        reconciliationMechanism: PlaybackReconciliationMechanism? = nil,
         session: TrackPlaySession,
         message: String?,
         context: ModelContext
@@ -215,6 +218,7 @@ enum EvictionEngine {
             trackID: item.trackID,
             eventType: eventType,
             source: source,
+            reconciliationMechanism: reconciliationMechanism,
             skipCountAtEvent: item.skipCount,
             positionSeconds: session.lastObservedPlaybackTime,
             durationSeconds: session.durationSeconds,

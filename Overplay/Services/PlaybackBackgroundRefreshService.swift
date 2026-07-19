@@ -31,17 +31,17 @@ final class PlaybackBackgroundRefreshService {
                 task.setTaskCompleted(success: false)
                 return
             }
-            Task { @MainActor in
-                Self.shared.handle(task: task)
+            let operation = Task { @MainActor in
+                await Self.shared.handle(task: task)
+            }
+            task.expirationHandler = {
+                operation.cancel()
+                TrackMetadataDiagnostics.log("background refresh expired before completing")
             }
         }
     }
 
-    private func handle(task: BGAppRefreshTask) {
-        task.expirationHandler = {
-            TrackMetadataDiagnostics.log("background refresh expired before completing")
-        }
-
+    private func handle(task: BGAppRefreshTask) async {
         let runtime = AppRuntime.shared
         guard let context = runtime.makeModelContext() else {
             TrackMetadataDiagnostics.log("background refresh woke before the model container was ready")
@@ -49,10 +49,14 @@ final class PlaybackBackgroundRefreshService {
             return
         }
 
-        let result = PlaybackReconciliationService.reconcileAndCaptureWaypoint(
+        let result = await PlaybackReconciliationService.reconcileAndCaptureWaypoint(
             playbackController: runtime.playbackController,
             context: context
         )
+        guard !Task.isCancelled else {
+            task.setTaskCompleted(success: false)
+            return
+        }
         TrackMetadataDiagnostics.log(
             "background refresh wake counted=\(result.countedLocalTrackIDs.count) nextTarget=\(result.nextWakeTarget.map { $0.formatted(date: .omitted, time: .standard) } ?? "nil")"
         )

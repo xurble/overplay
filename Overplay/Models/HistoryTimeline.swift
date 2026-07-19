@@ -2,6 +2,7 @@ import Foundation
 
 enum HistoryEventFilter: String, CaseIterable, Identifiable, Sendable {
     case all
+    case recoveredPlayback
     case evictions
     case removals
     case promotions
@@ -14,6 +15,8 @@ enum HistoryEventFilter: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .all:
             "All"
+        case .recoveredPlayback:
+            "Recovered Playback"
         case .evictions:
             "Retired"
         case .removals:
@@ -31,6 +34,8 @@ enum HistoryEventFilter: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .all:
             true
+        case .recoveredPlayback:
+            event.eventType == .playthrough && event.source == .reconciled
         case .evictions:
             event.eventType == .evicted
         case .removals:
@@ -53,6 +58,7 @@ struct HistoryEventRowModel: Identifiable, Equatable {
     var eventType: HistoryEventType
     var eventTitle: String
     var sourceTitle: String
+    var reconciliationMechanismTitle: String?
     var trackTitle: String
     var subtitle: String
     var message: String?
@@ -61,6 +67,33 @@ struct HistoryEventRowModel: Identifiable, Equatable {
     var artworkURLTemplate: String?
     var createdAt: Date
     var systemImage: String
+}
+
+struct HistoryReconciliationMechanismCount: Identifiable, Equatable, Sendable {
+    var mechanism: PlaybackReconciliationMechanism?
+    var count: Int
+
+    var id: String {
+        mechanism?.rawValue ?? "unclassified"
+    }
+
+    var title: String {
+        mechanism?.displayTitle ?? "Unclassified"
+    }
+
+    var detail: String {
+        mechanism?.explanation ?? "Recovered before proof mechanisms were stored."
+    }
+
+    var systemImage: String {
+        mechanism?.systemImage ?? "questionmark.circle"
+    }
+}
+
+struct HistoryReconciliationSummary: Equatable, Sendable {
+    var totalRecoveredPlaythroughs: Int
+    var recoveredLastSevenDays: Int
+    var mechanismCounts: [HistoryReconciliationMechanismCount]
 }
 
 enum HistoryTimeline {
@@ -93,6 +126,7 @@ enum HistoryTimeline {
                     eventType: event.eventType,
                     eventTitle: event.eventType.displayTitle,
                     sourceTitle: event.source.displayTitle,
+                    reconciliationMechanismTitle: event.resolvedReconciliationMechanism?.displayTitle,
                     trackTitle: track?.title ?? "Unknown Track",
                     subtitle: subtitle(track: track, playlist: playlist),
                     message: event.message,
@@ -103,6 +137,39 @@ enum HistoryTimeline {
                     systemImage: event.eventType.systemImage
                 )
             }
+    }
+
+    static func reconciliationSummary(
+        events: [HistoryEvent],
+        now: Date = .now
+    ) -> HistoryReconciliationSummary {
+        let recoveredEvents = events.filter {
+            $0.eventType == .playthrough && $0.source == .reconciled
+        }
+        let sevenDaysAgo = now.addingTimeInterval(-7 * 24 * 60 * 60)
+        let recoveredLastSevenDays = recoveredEvents.count { $0.createdAt >= sevenDaysAgo }
+        let groupedCounts = Dictionary(grouping: recoveredEvents, by: \.resolvedReconciliationMechanism)
+
+        var mechanismCounts = PlaybackReconciliationMechanism.allCases.map { mechanism in
+            HistoryReconciliationMechanismCount(
+                mechanism: mechanism,
+                count: groupedCounts[mechanism]?.count ?? 0
+            )
+        }
+        if let unclassifiedCount = groupedCounts[nil]?.count, unclassifiedCount > 0 {
+            mechanismCounts.append(
+                HistoryReconciliationMechanismCount(
+                    mechanism: nil,
+                    count: unclassifiedCount
+                )
+            )
+        }
+
+        return HistoryReconciliationSummary(
+            totalRecoveredPlaythroughs: recoveredEvents.count,
+            recoveredLastSevenDays: recoveredLastSevenDays,
+            mechanismCounts: mechanismCounts
+        )
     }
 
     private static func subtitle(track: TrackRecord?, playlist: PlaylistRecord?) -> String {
@@ -119,6 +186,65 @@ enum HistoryTimeline {
         case (.none, .none):
             return "No playlist context"
         }
+    }
+}
+
+extension PlaybackReconciliationMechanism {
+    var displayTitle: String {
+        switch self {
+        case .pointObservation:
+            "Player Position"
+        case .wallClockContinuity:
+            "Wall Clock"
+        case .musicKitPlayCount:
+            "MusicKit Play Count"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .pointObservation:
+            "The player was observed beyond the playthrough threshold."
+        case .wallClockContinuity:
+            "Elapsed time matched continuous playback through the queue."
+        case .musicKitPlayCount:
+            "Apple Music's play count and last-played date advanced."
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .pointObservation:
+            "scope"
+        case .wallClockContinuity:
+            "clock.arrow.2.circlepath"
+        case .musicKitPlayCount:
+            "music.note"
+        }
+    }
+}
+
+private extension HistoryEvent {
+    var resolvedReconciliationMechanism: PlaybackReconciliationMechanism? {
+        if let reconciliationMechanism {
+            return reconciliationMechanism
+        }
+        guard source == .reconciled, let message else {
+            return nil
+        }
+
+        if message.localizedCaseInsensitiveContains("Apple Music library play count") {
+            return .musicKitPlayCount
+        }
+        if message.localizedCaseInsensitiveContains("Played through while Overplay was suspended") {
+            return .wallClockContinuity
+        }
+        if message.localizedCaseInsensitiveContains("Reached")
+            && message.localizedCaseInsensitiveContains("while Overplay was suspended") {
+            return .pointObservation
+        }
+
+        return nil
     }
 }
 

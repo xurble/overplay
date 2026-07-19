@@ -23,6 +23,22 @@ struct HistoryViewModelTests {
         #expect(viewModel.emptyTitle == "No Retired")
     }
 
+    @Test("reconciliation summary is independent of timeline filter")
+    func reconciliationSummaryIsIndependentOfTimelineFilter() {
+        let viewModel = HistoryViewModel()
+        viewModel.selectedFilter = .evictions
+        let event = HistoryEvent(
+            eventType: .playthrough,
+            source: .reconciled,
+            reconciliationMechanism: .musicKitPlayCount
+        )
+
+        let summary = viewModel.reconciliationSummary(events: [event])
+
+        #expect(summary.totalRecoveredPlaythroughs == 1)
+        #expect(summary.mechanismCounts.first { $0.mechanism == .musicKitPlayCount }?.count == 1)
+    }
+
     @Test("restorable item requires matching evicted playlist item")
     func restorableItemRequiresMatchingEvictedPlaylistItem() {
         let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main")

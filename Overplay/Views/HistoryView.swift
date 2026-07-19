@@ -24,6 +24,14 @@ struct HistoryView: View {
                 .pickerStyle(.menu)
             }
 
+            Section {
+                ReconciliationEffectivenessView(summary: reconciliationSummary)
+            } header: {
+                Text("Suspended Playback Recovery")
+            } footer: {
+                Text("These are playthroughs completed while Overplay was suspended and written when reconciliation next ran. Each playthrough is attributed to the evidence that made the recovery possible.")
+            }
+
             if rows.isEmpty {
                 ContentUnavailableView(
                     emptyTitle,
@@ -66,6 +74,10 @@ struct HistoryView: View {
             playlists: playlists,
             tracks: tracks
         )
+    }
+
+    private var reconciliationSummary: HistoryReconciliationSummary {
+        viewModel.reconciliationSummary(events: events)
     }
 
     private var emptyTitle: String {
@@ -160,12 +172,109 @@ private struct HistoryEventBadgesView: View {
     private var badges: some View {
         HistoryBadgeView(text: row.sourceTitle)
 
+        if let reconciliationMechanismTitle = row.reconciliationMechanismTitle {
+            HistoryBadgeView(text: reconciliationMechanismTitle)
+        }
+
         if let skipCountText = row.skipCountText {
             HistoryBadgeView(text: skipCountText)
         }
 
         if let remoteMutationStatusText = row.remoteMutationStatusText {
             HistoryBadgeView(text: remoteMutationStatusText)
+        }
+    }
+}
+
+private struct ReconciliationEffectivenessView: View {
+    var summary: HistoryReconciliationSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 24) {
+                ReconciliationMetricView(
+                    value: summary.totalRecoveredPlaythroughs,
+                    label: "Recovered total"
+                )
+                ReconciliationMetricView(
+                    value: summary.recoveredLastSevenDays,
+                    label: "Last 7 days"
+                )
+            }
+
+            if summary.totalRecoveredPlaythroughs == 0 {
+                Text("No suspended playthroughs have needed recovery yet.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(summary.mechanismCounts) { mechanismCount in
+                        ReconciliationMechanismRowView(
+                            mechanismCount: mechanismCount,
+                            total: summary.totalRecoveredPlaythroughs
+                        )
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+private struct ReconciliationMetricView: View {
+    var value: Int
+    var label: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value, format: .number)
+                .font(.title2.weight(.semibold))
+                .monospacedDigit()
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct ReconciliationMechanismRowView: View {
+    var mechanismCount: HistoryReconciliationMechanismCount
+    var total: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Label(mechanismCount.title, systemImage: mechanismCount.systemImage)
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                Text(mechanismCount.count, format: .number)
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+            }
+
+            ProgressView(
+                value: Double(mechanismCount.count),
+                total: Double(max(total, 1))
+            )
+            .tint(tint)
+
+            Text(mechanismCount.detail)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var tint: Color {
+        switch mechanismCount.mechanism {
+        case .pointObservation:
+            .blue
+        case .wallClockContinuity:
+            .orange
+        case .musicKitPlayCount:
+            .pink
+        case nil:
+            .gray
         }
     }
 }

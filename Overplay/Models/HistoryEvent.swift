@@ -8,6 +8,7 @@ final class HistoryEvent {
     var trackID: UUID?
     var eventTypeRawValue: String = HistoryEventType.remoteMutation.rawValue
     var sourceRawValue: String = HistoryEventSource.overplay.rawValue
+    var reconciliationMechanismRawValue: String?
     var skipCountAtEvent: Int?
     var positionSeconds: Double?
     var durationSeconds: Double?
@@ -31,12 +32,18 @@ final class HistoryEvent {
         set { remoteMutationStatusRawValue = newValue?.rawValue }
     }
 
+    var reconciliationMechanism: PlaybackReconciliationMechanism? {
+        get { reconciliationMechanismRawValue.flatMap(PlaybackReconciliationMechanism.init(rawValue:)) }
+        set { reconciliationMechanismRawValue = newValue?.rawValue }
+    }
+
     init(
         id: UUID = UUID(),
         playlistID: UUID? = nil,
         trackID: UUID? = nil,
         eventType: HistoryEventType,
         source: HistoryEventSource,
+        reconciliationMechanism: PlaybackReconciliationMechanism? = nil,
         skipCountAtEvent: Int? = nil,
         positionSeconds: Double? = nil,
         durationSeconds: Double? = nil,
@@ -50,6 +57,7 @@ final class HistoryEvent {
         self.trackID = trackID
         self.eventTypeRawValue = eventType.rawValue
         self.sourceRawValue = source.rawValue
+        self.reconciliationMechanismRawValue = reconciliationMechanism?.rawValue
         self.skipCountAtEvent = skipCountAtEvent
         self.positionSeconds = positionSeconds
         self.durationSeconds = durationSeconds

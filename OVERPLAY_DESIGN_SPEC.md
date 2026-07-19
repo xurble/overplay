@@ -365,7 +365,7 @@ monitor cannot witness it. Skips are NEVER reconstructed for suspended
 spans — an unobserved interval must never produce a skip. Playthroughs are
 recovered retroactively on any wake (a background refresh grant, scene
 foregrounding, or entering the background, which records the exact baseline
-waypoint) under two proof rules; anything ambiguous counts nothing:
+waypoint) under three proof rules; anything ambiguous counts nothing:
 
 - Point-proof: an observation showing the current track at or past
   `playthroughThresholdPercentage` counts the playthrough outright.
@@ -376,9 +376,18 @@ waypoint) under two proof rules; anything ambiguous counts nothing:
   (small per-boundary tolerance), each completed track counts. Any pause,
   skip, stall, unknown duration, or playlist change fails the equation and
   nothing in that span is counted.
+- Music-library-proof: a batched `MusicLibraryRequest<Track>` shows that the
+  same library item's `playCount` increased and its `lastPlayedDate` advanced
+  into the observed interval. Missing, disabled, stale, mismatched, or failed
+  MusicKit data is neutral. Unresolved baselines are retained briefly so a
+  later wake can observe delayed counter propagation.
 
-Reconciled events are logged with the `reconciled` history source so the
-History screen distinguishes them from witnessed counts. Background wakes
+Reconciled events are logged with the `reconciled` history source and their
+proof mechanism (`pointObservation`, `wallClockContinuity`, or
+`musicKitPlayCount`). History presents all-time and recent recovered-write
+totals, a mechanism breakdown, a recovered-playback filter, and the proof on
+each event. Events written by older builds are classified from their existing
+message where possible. Background wakes
 are aimed at the playthrough-threshold crossing of the current track — the
 earliest instant a single snapshot is self-sufficient proof; iOS delivers
 refresh grants late and allows one pending request, so aiming at the start
@@ -764,6 +773,8 @@ Show:
 - Triggering skip count or manual source.
 - Date.
 - Remote Apple Music mutation status.
+- Suspended-playback recovery totals and proof-mechanism breakdown.
+- Reconciliation proof mechanism on each recovered playthrough.
 - Restore/reactivate action where appropriate.
 
 History must survive sync, relaunch, and iCloud sync.
@@ -938,6 +949,7 @@ Local JSON file only:
 - `trackID: UUID?`
 - `eventType: HistoryEventType`
 - `source: HistoryEventSource`
+- `reconciliationMechanism: PlaybackReconciliationMechanism?`
 - `skipCountAtEvent: Int?`
 - `positionSeconds: Double?`
 - `durationSeconds: Double?`

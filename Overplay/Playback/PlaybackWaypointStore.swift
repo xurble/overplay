@@ -12,6 +12,26 @@ struct PlaybackWaypoint: Codable, Equatable, Sendable {
     /// Local track ID whose playthrough has already been counted for the
     /// play instance this waypoint observes — the point-proof dedupe ledger.
     var countedLocalTrackID: String? = nil
+    /// Apple Music's library counters for this track at the waypoint. A
+    /// later increase plus a matching last-played date can corroborate a
+    /// playthrough even when a pause or skip breaks wall-time continuity.
+    var musicLibrarySnapshot: MusicLibraryPlaybackSnapshot? = nil
+    /// Older baselines awaiting delayed MusicKit propagation. Optional so
+    /// waypoints written before this field existed continue to decode.
+    var pendingMusicLibraryBaselines: [MusicLibraryPlaybackBaseline]? = nil
+
+    var allMusicLibraryBaselines: [MusicLibraryPlaybackBaseline] {
+        var baselines = pendingMusicLibraryBaselines ?? []
+        if let musicLibrarySnapshot {
+            baselines.append(MusicLibraryPlaybackBaseline(
+                playlistID: playlistID,
+                localTrackID: localTrackID,
+                recordedAt: recordedAt,
+                snapshot: musicLibrarySnapshot
+            ))
+        }
+        return baselines
+    }
 }
 
 enum PlaybackWaypointStore {

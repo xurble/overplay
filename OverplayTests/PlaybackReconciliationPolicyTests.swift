@@ -178,6 +178,159 @@ struct PlaybackReconciliationPolicyTests {
         #expect(outcome.continuityProvenLocalTrackIDs == ["b"])
     }
 
+    // MARK: Apple Music library proof
+
+    @Test("an advanced play count and last-played date prove the waypoint track")
+    func anAdvancedPlayCountAndLastPlayedDateProveTheWaypointTrack() {
+        var baseline = waypoint(track: "a", position: 100, duration: 180)
+        baseline.musicLibrarySnapshot = musicLibrarySnapshot(
+            playCount: 7,
+            lastPlayedAt: start.addingTimeInterval(-500)
+        )
+        let observedAt = start.addingTimeInterval(90)
+
+        let outcome = PlaybackReconciliationPolicy.reconcile(
+            waypoint: baseline,
+            // Deliberately break continuity: MusicKit is an independent
+            // proof source for the outgoing waypoint track.
+            observation: observation(track: "c", position: 20, duration: 120, at: observedAt),
+            orderedTracks: order(),
+            playthroughThresholdPercentage: threshold,
+            musicLibrarySnapshots: [
+                "a": musicLibrarySnapshot(
+                    playCount: 8,
+                    lastPlayedAt: start.addingTimeInterval(80)
+                )
+            ]
+        )
+
+        #expect(outcome.continuityProvenLocalTrackIDs.isEmpty)
+        #expect(outcome.musicLibraryProvenLocalTrackIDs == ["a"])
+    }
+
+    @Test("missing stale or mismatched library metadata proves nothing")
+    func missingStaleOrMismatchedLibraryMetadataProvesNothing() {
+        var baseline = waypoint(track: "a", position: 100, duration: 180)
+        baseline.musicLibrarySnapshot = musicLibrarySnapshot(
+            playCount: 7,
+            lastPlayedAt: start.addingTimeInterval(-500)
+        )
+        let observation = observation(
+            track: "c",
+            position: 20,
+            duration: 120,
+            at: start.addingTimeInterval(90)
+        )
+
+        func proof(_ latest: MusicLibraryPlaybackSnapshot?) -> String? {
+            PlaybackReconciliationPolicy.reconcile(
+                waypoint: baseline,
+                observation: observation,
+                orderedTracks: [],
+                playthroughThresholdPercentage: threshold,
+                musicLibrarySnapshots: latest.map { ["a": $0] } ?? [:]
+            ).musicLibraryProvenLocalTrackIDs.first
+        }
+
+        #expect(proof(nil) == nil)
+        #expect(proof(musicLibrarySnapshot(
+            playCount: 7,
+            lastPlayedAt: start.addingTimeInterval(80)
+        )) == nil)
+        #expect(proof(musicLibrarySnapshot(
+            playCount: 8,
+            lastPlayedAt: nil
+        )) == nil)
+        #expect(proof(musicLibrarySnapshot(
+            musicItemID: "different-library-item",
+            playCount: 8,
+            lastPlayedAt: start.addingTimeInterval(80)
+        )) == nil)
+        #expect(proof(musicLibrarySnapshot(
+            playCount: 8,
+            lastPlayedAt: start.addingTimeInterval(-100)
+        )) == nil)
+    }
+
+    @Test("library metadata cannot recount a waypoint play instance")
+    func libraryMetadataCannotRecountAWaypointPlayInstance() {
+        var baseline = waypoint(track: "a", position: 170, duration: 180)
+        baseline.countedLocalTrackID = "a"
+        baseline.musicLibrarySnapshot = musicLibrarySnapshot(
+            playCount: 7,
+            lastPlayedAt: start.addingTimeInterval(-500)
+        )
+
+        let outcome = PlaybackReconciliationPolicy.reconcile(
+            waypoint: baseline,
+            observation: observation(
+                track: "b",
+                position: 10,
+                duration: 200,
+                at: start.addingTimeInterval(30)
+            ),
+            orderedTracks: order(),
+            playthroughThresholdPercentage: threshold,
+            musicLibrarySnapshots: [
+                "a": musicLibrarySnapshot(
+                    playCount: 8,
+                    lastPlayedAt: start.addingTimeInterval(20)
+                )
+            ]
+        )
+
+        #expect(outcome.musicLibraryProvenLocalTrackIDs.isEmpty)
+    }
+
+    @Test("a delayed MusicKit update can prove an older retained baseline")
+    func aDelayedMusicKitUpdateCanProveAnOlderRetainedBaseline() {
+        var latestWaypoint = waypoint(track: "b", position: 40, duration: 200)
+        latestWaypoint.recordedAt = start.addingTimeInterval(120)
+        latestWaypoint.musicLibrarySnapshot = musicLibrarySnapshot(
+            musicItemID: "library-b",
+            playCount: 3,
+            lastPlayedAt: start.addingTimeInterval(-300)
+        )
+        latestWaypoint.pendingMusicLibraryBaselines = [
+            MusicLibraryPlaybackBaseline(
+                playlistID: "p",
+                localTrackID: "a",
+                recordedAt: start,
+                snapshot: musicLibrarySnapshot(
+                    musicItemID: "library-a",
+                    playCount: 7,
+                    lastPlayedAt: start.addingTimeInterval(-500)
+                )
+            )
+        ]
+
+        let outcome = PlaybackReconciliationPolicy.reconcile(
+            waypoint: latestWaypoint,
+            observation: observation(
+                track: "c",
+                position: 10,
+                duration: 120,
+                at: start.addingTimeInterval(240)
+            ),
+            orderedTracks: [],
+            playthroughThresholdPercentage: threshold,
+            musicLibrarySnapshots: [
+                "a": musicLibrarySnapshot(
+                    musicItemID: "library-a",
+                    playCount: 8,
+                    lastPlayedAt: start.addingTimeInterval(80)
+                ),
+                "b": musicLibrarySnapshot(
+                    musicItemID: "library-b",
+                    playCount: 3,
+                    lastPlayedAt: start.addingTimeInterval(-300)
+                )
+            ]
+        )
+
+        #expect(outcome.musicLibraryProvenLocalTrackIDs == ["a"])
+    }
+
     // MARK: Wake aiming
 
     @Test("before the threshold crossing the wake aims at the crossing plus margin")
@@ -270,6 +423,18 @@ struct PlaybackReconciliationPolicyTests {
             positionSeconds: position,
             durationSeconds: duration,
             observedAt: date ?? start
+        )
+    }
+
+    private func musicLibrarySnapshot(
+        musicItemID: String = "library-item",
+        playCount: Int?,
+        lastPlayedAt: Date?
+    ) -> MusicLibraryPlaybackSnapshot {
+        MusicLibraryPlaybackSnapshot(
+            musicItemID: musicItemID,
+            playCount: playCount,
+            lastPlayedDate: lastPlayedAt
         )
     }
 }

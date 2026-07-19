@@ -62,14 +62,99 @@ struct HistoryTimelineTests {
             HistoryEvent(playlistID: playlistID, trackID: trackID, eventType: .trackRemoved, source: .appleMusic),
             HistoryEvent(playlistID: playlistID, trackID: trackID, eventType: .promoted, source: .user),
             HistoryEvent(playlistID: playlistID, trackID: trackID, eventType: .restored, source: .user),
-            HistoryEvent(playlistID: playlistID, trackID: trackID, eventType: .remoteMutation, source: .user, remoteMutationStatus: .failed)
+            HistoryEvent(playlistID: playlistID, trackID: trackID, eventType: .remoteMutation, source: .user, remoteMutationStatus: .failed),
+            HistoryEvent(
+                playlistID: playlistID,
+                trackID: trackID,
+                eventType: .playthrough,
+                source: .reconciled,
+                reconciliationMechanism: .wallClockContinuity
+            )
         ]
 
+        #expect(HistoryTimeline.rows(events: events, playlists: [], tracks: [], filter: .recoveredPlayback).map(\.eventType) == [.playthrough])
         #expect(HistoryTimeline.rows(events: events, playlists: [], tracks: [], filter: .evictions).map(\.eventType) == [.evicted])
         #expect(HistoryTimeline.rows(events: events, playlists: [], tracks: [], filter: .removals).map(\.eventType) == [.trackRemoved])
         #expect(HistoryTimeline.rows(events: events, playlists: [], tracks: [], filter: .promotions).map(\.eventType) == [.promoted])
         #expect(HistoryTimeline.rows(events: events, playlists: [], tracks: [], filter: .restores).map(\.eventType) == [.restored])
         #expect(HistoryTimeline.rows(events: events, playlists: [], tracks: [], filter: .remoteMutations).map(\.eventType) == [.remoteMutation])
+    }
+
+    @Test("reconciliation summary attributes recovered writes to their proof mechanism")
+    func reconciliationSummaryAttributesRecoveredWritesToProofMechanism() {
+        let now = Date(timeIntervalSince1970: 2_000_000)
+        let recent = now.addingTimeInterval(-24 * 60 * 60)
+        let older = now.addingTimeInterval(-8 * 24 * 60 * 60)
+        let events = [
+            HistoryEvent(
+                eventType: .playthrough,
+                source: .reconciled,
+                reconciliationMechanism: .wallClockContinuity,
+                createdAt: recent
+            ),
+            HistoryEvent(
+                eventType: .playthrough,
+                source: .reconciled,
+                reconciliationMechanism: .musicKitPlayCount,
+                createdAt: recent
+            ),
+            HistoryEvent(
+                eventType: .playthrough,
+                source: .reconciled,
+                message: "Reached 80% while Overplay was suspended",
+                createdAt: older
+            ),
+            HistoryEvent(
+                eventType: .playthrough,
+                source: .reconciled,
+                message: "Played through while Overplay was suspended",
+                createdAt: older
+            ),
+            HistoryEvent(
+                eventType: .playthrough,
+                source: .reconciled,
+                message: "Recovered by an older build",
+                createdAt: older
+            ),
+            HistoryEvent(
+                eventType: .playthrough,
+                source: .playback,
+                createdAt: recent
+            )
+        ]
+
+        let summary = HistoryTimeline.reconciliationSummary(events: events, now: now)
+        let counts = Dictionary(uniqueKeysWithValues: summary.mechanismCounts.map { ($0.id, $0.count) })
+
+        #expect(summary.totalRecoveredPlaythroughs == 5)
+        #expect(summary.recoveredLastSevenDays == 2)
+        #expect(counts[PlaybackReconciliationMechanism.pointObservation.rawValue] == 1)
+        #expect(counts[PlaybackReconciliationMechanism.wallClockContinuity.rawValue] == 2)
+        #expect(counts[PlaybackReconciliationMechanism.musicKitPlayCount.rawValue] == 1)
+        #expect(counts["unclassified"] == 1)
+    }
+
+    @Test("reconciled history rows expose proof mechanism badges")
+    func reconciledHistoryRowsExposeProofMechanismBadges() {
+        let typedEvent = HistoryEvent(
+            eventType: .playthrough,
+            source: .reconciled,
+            reconciliationMechanism: .musicKitPlayCount
+        )
+        let legacyEvent = HistoryEvent(
+            eventType: .playthrough,
+            source: .reconciled,
+            message: "Played through while Overplay was suspended"
+        )
+
+        let rows = HistoryTimeline.rows(
+            events: [typedEvent, legacyEvent],
+            playlists: [],
+            tracks: []
+        )
+
+        #expect(rows.first { $0.eventID == typedEvent.id }?.reconciliationMechanismTitle == "MusicKit Play Count")
+        #expect(rows.first { $0.eventID == legacyEvent.id }?.reconciliationMechanismTitle == "Wall Clock")
     }
 
     @Test("restoring playlist item clears eviction state")

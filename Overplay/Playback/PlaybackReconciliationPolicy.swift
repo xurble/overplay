@@ -5,7 +5,7 @@ import Foundation
 ///
 /// Skips are never reconstructed — unwitnessed transitions must never count
 /// (the same rule the live evaluation enforces). Playthroughs are recovered
-/// under two proof rules; anything ambiguous counts nothing:
+/// under three proof rules; anything ambiguous counts nothing:
 ///
 /// - POINT-PROOF: an observation showing the current track at or past the
 ///   playthrough threshold counts it outright. Playthroughs are
@@ -17,6 +17,9 @@ import Foundation
 ///   provably continuous and each completed track counts. Any mismatch —
 ///   pause, skip, stall, seek, unknown duration, changed playlist — fails
 ///   the equation and nothing in the span is counted.
+/// - MUSIC-LIBRARY-PROOF: Apple Music's play count for the waypoint track
+///   increased and its last-played date also advanced into the observed
+///   interval. Missing or stale library data is neutral, never negative.
 enum PlaybackReconciliationPolicy {
     /// Wall-clock slack allowed per track boundary crossed (gap between
     /// tracks, poll jitter at the edges).
@@ -49,13 +52,17 @@ enum PlaybackReconciliationPolicy {
         /// Tracks proven completed by wall-clock continuity since the
         /// previous waypoint, in playback order.
         var continuityProvenLocalTrackIDs: [String] = []
+        /// Waypoint tracks corroborated by Apple Music's library play count
+        /// and last-played date, including delayed results from older wakes.
+        var musicLibraryProvenLocalTrackIDs: [String] = []
     }
 
     static func reconcile(
         waypoint: PlaybackWaypoint?,
         observation: Observation,
         orderedTracks: [OrderedTrack],
-        playthroughThresholdPercentage: Double
+        playthroughThresholdPercentage: Double,
+        musicLibrarySnapshots: [String: MusicLibraryPlaybackSnapshot] = [:]
     ) -> Outcome {
         Outcome(
             pointProvenLocalTrackID: pointProvenLocalTrackID(
@@ -67,8 +74,51 @@ enum PlaybackReconciliationPolicy {
                 waypoint: waypoint,
                 observation: observation,
                 orderedTracks: orderedTracks
+            ),
+            musicLibraryProvenLocalTrackIDs: musicLibraryProvenLocalTrackIDs(
+                waypoint: waypoint,
+                observation: observation,
+                latestSnapshots: musicLibrarySnapshots
             )
         )
+    }
+
+    private static func musicLibraryProvenLocalTrackIDs(
+        waypoint: PlaybackWaypoint?,
+        observation: Observation,
+        latestSnapshots: [String: MusicLibraryPlaybackSnapshot]
+    ) -> [String] {
+        guard let waypoint else { return [] }
+        var provenLocalTrackIDs: [String] = []
+        for baseline in waypoint.allMusicLibraryBaselines {
+            guard baseline.playlistID == observation.playlistID,
+                  waypoint.countedLocalTrackID != baseline.localTrackID,
+                  !provenLocalTrackIDs.contains(baseline.localTrackID),
+                  let latest = latestSnapshots[baseline.localTrackID],
+                  baseline.snapshot.musicItemID == latest.musicItemID,
+                  let baselinePlayCount = baseline.snapshot.playCount,
+                  let latestPlayCount = latest.playCount,
+                  latestPlayCount > baselinePlayCount,
+                  let latestLastPlayedDate = latest.lastPlayedDate else {
+                continue
+            }
+
+            if let baselineLastPlayedDate = baseline.snapshot.lastPlayedDate,
+               latestLastPlayedDate <= baselineLastPlayedDate {
+                continue
+            }
+
+            let intervalStart = baseline.recordedAt.addingTimeInterval(-baseToleranceSeconds)
+            let intervalEnd = observation.observedAt.addingTimeInterval(baseToleranceSeconds)
+            guard latestLastPlayedDate >= intervalStart,
+                  latestLastPlayedDate <= intervalEnd else {
+                // A delayed counter that refers to playback before this
+                // baseline must not be attributed to the suspended interval.
+                continue
+            }
+            provenLocalTrackIDs.append(baseline.localTrackID)
+        }
+        return provenLocalTrackIDs
     }
 
     private static func pointProvenLocalTrackID(

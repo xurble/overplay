@@ -176,6 +176,47 @@ struct EvictionEngineTests {
         #expect(history.contains { $0.eventType == .playthrough })
     }
 
+    @Test("reconciled playthrough persists its proof mechanism")
+    func reconciledPlaythroughPersistsItsProofMechanism() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let settings = OverplaySettings()
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "playlist-1",
+            name: "Main",
+            role: .oneTruePlaylist
+        )
+        let item = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: UUID()
+        )
+        context.insert(settings)
+        context.insert(playlist)
+        context.insert(item)
+
+        EvictionEngine.countPlaythrough(
+            item,
+            playlist: playlist,
+            session: TrackPlaySession(
+                trackID: "track-1",
+                sessionStartDate: .now,
+                lastObservedPlaybackTime: 100,
+                durationSeconds: 100,
+                hasEvaluated: false
+            ),
+            settings: settings,
+            source: .reconciled,
+            reconciliationMechanism: .musicKitPlayCount,
+            message: "Recovered from MusicKit",
+            context: context
+        )
+
+        let history = try context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(history.count == 1)
+        #expect(history.first?.source == .reconciled)
+        #expect(history.first?.reconciliationMechanism == .musicKitPlayCount)
+    }
+
     @Test("triage playlist item counts skip without retirement")
     func triagePlaylistItemCountsSkipWithoutRetirement() throws {
         let container = try OverplayTestSupport.makeModelContainer()
