@@ -1490,8 +1490,26 @@ final class PlaybackController {
             )
         }
         if shouldRefreshActivePlaylist {
-            rebuildActivePlaylistSnapshot(context: context)
+            patchActivePlaylistSnapshotRow(for: outcome.item, context: context)
         }
+    }
+
+    /// An evaluation outcome mutates a single item's counters, and this
+    /// runs on every counted skip/playthrough — patch that row instead of
+    /// refetching the whole playlist. Falls back to a full rebuild when the
+    /// snapshot doesn't match the current playlist/scope or the item's
+    /// membership changed.
+    private func patchActivePlaylistSnapshotRow(for item: PlaylistItemRecord?, context: ModelContext) {
+        guard let item,
+              let activePlaylistSnapshot,
+              activePlaylistSnapshot.musicPlaylistID == currentPlaylistID,
+              activePlaylistSnapshot.playbackScope == currentPlaylistScope,
+              let patched = activePlaylistSnapshot.updatingRow(for: item) else {
+            rebuildActivePlaylistSnapshot(context: context)
+            return
+        }
+
+        self.activePlaylistSnapshot = patched
     }
 
     func evaluationOutcomeAffectsActivePlaylist(_ outcome: PlaybackSessionEvaluationService.EvaluationOutcome) -> Bool {

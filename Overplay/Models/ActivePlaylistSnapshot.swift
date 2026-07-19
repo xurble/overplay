@@ -80,6 +80,31 @@ struct ActivePlaylistSnapshot: Equatable, Sendable {
         self.updatedAt = updatedAt
     }
 
+    /// Patches one item's counter/protection fields in place — an
+    /// evaluation outcome only ever touches a single row, so callers can
+    /// avoid refetching the whole playlist. Returns nil when the item has
+    /// no row or its eviction state changed (membership/order now differ),
+    /// signalling that a full rebuild is required instead.
+    func updatingRow(for item: PlaylistItemRecord) -> ActivePlaylistSnapshot? {
+        guard let index = rows.firstIndex(where: { $0.id == item.id }) else {
+            return nil
+        }
+
+        var row = rows[index]
+        guard row.isEvicted == (item.evictedAt != nil) else {
+            return nil
+        }
+
+        row.skipCount = item.skipCount
+        row.playthroughCount = item.playthroughCount
+        row.isProtected = item.protected
+
+        var snapshot = self
+        snapshot.rows[index] = row
+        snapshot.updatedAt = .now
+        return snapshot
+    }
+
     func updatingCurrentRow(
         currentPlaylistItemID: UUID?,
         currentLocalTrackID: String?,

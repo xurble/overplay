@@ -64,6 +64,72 @@ struct ActivePlaylistSnapshotTests {
         #expect(secondItem.sortOrder == 20)
     }
 
+    @Test("updating a row patches counters in place without reordering")
+    func updatingARowPatchesCountersInPlaceWithoutReordering() throws {
+        let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main")
+        let track = TrackRecord(catalogID: "catalog-1", libraryID: "library-1", title: "First", artistName: "Artist")
+        let item = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: track.id,
+            skipCount: 1,
+            playthroughCount: 2,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let snapshot = ActivePlaylistSnapshot(
+            playlist: playlist,
+            items: [item],
+            tracks: [track],
+            playbackOrderState: PlaybackOrderState(
+                playerID: "player",
+                musicPlaylistID: playlist.musicPlaylistID,
+                orderedTrackIDs: [track.id.uuidString]
+            )
+        )
+
+        item.skipCount = 5
+        item.playthroughCount = 3
+        item.protected = true
+        let patched = try #require(snapshot.updatingRow(for: item))
+
+        #expect(patched.rows.map(\.id) == snapshot.rows.map(\.id))
+        #expect(patched.rows.first?.skipCount == 5)
+        #expect(patched.rows.first?.playthroughCount == 3)
+        #expect(patched.rows.first?.isProtected == true)
+        #expect(patched.rows.first?.isCurrent == snapshot.rows.first?.isCurrent)
+    }
+
+    @Test("updating a row demands a rebuild for unknown items and membership changes")
+    func updatingARowDemandsARebuildForUnknownItemsAndMembershipChanges() {
+        let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main")
+        let track = TrackRecord(catalogID: "catalog-1", libraryID: "library-1", title: "First", artistName: "Artist")
+        let item = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: track.id,
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let snapshot = ActivePlaylistSnapshot(
+            playlist: playlist,
+            items: [item],
+            tracks: [track],
+            playbackOrderState: PlaybackOrderState(
+                playerID: "player",
+                musicPlaylistID: playlist.musicPlaylistID,
+                orderedTrackIDs: [track.id.uuidString]
+            )
+        )
+
+        let unknownItem = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: UUID(),
+            createdAt: Date(timeIntervalSince1970: 2)
+        )
+        #expect(snapshot.updatingRow(for: unknownItem) == nil)
+
+        // Eviction changes membership/order — a patch is not enough.
+        item.evictedAt = Date(timeIntervalSince1970: 100)
+        #expect(snapshot.updatingRow(for: item) == nil)
+    }
+
     @Test("updating current row preserves row identity")
     func updatingCurrentRowPreservesRowIdentity() {
         let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main")

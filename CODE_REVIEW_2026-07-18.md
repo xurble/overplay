@@ -67,13 +67,15 @@ Baseline: main @ 23236c1 plus uncommitted working-tree changes:
   recordTrustedRuntimeAlias. Steady-state playing tick now does zero
   repeat fetches; idle does nothing at all. Tests:
   PlaybackMonitorIdlePolicyTests.
-- PERF-2 (low-medium): `rebuildActivePlaylistSnapshot`
-  (PlaybackController.swift:2055) fetches ALL items + ALL tracks of the
-  current playlist on the main context. Called on every track action AND on
-  every counted skip/playthrough via applyEvaluationOutcome (:1374). On a
-  large playlist this is a per-transition full-playlist fetch. Acceptable per
-  user action; consider reusing snapshot + patching the affected row for
-  evaluation outcomes.
+- PERF-2 (low-medium, FIXED 2026-07-19): `rebuildActivePlaylistSnapshot`
+  fetched ALL items + ALL tracks of the current playlist on every counted
+  skip/playthrough via applyEvaluationOutcome. Evaluation outcomes only
+  mutate one item's counters, so applyEvaluationOutcome now patches that
+  row in place (ActivePlaylistSnapshot.updatingRow), falling back to a full
+  rebuild when the snapshot doesn't match the current playlist/scope, the
+  item has no row, or its eviction state changed (membership/order differ).
+  Track actions keep the full rebuild — they genuinely change membership.
+  Tests: ActivePlaylistSnapshotTests.
 - BUG-1 (candidate, needs chunk-4 confirmation):
   `removeEvictedItemFromPlaylist` (PlaybackController.swift:1300) resolves
   the remote-removal ID as `currentTrack?.id` FIRST, falling back to the
