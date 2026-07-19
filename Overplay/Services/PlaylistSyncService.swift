@@ -46,6 +46,10 @@ struct PlaylistSyncService {
         subsystem: Bundle.main.bundleIdentifier ?? "Overplay",
         category: "PlaylistSync"
     )
+    private static let osLog = OSLog(
+        subsystem: Bundle.main.bundleIdentifier ?? "Overplay",
+        category: "PlaylistSync"
+    )
 
     /// `lastSeenInPlaylistAt` must track every sync sighting so future
     /// missing-from-remote logic has accurate data, but stamping a fresh
@@ -249,26 +253,31 @@ struct PlaylistSyncService {
                 continue
             }
 
-            let snapshotIdentity = snapshot.resolvedIdentity
-            let existingTrack = try TrackRecordRepository.track(
-                catalogID: snapshotIdentity.catalogID,
-                libraryID: snapshotIdentity.libraryID,
-                in: context
-            )
-            let existingItem = try existingTrack.flatMap {
-                try PlaylistItemRepository.item(
-                    playlistID: playlistRecord.id,
-                    trackID: $0.id,
+            // These lookups exist only to feed the debug log line — two
+            // indexed fetches per track, ~1000 wasted fetches on a
+            // 500-track playlist when debug logging is off.
+            if Self.osLog.isEnabled(type: .debug) {
+                let snapshotIdentity = snapshot.resolvedIdentity
+                let existingTrack = try TrackRecordRepository.track(
+                    catalogID: snapshotIdentity.catalogID,
+                    libraryID: snapshotIdentity.libraryID,
                     in: context
                 )
+                let existingItem = try existingTrack.flatMap {
+                    try PlaylistItemRepository.item(
+                        playlistID: playlistRecord.id,
+                        trackID: $0.id,
+                        in: context
+                    )
+                }
+                logFoundRemoteTrack(
+                    snapshot,
+                    playlistRecord: playlistRecord,
+                    sortOrder: sortOrder,
+                    existingTrack: existingTrack,
+                    existingItem: existingItem
+                )
             }
-            logFoundRemoteTrack(
-                snapshot,
-                playlistRecord: playlistRecord,
-                sortOrder: sortOrder,
-                existingTrack: existingTrack,
-                existingItem: existingItem
-            )
 
             do {
                 let trackResult = try TrackRecordRepository.upsertWithResult(snapshot, in: context)

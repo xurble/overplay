@@ -163,15 +163,15 @@ maintains both scope orders symmetrically. `reconciledTransitionIndex`
 prefers the player-reported entry and never advances from a concurrently
 moved index. No logic bugs found.
 
-- PERF-4 (medium): `PlaybackQueueCoordinator.localTrackID(matching:)`
-  (:100-110) falls back to fetching ALL TrackRecords and scanning when the
-  indexed catalog/library lookup misses. PlaybackController.localTrackID
-  (:1448-1478) reaches it (a) whenever the scoped playlist lookup throws and
-  (b) unconditionally when no playlist is set. If an unresolvable track is
-  playing (e.g. queue-reported ID that matches no record), the 1 Hz refresh
-  re-runs this full-table scan EVERY second (resolvedCurrentPlaybackIdentity
-  :1583 → localTrackID(matching:)). Fix: negative-cache the miss per
-  musicItemID until identity changes.
+- PERF-4 (medium, FIXED 2026-07-19): `PlaybackQueueCoordinator
+  .localTrackID(matching:)` falls back to fetching ALL TrackRecords when
+  the indexed lookup misses, and with an unresolvable track playing the
+  1 Hz refresh re-ran that full scan every second. Now
+  PlaybackController.localTrackID negative-caches misses per musicItemID
+  (`unresolvableMusicItemIDs`), cleared by bumpPlaybackItemMetadataVersion
+  (every metadata change/track transition), reconcileStoredOrder (sync and
+  membership changes can heal a miss), and database reset — one scan per
+  track episode instead of one per second.
 - NOTE: PlaybackIdentityStore decodes the full JSON alias dictionary from
   UserDefaults on every read; hot-path reads are mostly short-circuited
   earlier (recordTrustedRuntimeAlias's track-record check), so this rides on
@@ -260,12 +260,12 @@ gated once-per-cycle identity merge, cancellation checks. No issues.
   every 30-minute cycle would dirty every item record and churn CloudKit;
   day resolution is enough for any pruning decision. Tests added in
   PlaylistSyncReconciliationTests.
-- PERF-6 (low-medium): reconcile does 2 extra indexed fetches PER TRACK
-  purely to feed a .debug log line (existingTrack/existingItem,
-  PlaylistSyncService.swift:236-247), even when debug logging is off, and
-  the upserts immediately re-resolve the same records. On a 500-track
-  playlist that's ~1000 wasted main-actor fetches per sync cycle. Gate on
-  Logger.isEnabled(.debug) or reuse the upsert results for logging.
+- PERF-6 (low-medium, FIXED 2026-07-19): reconcile did 2 extra indexed
+  fetches PER TRACK purely to feed a .debug log line even when debug
+  logging was off (~1000 wasted main-actor fetches per 500-track cycle).
+  The pre-upsert lookups and logFoundRemoteTrack are now gated on
+  `OSLog.isEnabled(type: .debug)` — zero cost unless someone is actually
+  watching the debug stream.
 - NOTE: `ModelContext.ephemeral` (PlaylistSyncService.swift:505-513) uses
   `try!` — acceptable (static in-memory schema), but a failed container
   init would crash instead of surfacing an error.
@@ -504,10 +504,14 @@ double-count-proof. No high-severity correctness bug was found. Ranked:
    leave-in-place removals behavior, decision logged in TODO.md;
    lastSeenInPlaylistAt refreshes on change/first sighting/daily for
    unchanged items — not every cycle, to avoid CloudKit write churn).
-6. PERF-4 — worst-case per-tick full TrackRecord table scan when an
-   unresolvable track is playing (needs a negative cache).
-7. PERF-6 — sync reconcile burns 2 fetches/track feeding disabled debug logs
-   (~1000 wasted main-actor fetches per 500-track sync).
+6. PERF-4 — FIXED 2026-07-19 (misses negative-cached per musicItemID,
+   invalidated on metadata changes, sync reconciles, and reset). Was:
+   worst-case per-tick full TrackRecord table scan when an unresolvable
+   track is playing.
+7. PERF-6 — FIXED 2026-07-19 (debug-only lookups gated on
+   OSLog.isEnabled(.debug)). Was: sync reconcile burned 2 fetches/track
+   feeding disabled debug logs (~1000 wasted main-actor fetches per
+   500-track sync).
 8. PERF-5 — CarPlay observes elapsedSeconds it never uses → per-second
    settings+signature fetches while connected.
 9. BUG-4 — RemoteCommandService keeps the orphaned CarPlay ModelContext
