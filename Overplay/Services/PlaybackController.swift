@@ -78,6 +78,10 @@ final class PlaybackController {
     /// Known music item IDs of the current track, cached per local track ID
     /// — the 1 Hz refresh consults these once or twice per tick.
     @ObservationIgnored private var knownMusicItemIDsCache: (localTrackID: UUID, ids: Set<String>)?
+    /// Music item IDs that failed to resolve to a local track — each miss
+    /// costs a full TrackRecord scan, so misses are remembered until the
+    /// next metadata change could heal them.
+    @ObservationIgnored private var unresolvableMusicItemIDs: Set<String> = []
     @ObservationIgnored var isNetworkReachable: () -> Bool = { NetworkReachabilityMonitor.shared.isReachable }
 
     static let deliveryStallMessage =
@@ -286,6 +290,7 @@ final class PlaybackController {
         didLogQueueEndWithoutRestart = false
         cachedSettings = nil
         knownMusicItemIDsCache = nil
+        unresolvableMusicItemIDs.removeAll()
         monitorIdleSince = nil
         deliveryStallState = PlaybackDeliveryStallPolicy.State()
         deliveryRecoveryAttempts = 0
@@ -1566,6 +1571,25 @@ final class PlaybackController {
         playlistID: String? = nil,
         context: ModelContext
     ) -> String? {
+        // A miss ends in PlaybackQueueCoordinator's full TrackRecord scan.
+        // When an unresolvable track is playing, the 1 Hz refresh would
+        // repeat that scan every tick — remember the miss until the next
+        // metadata change (sync, merge, or track transition) could heal it.
+        guard !unresolvableMusicItemIDs.contains(musicItemID) else { return nil }
+
+        if let resolved = resolveLocalTrackID(matching: musicItemID, playlistID: playlistID, context: context) {
+            return resolved
+        }
+
+        unresolvableMusicItemIDs.insert(musicItemID)
+        return nil
+    }
+
+    private func resolveLocalTrackID(
+        matching musicItemID: String,
+        playlistID: String?,
+        context: ModelContext
+    ) -> String? {
         if let playlistID = playlistID ?? currentPlaylistID {
             do {
                 if let scopedLocalTrackID = try PlaybackQueueOrchestrator.localTrackID(
@@ -1927,6 +1951,7 @@ final class PlaybackController {
 
     private func bumpPlaybackItemMetadataVersion() {
         knownMusicItemIDsCache = nil
+        unresolvableMusicItemIDs.removeAll()
         playbackItemMetadataVersion += 1
     }
 
@@ -2268,6 +2293,9 @@ final class PlaybackController {
     /// to track the current entry. Duplicate cleanup happens in the track
     /// identity merge pass at startup and after sync, not here.
     func reconcileStoredOrder(for playlist: PlaylistRecord, context: ModelContext) {
+        // Membership changed (sync, link change, manual add): previously
+        // unresolvable music item IDs may now have records.
+        unresolvableMusicItemIDs.removeAll()
         let currentLocalTrackID = currentPlaylistID == playlist.musicPlaylistID && currentPlaylistScope == .active
             ? currentPlaylistItem?.trackID.uuidString
             : nil
