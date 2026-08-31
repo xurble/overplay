@@ -50,7 +50,7 @@ Verification:
 - Media commands are local to the Mac.
 - macOS target builds.
 
-## Product Gaps To Reconcile With The Spec
+## Deferred Product Gaps
 
 ### Dashboard Summary
 
@@ -79,30 +79,6 @@ Verification:
 - Publish artwork through `MPNowPlayingInfoCenter` in addition to title, artist,
   album, duration, elapsed time, and playback rate.
 
-### Behavior Decisions
-
-The implementation currently differs from the design spec in these areas.
-Resolve each by either updating the spec to match the product decision or
-changing the implementation.
-
-- Remote removals are not reconciled: a track deleted from the Apple Music
-  playlist keeps its local item, history, and playability. Decided 2026-07-19
-  — the spec's component summary previously contradicted this and now
-  matches "Removals from Apple Music". `lastSeenInPlaylistAt` is kept
-  accurate (daily resolution) so a missing-from-remote feature can be built
-  later without a data backfill.
-- Promotion locally retires the source triage item after a successful
-  promotion; the spec says leave the source unchanged unless a future setting
-  says otherwise.
-- Remote deletion is attempted only for managed Apple Music One True Playlist
-  items; the spec says manual retirement should attempt removal when supported.
-- Playlist-row retirement is local-only and does not use the current-track remote
-  deletion path.
-- Search only offers active playlists that allow remote writes; the spec says
-  users can add tracks to any linked playlist.
-- History is a filtered list everywhere; Mac should revisit sortable and
-  filterable table presentation.
-
 ## Performance And Responsiveness Follow-Ups
 
 ### Background Sync Context
@@ -124,6 +100,16 @@ If on-device catch-up sync still hitches:
 The automated playback and identity-fix test suite passed on the iPhone
 simulator after the remediation work. The remaining checklist requires a
 physical device with an Apple Music subscription.
+
+Cross-surface consistency is a release gate. Run each supported playback
+action from SwiftUI, CarPlay, and the system remote-command path (Lock Screen,
+Control Center, headset, or media key), and also allow MusicKit to advance a
+track naturally. For every origin, verify that the player-confirmed current
+track, queue context, play state, position, outgoing-track statistics/history,
+active-playlist projection, restore state, CarPlay presentation, and system
+now-playing metadata converge without navigation, relaunch, template reset,
+periodic playlist sync, or manual refresh. A stale surface is a release-blocking
+defect even if audio playback is correct.
 
 - Skip at less than 10 seconds: no skip counted.
 - Skip at about 30%: skip counted once.

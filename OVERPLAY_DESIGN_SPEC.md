@@ -1,8 +1,20 @@
-# Overplay Design Specification
+# Overplay Current-State Product and Design Specification
+
+## Specification Status
+
+This document is the canonical specification for behaviour implemented in the
+repository as of 2026-08-31. Requirements describe the current iPhone, iPad,
+and CarPlay product unless a section is explicitly labelled **Planned**.
+Future work belongs in `TODO.md`; implementation details are requirements only
+when they create observable behaviour or protect a stated invariant.
+
+Evidence priority is executable tests, public UI and persisted models, then
+implementation. Known defects and dead paths are recorded separately and are
+not product requirements.
 
 ## Purpose
 
-Overplay is an Apple Music companion app for iPhone, iPad, Mac, and CarPlay.
+Overplay is an Apple Music companion app for iPhone, iPad, and CarPlay.
 It keeps a user's main music playlist fresh while using other playlists as
 intake and triage sources.
 
@@ -16,13 +28,34 @@ promoting songs into the One True Playlist.
 Overplay maintains its own history and state. It does not rely on Apple
 Music's global play count or skip count.
 
+## Current-State Requirement Index
+
+| ID | Requirement | Primary evidence |
+| --- | --- | --- |
+| `PLAT-001` | The current app supports iPhone and iPad on iOS/iPadOS 26+, with CarPlay supplied by the iPhone app. A native Mac target is planned, not implemented. | `Overplay.xcodeproj/project.pbxproj`, `Overplay/App/Shell/PlatformShell.swift` |
+| `AUTH-001` | Normal use requires Apple Music authorization, catalogue playback capability, and Sync Library. The simulator supplies a ready state for development. | `Overplay/Services/MusicAuthorizationService.swift`, `Overplay/App/StartupAuthorizationGate.swift` |
+| `PLAYLIST-001` | Exactly one active One True Playlist is selected. Selecting another demotes the previous main playlist to triage. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/NewModelRepositoryTests.swift` |
+| `PLAYLIST-002` | Initial setup can create a managed playlist, copy an existing playlist into a managed playlist, or link an existing playlist as incoming-only. | `Overplay/ViewModels/PlaylistSelectionViewModel.swift`, `Overplay/Services/PlaylistSyncService.swift` |
+| `SYNC-001` | Automatic sync starts shortly after authorization, runs every 30 minutes, skips fresh successful playlists, retries failed playlists, and prioritizes the playing and selected playlists. | `Overplay/Services/PeriodicPlaylistSyncService.swift`, `OverplayTests/PeriodicPlaylistSyncServiceTests.swift` |
+| `SYNC-002` | Sync is idempotent, collapses duplicate identities, preserves history, and leaves remotely missing tracks locally playable unless retired. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/PlaylistSyncReconciliationTests.swift` |
+| `MUT-001` | Successful promotion adds or reactivates the destination item, records history, and locally retires the source triage item. | `Overplay/Services/PlaylistMutationService.swift`, `OverplayTests/PlaylistMutationServiceTests.swift` |
+| `MUT-002` | Apple Music search can add songs only to active playlists that allow remote writes. | `Overplay/ViewModels/SearchMusicViewModel.swift`, `OverplayTests/SearchMusicViewModelTests.swift` |
+| `RETIRE-001` | Retirement is always authoritative locally. Current-track retirement attempts remote deletion only for a managed One True Playlist; playlist-row and triage retirement are local-only. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/PlaylistRemoteMutationPolicy.swift` |
+| `PLAY-001` | Overplay owns full queue order. Shuffle is a one-shot reshuffle and restart; playlist repeat rebuilds a fresh shuffled queue. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/PlaybackOrderEngine.swift` |
+| `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
+| `HISTORY-001` | History is filterable and paged. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
+| `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, playlist selection, and MusicKit diagnostics. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
+| `SURFACE-001` | Every playback action exposed by SwiftUI, CarPlay, Lock Screen, Control Center, or a headset/media transport has identical semantics and runs through the shared playback controller. A surface may expose fewer actions, but it must not implement a different version of an action. | Confirmed product requirement (2026-08-31); `Overplay/Services/RemoteCommandService.swift`, `Overplay/CarPlaySupport/CarPlayCoordinator.swift` |
+| `SURFACE-002` | A playback action or player-observed transition on any surface must reconcile and publish one authoritative playback snapshot to every other surface. Current-track identity, queue context, play state, position, outgoing-track evaluation, active-playlist projection, restore state, and system now-playing metadata must not diverge. | Confirmed product requirement (2026-08-31); `Overplay/Services/PlaybackController.swift`, `Overplay/Services/NowPlayingMetadataService.swift` |
+
 ## Platform
 
-- Target platforms:
+- Current platforms:
   - iPhone on iOS 26 and later.
   - CarPlay through the iPhone app on iOS 26 and later.
   - iPad on iPadOS 26 and later.
-  - Mac on macOS 26 and later.
+- Planned platform:
+  - A native Mac target on macOS 26 and later. No Mac target currently exists.
 - Language: Swift 6.
 - UI framework: SwiftUI.
 - Persistence: SwiftData backed by iCloud/CloudKit for shared playlist,
@@ -39,8 +72,9 @@ Music's global play count or skip count.
 
 ## Platform Strategy
 
-Overplay should use one shared SwiftUI app architecture across iPhone, iPad,
-and Mac. Product rules, sync, persistence, search, playlist mutation, playback
+Overplay uses one shared SwiftUI app architecture across iPhone and iPad and
+is intended to extend that architecture to Mac. Product rules, sync,
+persistence, search, playlist mutation, playback
 tracking, and retirement logic should live in shared services and models.
 Platform-specific code should be limited to presentation shell, scene
 configuration, keyboard/menu commands, entitlement differences, and media
@@ -52,22 +86,25 @@ iPhone is the focused playback and quick-triage experience.
 
 - Use compact navigation with a dashboard-first flow.
 - Keep Now Playing as the strongest visual surface.
-- Prioritize fast actions: play, skip, keep, retire, promote, sync.
+- Prioritize fast actions: play, skip, retire, promote, sync.
 - Support lock-screen metadata, remote commands, and the CarPlay music player.
 
 ### iPad
 
 iPad is the review and management experience as well as a playback device.
 
-- Prefer `NavigationSplitView` or equivalent adaptive split navigation.
-- Use a sidebar for Dashboard, One True Playlist, triage playlists, Search,
+- Regular width uses `NavigationSplitView`; compact width falls back to the
+  stacked dashboard flow.
+- The sidebar provides Dashboard, One True Playlist, triage playlists, Search,
   History, and Settings.
-- Let playlist detail and Now Playing coexist comfortably on wide screens.
-- Support Stage Manager, Split View, Slide Over, hardware keyboard shortcuts,
-  pointer hover states, and drag-friendly large touch targets.
-- Avoid phone-sized layouts stretched across the full display.
+- Sidebar selection is scene-local and the persistent mini-player remains
+  available over detail content.
 
-### Mac
+**Planned iPad refinements:** improve wide-screen playlist detail and Now
+Playing coexistence; verify Stage Manager, Split View, and multiwindow state;
+and add useful hardware-keyboard and pointer interactions.
+
+### Mac — Planned
 
 Mac is the power-user library management and background playback experience.
 
@@ -84,9 +121,10 @@ Mac is the power-user library management and background playback experience.
 
 ### Shared target expectations
 
-- All three targets must read and write the same iCloud-backed Overplay data.
-- All three targets must keep transient playback and selection state local to
-  the device.
+- iPhone and iPad read and write the same iCloud-backed Overplay data. The
+  planned Mac target must join the same store.
+- Each current and planned target must keep transient playback and selection
+  state local to the device.
 - A sync, promotion, retirement, restore, or settings change made on one device
   should eventually appear on the others.
 - A play, pause, queue, currently selected screen, or current playback position
@@ -124,8 +162,10 @@ Each linked playlist stores:
 - Last sync error, if any.
 - Whether the playlist is active.
 
-Exactly one active playlist has the `oneTruePlaylist` role. The user may add,
-remove, deactivate, or rename linked triage playlists.
+Exactly one active playlist has the `oneTruePlaylist` role. Selecting another
+main playlist demotes the previous one to triage. The current UI can add triage
+playlists and deactivate them from the dashboard; it does not rename linked
+playlists or delete their Apple Music source playlists.
 
 ### Track state
 
@@ -173,8 +213,8 @@ CloudKit insert races, which cannot enforce unique constraints) are collapsed
 by an identity merge pass that runs at startup and after each sync. The
 oldest record wins; playlist items and history events repoint to it. When two
 items for the same playlist collapse, skip and playthrough counts are summed
-and retirement/protection state follows the most recently updated item — merge
-must never discard counts. Device-local order, alias, and playback-state
+and retirement state follows the most recently updated item — merge must never
+discard counts. Device-local order, alias, and playback-state
 stores rekey their local track IDs in the same pass.
 
 ### Album artwork cache
@@ -251,20 +291,25 @@ When Overplay retires a track locally:
   that playlist.
 - Exclude the track from future Active playback for that playlist.
 
-If Apple Music playlist mutation is available and reliable, Overplay should
-also attempt to remove the item from the linked Apple Music playlist. If the
-remote deletion fails or is unsupported, local retirement remains authoritative
-inside Overplay and the track is filtered out of Active playback.
+Local retirement is authoritative. When the user retires the currently playing
+track, Overplay also attempts Apple Music deletion only when the source is a
+managed One True Playlist. Retiring a playlist row, retiring from a triage
+playlist, or retiring from an incoming-only playlist is local-only. A failed or
+unsupported remote deletion never rolls back the local retirement.
 
 ### Periodic sync
 
-The app should sync:
+After Apple Music becomes ready, automatic sync starts after a 10-second delay
+and evaluates active linked playlists every 30 minutes. A playlist with a
+successful sync less than 30 minutes old is skipped; a playlist with no prior
+sync or a recorded error is retried. Catch-up cycles prioritize the currently
+playing playlist, then the selected One True Playlist, then the remaining
+playlists in stored order, with pacing between playlist operations.
 
-- On first launch after Apple Music authorization.
-- When the user adds or changes a linked playlist.
-- When the user manually taps sync.
-- Opportunistically on app foreground if the last sync is stale.
-- After a successful manual add or promotion.
+The user can manually sync one playlist or all linked playlists. Selecting or
+creating a linked playlist starts a background refresh. Successful search adds
+and promotions write their local result immediately; search then syncs the
+destination playlist when possible.
 
 Sync must be idempotent. Running sync multiple times should not duplicate
 tracks or erase history. A linked playlist must contain at most one local
@@ -288,15 +333,17 @@ Promotion should:
 - Create or reactivate the local One True Playlist item on success.
 - Preserve source triage stats and history.
 - Record a promotion event linking source playlist and destination playlist.
-- Leave the source triage playlist unchanged unless a future setting says
-  otherwise.
+- Locally retire the source triage item after the destination mutation
+  succeeds, moving it from Active to Retired without deleting it remotely.
 
 If Apple Music add-to-playlist fails, show a clear non-fatal error and do not
 pretend the promotion succeeded.
 
 ### Search and manual add
 
-Users can search Apple Music and manually add tracks to any linked playlist.
+Users can search Apple Music and manually add tracks to active linked playlists
+whose write policy is `managed`. Incoming-only and inactive playlists are not
+offered as destinations.
 
 Add behaviour:
 
@@ -306,7 +353,8 @@ Add behaviour:
   returned identifiers.
 - On failure, Overplay displays a clear error.
 
-Manual add should support both the One True Playlist and triage playlists.
+Manual add supports both One True Playlist and triage destinations when they
+allow remote writes.
 
 ## Play/Skip History
 
@@ -354,6 +402,11 @@ threshold, neither the skip count nor the playthrough count changes.
 
 A playthrough is counted when the track reaches
 `playthroughThresholdPercentage` or natural completion is detected.
+
+Playthrough evaluation is position-based rather than witnessed-time-based.
+Seeking to or beyond the threshold can therefore count a playthrough; this is
+an intentional current product rule. Seeking does not contribute to the
+witnessed listening time required for a skip.
 
 Playthroughs and skips accumulate independently. A playthrough does not reset
 the playlist item's skip count.
@@ -404,8 +457,10 @@ retirement:
 - Marks the local playlist item retired.
 - Records a manual retirement event. The current data model may store this as
   an eviction event while Retired remains the user-facing term.
-- Attempts Apple Music removal if supported.
-- Falls back to local filtering if remote removal fails.
+- If retirement is initiated for the current track in a managed One True
+  Playlist, attempts Apple Music removal and then advances playback.
+- Otherwise keeps the retirement local-only.
+- Falls back to local filtering if an attempted remote removal fails.
 
 The user can restore a retired track. Restore clears the local retirement
 state, moves the item to the bottom of the Active list for that playlist, and
@@ -422,7 +477,7 @@ share:
 - Skip and playthrough counts.
 - Retirement history.
 - Promotion history.
-- User-configurable retirement settings.
+- User-configurable playback-evaluation thresholds.
 
 The following must remain device-local in `AppStorage` or equivalent local
 storage:
@@ -438,9 +493,9 @@ storage:
 - Any transient sync or playback progress state.
 
 Window-specific navigation and presentation state should use `SceneStorage` or
-other scene-local storage when a platform supports multiple windows. This is
-especially important on iPad and Mac, where two windows may legitimately show
-different playlists or views at the same time.
+other scene-local storage when a platform supports multiple windows. The
+regular-width sidebar selection currently uses `SceneStorage`; future
+multiwindow iPad and Mac work must keep window navigation independent.
 
 Two devices should be able to share playlist and retirement data without
 interfering with each other's playback.
@@ -463,7 +518,7 @@ remote commands aligned to the same source of truth.
 During playback, the shared playback controller should maintain an active
 playlist projection for the currently playing playlist. It should contain
 stable playlist item IDs, local track IDs, display metadata, artwork source,
-skip and playthrough counts, protected/retired/playable state, and current-row
+skip and playthrough counts, retired/playable state, and current-row
 state. Playlist views use this projection only when it matches the displayed
 current playlist and selected Active/Retired scope; otherwise they fall back to
 SwiftData records ordered by the selected scope's local order state.
@@ -555,8 +610,8 @@ locally.
 Active playlist projection updates:
 
 - Track changes update current-row state immediately.
-- Skip increments, playthrough counts, playthrough skip resets, keep/protect
-  changes, manual resets, retirements, restores, promotions, queue rebuilds, and
+- Skip increments, playthrough counts, manual resets, retirements, restores,
+  promotions, queue rebuilds, and
   shuffle/order changes refresh the projection after their shared controller or
   use-case mutation succeeds.
 - When playback switches to another playlist or clears, discard the old
@@ -566,11 +621,19 @@ Active playlist projection updates:
 
 ## Cross-Surface Playback Consistency
 
-Playback is a shared engine with many surfaces, not a phone-only feature.
-Every playback change must be designed so iPhone, iPad, Mac, CarPlay, Lock
-Screen, Control Center, AirPods/headset controls, keyboard/media keys, Siri or
-shortcut entry points, MusicKit queue state, and system now-playing metadata
-agree about the current track, queue, play state, and playback position.
+Cross-surface consistency is a release-blocking product invariant, not merely
+an architectural preference. Playback is one shared engine presented through
+many surfaces. iPhone, iPad, CarPlay, Lock Screen, Control Center,
+AirPods/headset controls, MusicKit queue state, and system now-playing metadata
+must agree about the current track, queue, play state, playback position, and
+the result of any track-changing action.
+
+Surfaces do not have to expose identical control sets because platform
+affordances differ. However, every action a surface does expose—play, pause,
+next, previous, seek, shuffle, repeat, queue replacement, retirement, restore,
+or promotion—must execute the same shared behavior as that action on every
+other surface. No surface may maintain a private implementation or shadow
+playback state.
 
 Track changes can be generated by Overplay controls, CarPlay controls, remote
 commands, keyboard or headset transport controls, MusicKit queue advancement,
@@ -585,6 +648,76 @@ through the same reconciliation path that updates:
 - Current-track metadata and artwork.
 - `MPNowPlayingInfoCenter` metadata and remote command state.
 - Local playback state used for restore.
+
+### State convergence contract
+
+Each controller-initiated action must publish a reconciled shared playback
+snapshot immediately after the player confirms the change and before the
+initiating surface presents the action as settled. A player-originated or
+externally generated change must publish that snapshot no later than the next
+active player observation and reconciliation cycle.
+
+Convergence must not depend on background playlist sync, an eventual SwiftData
+query refresh, view recreation, CarPlay template-stack replacement, or a manual
+refresh. SwiftUI and CarPlay presentation state, the active-playlist
+projection, local restore state, and `MPNowPlayingInfoCenter` must be updated
+from the same reconciliation result.
+
+Track transitions are ordered operations:
+
+1. Read the actual player-reported outgoing and incoming items.
+2. Evaluate and persist the outgoing listening session exactly once.
+3. Reconcile the queue identity and current playlist context.
+4. Publish the incoming current track, play state, position, statistics,
+   history, retirement state, and active-playlist projection.
+5. Publish matching system now-playing metadata and remote-command state.
+
+If an engine command fails, no surface may continue to display an optimistic
+result as authoritative. The controller must reconcile from the player and all
+surfaces must converge on that same confirmed state; surfaces that can present
+an error should do so without inventing a different playback state.
+
+### Track-skip parity
+
+A Next action has the same meaning regardless of whether it originates in the
+app, CarPlay, Lock Screen, Control Center, a keyboard/media key, or a headset:
+
+- The same thresholds and witnessed-listening evidence decide whether the
+  outgoing track counts as a skip.
+- The outgoing track is evaluated once, even if multiple surfaces observe the
+  transition.
+- Every active surface changes to the same player-confirmed incoming track.
+- Playlist rows, history, statistics, queue position, restore state, artwork,
+  and system now-playing metadata reflect the same result.
+- No surface requires navigation, relaunch, template reset, or manual refresh
+  to observe the change.
+
+The same parity rule applies to every other shared playback action. Rapid or
+overlapping commands may be serialized or rejected, but they must not create
+duplicate history, attribute an event to the wrong track, or leave surfaces on
+different tracks.
+
+### Acceptance gate
+
+For each supported action, validation must originate the action separately
+from SwiftUI, CarPlay, and `MPRemoteCommandCenter` (covering Lock Screen,
+Control Center, headset, and media-key transports), plus exercise natural
+MusicKit track advancement. Each case must verify:
+
+- The action enters the shared controller or the external transition enters
+  the shared reconciliation path.
+- The outgoing session is evaluated at most once and against the correct
+  track.
+- The shared current-track identity, queue context, play state, and position
+  match the player-confirmed state.
+- SwiftUI, the currently visible CarPlay template, system now-playing metadata,
+  remote-command state, and local restore state converge within the timing
+  contract above.
+- Statistics, history, retirement state, and the active-playlist projection
+  reflect the same completed mutation without waiting for periodic sync.
+
+Any stale or contradictory surface is a product defect and a release blocker,
+even when playback audio itself continues correctly.
 
 The actual player-reported current item is authoritative when it is available.
 Local queue order and cached active-queue entries may help correlate playlist
@@ -607,10 +740,10 @@ presentation models.
 
 ## Required Screens
 
-Screens should be adaptive rather than separate products. iPhone can present
-these as stacked screens. iPad and Mac should use persistent sidebars,
-toolbars, inspector-style detail areas, and split layouts when those patterns
-make the workflow clearer.
+Screens are adaptive rather than separate products. Compact width uses stacked
+navigation from the dashboard. Regular width uses a `NavigationSplitView`
+sidebar for Dashboard, Search, History, Settings, linked playlists, and
+playlist detail. Native Mac presentation is planned.
 
 ### Permission screen
 
@@ -625,8 +758,9 @@ Show:
 
 Platform notes:
 
-- iPhone and iPad should use a friendly full-screen onboarding surface.
-- Mac should use a compact window-friendly state view with clear system
+- iPhone and iPad use the same full-screen onboarding surface.
+- A direct action to open system Settings after denial is not implemented.
+- **Planned Mac:** use a compact window-friendly state view with clear system
   settings guidance.
 
 ### Playlist management screen
@@ -640,33 +774,35 @@ Required capabilities:
 - Search/filter Apple Music library playlists.
 - Show playlist artwork, role, track count, and sync status.
 - Manually sync one playlist or all playlists.
-- Deactivate or remove a linked triage playlist.
+- Deactivate a linked triage playlist from the dashboard.
 
 Platform notes:
 
-- iPad and Mac should make playlist management a sidebar/table workflow.
-- Mac should expose common actions through toolbar items, context menus, and
+- iPad exposes playlist management in the regular-width sidebar/detail flow.
+- **Planned Mac:** expose common actions through toolbar items, context menus, and
   menu commands.
 
 ### Dashboard
 
-Purpose: summarize the One True Playlist and triage activity.
+Purpose: provide entry points to the One True Playlist and triage playlists.
 
 Show:
 
-- One True Playlist name.
-- Active playable count.
-- Count of playable tracks with one or more logged skips.
-- Retired count.
-- Recently promoted count.
-- Triage playlists with unreviewed or high-skip items.
-- Actions for play, sync, search, settings, and history.
+- One True Playlist row, or a link to configure it when absent.
+- Active triage playlist rows.
+- For each row: representative artwork, role/current-playback icon, total
+  tracked count, source, last-sync status, and write policy.
+- Link to add another triage playlist.
+- Settings action.
+- Swipe-to-deactivate for triage playlist rows.
 
 Platform notes:
 
-- iPhone dashboard should be compact and action-oriented.
-- iPad dashboard can show summary sections beside triage queues.
-- Mac dashboard should favor dense, sortable, scan-friendly summaries.
+- iPhone uses the compact stacked dashboard.
+- iPad uses the same dashboard content within its split-view detail.
+- Rich summary counts, triage queues, and direct play/sync/search/history
+  actions remain roadmap work.
+- **Planned Mac:** favor dense, sortable, scan-friendly summaries.
 
 ### Playlist detail
 
@@ -680,7 +816,6 @@ Show:
   playable as a playlist context from iOS.
 - Skip and playthrough counts.
 - Retirement state.
-- Last seen in Apple Music.
 - Promote action for triage playlist tracks.
 - Manual retire/remove action for active tracks.
 - Restore action for retired tracks.
@@ -688,8 +823,8 @@ Show:
 
 Platform notes:
 
-- iPad and Mac should support table-like scanning and selection.
-- Mac should support context menu actions for promote, retire, restore, and
+- iPad currently reuses the adaptive list in split-view detail.
+- **Planned Mac:** support context menu actions for promote, retire, restore, and
   reveal in Apple Music where possible.
 
 ### Now Playing
@@ -713,8 +848,9 @@ The standard media controls should call into a shared playback controller.
 Platform notes:
 
 - iPhone should keep Now Playing immersive and touch-first.
-- iPad should support Now Playing as a detail pane or separate window.
-- Mac should support a compact mini-player style window in addition to the
+- iPad uses the same persistent mini-player sheet and expandable Now Playing
+  surface as iPhone.
+- **Planned Mac:** support a compact mini-player style window in addition to the
   full Now Playing view where practical.
 
 ### CarPlay music player
@@ -741,12 +877,12 @@ Platform notes:
   configuration.
 - CarPlay templates should remain thin and delegate playback, queue building,
   metadata, and command handling to shared services.
-- The iPhone SwiftUI shell, iPad target, and Mac target should not import or
-  depend on CarPlay-specific types.
+- The iPhone/iPad SwiftUI shell does not import or depend on CarPlay-specific
+  types. The same isolation is required for the planned Mac target.
 
 ### Search
 
-Purpose: search Apple Music and add tracks to any linked playlist.
+Purpose: search Apple Music and add tracks to an active managed playlist.
 
 Show:
 
@@ -757,7 +893,8 @@ Show:
 
 Platform notes:
 
-- iPad and Mac should support faster triage with keyboard focus, return-to-add
+- iPad currently uses the shared search list in split-view detail.
+- **Planned Mac:** support faster triage with keyboard focus, return-to-add
   where appropriate, and persistent destination selection.
 
 ### Retirement and history
@@ -777,12 +914,15 @@ Show:
 - Reconciliation proof mechanism on each recovered playthrough.
 - Restore/reactivate action where appropriate.
 
-History must survive sync, relaunch, and iCloud sync.
+History survives sync, relaunch, and iCloud sync within its retention policy.
+The view loads predicate-filtered pages of 100 events with an explicit Show
+More action. `skipIgnored` events expire after 30 days; all other events expire
+after 365 days. Startup cleanup deletes at most 500 expired events per run.
 
 Platform notes:
 
-- Mac should use a sortable, filterable table for history when practical.
-- iPad should support filters without hiding the event list.
+- iPhone and iPad expose the same menu filter without hiding the event list.
+- **Planned Mac:** use a sortable, filterable table when practical.
 
 ### Settings
 
@@ -790,15 +930,19 @@ Purpose: configure behaviour.
 
 Settings:
 
-- One True Playlist.
-- Linked triage playlists.
+- Selected One True Playlist and link-management navigation.
 - Skip threshold percentage.
 - Minimum listening time before skip can count.
 - Playthrough threshold percentage.
-- Reset local playback state.
-- Reset shared stats and history with destructive confirmation.
+- Reset all Overplay skip counts, playthrough counts, retirement state, and
+  legacy protection state without changing Apple Music playlist contents.
+- Nuke all Overplay SwiftData records locally and save those deletions for
+  iCloud propagation, then recreate default settings and clear local playback
+  state. Apple Music playlists are not deleted.
+- Run MusicKit authorization, playlist-access, and playback-readiness
+  diagnostics.
 
-Settings should be available on every target. Mac should expose the settings
+There is no separate reset-local-playback-state control. **Planned Mac:** expose the settings
 window through the standard app settings command as well as in-app navigation.
 
 ## Services
@@ -835,30 +979,29 @@ window through the standard app settings command as well as in-app navigation.
 - Publish current playback state.
 - Forward transitions to shared playback evaluation and track action services.
 - Keep playback/session state device-local.
-- Isolate platform-specific playback or media-session differences behind a
-  small adapter if iPhone, iPad, and Mac APIs diverge.
+- Isolate future platform-specific playback or media-session differences
+  behind a small adapter if APIs diverge.
 
 ### TrackActionService / EvictionEngine
 
 - Apply skip and playthrough rules.
-- Increment/reset counts.
+- Increment counts and support whole-database statistic reset.
 - Manually retire or restore items from any linked playlist.
 - Record retirement events. The current implementation may still use eviction
   naming internally.
-- Request remote playlist deletion for managed playlists.
 
 ### PlaylistMutationService
 
 - Add tracks to managed linked Apple Music playlists.
-- Promote tracks from triage playlists to a managed One True Playlist.
-- Attempt remote playlist deletion for local retirements when policy allows.
+- Promote tracks from triage playlists to a managed One True Playlist and
+  retire the source triage item after success.
 - Return explicit success/failure results.
 
 ### SearchService
 
 - Search Apple Music catalogue.
 - Return lightweight result models.
-- Support manual add to any linked playlist.
+- Support manual add to active managed linked playlists.
 
 ### NowPlayingMetadataService
 
@@ -871,8 +1014,7 @@ window through the standard app settings command as well as in-app navigation.
 - Forward play, pause, next, previous, and supported shuffle actions to the
   playback controller.
 - Avoid retain cycles and clean up handlers when appropriate.
-- Support lock-screen, Control Center, headset, keyboard, and Mac media-key
-  commands where each platform exposes them.
+- Support lock-screen, Control Center, and headset transport commands.
 
 ### PlatformShell
 
@@ -882,9 +1024,10 @@ window through the standard app settings command as well as in-app navigation.
   window commands, and scene setup.
 - Keep platform branching out of business logic.
 
-## Suggested Data Model
+## Persisted Data Model
 
-Exact SwiftData syntax may evolve, but the model should retain these concepts.
+The current SwiftData schema retains these concepts. Pre-release schema changes
+may use a development reset under the repository data policy.
 
 ### PlaylistRecord
 
@@ -896,6 +1039,7 @@ Exact SwiftData syntax may evolve, but the model should retain these concepts.
 - `isActive: Bool`
 - `lastSyncedAt: Date?`
 - `lastSyncError: String?`
+- `sortOrder: Int`
 - `createdAt: Date`
 - `updatedAt: Date`
 
@@ -909,6 +1053,7 @@ Exact SwiftData syntax may evolve, but the model should retain these concepts.
 - `albumTitle: String?`
 - `artworkURLTemplate: String?`
 - `durationSeconds: Double?`
+- `musicKitPlaybackData: Data?`
 - `createdAt: Date`
 - `updatedAt: Date`
 
@@ -934,6 +1079,7 @@ Local JSON file only:
 - `playlistID: UUID`
 - `trackID: UUID`
 - `musicPlaylistEntryID: String?`
+- `sortOrder: Int` (legacy persisted value; local playback order is authoritative)
 - `skipCount: Int`
 - `playthroughCount: Int`
 - `lastPlayedAt: Date?`
@@ -942,7 +1088,6 @@ Local JSON file only:
 - `evictedAt: Date?` (local retirement timestamp in current code)
 - `evictionReason: EvictionReason?` (retirement reason in current code)
 - `evictionSource: EvictionSource?` (retirement source in current code)
-- `protected: Bool`
 - `createdAt: Date`
 - `updatedAt: Date`
 
@@ -962,14 +1107,20 @@ Local JSON file only:
 - `message: String?`
 - `createdAt: Date`
 
-### SettingsRecord
+### OverplaySettings
 
 - `id: UUID`
+- `selectedPlaylistID: String?`
+- `selectedPlaylistName: String?`
 - `skipThresholdPercentage: Double`
 - `minimumSkipListeningSeconds: Double`
 - `playthroughThresholdPercentage: Double`
 - `createdAt: Date`
 - `updatedAt: Date`
+
+The implementation still persists the obsolete `protectKeptTracks` setting
+and playlist-item `protected` flag. They are excluded from the product model
+and are slated for removal with their dead controller and presentation paths.
 
 ## Edge Cases
 
@@ -993,35 +1144,74 @@ Local JSON file only:
 - Active and Retired tabs are switched repeatedly while playback is active.
 - A Retired playlist is started on iOS while CarPlay is connected.
 - iCloud data arrives while a device is actively playing.
-- The same iCloud account uses Overplay on iPhone, iPad, and Mac at the same
-  time.
-- Two iPad or Mac windows show different playlists simultaneously.
-- A Mac window is closed while playback continues.
+- The same iCloud account uses Overplay on iPhone and iPad at the same time.
+- Two iPad windows show different playlists simultaneously.
 - A hardware keyboard or media key command arrives while a modal sheet is open.
 - Platform-specific MusicKit capability differs or is temporarily unavailable.
 
+## Explicit Non-Goals and Deferred Work
+
+The following are not requirements of the current product:
+
+- Native Mac target, Mac windows, menus, tables, and media-key integration.
+- Siri, App Intents/Shortcuts, widgets, Dynamic Island, or separate watch
+  surfaces.
+- Rich dashboard summaries such as recent promotions, unreviewed queues, or
+  high-skip queues.
+- A separate reset-local-playback-state control or a direct deep link to
+  system Settings after authorization denial.
+- CarPlay skip-history-only browsing.
+- Explicit Now Playing artwork publication through `MPNowPlayingInfoCenter`.
+- User-facing keep/protection behavior. Persisted protection fields and dead
+  controller APIs are obsolete implementation debt and must not be treated as
+  product behavior.
+
+## Known Defects and Verification Gaps
+
+- The 2026-08-31 current source does not compile because
+  `CarPlayCoordinator.swift` ends with five extraneous closing braces. This is
+  an implementation defect, not specified behaviour.
+- CarPlay scene launch, template presentation, and in-car controls still need
+  simulator or physical-device verification.
+- Cross-surface convergence is a confirmed requirement, but the current
+  implementation is reported to be unreliable. Treat any case where SwiftUI,
+  CarPlay, Lock Screen, Control Center, or headset/media controls disagree
+  after an action as a suspected implementation defect until the acceptance
+  gate above passes.
+- Suspended-playback background refresh delivery, multi-device convergence,
+  and the playback/device checklist in `TODO.md` still require physical-device
+  verification with an Apple Music subscription.
+- Obsolete keep/protection persistence and propagation remain in the codebase
+  pending removal; they are excluded from every requirement in this document.
+
 ## CarPlay
 
-CarPlay is a current iPhone-supported product goal. Entitlement requirements
-have been met, and the iPhone app target should include a CarPlay music
-interface using CarPlay templates.
+CarPlay is a current iPhone-supported product surface. The app target has the
+CarPlay audio entitlement and declares a CarPlay template application scene.
 
 The app architecture should keep playback, now-playing metadata, and remote
 commands independent of SwiftUI views so CarPlay templates use the same shared
 services as the phone UI.
 
-CarPlay should support:
+CarPlay supports:
 
 - Play One True Playlist.
 - Browse active triage playlists.
-- Review tracks with logged skips.
+- Browse Active playlist tracks with playthrough and skip totals in row detail.
 - Show the current Retired playlist context when the user started Retired
   playback from iOS.
 - Now Playing controls.
+- Retire the current Active track.
+- Promote the current triage track and advance playback after success.
 - Restore the current track when it belongs to a Retired playlist context.
 
+CarPlay does not provide a separate skip-history browser. The app publishes
+title, artist, album, duration, elapsed time, and playback rate to system Now
+Playing metadata; explicit artwork publication remains deferred.
+
 CarPlay UI logic should remain isolated from the iPhone/iPad SwiftUI shell.
-iPad and Mac targets must not depend on CarPlay-specific types or entitlements.
+The iPad shell does not depend on CarPlay-specific types or entitlements; the
+same isolation is required for the planned Mac target.
 
 ## Development Guidelines
 
@@ -1036,19 +1226,20 @@ iPad and Mac targets must not depend on CarPlay-specific types or entitlements.
 - Keep device-local playback state out of iCloud-backed records.
 - Keep CarPlay templates thin; route playback and queue actions through shared
   services.
-- Avoid adding compatibility paths for pre-iOS 26, pre-iPadOS 26, or
-  pre-macOS 26 systems.
+- Avoid adding compatibility paths for pre-iOS 26 or pre-iPadOS 26 systems.
+- The planned Mac target starts at macOS 26 and should not add older-system
+  compatibility paths.
 - Prefer shared SwiftUI views that adapt by size class and platform idiom, but
   create platform-specific shells when a native iPad or Mac pattern is clearer.
-- Add keyboard shortcuts and menu commands for common iPad and Mac workflows
-  once the underlying action exists.
+- Add keyboard shortcuts and menu commands only as roadmap work once the
+  underlying action exists.
 
 ## Current Product Definition
 
 The product is healthy when a user can:
 
-1. Install and run Overplay on iPhone, iPad, and Mac.
-2. Connect Apple Music on each target.
+1. Install and run Overplay on iPhone and iPad.
+2. Connect Apple Music on either target.
 3. Choose a One True Playlist.
 4. Link additional triage playlists.
 5. Sync all linked playlists.
@@ -1057,11 +1248,13 @@ The product is healthy when a user can:
 8. Surface skip/playthrough history while leaving retirement to explicit user actions.
 9. Manually retire and restore tracks from any linked playlist.
 10. Promote triage tracks into the One True Playlist.
-11. Search Apple Music and add tracks to any linked playlist.
+11. Search Apple Music and add tracks to active managed linked playlists.
 12. Share playlist, stats, and retirement data across devices through iCloud.
 13. Keep each device's current playback state independent.
-14. Use native iPad layouts for triage and management.
-15. Use native Mac windows, menus, keyboard shortcuts, and media controls for
-    management and playback.
-16. Use a CarPlay music player for playlist browsing, Now Playing controls,
+14. Use an adaptive iPad split-view layout for navigation and management.
+15. Use a CarPlay music player for playlist browsing, Now Playing controls,
     and playback through the shared playback controller.
+16. Start a playback action on any supported surface and see the same
+    player-confirmed current track, queue context, play state, position,
+    statistics, history, and now-playing metadata on every other active surface
+    within the cross-surface timing contract, without manual refresh.
