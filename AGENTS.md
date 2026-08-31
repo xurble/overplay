@@ -385,9 +385,11 @@ Agents may:
 -   refactor code safely
 -   commit code between steps of large pieces of work
 
+Git branching, commits, pushes, and pull-request workflow are governed by the
+project's mad-skills settings and the applicable mad-skills workflows.
+
 Agents must **not**:
 
--   push code
 -   change git history
 -   introduce large dependencies without approval
 -   restructure the project without confirmation
@@ -414,10 +416,6 @@ Allowed:
 -   adding views and components
 -   safe refactoring
 -   using modern Swift 6 features
-
-Forbidden:
-
--   **any git commit, push, or repository‑changing git command**
 
 Platform assumptions:
 
