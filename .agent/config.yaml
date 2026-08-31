@@ -1,0 +1,15 @@
+version: 1
+project:
+  type: ios
+  profile: normal
+github:
+  enabled: false
+  use_issues: false
+  merge_method: squash
+  squash_merge_commit_message: pr-title-description
+  delete_branch_on_merge: true
+git:
+  conventional_commits: true
+ios:
+  project: Overplay.xcodeproj
+  scheme: Overplay

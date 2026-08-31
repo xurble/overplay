@@ -582,3 +582,13 @@ extension CarPlayCoordinator: CPNowPlayingTemplateObserver {
         setRootTemplate(animated: true)
     }
 }
+
+}
+
+}
+
+}
+
+}
+
+}
