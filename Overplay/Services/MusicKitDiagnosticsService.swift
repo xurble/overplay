@@ -21,9 +21,8 @@ struct MusicKitDiagnosticsService {
         probeAuthorization(into: &report)
         await probeSubscription(into: &report)
         await probeLibraryPlaylists(into: &report)
-        let cachedTracks = await probeSelectedPlaylist(settings: settings, context: context, into: &report)
-        await probeApplicationMusicPlayer(into: &report)
-        await probeCachedPlaybackQueue(cachedTracks: cachedTracks, into: &report)
+        await probeSelectedPlaylist(settings: settings, context: context, into: &report)
+        MusicKitDiagnosticsPlayerProbe().addDiagnostics(into: &report)
 
         return report.text
     }
@@ -59,10 +58,10 @@ struct MusicKitDiagnosticsService {
         settings: OverplaySettings,
         context: ModelContext,
         into report: inout MusicKitDiagnosticsReport
-    ) async -> [Track] {
+    ) async {
         guard let selectedPlaylistID = settings.selectedPlaylistID else {
             report.add("Selected playlist", "none")
-            return []
+            return
         }
 
         report.add("Selected playlist ID", selectedPlaylistID)
@@ -76,7 +75,7 @@ struct MusicKitDiagnosticsService {
         do {
             guard let playlist = try PlaylistRepository.playlist(musicPlaylistID: selectedPlaylistID, in: context) else {
                 report.add("Local selected playlist record", "missing")
-                return []
+                return
             }
 
             let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
@@ -99,23 +98,8 @@ struct MusicKitDiagnosticsService {
                 report.add("Selected playlist remote playable tracks", "failed: \(diagnosticDescription(for: error))")
                 await probeRemotePlaylistCandidates(named: playlist.name, into: &report)
             }
-            return cachedTracks
         } catch {
             report.add("Local selected playlist probe", "failed: \(diagnosticDescription(for: error))")
-            return []
-        }
-    }
-
-    private func probeApplicationMusicPlayer(into report: inout MusicKitDiagnosticsReport) async {
-        let player = ApplicationMusicPlayer.shared
-        report.add("ApplicationMusicPlayer status", String(describing: player.state.playbackStatus))
-        report.add("ApplicationMusicPlayer current entry", player.queue.currentEntry == nil ? "nil" : "present")
-
-        do {
-            try await player.prepareToPlay()
-            report.add("ApplicationMusicPlayer.prepareToPlay", "ok")
-        } catch {
-            report.add("ApplicationMusicPlayer.prepareToPlay", "failed: \(diagnosticDescription(for: error))")
         }
     }
 
@@ -169,26 +153,6 @@ struct MusicKitDiagnosticsService {
         }
     }
 
-    private func probeCachedPlaybackQueue(cachedTracks: [Track], into report: inout MusicKitDiagnosticsReport) async {
-        guard let firstTrack = cachedTracks.first else {
-            report.add("Cached one-track queue probe", "skipped: no cached tracks")
-            return
-        }
-
-        let player = ApplicationMusicPlayer.shared
-        player.queue = ApplicationMusicPlayer.Queue(for: [firstTrack], startingAt: firstTrack)
-        report.add("Cached one-track queue probe track", "\(firstTrack.title) by \(firstTrack.artistName) [\(firstTrack.id.rawValue)]")
-
-        do {
-            try await player.prepareToPlay()
-            report.add("Cached one-track queue prepareToPlay", "ok")
-            player.pause()
-        } catch {
-            report.add("Cached one-track queue prepareToPlay", "failed: \(diagnosticDescription(for: error))")
-            player.pause()
-        }
-    }
-
     private func authorizationStatusDescription(_ status: MusicAuthorization.Status) -> String {
         switch status {
         case .notDetermined:
@@ -214,7 +178,33 @@ struct MusicKitDiagnosticsService {
     }
 }
 
-private struct MusicKitDiagnosticsReport {
+@MainActor
+struct MusicKitDiagnosticsPlayerProbe {
+    struct Snapshot: Equatable, Sendable {
+        let playbackStatus: String
+        let hasCurrentEntry: Bool
+    }
+
+    private let readSnapshot: () -> Snapshot
+
+    init(readSnapshot: @escaping () -> Snapshot = {
+        let player = ApplicationMusicPlayer.shared
+        return Snapshot(
+            playbackStatus: String(describing: player.state.playbackStatus),
+            hasCurrentEntry: player.queue.currentEntry != nil
+        )
+    }) {
+        self.readSnapshot = readSnapshot
+    }
+
+    func addDiagnostics(into report: inout MusicKitDiagnosticsReport) {
+        let snapshot = readSnapshot()
+        report.add("ApplicationMusicPlayer status", snapshot.playbackStatus)
+        report.add("ApplicationMusicPlayer current entry", snapshot.hasCurrentEntry ? "present" : "nil")
+    }
+}
+
+struct MusicKitDiagnosticsReport {
     private var lines: [String] = []
 
     var text: String {

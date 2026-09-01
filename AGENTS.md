@@ -276,6 +276,23 @@ Agents should:
 If a change cannot reasonably be unit tested, agents should explain why
 and describe what verification was performed instead.
 
+## MusicKit Verification
+
+MusicKit does not provide meaningful live playback behavior in the simulator
+used by server-side agents. Simulator UI or integration tests that depend on
+live MusicKit authorization, library access, queues, or playback are therefore
+not required for this project and should not be treated as a completion gate.
+
+For MusicKit changes, agents should instead:
+
+-   Cover pure logic and injected boundaries with focused unit tests where
+    practical
+-   Verify that the affected targets compile or build
+-   Report any behavior that still requires physical-device validation
+
+Physical-device MusicKit testing is optional unless the user explicitly
+requests it and a suitable device is available.
+
 ------------------------------------------------------------------------
 
 # SwiftUI Stability Rules
