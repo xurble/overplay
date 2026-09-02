@@ -110,14 +110,17 @@ struct ActivePlaylistSnapshot: Equatable, Sendable {
         currentLocalTrackID: String?,
         currentMusicItemID: String?
     ) -> ActivePlaylistSnapshot {
-        var snapshot = self
-        snapshot.rows = rows.map { row in
+        let updatedRows = rows.map { row in
             var row = row
             row.isCurrent = row.id == currentPlaylistItemID
                 || row.localTrackID == currentLocalTrackID
                 || currentMusicItemID.map { row.musicItemIDs.contains($0) } == true
             return row
         }
+        guard updatedRows != rows else { return self }
+
+        var snapshot = self
+        snapshot.rows = updatedRows
         snapshot.updatedAt = .now
         return snapshot
     }

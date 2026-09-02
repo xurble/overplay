@@ -2641,10 +2641,12 @@ final class PlaybackController {
             return
         }
 
-        self.activePlaylistSnapshot = activePlaylistSnapshot.updatingCurrentRow(
+        let updatedSnapshot = activePlaylistSnapshot.updatingCurrentRow(
             currentPlaylistItemID: currentPlaylistItem?.id,
             currentLocalTrackID: nowPlayingDisplayLocalTrackID,
             currentMusicItemID: nowPlayingDisplayTrack?.id ?? currentTrack?.id
         )
+        guard updatedSnapshot != activePlaylistSnapshot else { return }
+        self.activePlaylistSnapshot = updatedSnapshot
     }
 }

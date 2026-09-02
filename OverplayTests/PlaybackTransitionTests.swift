@@ -165,6 +165,18 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
     }
 
+    @Test("stable playback reconciliation preserves the active snapshot revision")
+    func stablePlaybackReconciliationPreservesActiveSnapshotRevision() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let revision = try #require(fixture.controller.activePlaylistSnapshot?.updatedAt)
+
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        #expect(fixture.controller.activePlaylistSnapshot?.updatedAt == revision)
+    }
+
     @Test("failed Previous does not poison a later countable transition")
     func failedPreviousDoesNotPoisonLaterTransition() async throws {
         let fixture = try makeFixture()
