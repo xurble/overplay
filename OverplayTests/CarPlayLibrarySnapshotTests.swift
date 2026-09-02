@@ -178,23 +178,36 @@ struct CarPlayLibrarySnapshotTests {
         #expect(visibleItem.text == "After")
     }
 
-    @Test func retainedCarPlayListUpdatesWhileNowPlayingIsOnTop() throws {
-        let retainedList = CPListTemplate(
+    @Test func stackedCarPlayListUpdatesWhileNowPlayingIsOnTop() throws {
+        let playlistList = CPListTemplate(
             title: "Overplay",
             sections: [CPListSection(items: [CPListItem(text: "Before", detailText: nil)])]
         )
 
         let target = try #require(CarPlayListTemplateUpdater.refreshTarget(
             topTemplate: CPNowPlayingTemplate.shared,
-            retainedListTemplate: retainedList
+            templateStack: [playlistList, CPNowPlayingTemplate.shared]
         ))
         CarPlayListTemplateUpdater.update(
             target,
             sections: [CPListSection(items: [CPListItem(text: "After", detailText: nil)])]
         )
 
-        #expect(target === retainedList)
-        let retainedItem = try #require(retainedList.sections.first?.items.first as? CPListItem)
-        #expect(retainedItem.text == "After")
+        #expect(target === playlistList)
+        let updatedItem = try #require(playlistList.sections.first?.items.first as? CPListItem)
+        #expect(updatedItem.text == "After")
+    }
+
+    @Test func refreshTargetFollowsTemplateStackAfterNavigationBackToRoot() {
+        let rootList = CPListTemplate(title: "Overplay", sections: [])
+        let poppedPlaylistList = CPListTemplate(title: "Playlist", sections: [])
+
+        let target = CarPlayListTemplateUpdater.refreshTarget(
+            topTemplate: CPNowPlayingTemplate.shared,
+            templateStack: [rootList, CPNowPlayingTemplate.shared]
+        )
+
+        #expect(target === rootList)
+        #expect(target !== poppedPlaylistList)
     }
 }
