@@ -177,4 +177,24 @@ struct CarPlayLibrarySnapshotTests {
         let visibleItem = try #require(template.sections.first?.items.first as? CPListItem)
         #expect(visibleItem.text == "After")
     }
+
+    @Test func retainedCarPlayListUpdatesWhileNowPlayingIsOnTop() throws {
+        let retainedList = CPListTemplate(
+            title: "Overplay",
+            sections: [CPListSection(items: [CPListItem(text: "Before", detailText: nil)])]
+        )
+
+        let target = try #require(CarPlayListTemplateUpdater.refreshTarget(
+            topTemplate: CPNowPlayingTemplate.shared,
+            retainedListTemplate: retainedList
+        ))
+        CarPlayListTemplateUpdater.update(
+            target,
+            sections: [CPListSection(items: [CPListItem(text: "After", detailText: nil)])]
+        )
+
+        #expect(target === retainedList)
+        let retainedItem = try #require(retainedList.sections.first?.items.first as? CPListItem)
+        #expect(retainedItem.text == "After")
+    }
 }

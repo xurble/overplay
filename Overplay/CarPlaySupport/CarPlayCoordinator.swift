@@ -8,6 +8,13 @@ import UIKit
 
 @MainActor
 enum CarPlayListTemplateUpdater {
+    static func refreshTarget(
+        topTemplate: CPTemplate?,
+        retainedListTemplate: CPListTemplate?
+    ) -> CPListTemplate? {
+        (topTemplate as? CPListTemplate) ?? retainedListTemplate
+    }
+
     @discardableResult
     static func update(
         _ template: CPListTemplate,
@@ -34,6 +41,7 @@ final class CarPlayCoordinator: NSObject {
     private var playbackObservationGeneration = 0
     private var lastNowPlayingButtonSignature: CarPlayNowPlayingButtonSignature?
     private var visiblePlaylistID: UUID?
+    private weak var navigationListTemplate: CPListTemplate?
     private var didPresentDeliveryStallAlert = false
 
     func connect(interfaceController: CPInterfaceController, runtime: AppRuntime) {
@@ -81,6 +89,7 @@ final class CarPlayCoordinator: NSObject {
         playbackController = nil
         remoteCommandService = nil
         visiblePlaylistID = nil
+        navigationListTemplate = nil
         lastNowPlayingButtonSignature = nil
         CPNowPlayingTemplate.shared.remove(self)
     }
@@ -88,7 +97,9 @@ final class CarPlayCoordinator: NSObject {
     private func setRootTemplate(animated: Bool) {
         guard let interfaceController else { return }
         visiblePlaylistID = nil
-        interfaceController.setRootTemplate(makeRootTemplate(), animated: animated, completion: nil)
+        let template = makeRootTemplate()
+        navigationListTemplate = template
+        interfaceController.setRootTemplate(template, animated: animated, completion: nil)
     }
 
     private func makeRootTemplate() -> CPListTemplate {
@@ -222,6 +233,7 @@ final class CarPlayCoordinator: NSObject {
                 title: playlist.name,
                 sections: try playlistSections(for: playlist)
             )
+            navigationListTemplate = template
             interfaceController.pushTemplate(template, animated: true, completion: nil)
         } catch {
             showError(title: "Playlist failed", message: error.localizedDescription)
@@ -553,9 +565,13 @@ final class CarPlayCoordinator: NSObject {
 
     private func refreshLibraryLists() {
         guard let interfaceController,
-              let listTemplate = interfaceController.topTemplate as? CPListTemplate else {
+              let listTemplate = CarPlayListTemplateUpdater.refreshTarget(
+                topTemplate: interfaceController.topTemplate,
+                retainedListTemplate: navigationListTemplate
+              ) else {
             return
         }
+        navigationListTemplate = listTemplate
 
         if listTemplate.title == "Overplay" {
             visiblePlaylistID = nil
@@ -575,10 +591,6 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func refreshVisibleTemplate() {
-        guard interfaceController?.topTemplate is CPListTemplate else {
-            return
-        }
-
         refreshLibraryLists()
     }
 
