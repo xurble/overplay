@@ -61,6 +61,7 @@ final class PlaybackController {
     /// watches this to surface an alert — statusMessage renders only in the
     /// iPhone/iPad Now Playing views.
     private(set) var isDeliveryStalled = false
+    private(set) var isPlaybackTransitionInFlight = false
     private(set) var playbackItemMetadataVersion = 0
     private(set) var playbackModeVersion = 0
 
@@ -142,6 +143,16 @@ final class PlaybackController {
 
     var canControlPlayback: Bool {
         currentPlaylistID != nil && currentTrack != nil && activeQueueIndex != nil
+    }
+
+    var remoteCommandAvailability: PlaybackRemoteCommandAvailability {
+        PlaybackRemoteCommandAvailability.make(
+            canControlPlayback: canControlPlayback,
+            hasRestorablePlayback: currentPlaylistID != nil && currentTrack != nil,
+            isPlaying: isPlaying,
+            isTransitionInFlight: isPlaybackTransitionInFlight,
+            isDeliveryStalled: isDeliveryStalled
+        )
     }
 
     var displayedSkipCount: Int {
@@ -542,7 +553,11 @@ final class PlaybackController {
         }
 
         isPerformingTransition = true
-        defer { isPerformingTransition = false }
+        isPlaybackTransitionInFlight = true
+        defer {
+            isPerformingTransition = false
+            isPlaybackTransitionInFlight = false
+        }
 
         do {
             try await command()
@@ -885,14 +900,15 @@ final class PlaybackController {
         await reshuffleCurrentPlaylist(context: context)
     }
 
-    func reshuffleCurrentPlaylist(context: ModelContext) async {
+    @discardableResult
+    func reshuffleCurrentPlaylist(context: ModelContext) async -> Bool {
         guard let currentPlaylistID else {
             statusMessage = "Choose a playlist first."
-            return
+            return false
         }
         guard let settings = monitoredSettings(context: context) else {
             statusMessage = "Playback settings are unavailable."
-            return
+            return false
         }
 
         do {
@@ -908,7 +924,7 @@ final class PlaybackController {
             )
             guard !reshuffled.entries.isEmpty else {
                 statusMessage = "No playable tracks remain after local retirements."
-                return
+                return false
             }
             try await startPlayback(
                 queueEntries: reshuffled.entries,
@@ -919,8 +935,10 @@ final class PlaybackController {
                 outgoingSessionSettings: settings,
                 context: context
             )
+            return statusMessage == nil
         } catch {
             statusMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -2427,6 +2445,66 @@ final class PlaybackController {
         activeSession = session
     }
 
+    /// Publishes durable playlist-item changes recovered while Overplay was
+    /// suspended through the same controller snapshot used by live playback.
+    /// The observation may have completed in a different SwiftData context,
+    /// so fetch the affected rows in this context instead of relying on query
+    /// invalidation to refresh the active surfaces later.
+    func publishReconciledPlaylistItemChanges(
+        localTrackIDs: [String],
+        playlistID: String,
+        context: ModelContext
+    ) {
+        guard currentPlaylistID == playlistID, !localTrackIDs.isEmpty,
+              let playlist = try? currentPlaylist(in: context) else {
+            return
+        }
+
+        let changedTrackIDs = Set(localTrackIDs.compactMap(UUID.init(uuidString:)))
+        guard !changedTrackIDs.isEmpty,
+              let playlistItems = try? PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context) else {
+            return
+        }
+        let changedItems = playlistItems.filter { changedTrackIDs.contains($0.trackID) }
+        guard !changedItems.isEmpty else { return }
+
+        let displayedLocalTrackID = nowPlayingDisplayLocalTrackID
+        if let displayedItem = changedItems.first(where: { $0.trackID.uuidString == displayedLocalTrackID }),
+           let musicItemID = currentTrack?.id {
+            currentPlaylistItem = displayedItem
+            syncPlaybackMetadata(
+                for: musicItemID,
+                trustedPlaylistItem: displayedItem,
+                context: context
+            )
+            persistLocalPlaybackState(
+                musicItemID: musicItemID,
+                localTrackID: displayedItem.trackID.uuidString
+            )
+            NowPlayingMetadataService.update(
+                track: nowPlayingDisplayTrack,
+                elapsed: elapsedSeconds,
+                isPlaying: isPlaying
+            )
+        }
+
+        guard var snapshot = activePlaylistSnapshot,
+              snapshot.musicPlaylistID == playlistID,
+              snapshot.playbackScope == currentPlaylistScope else {
+            rebuildActivePlaylistSnapshot(context: context)
+            return
+        }
+
+        for item in changedItems {
+            guard let patched = snapshot.updatingRow(for: item) else {
+                rebuildActivePlaylistSnapshot(context: context)
+                return
+            }
+            snapshot = patched
+        }
+        activePlaylistSnapshot = snapshot
+    }
+
     /// True when the live session for this track has already been counted,
     /// so reconciliation must not count the same play again.
     func activeSessionHasEvaluated(localTrackID: String) -> Bool {
@@ -2563,10 +2641,12 @@ final class PlaybackController {
             return
         }
 
-        self.activePlaylistSnapshot = activePlaylistSnapshot.updatingCurrentRow(
+        let updatedSnapshot = activePlaylistSnapshot.updatingCurrentRow(
             currentPlaylistItemID: currentPlaylistItem?.id,
             currentLocalTrackID: nowPlayingDisplayLocalTrackID,
             currentMusicItemID: nowPlayingDisplayTrack?.id ?? currentTrack?.id
         )
+        guard updatedSnapshot != activePlaylistSnapshot else { return }
+        self.activePlaylistSnapshot = updatedSnapshot
     }
 }

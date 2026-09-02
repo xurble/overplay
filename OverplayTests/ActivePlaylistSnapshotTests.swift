@@ -156,6 +156,31 @@ struct ActivePlaylistSnapshotTests {
         #expect(updated.rows.first { $0.id == secondItem.id }?.isCurrent == true)
     }
 
+    @Test("updating an unchanged current row preserves the snapshot revision")
+    func updatingUnchangedCurrentRowPreservesSnapshotRevision() {
+        let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main")
+        let track = TrackRecord(catalogID: "track", libraryID: "track", title: "Track", artistName: "Artist")
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id)
+        let revision = Date(timeIntervalSince1970: 100)
+        let snapshot = ActivePlaylistSnapshot(
+            playlist: playlist,
+            items: [item],
+            tracks: [track],
+            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
+            currentPlaylistItemID: item.id,
+            updatedAt: revision
+        )
+
+        let unchanged = snapshot.updatingCurrentRow(
+            currentPlaylistItemID: item.id,
+            currentLocalTrackID: track.id.uuidString,
+            currentMusicItemID: "track"
+        )
+
+        #expect(unchanged == snapshot)
+        #expect(unchanged.updatedAt == revision)
+    }
+
     @Test("rebuilt snapshot reflects track action mutations")
     func rebuiltSnapshotReflectsTrackActionMutations() {
         let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main")

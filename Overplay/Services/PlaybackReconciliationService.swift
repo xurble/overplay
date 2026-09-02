@@ -42,7 +42,8 @@ enum PlaybackReconciliationService {
     static func reconcileAndCaptureWaypoint(
         playbackController: PlaybackController,
         context: ModelContext,
-        musicLibraryFetcher: any MusicLibraryPlaybackHistoryFetching = MusicKitLibraryPlaybackHistoryFetcher()
+        musicLibraryFetcher: any MusicLibraryPlaybackHistoryFetching = MusicKitLibraryPlaybackHistoryFetcher(),
+        saveChanges: (ModelContext) throws -> Void = { try $0.save() }
     ) async -> Result {
         guard let observation = playbackController.capturePlaybackObservation(context: context) else {
             // Nothing observable (no queue, or an unresolvable track). Keep
@@ -101,18 +102,33 @@ enum PlaybackReconciliationService {
 
         var counted: [String] = []
         if let settings {
-            counted = countPlaythroughs(
-                outcome: outcome,
-                observation: observation,
-                waypoint: waypoint,
-                orderedTracks: orderedTracks,
-                settings: settings,
-                context: context
-            )
+            do {
+                counted = try countPlaythroughs(
+                    outcome: outcome,
+                    observation: observation,
+                    waypoint: waypoint,
+                    orderedTracks: orderedTracks,
+                    settings: settings,
+                    context: context,
+                    saveChanges: saveChanges
+                )
+            } catch {
+                context.rollback()
+                TrackMetadataDiagnostics.log(
+                    "reconciled playthrough persistence failed: \(error.localizedDescription)"
+                )
+                return Result(
+                    nextWakeTarget: nextWakeTarget(
+                        observation: observation,
+                        orderedTracks: orderedTracks,
+                        playthroughThresholdPercentage: threshold
+                    )
+                )
+            }
         }
 
-        if let pointProven = outcome.pointProvenLocalTrackID, counted.contains(pointProven) {
-            playbackController.markActiveSessionPlaythroughCounted(localTrackID: pointProven)
+        for localTrackID in counted {
+            playbackController.markActiveSessionPlaythroughCounted(localTrackID: localTrackID)
         }
 
         saveWaypoint(
@@ -124,6 +140,15 @@ enum PlaybackReconciliationService {
             countedLocalTrackIDs: Set(counted),
             playbackController: playbackController
         )
+
+        if !counted.isEmpty {
+            await playbackController.reconcilePlayerState(context: context)
+            playbackController.publishReconciledPlaylistItemChanges(
+                localTrackIDs: counted,
+                playlistID: observation.playlistID,
+                context: context
+            )
+        }
 
         if !counted.isEmpty {
             TrackMetadataDiagnostics.log(
@@ -191,8 +216,9 @@ enum PlaybackReconciliationService {
         waypoint: PlaybackWaypoint?,
         orderedTracks: [PlaybackReconciliationPolicy.OrderedTrack],
         settings: OverplaySettings,
-        context: ModelContext
-    ) -> [String] {
+        context: ModelContext,
+        saveChanges: (ModelContext) throws -> Void
+    ) throws -> [String] {
         guard let playlist = try? PlaylistRepository.playlist(
             musicPlaylistID: observation.playlistID,
             in: context
@@ -292,7 +318,7 @@ enum PlaybackReconciliationService {
         }
 
         if !counted.isEmpty {
-            try? context.save()
+            try saveChanges(context)
         }
         return counted
     }

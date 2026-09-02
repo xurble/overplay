@@ -8,6 +8,45 @@ import SwiftData
 import UIKit
 #endif
 
+struct PlaybackRemoteCommandAvailability: Equatable, Sendable {
+    var canPlay: Bool
+    var canPause: Bool
+    var canTogglePlayPause: Bool
+    var canSkipToNext: Bool
+    var canSkipToPrevious: Bool
+    var canShuffle: Bool
+
+    static let unavailable = PlaybackRemoteCommandAvailability(
+        canPlay: false,
+        canPause: false,
+        canTogglePlayPause: false,
+        canSkipToNext: false,
+        canSkipToPrevious: false,
+        canShuffle: false
+    )
+
+    static func make(
+        canControlPlayback: Bool,
+        hasRestorablePlayback: Bool,
+        isPlaying: Bool,
+        isTransitionInFlight: Bool,
+        isDeliveryStalled: Bool
+    ) -> PlaybackRemoteCommandAvailability {
+        guard !isTransitionInFlight, hasRestorablePlayback else {
+            return .unavailable
+        }
+
+        return PlaybackRemoteCommandAvailability(
+            canPlay: !isPlaying || isDeliveryStalled,
+            canPause: canControlPlayback && isPlaying && !isDeliveryStalled,
+            canTogglePlayPause: true,
+            canSkipToNext: canControlPlayback,
+            canSkipToPrevious: canControlPlayback,
+            canShuffle: canControlPlayback
+        )
+    }
+}
+
 @MainActor
 final class RemoteCommandService {
     private static let logger = Logger(
@@ -19,7 +58,7 @@ final class RemoteCommandService {
     private(set) var playbackController: PlaybackController?
     private(set) var context: ModelContext?
     private var targetTokens = [Any]()
-    private var playbackModeObservationGeneration = 0
+    private var playbackStateObservationGeneration = 0
 
     var registeredTargetCount: Int {
         targetTokens.count
@@ -35,22 +74,19 @@ final class RemoteCommandService {
         #endif
 
         let commandCenter = MPRemoteCommandCenter.shared()
-        commandCenter.playCommand.isEnabled = true
-        commandCenter.pauseCommand.isEnabled = true
-        commandCenter.nextTrackCommand.isEnabled = true
-        commandCenter.previousTrackCommand.isEnabled = true
-        commandCenter.togglePlayPauseCommand.isEnabled = true
         commandCenter.skipForwardCommand.isEnabled = false
         commandCenter.skipBackwardCommand.isEnabled = false
         commandCenter.seekForwardCommand.isEnabled = false
         commandCenter.seekBackwardCommand.isEnabled = false
-        commandCenter.changeShuffleModeCommand.isEnabled = true
         commandCenter.changeRepeatModeCommand.isEnabled = false
-        syncPlaybackModes(from: playbackController)
+        syncPlaybackState(from: playbackController)
 
         targetTokens.append(commandCenter.playCommand.addTarget { [weak self] _ in
             guard let self, let playbackController = self.playbackController, let context = self.context else {
                 return .commandFailed
+            }
+            guard playbackController.remoteCommandAvailability.canPlay else {
+                return .noActionableNowPlayingItem
             }
             Task { @MainActor in
                 if let settings = try? SettingsRepository.settings(in: context) {
@@ -65,12 +101,18 @@ final class RemoteCommandService {
             guard let playbackController = self?.playbackController else {
                 return .commandFailed
             }
+            guard playbackController.remoteCommandAvailability.canPause else {
+                return .noActionableNowPlayingItem
+            }
             Task { @MainActor in playbackController.pause() }
             return .success
         })
         targetTokens.append(commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
             guard let self, let playbackController = self.playbackController, let context = self.context else {
                 return .commandFailed
+            }
+            guard playbackController.remoteCommandAvailability.canTogglePlayPause else {
+                return .noActionableNowPlayingItem
             }
             Task { @MainActor in
                 if playbackController.canControlPlayback {
@@ -90,19 +132,17 @@ final class RemoteCommandService {
             guard let self, let playbackController = self.playbackController, let context = self.context else {
                 return .commandFailed
             }
-            Task { @MainActor in
-                guard let settings = try? SettingsRepository.settings(in: context) else { return }
-                let previousTrackID = playbackController.currentTrack?.id
-                await playbackController.next(settings: settings, context: context)
-                Self.logger.info(
-                    "Remote next track command changed track from \(previousTrackID ?? "nil", privacy: .public) to \(playbackController.currentTrack?.id ?? "nil", privacy: .public)"
-                )
-            }
-            return .success
+            return self.handleNextCommand(
+                playbackController: playbackController,
+                context: context
+            )
         })
         targetTokens.append(commandCenter.previousTrackCommand.addTarget { [weak self] _ in
             guard let self, let playbackController = self.playbackController, let context = self.context else {
                 return .commandFailed
+            }
+            guard playbackController.remoteCommandAvailability.canSkipToPrevious else {
+                return .noActionableNowPlayingItem
             }
             Task { @MainActor in
                 let previousTrackID = playbackController.currentTrack?.id
@@ -120,16 +160,12 @@ final class RemoteCommandService {
             guard let self, let playbackController = self.playbackController, let context = self.context else {
                 return .commandFailed
             }
-            guard playbackController.currentPlaylistID != nil else {
-                self.syncPlaybackModes(from: playbackController)
+            guard playbackController.remoteCommandAvailability.canShuffle else {
+                self.syncPlaybackState(from: playbackController)
                 return .noActionableNowPlayingItem
             }
 
             let requestedShuffleType = event.shuffleType
-            let targetShuffleType = RemotePlaybackModeMapper.canonicalShuffleType(for: requestedShuffleType)
-            self.publishPlaybackModes(
-                shuffleEnabled: RemotePlaybackModeMapper.shuffleEnabled(for: targetShuffleType)
-            )
             Task { @MainActor in
                 _ = await self.applyShuffleModeCommand(
                     requestedShuffleType,
@@ -140,7 +176,31 @@ final class RemoteCommandService {
             }
             return .success
         })
-        startPlaybackModeObservation()
+        startPlaybackStateObservation()
+    }
+
+    func handleNextCommand(
+        playbackController: PlaybackController,
+        context: ModelContext,
+        settingsProvider: (ModelContext) throws -> OverplaySettings = {
+            try SettingsRepository.settings(in: $0)
+        }
+    ) -> MPRemoteCommandHandlerStatus {
+        guard playbackController.remoteCommandAvailability.canSkipToNext else {
+            return .noActionableNowPlayingItem
+        }
+        guard let settings = try? settingsProvider(context) else {
+            return .commandFailed
+        }
+
+        Task { @MainActor in
+            let previousTrackID = playbackController.currentTrack?.id
+            await playbackController.next(settings: settings, context: context)
+            Self.logger.info(
+                "Remote next track command changed track from \(previousTrackID ?? "nil", privacy: .public) to \(playbackController.currentTrack?.id ?? "nil", privacy: .public)"
+            )
+        }
+        return .success
     }
 
     func update(playbackController: PlaybackController, context: ModelContext) {
@@ -148,13 +208,13 @@ final class RemoteCommandService {
         self.context = context
 
         if isActive {
-            syncPlaybackModes(from: playbackController)
-            startPlaybackModeObservation()
+            syncPlaybackState(from: playbackController)
+            startPlaybackStateObservation()
         }
     }
 
     func deactivate() {
-        stopPlaybackModeObservation()
+        stopPlaybackStateObservation()
         let commandCenter = MPRemoteCommandCenter.shared()
         for token in targetTokens {
             commandCenter.playCommand.removeTarget(token)
@@ -168,6 +228,7 @@ final class RemoteCommandService {
         playbackController = nil
         context = nil
         isActive = false
+        publishAvailability(.unavailable)
 
         #if canImport(UIKit)
         UIApplication.shared.endReceivingRemoteControlEvents()
@@ -175,6 +236,11 @@ final class RemoteCommandService {
     }
 
     func syncPlaybackModes(from playbackController: PlaybackController) {
+        syncPlaybackState(from: playbackController)
+    }
+
+    func syncPlaybackState(from playbackController: PlaybackController) {
+        publishAvailability(playbackController.remoteCommandAvailability)
         publishPlaybackModes(shuffleEnabled: playbackController.shuffleEnabled)
     }
 
@@ -189,20 +255,31 @@ final class RemoteCommandService {
               let context = context ?? self.context else {
             return .commandFailed
         }
-        guard playbackController.currentPlaylistID != nil else {
-            syncPlaybackModes(from: playbackController)
+        guard playbackController.remoteCommandAvailability.canShuffle else {
+            syncPlaybackState(from: playbackController)
             return .noActionableNowPlayingItem
         }
 
         _ = shuffleType
-        publishPlaybackModes(shuffleEnabled: true)
-
-        await playbackController.reshuffleCurrentPlaylist(context: context)
-        syncPlaybackModes(from: playbackController)
+        let didReshuffle = await playbackController.reshuffleCurrentPlaylist(context: context)
+        syncPlaybackState(from: playbackController)
+        guard didReshuffle else {
+            return .commandFailed
+        }
         Self.logger.info(
             "\(source, privacy: .public) shuffle command requested; reshuffled current playlist"
         )
         return .success
+    }
+
+    private func publishAvailability(_ availability: PlaybackRemoteCommandAvailability) {
+        let commandCenter = MPRemoteCommandCenter.shared()
+        commandCenter.playCommand.isEnabled = availability.canPlay
+        commandCenter.pauseCommand.isEnabled = availability.canPause
+        commandCenter.togglePlayPauseCommand.isEnabled = availability.canTogglePlayPause
+        commandCenter.nextTrackCommand.isEnabled = availability.canSkipToNext
+        commandCenter.previousTrackCommand.isEnabled = availability.canSkipToPrevious
+        commandCenter.changeShuffleModeCommand.isEnabled = availability.canShuffle
     }
 
     private func publishPlaybackModes(shuffleEnabled: Bool) {
@@ -213,31 +290,31 @@ final class RemoteCommandService {
         commandCenter.changeRepeatModeCommand.currentRepeatType = .all
     }
 
-    private func startPlaybackModeObservation() {
-        playbackModeObservationGeneration += 1
-        observePlaybackModes(generation: playbackModeObservationGeneration)
+    private func startPlaybackStateObservation() {
+        playbackStateObservationGeneration += 1
+        observePlaybackState(generation: playbackStateObservationGeneration)
     }
 
-    private func stopPlaybackModeObservation() {
-        playbackModeObservationGeneration += 1
+    private func stopPlaybackStateObservation() {
+        playbackStateObservationGeneration += 1
     }
 
-    private func observePlaybackModes(generation: Int) {
-        guard generation == playbackModeObservationGeneration,
+    private func observePlaybackState(generation: Int) {
+        guard generation == playbackStateObservationGeneration,
               let playbackController else {
             return
         }
 
         withObservationTracking {
-            _ = playbackController.currentPlaylistID
+            _ = playbackController.remoteCommandAvailability
             _ = playbackController.shuffleEnabled
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self, generation == self.playbackModeObservationGeneration else { return }
+                guard let self, generation == self.playbackStateObservationGeneration else { return }
                 if let playbackController = self.playbackController {
-                    self.syncPlaybackModes(from: playbackController)
+                    self.syncPlaybackState(from: playbackController)
                 }
-                self.observePlaybackModes(generation: generation)
+                self.observePlaybackState(generation: generation)
             }
         }
     }

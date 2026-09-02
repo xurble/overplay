@@ -7,6 +7,26 @@ import SwiftData
 import UIKit
 
 @MainActor
+enum CarPlayListTemplateUpdater {
+    static func refreshTarget(
+        topTemplate: CPTemplate?,
+        templateStack: [CPTemplate]
+    ) -> CPListTemplate? {
+        (topTemplate as? CPListTemplate)
+            ?? templateStack.reversed().compactMap { $0 as? CPListTemplate }.first
+    }
+
+    @discardableResult
+    static func update(
+        _ template: CPListTemplate,
+        sections: [CPListSection]
+    ) -> CPListTemplate {
+        template.updateSections(sections)
+        return template
+    }
+}
+
+@MainActor
 final class CarPlayCoordinator: NSObject {
     private static let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "Overplay",
@@ -219,12 +239,20 @@ final class CarPlayCoordinator: NSObject {
     private func playlistSections(for playlist: PlaylistRecord) throws -> [CPListSection] {
         guard let modelContext else { return [] }
         let scope = carPlayDisplayScope(for: playlist)
-        let tracks = try CarPlayLibrarySnapshot.trackSummaries(
-            forPlaylistID: playlist.id,
-            playbackOrderState: playbackController?.playbackOrderState(for: playlist.musicPlaylistID, scope: scope),
-            scope: scope,
-            in: modelContext
-        )
+        let tracks: [TrackSummaryPresentation]
+        if let activePlaylistSnapshot = playbackController?.activePlaylistSnapshot,
+           activePlaylistSnapshot.playlistID == playlist.id,
+           activePlaylistSnapshot.musicPlaylistID == playlist.musicPlaylistID,
+           activePlaylistSnapshot.playbackScope == scope {
+            tracks = CarPlayLibrarySnapshot.trackSummaries(from: activePlaylistSnapshot)
+        } else {
+            tracks = try CarPlayLibrarySnapshot.trackSummaries(
+                forPlaylistID: playlist.id,
+                playbackOrderState: playbackController?.playbackOrderState(for: playlist.musicPlaylistID, scope: scope),
+                scope: scope,
+                in: modelContext
+            )
+        }
 
         guard !tracks.isEmpty else {
             return [
@@ -314,13 +342,13 @@ final class CarPlayCoordinator: NSObject {
             _ = playbackController.displayedSkipCount
             _ = playbackController.displayedIsProtected
             _ = playbackController.displayedIsEvicted
+            _ = playbackController.activePlaylistSnapshot?.updatedAt
             _ = playbackController.isDeliveryStalled
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, generation == self.playbackObservationGeneration else { return }
-                if self.updateNowPlayingButtons(force: false) {
-                    self.refreshLibraryLists()
-                }
+                _ = self.updateNowPlayingButtons(force: false)
+                self.refreshLibraryLists()
                 self.presentDeliveryStallAlertIfNeeded()
                 self.observePlaybackController(generation: generation)
             }
@@ -533,13 +561,16 @@ final class CarPlayCoordinator: NSObject {
 
     private func refreshLibraryLists() {
         guard let interfaceController,
-              let listTemplate = interfaceController.topTemplate as? CPListTemplate else {
+              let listTemplate = CarPlayListTemplateUpdater.refreshTarget(
+                topTemplate: interfaceController.topTemplate,
+                templateStack: interfaceController.templates
+              ) else {
             return
         }
 
         if listTemplate.title == "Overplay" {
             visiblePlaylistID = nil
-            listTemplate.updateSections(makeRootSections())
+            CarPlayListTemplateUpdater.update(listTemplate, sections: makeRootSections())
             return
         }
 
@@ -551,14 +582,10 @@ final class CarPlayCoordinator: NSObject {
             return
         }
 
-        listTemplate.updateSections(sections)
+        CarPlayListTemplateUpdater.update(listTemplate, sections: sections)
     }
 
     private func refreshVisibleTemplate() {
-        guard interfaceController?.topTemplate is CPListTemplate else {
-            return
-        }
-
         refreshLibraryLists()
     }
 
