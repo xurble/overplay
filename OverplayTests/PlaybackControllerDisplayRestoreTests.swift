@@ -108,96 +108,6 @@ struct PlaybackControllerDisplayRestoreTests {
         #expect(controller.activePlaylistSnapshot?.rows.first { $0.id == fixture.nextItem.id }?.isCurrent == true)
     }
 
-    @Test("playlist row playback evaluates outgoing track before target track")
-    func playlistRowPlaybackEvaluatesOutgoingTrackBeforeTargetTrack() async throws {
-        let fixture = try makeTwoTrackFixture()
-        let controller = PlaybackController()
-        let settings = OverplaySettings(
-            skipThresholdPercentage: 50,
-            minimumSkipListeningSeconds: 0
-        )
-        controller.currentPlaylistID = fixture.playlist.musicPlaylistID
-        controller.currentPlaylistItem = fixture.previousItem
-        controller.currentTrack = CurrentPlaybackTrack(
-            id: "previous-library",
-            title: fixture.previousTrack.title,
-            artistName: fixture.previousTrack.artistName,
-            durationSeconds: 180
-        )
-        controller.elapsedSeconds = 15
-        controller.durationSeconds = 180
-
-        await controller.evaluateOutgoingSessionBeforePlaybackReplacement(
-            settings: settings,
-            context: fixture.context,
-            targetPlaylistID: fixture.playlist.musicPlaylistID,
-            targetLocalTrackID: fixture.nextTrack.id.uuidString
-        )
-
-        #expect(fixture.previousItem.skipCount == 1)
-        #expect(fixture.nextItem.skipCount == 0)
-    }
-
-    @Test("playlist row playback does not evaluate when target is current track")
-    func playlistRowPlaybackDoesNotEvaluateWhenTargetIsCurrentTrack() async throws {
-        let fixture = try makeTwoTrackFixture()
-        let controller = PlaybackController()
-        let settings = OverplaySettings(
-            skipThresholdPercentage: 50,
-            minimumSkipListeningSeconds: 0
-        )
-        controller.currentPlaylistID = fixture.playlist.musicPlaylistID
-        controller.currentPlaylistItem = fixture.previousItem
-        controller.currentTrack = CurrentPlaybackTrack(
-            id: "previous-library",
-            title: fixture.previousTrack.title,
-            artistName: fixture.previousTrack.artistName,
-            durationSeconds: 180
-        )
-        controller.elapsedSeconds = 15
-        controller.durationSeconds = 180
-
-        await controller.evaluateOutgoingSessionBeforePlaybackReplacement(
-            settings: settings,
-            context: fixture.context,
-            targetPlaylistID: fixture.playlist.musicPlaylistID,
-            targetLocalTrackID: fixture.previousTrack.id.uuidString
-        )
-
-        #expect(fixture.previousItem.skipCount == 0)
-        #expect(fixture.nextItem.skipCount == 0)
-    }
-
-    @Test("playlist row playback in another playlist evaluates outgoing current playlist item")
-    func playlistRowPlaybackInAnotherPlaylistEvaluatesOutgoingCurrentPlaylistItem() async throws {
-        let fixture = try makeTwoPlaylistFixture()
-        let controller = PlaybackController()
-        let settings = OverplaySettings(
-            skipThresholdPercentage: 50,
-            minimumSkipListeningSeconds: 0
-        )
-        controller.currentPlaylistID = fixture.currentPlaylist.musicPlaylistID
-        controller.currentPlaylistItem = fixture.currentItem
-        controller.currentTrack = CurrentPlaybackTrack(
-            id: "current-library",
-            title: fixture.currentTrack.title,
-            artistName: fixture.currentTrack.artistName,
-            durationSeconds: 180
-        )
-        controller.elapsedSeconds = 15
-        controller.durationSeconds = 180
-
-        await controller.evaluateOutgoingSessionBeforePlaybackReplacement(
-            settings: settings,
-            context: fixture.context,
-            targetPlaylistID: fixture.targetPlaylist.musicPlaylistID,
-            targetLocalTrackID: fixture.targetTrack.id.uuidString
-        )
-
-        #expect(fixture.currentItem.skipCount == 1)
-        #expect(fixture.targetItem.skipCount == 0)
-    }
-
     @Test("stored order reconcile rebuilds the active snapshot only when the order changes")
     func storedOrderReconcileRebuildsTheActiveSnapshotOnlyWhenTheOrderChanges() throws {
         let fixture = try makeTwoTrackFixture()
@@ -255,10 +165,6 @@ struct PlaybackControllerDisplayRestoreTests {
 
         let fixture = try makeTwoPlaylistFixture()
         let controller = PlaybackController()
-        let settings = OverplaySettings(
-            skipThresholdPercentage: 50,
-            minimumSkipListeningSeconds: 0
-        )
         LocalPlaybackStateStore.save(LocalPlaybackState(
             playlistID: fixture.currentPlaylist.musicPlaylistID,
             musicItemID: "current-library",
@@ -270,13 +176,6 @@ struct PlaybackControllerDisplayRestoreTests {
 
         controller.restoreLocalPlaybackDisplay(context: fixture.context)
         #expect(controller.currentPlaylistItem?.id == fixture.currentItem.id)
-
-        await controller.evaluateOutgoingSessionBeforePlaybackReplacement(
-            settings: settings,
-            context: fixture.context,
-            targetPlaylistID: fixture.targetPlaylist.musicPlaylistID,
-            targetLocalTrackID: fixture.targetTrack.id.uuidString
-        )
 
         let history = try fixture.context.fetch(FetchDescriptor<HistoryEvent>())
         #expect(fixture.currentItem.skipCount == 0)

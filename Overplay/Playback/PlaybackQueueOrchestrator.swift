@@ -174,9 +174,9 @@ enum PlaybackQueueOrchestrator {
 
     /// Computes a reshuffled order and its playable entries without saving
     /// the order. A restart that replaces the live player queue must not
-    /// destroy the stored order until the player has confirmed it can play
-    /// the new queue — persist via `persistReshuffledOrder` only after
-    /// `play()` succeeds.
+    /// destroy the stored order until the player has confirmed a current item
+    /// from the new queue — persist via `persistReshuffledOrder` only after
+    /// that confirmation.
     static func previewedReshuffledQueue(
         playlistID: String,
         playerID: String,
