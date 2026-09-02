@@ -429,6 +429,138 @@ final class PlaybackController {
         currentPlaylistID == playlist.musicPlaylistID && currentTrack != nil
     }
 
+    /// True when `playlist` is the queue the player is actually playing, so a
+    /// surface can jump inside that queue instead of rebuilding it.
+    func currentQueueContains(playlist: PlaylistRecord, scope: PlaylistPlaybackScope) -> Bool {
+        currentPlaylistID == playlist.musicPlaylistID
+            && currentPlaylistScope == scope
+            && !activeQueueEntries.isEmpty
+    }
+
+    /// Skips to a track inside the live queue, preserving the order after it.
+    /// Returns `false` when the track is not in the live queue, so the caller
+    /// can fall back to building a fresh queue from that track.
+    @discardableResult
+    func playTrackInCurrentQueue(
+        localTrackID: String,
+        settings: OverplaySettings,
+        context: ModelContext
+    ) async -> Bool {
+        guard let target = activeQueueEntries.first(where: { $0.localTrackID == localTrackID }) else {
+            return false
+        }
+
+        await refresh(context: context)
+        let outgoing = captureOutgoingPlaybackTransition()
+        guard outgoing.entryID != target.queueEntryID else {
+            // Already the live entry: resume it rather than restart it.
+            if !isPlaying {
+                await play(context: context)
+            }
+            return true
+        }
+
+        let result = await performPlayerConfirmedTransition(
+            outgoingEntryID: outgoing.entryID,
+            expectedEntryIDs: [target.queueEntryID],
+            command: {
+                try await player.skipToEntry(withID: target.queueEntryID)
+            },
+            onObservedTransition: { _ in
+                evaluateOutgoingTransition(
+                    outgoing,
+                    settings: settings,
+                    naturalCompletion: false,
+                    context: context
+                )
+            }
+        )
+
+        switch result {
+        case .confirmed, .diverged:
+            await refresh(context: context)
+        case .failed(let error):
+            await refresh(context: context)
+            reportDeliveryFailure(message: musicPlaybackFailureMessage(for: error))
+        case .timedOut:
+            await refresh(context: context)
+            statusMessage = PlaybackTransitionError.confirmationTimedOut.localizedDescription
+        case .rejected:
+            break
+        }
+        return true
+    }
+
+    /// Shuffles a playlist that is not necessarily the current one and starts
+    /// it from the new first track. Shuffle is one-shot everywhere, so this is
+    /// the single implementation behind both the app and CarPlay.
+    @discardableResult
+    func shuffleAndPlay(
+        _ playlist: PlaylistRecord,
+        scope: PlaylistPlaybackScope = .active,
+        settings: OverplaySettings,
+        context: ModelContext
+    ) async -> Bool {
+        await shuffleAndPlay(
+            musicPlaylistID: playlist.musicPlaylistID,
+            scope: scope,
+            settings: settings,
+            context: context
+        )
+    }
+
+    @discardableResult
+    private func shuffleAndPlay(
+        musicPlaylistID: String,
+        scope: PlaylistPlaybackScope,
+        settings: OverplaySettings,
+        context: ModelContext
+    ) async -> Bool {
+        do {
+            let reshuffled = try PlaybackQueueOrchestrator.previewedReshuffledQueue(
+                playlistID: musicPlaylistID,
+                playerID: playerID,
+                scope: scope,
+                avoiding: mostRecentlyPlayedLocalTrackID(inPlaylistID: musicPlaylistID, context: context),
+                in: context
+            )
+            guard !reshuffled.entries.isEmpty else {
+                statusMessage = "No playable tracks remain after local retirements."
+                return false
+            }
+            try await startPlayback(
+                queueEntries: reshuffled.entries,
+                playlistID: musicPlaylistID,
+                scope: scope,
+                startingAt: reshuffled.entries.first?.localTrackID,
+                confirmedPlaybackOrder: reshuffled.orderedTrackIDs,
+                outgoingSessionSettings: settings,
+                context: context
+            )
+            return statusMessage == nil
+        } catch {
+            statusMessage = musicPlaybackFailureMessage(for: error)
+            return false
+        }
+    }
+
+    /// The track a fresh shuffle must keep away from the top of the new order:
+    /// the live track for the current playlist, otherwise the last one this
+    /// playlist was observed playing.
+    private func mostRecentlyPlayedLocalTrackID(
+        inPlaylistID musicPlaylistID: String,
+        context: ModelContext
+    ) -> String? {
+        guard currentPlaylistID == musicPlaylistID else {
+            let waypoint = PlaybackWaypointStore.load()
+            return waypoint?.playlistID == musicPlaylistID ? waypoint?.localTrackID : nil
+        }
+
+        return currentPlaylistItem?.trackID.uuidString
+            ?? activeQueueCurrentLocalTrackID
+            ?? currentTrack.flatMap { localTrackID(matching: $0.id, context: context) }
+    }
+
     private func startPlaylistPlayback(
         _ playlist: PlaylistRecord,
         startingAt trackRecord: TrackRecord?,
@@ -911,35 +1043,12 @@ final class PlaybackController {
             return false
         }
 
-        do {
-            let currentLocalTrackID = currentPlaylistItem?.trackID.uuidString
-                ?? activeQueueCurrentLocalTrackID
-                ?? currentTrack.flatMap { localTrackID(matching: $0.id, context: context) }
-            let reshuffled = try PlaybackQueueOrchestrator.previewedReshuffledQueue(
-                playlistID: currentPlaylistID,
-                playerID: playerID,
-                scope: currentPlaylistScope,
-                avoiding: currentLocalTrackID,
-                in: context
-            )
-            guard !reshuffled.entries.isEmpty else {
-                statusMessage = "No playable tracks remain after local retirements."
-                return false
-            }
-            try await startPlayback(
-                queueEntries: reshuffled.entries,
-                playlistID: currentPlaylistID,
-                scope: currentPlaylistScope,
-                startingAt: reshuffled.entries.first?.localTrackID,
-                confirmedPlaybackOrder: reshuffled.orderedTrackIDs,
-                outgoingSessionSettings: settings,
-                context: context
-            )
-            return statusMessage == nil
-        } catch {
-            statusMessage = error.localizedDescription
-            return false
-        }
+        return await shuffleAndPlay(
+            musicPlaylistID: currentPlaylistID,
+            scope: currentPlaylistScope,
+            settings: settings,
+            context: context
+        )
     }
 
     func currentPlaylistRole(context: ModelContext) -> PlaylistRole? {

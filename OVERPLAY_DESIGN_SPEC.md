@@ -860,8 +860,16 @@ templates connected to the shared playback controller.
 
 Show:
 
-- One True Playlist playback entry point.
-- Active linked playlists.
+- A one-tap `Overplay` entry point at the top of the root menu. It opens Now
+  Playing when the One True Playlist is already the live queue, resuming first
+  if playback is paused, and otherwise reshuffles the One True Playlist and
+  starts it from the new first track.
+- A row for the One True Playlist, opening its track list.
+- Active linked triage playlists in a separate section, opening the same track
+  list.
+- A `Shuffle` row at the top of every track list, reshuffling the scope being
+  shown and starting from the new first track.
+- Tracks in their current local order below the shuffle row.
 - The currently playing Retired playlist context if playback was started from
   Retired on iOS.
 - Current track title, artist, album, and artwork where CarPlay templates
@@ -870,6 +878,13 @@ Show:
 - Direct Retire button in Now Playing for active tracks.
 - Direct Restore button in Now Playing for retired tracks.
 - Direct Promote button when the current track belongs to a triage playlist.
+- An Up Next button that returns to the root menu.
+
+Selecting a track never restarts the track that is already playing. When its
+playlist is already the live queue, selection skips to that track inside the
+existing queue so the order after it survives; otherwise it builds a fresh
+queue starting from that track. The root menu offers no manual refresh: every
+list updates in place from shared playback state.
 
 Platform notes:
 
@@ -1168,9 +1183,6 @@ The following are not requirements of the current product:
 
 ## Known Defects and Verification Gaps
 
-- The 2026-08-31 current source does not compile because
-  `CarPlayCoordinator.swift` ends with five extraneous closing braces. This is
-  an implementation defect, not specified behaviour.
 - CarPlay scene launch, template presentation, and in-car controls still need
   simulator or physical-device verification.
 - Cross-surface convergence is a confirmed requirement, but the current
@@ -1195,15 +1207,19 @@ services as the phone UI.
 
 CarPlay supports:
 
-- Play One True Playlist.
-- Browse active triage playlists.
-- Browse Active playlist tracks with playthrough and skip totals in row detail.
+- Play or resume the One True Playlist from a single root row, reshuffling it
+  first when it is not already the live queue.
+- Browse the One True Playlist and active triage playlists.
+- Browse playlist tracks with playthrough and skip totals in row detail.
+- Shuffle the playlist being browsed and start it from the new first track.
+- Skip to a track inside the live queue without rebuilding it.
 - Show the current Retired playlist context when the user started Retired
-  playback from iOS.
+  playback from iOS, including shuffling that Retired order.
 - Now Playing controls.
 - Retire the current Active track.
 - Promote the current triage track and advance playback after success.
 - Restore the current track when it belongs to a Retired playlist context.
+- Return to the root menu from Now Playing.
 
 CarPlay does not provide a separate skip-history browser. The app publishes
 title, artist, album, duration, elapsed time, and playback rate to system Now

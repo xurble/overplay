@@ -68,6 +68,8 @@ Verification:
 
 ### CarPlay
 
+- Verify the rationalised root menu, shuffle rows, in-queue track skipping, and
+  the Up Next return path in a car or the CarPlay simulator.
 - Add skip-history browsing if the interaction fits safely within CarPlay templates.
 - Keep browsing focused on Active playlists; Retired content should only appear
   when it is the current playback context started elsewhere.

@@ -12,32 +12,53 @@ entitlement, and `Config/Info.plist` declares a CarPlay scene using
   isolated from the SwiftUI iPhone/iPad shell.
 - `CarPlayLibrarySnapshot` builds testable playlist summaries for the CarPlay
   list UI.
+- `CarPlayNavigationPolicy` decides what the root `Overplay` row and the track
+  rows do, free of CarPlay types so the rules are testable.
 - `AppRuntime.shared` provides the shared model container, playback controller,
   authorization service, and remote command service used by both phone UI and
   CarPlay.
 
 ## Current CarPlay UI
 
-The root CarPlay template shows:
+The root template has no navigation-bar actions. It shows:
 
-- The main Overplay playlist in a `Main Playlist` section.
-- Active triage playlists in a separate `Triage Playlists` section.
+- An `Overplay` row. When the One True Playlist is already the live queue it
+  opens Now Playing, resuming first if playback is paused; otherwise it
+  reshuffles the One True Playlist, starts it from the new first track, and
+  opens Now Playing. It is disabled when no One True Playlist is chosen or it
+  has no playable tracks.
+- A row for the One True Playlist itself, which opens its track list.
+- A separate section of the active triage playlists, which open the same
+  track-list screen.
 
-Selecting a playlist opens that playlist's Active track list. Selecting a track
-starts playback through `PlaybackController` with that playlist as the active
-queue, then opens `CPNowPlayingTemplate`. Standard CarPlay playback controls
-are routed through the shared remote command and playback services.
+A track list starts with a `Shuffle` row, then the tracks in their current
+local order. Shuffle reshuffles the scope being shown, starts from the new
+first track, and opens Now Playing.
+
+Tapping a track routes through `CarPlayNavigationPolicy.trackIntent`:
+
+- The live track opens Now Playing and is never restarted.
+- A track in the playlist that is already the live queue is skipped to inside
+  that queue, so the order after it survives.
+- Anything else builds a fresh queue from that track.
+
+Playback, shuffle, and in-queue skips all run through `PlaybackController`, so
+the same behavior is available to the phone UI and the system transports.
 
 CarPlay browsing intentionally exposes only Active playlist contents. If the
 user starts a Retired playlist context from iOS and then uses CarPlay, CarPlay
-displays that current Retired context through the shared playback state.
+displays that current Retired context through the shared playback state, and
+the shuffle row reshuffles that Retired order.
 
 The shared Now Playing template installs direct track action buttons. Active
 tracks expose Retire, Retired tracks expose Restore, and triage tracks expose
-Promote where applicable.
+Promote where applicable. Its Up Next button returns to the root menu.
 
 ## Verification
 
-The app target builds and unit tests cover CarPlay playlist summary ordering and
-playable counts. CarPlay simulator or device verification is still required for
-scene launch, template presentation, and in-car playback controls.
+The app target builds and unit tests cover CarPlay playlist summary ordering,
+playable counts, template refresh targeting, the root/track navigation rules in
+`CarPlayNavigationPolicy`, and the shared in-queue skip and shuffle-and-play
+paths in `PlaybackController`. CarPlay simulator or device verification is
+still required for scene launch, template presentation, and in-car playback
+controls.
