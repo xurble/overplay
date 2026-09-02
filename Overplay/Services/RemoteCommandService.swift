@@ -132,18 +132,10 @@ final class RemoteCommandService {
             guard let self, let playbackController = self.playbackController, let context = self.context else {
                 return .commandFailed
             }
-            guard playbackController.remoteCommandAvailability.canSkipToNext else {
-                return .noActionableNowPlayingItem
-            }
-            Task { @MainActor in
-                guard let settings = try? SettingsRepository.settings(in: context) else { return }
-                let previousTrackID = playbackController.currentTrack?.id
-                await playbackController.next(settings: settings, context: context)
-                Self.logger.info(
-                    "Remote next track command changed track from \(previousTrackID ?? "nil", privacy: .public) to \(playbackController.currentTrack?.id ?? "nil", privacy: .public)"
-                )
-            }
-            return .success
+            return self.handleNextCommand(
+                playbackController: playbackController,
+                context: context
+            )
         })
         targetTokens.append(commandCenter.previousTrackCommand.addTarget { [weak self] _ in
             guard let self, let playbackController = self.playbackController, let context = self.context else {
@@ -185,6 +177,30 @@ final class RemoteCommandService {
             return .success
         })
         startPlaybackStateObservation()
+    }
+
+    func handleNextCommand(
+        playbackController: PlaybackController,
+        context: ModelContext,
+        settingsProvider: (ModelContext) throws -> OverplaySettings = {
+            try SettingsRepository.settings(in: $0)
+        }
+    ) -> MPRemoteCommandHandlerStatus {
+        guard playbackController.remoteCommandAvailability.canSkipToNext else {
+            return .noActionableNowPlayingItem
+        }
+        guard let settings = try? settingsProvider(context) else {
+            return .commandFailed
+        }
+
+        Task { @MainActor in
+            let previousTrackID = playbackController.currentTrack?.id
+            await playbackController.next(settings: settings, context: context)
+            Self.logger.info(
+                "Remote next track command changed track from \(previousTrackID ?? "nil", privacy: .public) to \(playbackController.currentTrack?.id ?? "nil", privacy: .public)"
+            )
+        }
+        return .success
     }
 
     func update(playbackController: PlaybackController, context: ModelContext) {

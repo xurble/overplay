@@ -1,4 +1,5 @@
 import Foundation
+import enum MediaPlayer.MPRemoteCommandHandlerStatus
 @preconcurrency import MusicKit
 import SwiftData
 import Testing
@@ -143,6 +144,25 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[1].id.rawValue)
         #expect(fixture.items[0].skipCount == 1)
         #expect(try fixture.history().count == 1)
+    }
+
+    @Test("remote Next reports failure before scheduling when settings cannot load")
+    func remoteNextReportsSynchronousSettingsFailure() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let service = RemoteCommandService()
+
+        let status = service.handleNextCommand(
+            playbackController: fixture.controller,
+            context: fixture.context,
+            settingsProvider: { _ in throw ReconciliationTestFailure.expected }
+        )
+        await Task.yield()
+
+        #expect(status == .commandFailed)
+        #expect(fixture.player.nextCallCount == 0)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
     }
 
     @Test("failed Previous does not poison a later countable transition")
@@ -292,22 +312,72 @@ struct PlaybackTransitionTests {
         try await fixture.start(at: 0)
         let previousMetadataVersion = fixture.controller.playbackItemMetadataVersion
         fixture.player.playbackTime = 180
+        let reconciliationContext = ModelContext(fixture.container)
 
         let result = await PlaybackReconciliationService.reconcileAndCaptureWaypoint(
             playbackController: fixture.controller,
-            context: fixture.context,
+            context: reconciliationContext,
             musicLibraryFetcher: EmptyMusicLibraryPlaybackHistoryFetcher()
         )
+        let verificationContext = ModelContext(fixture.container)
+        let persistedItem = try #require(try PlaylistItemRepository.item(
+            id: fixture.items[0].id,
+            in: verificationContext
+        ))
 
         #expect(result.countedLocalTrackIDs == [fixture.tracks[0].id.uuidString])
-        #expect(fixture.items[0].playthroughCount == 1)
+        #expect(persistedItem.playthroughCount == 1)
         #expect(fixture.controller.currentTrack?.playthroughCount == 1)
         #expect(fixture.controller.displayedPlaythroughCount == 1)
         #expect(fixture.controller.activePlaylistSnapshot?.rows.first {
             $0.localTrackID == fixture.tracks[0].id.uuidString
         }?.playthroughCount == 1)
         #expect(fixture.controller.playbackItemMetadataVersion > previousMetadataVersion)
-        #expect(try fixture.history().count == 1)
+        #expect(try verificationContext.fetch(FetchDescriptor<HistoryEvent>()).count == 1)
+    }
+
+    @Test("failed recovered playthrough save publishes nothing and remains retryable")
+    func failedRecoveredPlaythroughSavePublishesNothingAndRemainsRetryable() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 180
+        PlaybackWaypointStore.clear(flushImmediately: true)
+
+        let failedResult = await PlaybackReconciliationService.reconcileAndCaptureWaypoint(
+            playbackController: fixture.controller,
+            context: ModelContext(fixture.container),
+            musicLibraryFetcher: EmptyMusicLibraryPlaybackHistoryFetcher(),
+            saveChanges: { _ in throw ReconciliationTestFailure.expected }
+        )
+        let failedVerificationContext = ModelContext(fixture.container)
+        let unchangedItem = try #require(try PlaylistItemRepository.item(
+            id: fixture.items[0].id,
+            in: failedVerificationContext
+        ))
+
+        #expect(failedResult.countedLocalTrackIDs.isEmpty)
+        #expect(unchangedItem.playthroughCount == 0)
+        #expect(try failedVerificationContext.fetch(FetchDescriptor<HistoryEvent>()).isEmpty)
+        #expect(PlaybackWaypointStore.load() == nil)
+        #expect(fixture.controller.currentTrack?.playthroughCount == 0)
+        #expect(fixture.controller.activePlaylistSnapshot?.rows.first?.playthroughCount == 0)
+
+        let retryResult = await PlaybackReconciliationService.reconcileAndCaptureWaypoint(
+            playbackController: fixture.controller,
+            context: ModelContext(fixture.container),
+            musicLibraryFetcher: EmptyMusicLibraryPlaybackHistoryFetcher()
+        )
+        let retryVerificationContext = ModelContext(fixture.container)
+        let persistedItem = try #require(try PlaylistItemRepository.item(
+            id: fixture.items[0].id,
+            in: retryVerificationContext
+        ))
+
+        #expect(retryResult.countedLocalTrackIDs == [fixture.tracks[0].id.uuidString])
+        #expect(persistedItem.playthroughCount == 1)
+        #expect(try retryVerificationContext.fetch(FetchDescriptor<HistoryEvent>()).count == 1)
+        #expect(fixture.controller.currentTrack?.playthroughCount == 1)
     }
 
     @Test("recovered non-current playthroughs patch the active projection after player reconciliation")
@@ -330,17 +400,29 @@ struct PlaybackTransitionTests {
         fixture.player.advanceExternally()
         fixture.player.advanceExternally()
         fixture.player.playbackTime = 10
+        let reconciliationContext = ModelContext(fixture.container)
 
         let result = await PlaybackReconciliationService.reconcileAndCaptureWaypoint(
             playbackController: fixture.controller,
-            context: fixture.context,
+            context: reconciliationContext,
             musicLibraryFetcher: EmptyMusicLibraryPlaybackHistoryFetcher()
         )
+        let verificationContext = ModelContext(fixture.container)
+        let firstPersistedItem = try #require(try PlaylistItemRepository.item(
+            id: fixture.items[0].id,
+            in: verificationContext
+        ))
+        let secondPersistedItem = try #require(try PlaylistItemRepository.item(
+            id: fixture.items[1].id,
+            in: verificationContext
+        ))
 
         #expect(result.countedLocalTrackIDs == [
             fixture.tracks[0].id.uuidString,
             fixture.tracks[1].id.uuidString
         ])
+        #expect(firstPersistedItem.playthroughCount == 1)
+        #expect(secondPersistedItem.playthroughCount == 1)
         #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[2].id.rawValue)
         #expect(fixture.controller.activePlaylistSnapshot?.rows.first {
             $0.localTrackID == fixture.tracks[0].id.uuidString
@@ -351,7 +433,7 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.activePlaylistSnapshot?.rows.first {
             $0.localTrackID == fixture.tracks[2].id.uuidString
         }?.isCurrent == true)
-        #expect(try fixture.history().count == 2)
+        #expect(try verificationContext.fetch(FetchDescriptor<HistoryEvent>()).count == 2)
     }
 
     @Test("Next landing outside the realized queue clears stale playlist correlation")
@@ -540,6 +622,10 @@ private struct EmptyMusicLibraryPlaybackHistoryFetcher: MusicLibraryPlaybackHist
         _ = candidates
         return [:]
     }
+}
+
+private enum ReconciliationTestFailure: Error {
+    case expected
 }
 
 @MainActor
