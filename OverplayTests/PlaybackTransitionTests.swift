@@ -93,6 +93,25 @@ struct PlaybackTransitionTests {
         #expect(timedOut.controller.statusMessage == PlaybackTransitionError.confirmationTimedOut.localizedDescription)
     }
 
+    @Test("Next does not confirm when a temporarily missing outgoing entry reappears unchanged")
+    func temporarilyMissingOutgoingEntryDoesNotConfirmUnchangedNext() async throws {
+        let fixture = try makeFixture(maximumObservationCount: 3)
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 15
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        fixture.player.suppressCurrentEntryReporting = true
+        fixture.player.nextRevealsUnchangedEntry = true
+
+        await fixture.controller.next(settings: fixture.settings, context: fixture.context)
+
+        #expect(fixture.player.nextCallCount == 1)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
+        #expect(fixture.items[0].skipCount == 0)
+        #expect(try fixture.history().isEmpty)
+        #expect(fixture.controller.statusMessage == PlaybackTransitionError.confirmationTimedOut.localizedDescription)
+    }
+
     @Test("rapid Next rejects overlap and evaluates the outgoing track once")
     func rapidNextRejectsOverlapAndEvaluatesOutgoingOnce() async throws {
         let fixture = try makeFixture()
@@ -308,6 +327,8 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     var replacementConfirmationDelays: [Int] = []
     var clearCurrentEntryWhileReplacementPending = false
     var nextEntryOverride: MusicPlayer.Queue.Entry?
+    var suppressCurrentEntryReporting = false
+    var nextRevealsUnchangedEntry = false
     var blockNextCommand = false
     private(set) var nextCallCount = 0
 
@@ -317,6 +338,7 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     private var blockedNextContinuation: CheckedContinuation<Void, Never>?
 
     var currentEntry: MusicPlayer.Queue.Entry? {
+        guard !suppressCurrentEntryReporting else { return nil }
         if let pendingTransition {
             if pendingTransition.remainingReads == 0 {
                 currentEntryStorage = pendingTransition.entry
@@ -363,6 +385,11 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
         if nextFailuresRemaining > 0 {
             nextFailuresRemaining -= 1
             throw Failure.commandFailed
+        }
+        if nextRevealsUnchangedEntry {
+            nextRevealsUnchangedEntry = false
+            suppressCurrentEntryReporting = false
+            return
         }
         if let nextEntryOverride {
             self.nextEntryOverride = nil

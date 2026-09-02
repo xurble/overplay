@@ -512,9 +512,9 @@ final class PlaybackController {
         let currentEntry = player.currentEntry
         let realizedEntry = currentEntry.flatMap { currentEntry in
             activeQueueEntries.first { $0.queueEntryID == currentEntry.id }
-        }
+        } ?? activeQueueCurrentEntry
         return OutgoingPlaybackTransition(
-            entryID: currentEntry?.id,
+            entryID: currentEntry?.id ?? realizedEntry?.queueEntryID,
             musicItemID: currentEntry?.item?.id.rawValue
                 ?? realizedEntry?.queuedMusicItemID
                 ?? activeSession?.trackID
