@@ -1,3 +1,4 @@
+import CarPlay
 import Foundation
 import SwiftData
 import Testing
@@ -130,5 +131,50 @@ struct CarPlayLibrarySnapshotTests {
         )
 
         #expect(tracks.map(\.title) == ["Third", "First", "Second"])
+    }
+
+    @Test func activeControllerSnapshotPublishesUpdatedRowsWithoutAContextRefetch() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = ModelContext(container)
+        let playlist = PlaylistRecord(musicPlaylistID: "one", name: "Overplay")
+        let track = TrackRecord(title: "Current", artistName: "Artist")
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id)
+        context.insert(playlist)
+        context.insert(track)
+        context.insert(item)
+
+        let initial = ActivePlaylistSnapshot(
+            playlist: playlist,
+            items: [item],
+            tracks: [track],
+            playbackOrderState: PlaybackOrderState(
+                playerID: "main",
+                musicPlaylistID: playlist.musicPlaylistID,
+                orderedTrackIDs: [track.id.uuidString]
+            )
+        )
+        item.playthroughCount = 1
+        let updated = try #require(initial.updatingRow(for: item))
+
+        #expect(CarPlayLibrarySnapshot.trackSummaries(from: initial).first?.playthroughCount == 0)
+        #expect(CarPlayLibrarySnapshot.trackSummaries(from: updated).first?.playthroughCount == 1)
+    }
+
+    @Test func visibleCarPlayListUpdatesSectionsWithoutReplacingItsTemplate() throws {
+        let initialItem = CPListItem(text: "Before", detailText: nil)
+        let template = CPListTemplate(
+            title: "Overplay",
+            sections: [CPListSection(items: [initialItem])]
+        )
+        let replacementItem = CPListItem(text: "After", detailText: nil)
+
+        let updatedTemplate = CarPlayListTemplateUpdater.update(
+            template,
+            sections: [CPListSection(items: [replacementItem])]
+        )
+
+        #expect(updatedTemplate === template)
+        let visibleItem = try #require(template.sections.first?.items.first as? CPListItem)
+        #expect(visibleItem.text == "After")
     }
 }

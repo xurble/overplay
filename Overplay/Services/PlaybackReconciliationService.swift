@@ -111,8 +111,8 @@ enum PlaybackReconciliationService {
             )
         }
 
-        if let pointProven = outcome.pointProvenLocalTrackID, counted.contains(pointProven) {
-            playbackController.markActiveSessionPlaythroughCounted(localTrackID: pointProven)
+        for localTrackID in counted {
+            playbackController.markActiveSessionPlaythroughCounted(localTrackID: localTrackID)
         }
 
         saveWaypoint(
@@ -124,6 +124,15 @@ enum PlaybackReconciliationService {
             countedLocalTrackIDs: Set(counted),
             playbackController: playbackController
         )
+
+        if !counted.isEmpty {
+            await playbackController.reconcilePlayerState(context: context)
+            playbackController.publishReconciledPlaylistItemChanges(
+                localTrackIDs: counted,
+                playlistID: observation.playlistID,
+                context: context
+            )
+        }
 
         if !counted.isEmpty {
             TrackMetadataDiagnostics.log(

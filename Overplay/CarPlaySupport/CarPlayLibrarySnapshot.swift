@@ -29,4 +29,28 @@ enum CarPlayLibrarySnapshot {
             tracks: tracks
         ).trackSummaries(forPlaylistID: playlistID, playbackOrderState: playbackOrderState, scope: scope)
     }
+
+    /// Active playback surfaces consume the controller-owned snapshot so a
+    /// write performed in another SwiftData context is visible immediately.
+    static func trackSummaries(from snapshot: ActivePlaylistSnapshot) -> [TrackSummaryPresentation] {
+        snapshot.rows
+            .filter { row in
+                snapshot.playbackScope == .active ? !row.isEvicted : row.isEvicted
+            }
+            .map { row in
+                TrackSummaryPresentation(
+                    id: row.id,
+                    playlistID: row.playlistID,
+                    trackID: row.trackID,
+                    title: row.title,
+                    artistName: row.artistName,
+                    albumTitle: row.albumTitle,
+                    artworkURLString: row.artworkURLString,
+                    skipCount: row.skipCount,
+                    playthroughCount: row.playthroughCount,
+                    isPlayable: snapshot.playbackScope == .retired || row.isPlayable,
+                    isRetired: row.isEvicted
+                )
+            }
+    }
 }

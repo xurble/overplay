@@ -77,6 +77,9 @@ struct PlaybackTransitionTests {
         #expect(failed.controller.currentTrack?.id == failed.musicTracks[0].id.rawValue)
         #expect(failed.items[0].skipCount == 0)
         #expect(try failed.history().isEmpty)
+        #expect(failed.controller.isDeliveryStalled)
+        #expect(failed.controller.remoteCommandAvailability.canPlay)
+        #expect(!failed.controller.remoteCommandAvailability.canPause)
 
         let timedOut = try makeFixture(maximumObservationCount: 3)
         defer { timedOut.cleanUp() }
@@ -127,6 +130,8 @@ struct PlaybackTransitionTests {
         while fixture.player.nextCallCount == 0 {
             await Task.yield()
         }
+        #expect(fixture.controller.isPlaybackTransitionInFlight)
+        #expect(fixture.controller.remoteCommandAvailability == .unavailable)
         let second = Task { @MainActor in
             await fixture.controller.next(settings: fixture.settings, context: fixture.context)
         }
@@ -278,6 +283,75 @@ struct PlaybackTransitionTests {
         #expect(fixture.items[0].playthroughCount == 1)
         #expect(fixture.items[0].skipCount == 0)
         #expect(try fixture.history().count == 1)
+    }
+
+    @Test("recovered current playthrough immediately republishes controller metadata")
+    func recoveredCurrentPlaythroughRepublishesControllerMetadata() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let previousMetadataVersion = fixture.controller.playbackItemMetadataVersion
+        fixture.player.playbackTime = 180
+
+        let result = await PlaybackReconciliationService.reconcileAndCaptureWaypoint(
+            playbackController: fixture.controller,
+            context: fixture.context,
+            musicLibraryFetcher: EmptyMusicLibraryPlaybackHistoryFetcher()
+        )
+
+        #expect(result.countedLocalTrackIDs == [fixture.tracks[0].id.uuidString])
+        #expect(fixture.items[0].playthroughCount == 1)
+        #expect(fixture.controller.currentTrack?.playthroughCount == 1)
+        #expect(fixture.controller.displayedPlaythroughCount == 1)
+        #expect(fixture.controller.activePlaylistSnapshot?.rows.first {
+            $0.localTrackID == fixture.tracks[0].id.uuidString
+        }?.playthroughCount == 1)
+        #expect(fixture.controller.playbackItemMetadataVersion > previousMetadataVersion)
+        #expect(try fixture.history().count == 1)
+    }
+
+    @Test("recovered non-current playthroughs patch the active projection after player reconciliation")
+    func recoveredNonCurrentPlaythroughsPatchActiveProjection() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 170
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        PlaybackWaypointStore.save(
+            PlaybackWaypoint(
+                playlistID: fixture.playlist.musicPlaylistID,
+                localTrackID: fixture.tracks[0].id.uuidString,
+                positionSeconds: 170,
+                durationSeconds: 180,
+                recordedAt: Date().addingTimeInterval(-200)
+            ),
+            flushImmediately: true
+        )
+        fixture.player.advanceExternally()
+        fixture.player.advanceExternally()
+        fixture.player.playbackTime = 10
+
+        let result = await PlaybackReconciliationService.reconcileAndCaptureWaypoint(
+            playbackController: fixture.controller,
+            context: fixture.context,
+            musicLibraryFetcher: EmptyMusicLibraryPlaybackHistoryFetcher()
+        )
+
+        #expect(result.countedLocalTrackIDs == [
+            fixture.tracks[0].id.uuidString,
+            fixture.tracks[1].id.uuidString
+        ])
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[2].id.rawValue)
+        #expect(fixture.controller.activePlaylistSnapshot?.rows.first {
+            $0.localTrackID == fixture.tracks[0].id.uuidString
+        }?.playthroughCount == 1)
+        #expect(fixture.controller.activePlaylistSnapshot?.rows.first {
+            $0.localTrackID == fixture.tracks[1].id.uuidString
+        }?.playthroughCount == 1)
+        #expect(fixture.controller.activePlaylistSnapshot?.rows.first {
+            $0.localTrackID == fixture.tracks[2].id.uuidString
+        }?.isCurrent == true)
+        #expect(try fixture.history().count == 2)
     }
 
     @Test("Next landing outside the realized queue clears stale playlist correlation")
@@ -459,6 +533,16 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
 }
 
 @MainActor
+private struct EmptyMusicLibraryPlaybackHistoryFetcher: MusicLibraryPlaybackHistoryFetching {
+    func snapshots(
+        for candidates: [MusicLibraryPlaybackCandidate]
+    ) async throws -> [String: MusicLibraryPlaybackSnapshot] {
+        _ = candidates
+        return [:]
+    }
+}
+
+@MainActor
 private struct PlaybackTransitionFixture {
     struct AddedPlaylist {
         var playlist: PlaylistRecord
@@ -506,6 +590,7 @@ private struct PlaybackTransitionFixture {
             flushImmediately: true
         )
         LocalPlaybackStateStore.clear(flushImmediately: true)
+        PlaybackWaypointStore.clear(flushImmediately: true)
     }
 
     static func insertPlaylist(
