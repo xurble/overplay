@@ -36,50 +36,78 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
     }
 
     func replaceQueue(with materialization: PlaybackQueueMaterialization) {
-        player.queue = ApplicationMusicPlayer.Queue(
-            materialization.queueEntries,
-            startingAt: materialization.startingEntry
-        )
+        MusicKitActivityLog.shared.measure(
+            .queueReplace,
+            magnitude: Double(materialization.queueEntries.count),
+            detail: materialization.startingEntry == nil ? "no starting entry" : nil
+        ) {
+            player.queue = ApplicationMusicPlayer.Queue(
+                materialization.queueEntries,
+                startingAt: materialization.startingEntry
+            )
+        }
     }
 
     func prepareToPlay() async throws {
-        try await player.prepareToPlay()
+        try await MusicKitActivityLog.shared.measure(.playerPrepare) {
+            try await player.prepareToPlay()
+        }
     }
 
     func play() async throws {
-        try await player.play()
+        try await MusicKitActivityLog.shared.measure(.playerPlay) {
+            try await player.play()
+        }
     }
 
     func pause() {
-        player.pause()
+        MusicKitActivityLog.shared.measure(.playerPause) {
+            player.pause()
+        }
     }
 
     func skipToNextEntry() async throws {
-        try await player.skipToNextEntry()
+        try await MusicKitActivityLog.shared.measure(.playerSkipNext) {
+            try await player.skipToNextEntry()
+        }
     }
 
     func skipToPreviousEntry() async throws {
-        try await player.skipToPreviousEntry()
+        try await MusicKitActivityLog.shared.measure(.playerSkipPrevious) {
+            try await player.skipToPreviousEntry()
+        }
     }
 
     /// Jumps inside the queue that is already loaded, so everything after the
     /// target entry survives. Rebuilding the queue would lose that order.
     func skipToEntry(withID entryID: String) async throws {
-        guard let entry = player.queue.entries.first(where: { $0.id == entryID }) else {
-            throw PlaybackQueueEntryError.entryNotInQueue
-        }
+        try await MusicKitActivityLog.shared.measure(
+            .playerSkipToEntry,
+            magnitude: Double(player.queue.entries.count)
+        ) {
+            guard let entry = player.queue.entries.first(where: { $0.id == entryID }) else {
+                throw PlaybackQueueEntryError.entryNotInQueue
+            }
 
-        player.queue.currentEntry = entry
-        try await player.play()
+            player.queue.currentEntry = entry
+            try await player.play()
+        }
     }
 
     func appendToQueue(_ tracks: [Track]) async throws {
-        try await player.queue.insert(tracks, position: .tail)
+        try await MusicKitActivityLog.shared.measure(
+            .queueAppend,
+            magnitude: Double(tracks.count)
+        ) {
+            try await player.queue.insert(tracks, position: .tail)
+        }
     }
 
     func disablePlaybackModes() {
-        player.state.shuffleMode = .off
-        player.state.repeatMode = .none
+        MusicKitActivityLog.shared.measure(.playerModeReset) {
+            player.state.shuffleMode = .off
+            player.state.repeatMode = .none
+        }
     }
 }
 

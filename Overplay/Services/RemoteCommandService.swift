@@ -82,6 +82,7 @@ final class RemoteCommandService {
         syncPlaybackState(from: playbackController)
 
         targetTokens.append(commandCenter.playCommand.addTarget { [weak self] _ in
+            Self.recordRemoteCommand("play")
             guard let self, let playbackController = self.playbackController, let context = self.context else {
                 return .commandFailed
             }
@@ -98,6 +99,7 @@ final class RemoteCommandService {
             return .success
         })
         targetTokens.append(commandCenter.pauseCommand.addTarget { [weak self] _ in
+            Self.recordRemoteCommand("pause")
             guard let playbackController = self?.playbackController else {
                 return .commandFailed
             }
@@ -108,6 +110,7 @@ final class RemoteCommandService {
             return .success
         })
         targetTokens.append(commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
+            Self.recordRemoteCommand("togglePlayPause")
             guard let self, let playbackController = self.playbackController, let context = self.context else {
                 return .commandFailed
             }
@@ -129,6 +132,7 @@ final class RemoteCommandService {
             return .success
         })
         targetTokens.append(commandCenter.nextTrackCommand.addTarget { [weak self] _ in
+            Self.recordRemoteCommand("nextTrack")
             guard let self, let playbackController = self.playbackController, let context = self.context else {
                 return .commandFailed
             }
@@ -138,6 +142,7 @@ final class RemoteCommandService {
             )
         })
         targetTokens.append(commandCenter.previousTrackCommand.addTarget { [weak self] _ in
+            Self.recordRemoteCommand("previousTrack")
             guard let self, let playbackController = self.playbackController, let context = self.context else {
                 return .commandFailed
             }
@@ -154,6 +159,7 @@ final class RemoteCommandService {
             return .success
         })
         targetTokens.append(commandCenter.changeShuffleModeCommand.addTarget { [weak self] event in
+            Self.recordRemoteCommand("changeShuffleMode")
             guard let event = event as? MPChangeShuffleModeCommandEvent else {
                 return .commandFailed
             }
@@ -177,6 +183,17 @@ final class RemoteCommandService {
             return .success
         })
         startPlaybackStateObservation()
+    }
+
+    /// Inbound commands arrive from the Lock Screen, Control Center,
+    /// CarPlay, AirPods, and media keys. Recording them separates
+    /// externally driven playback churn from Overplay's own UI.
+    private static func recordRemoteCommand(_ name: String) {
+        MusicKitActivityLog.shared.record(
+            .remoteCommandReceived,
+            detail: name,
+            notes: [.externalSurface]
+        )
     }
 
     func handleNextCommand(

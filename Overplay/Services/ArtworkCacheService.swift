@@ -183,11 +183,49 @@ actor ArtworkCacheService {
     }
 
     private static func download(from url: URL) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(from: url)
-        if let httpResponse = response as? HTTPURLResponse,
-           !(200..<300).contains(httpResponse.statusCode) {
+        let startedAt = Date.now
+        let started = ContinuousClock.now
+
+        func record(magnitude: Double?, detail: String?, error: Error?) {
+            MusicKitActivityLog.shared.record(
+                .artworkDownload,
+                startedAt: startedAt,
+                duration: started.duration(to: .now),
+                magnitude: magnitude,
+                detail: detail,
+                error: error
+            )
+        }
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(from: url)
+        } catch {
+            record(magnitude: nil, detail: nil, error: error)
+            throw error
+        }
+
+        let statusCode = (response as? HTTPURLResponse)?.statusCode
+        // Record the HTTP status. URLError(.badServerResponse) discards it,
+        // and a throttled or refused status from Apple's artwork CDN is
+        // exactly the signal worth keeping.
+        if let statusCode, !(200..<300).contains(statusCode) {
+            record(
+                magnitude: Double(data.count),
+                detail: "HTTP \(statusCode)",
+                error: NSError(
+                    domain: "OverplayArtworkHTTP",
+                    code: statusCode,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "Artwork download returned HTTP \(statusCode)."
+                    ]
+                )
+            )
             throw URLError(.badServerResponse)
         }
+
+        record(magnitude: Double(data.count), detail: statusCode.map { "HTTP \($0)" }, error: nil)
         return data
     }
 

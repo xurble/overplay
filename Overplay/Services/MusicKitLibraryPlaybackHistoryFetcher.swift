@@ -54,7 +54,13 @@ struct MusicKitLibraryPlaybackHistoryFetcher: MusicLibraryPlaybackHistoryFetchin
         )
         request.limit = requestedIDs.count
 
-        let tracks = try await request.response().items
+        let tracks = try await MusicKitActivityLog.shared.measure(
+            .libraryTrackQuery,
+            magnitude: Double(requestedIDs.count),
+            detail: "requested \(requestedIDs.count) ids"
+        ) {
+            try await request.response().items
+        }
         var snapshotsByLocalTrackID: [String: MusicLibraryPlaybackSnapshot] = [:]
         for track in tracks {
             let identity = MusicTrackIdentity.ids(for: track)

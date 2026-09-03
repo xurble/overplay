@@ -24,7 +24,16 @@ struct MusicKitDiagnosticsService {
         await probeSelectedPlaylist(settings: settings, context: context, into: &report)
         MusicKitDiagnosticsPlayerProbe().addDiagnostics(into: &report)
 
-        return report.text
+        // The probes above describe the current state; the recorded call
+        // activity describes how Overplay has been treating Apple Music,
+        // which is what a system-wide Apple Music failure needs.
+        return report.text + "\n\n" + activityReport.text
+    }
+
+    /// The recorded Apple Music call activity, readable on its own without
+    /// running any live probes.
+    var activityReport: MusicKitActivityReport.Summary {
+        MusicKitActivityLog.shared.report()
     }
 
     private func probeAuthorization(into report: inout MusicKitDiagnosticsReport) {

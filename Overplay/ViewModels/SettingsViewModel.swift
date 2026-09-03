@@ -11,6 +11,8 @@ final class SettingsViewModel {
         var nukeDatabase: (ModelContext) throws -> Void
         var clearPlaybackStateAfterDatabaseReset: () -> Void
         var runMusicKitDiagnostics: (OverplaySettings, ModelContext) async -> String
+        var loadMusicKitActivityReport: () -> MusicKitActivityReport.Summary
+        var resetMusicKitActivityLog: () -> Void
 
         static func live(playbackController: PlaybackController) -> Self {
             Self(
@@ -28,6 +30,12 @@ final class SettingsViewModel {
                 },
                 runMusicKitDiagnostics: { settings, context in
                     await MusicKitDiagnosticsService().run(settings: settings, context: context)
+                },
+                loadMusicKitActivityReport: {
+                    MusicKitDiagnosticsService().activityReport
+                },
+                resetMusicKitActivityLog: {
+                    MusicKitActivityLog.shared.reset()
                 }
             )
         }
@@ -36,6 +44,7 @@ final class SettingsViewModel {
     var didNukeDatabase = false
     var isRunningMusicKitDiagnostics = false
     var musicKitDiagnosticsReport: String?
+    var musicKitActivityReport: MusicKitActivityReport.Summary?
     var message: String?
 
     func saveIfNeeded(
@@ -86,5 +95,19 @@ final class SettingsViewModel {
         defer { isRunningMusicKitDiagnostics = false }
 
         musicKitDiagnosticsReport = await dependencies.runMusicKitDiagnostics(settings, context)
+        refreshMusicKitActivityReport(dependencies: dependencies)
+    }
+
+    /// Reads the recorded Apple Music call activity. Makes no Apple Music
+    /// calls of its own, so it is safe to run on appearance and to refresh
+    /// repeatedly while investigating.
+    func refreshMusicKitActivityReport(dependencies: Dependencies) {
+        musicKitActivityReport = dependencies.loadMusicKitActivityReport()
+    }
+
+    func resetMusicKitActivityLog(dependencies: Dependencies) {
+        dependencies.resetMusicKitActivityLog()
+        refreshMusicKitActivityReport(dependencies: dependencies)
+        message = "Apple Music call activity cleared."
     }
 }

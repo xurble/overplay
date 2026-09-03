@@ -94,6 +94,13 @@ struct OverplayApp: App {
     private func handleScenePhaseChange(_ phase: ScenePhase) async {
         guard !Self.isRunningTests else { return }
         guard phase == .background || phase == .active else { return }
+
+        if phase == .background {
+            // Persist recorded Apple Music activity now: an incident that
+            // ends in a device reboot must not lose the run-up to it.
+            MusicKitActivityLog.shared.flush()
+        }
+
         guard let context = AppRuntime.shared.makeModelContext() else { return }
 
         if phase == .background {
