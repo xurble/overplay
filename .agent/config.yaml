@@ -2,9 +2,11 @@ version: 1
 project:
   type: ios
   profile: normal
+commands:
+  check: "xcodebuild test -project Overplay.xcodeproj -scheme Overplay -destination 'platform=iOS Simulator,name=iPhone 17 Pro'"
 github:
-  enabled: false
-  use_issues: false
+  enabled: true
+  use_issues: true
   merge_method: squash
   squash_merge_commit_message: pr-title-description
   delete_branch_on_merge: true
