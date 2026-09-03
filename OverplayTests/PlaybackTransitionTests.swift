@@ -129,6 +129,131 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
     }
 
+    @Test("an external queue replacement hands the track back to the caller")
+    func externalQueueReplacementHandsTheTrackBackToTheCaller() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let other = try fixture.addPlaylist(prefix: "other", trackCount: 3)
+
+        // Apple Music switches queues behind our back: the controller still
+        // holds queue entries the player no longer has.
+        let replacement = try PlaybackQueueOrchestrator.orderedCachedQueueEntries(
+            for: other.playlist.musicPlaylistID,
+            playerID: fixture.playerID,
+            startingTrackID: nil,
+            scope: .active,
+            in: fixture.context
+        )
+        fixture.player.replaceQueue(
+            with: PlaybackQueueMaterializer.materialize(replacement, startingAt: nil)
+        )
+
+        let didSkip = await fixture.controller.playTrackInCurrentQueue(
+            localTrackID: fixture.tracks[2].id.uuidString,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        #expect(!didSkip)
+        #expect(fixture.player.skipToEntryCallCount == 0)
+        #expect(!fixture.controller.isDeliveryStalled)
+    }
+
+    @Test("a failed in-queue skip reports a stall and keeps the outgoing track")
+    func failedInQueueSkipReportsStallAndKeepsOutgoingTrack() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 15
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        fixture.player.skipToEntryFailuresRemaining = 1
+
+        let didSkip = await fixture.controller.playTrackInCurrentQueue(
+            localTrackID: fixture.tracks[2].id.uuidString,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        #expect(didSkip)
+        #expect(fixture.controller.isDeliveryStalled)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
+        #expect(fixture.items[0].skipCount == 0)
+        #expect(try fixture.history().isEmpty)
+    }
+
+    @Test("a timed-out in-queue skip commits no history and keeps the outgoing track")
+    func timedOutInQueueSkipCommitsNoHistoryAndKeepsOutgoingTrack() async throws {
+        let fixture = try makeFixture(maximumObservationCount: 2)
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 15
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        fixture.player.skipToEntryConfirmationDelays = [5]
+
+        let didSkip = await fixture.controller.playTrackInCurrentQueue(
+            localTrackID: fixture.tracks[2].id.uuidString,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        #expect(didSkip)
+        #expect(fixture.controller.statusMessage == PlaybackTransitionError.confirmationTimedOut.localizedDescription)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
+        #expect(fixture.items[0].skipCount == 0)
+        #expect(try fixture.history().isEmpty)
+    }
+
+    @Test("a failed shuffle reports failure so CarPlay does not navigate")
+    func failedShuffleReportsFailure() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playFailuresRemaining = 1
+
+        let didShuffle = await fixture.controller.shuffleAndPlay(
+            fixture.playlist,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        #expect(!didShuffle)
+        #expect(fixture.controller.statusMessage != nil)
+    }
+
+    @Test("a timed-out shuffle reports failure so CarPlay does not navigate")
+    func timedOutShuffleReportsFailure() async throws {
+        let fixture = try makeFixture(maximumObservationCount: 2)
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.replacementConfirmationDelays = [5]
+
+        let didShuffle = await fixture.controller.shuffleAndPlay(
+            fixture.playlist,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        #expect(!didShuffle)
+        #expect(fixture.controller.statusMessage == PlaybackTransitionError.confirmationTimedOut.localizedDescription)
+    }
+
+    @Test("shuffling a playlist with no playable tracks reports failure")
+    func shufflingAPlaylistWithNoPlayableTracksReportsFailure() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        let empty = try fixture.addPlaylist(prefix: "empty", trackCount: 0)
+
+        let didShuffle = await fixture.controller.shuffleAndPlay(
+            empty.playlist,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        #expect(!didShuffle)
+        #expect(fixture.controller.statusMessage != nil)
+    }
+
     @Test("shuffling a playlist that is not playing starts it from the new first track")
     func shufflingAnotherPlaylistStartsFromTheNewFirstTrack() async throws {
         let fixture = try makeFixture()
@@ -693,6 +818,9 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     }
 
     func skipToEntry(withID entryID: String) async throws {
+        // Counted as an attempt, so a test can tell "never tried" from
+        // "tried and was rejected".
+        skipToEntryCallCount += 1
         if skipToEntryFailuresRemaining > 0 {
             skipToEntryFailuresRemaining -= 1
             throw Failure.commandFailed
@@ -700,7 +828,6 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
         guard let entry = entries.first(where: { $0.id == entryID }) else {
             throw PlaybackQueueEntryError.entryNotInQueue
         }
-        skipToEntryCallCount += 1
         let delay = skipToEntryConfirmationDelays.isEmpty ? 0 : skipToEntryConfirmationDelays.removeFirst()
         scheduleTransition(to: entry, afterReads: delay)
     }

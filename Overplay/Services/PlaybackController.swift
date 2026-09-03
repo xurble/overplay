@@ -446,11 +446,15 @@ final class PlaybackController {
         settings: OverplaySettings,
         context: ModelContext
     ) async -> Bool {
+        // Reconcile first: an external queue replacement leaves
+        // activeQueueEntries describing a queue the player no longer holds, and
+        // skipping to an entry from it would fail as a stall instead of
+        // letting the caller build a fresh queue.
+        await refresh(context: context)
         guard let target = activeQueueEntries.first(where: { $0.localTrackID == localTrackID }) else {
             return false
         }
 
-        await refresh(context: context)
         let outgoing = captureOutgoingPlaybackTransition()
         guard outgoing.entryID != target.queueEntryID else {
             // Already the live entry: resume it rather than restart it.
@@ -481,6 +485,11 @@ final class PlaybackController {
             await refresh(context: context)
         case .failed(let error):
             await refresh(context: context)
+            // The queue moved under us between reconciliation and the jump —
+            // hand back to the caller rather than reporting a stall.
+            guard (error as? PlaybackQueueEntryError) != .entryNotInQueue else {
+                return false
+            }
             reportDeliveryFailure(message: musicPlaybackFailureMessage(for: error))
         case .timedOut:
             await refresh(context: context)

@@ -884,7 +884,9 @@ Selecting a track never restarts the track that is already playing. When its
 playlist is already the live queue, selection skips to that track inside the
 existing queue so the order after it survives; otherwise it builds a fresh
 queue starting from that track. The root menu offers no manual refresh: every
-list updates in place from shared playback state.
+list updates in place from shared playback state and from library changes made
+on the phone. A playback action that fails must report that failure rather than
+presenting Now Playing as though it succeeded.
 
 Platform notes:
 

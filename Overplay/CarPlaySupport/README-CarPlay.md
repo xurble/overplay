@@ -43,7 +43,20 @@ Tapping a track routes through `CarPlayNavigationPolicy.trackIntent`:
 - Anything else builds a fresh queue from that track.
 
 Playback, shuffle, and in-queue skips all run through `PlaybackController`, so
-the same behavior is available to the phone UI and the system transports.
+the same behavior is available to the phone UI and the system transports. The
+controller reports these failures by returning `false` and setting
+`statusMessage` rather than throwing, so CarPlay checks the result and shows an
+alert instead of navigating to a player that is not playing what was asked for.
+
+The `Overplay` row resolves the current One True Playlist when it is tapped
+rather than trusting the row it was drawn from, because the phone can change
+that role while the menu is on screen.
+
+There is no manual refresh. Visible lists are rebuilt from two triggers: the
+playback observation below, and a `ModelContext.didSave` observation that
+catches phone-side library changes — linking a playlist, changing the One True
+Playlist, or a sync updating counts — which touch SwiftData without touching
+playback state.
 
 CarPlay browsing intentionally exposes only Active playlist contents. If the
 user starts a Retired playlist context from iOS and then uses CarPlay, CarPlay

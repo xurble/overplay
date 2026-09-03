@@ -40,6 +40,7 @@ final class CarPlayCoordinator: NSObject {
     private weak var rootListTemplate: CPListTemplate?
     private weak var visiblePlaylistTemplate: CPListTemplate?
     private var didPresentDeliveryStallAlert = false
+    private var libraryChangeObserver: NSObjectProtocol?
 
     func connect(interfaceController: CPInterfaceController, runtime: AppRuntime) {
         self.interfaceController = interfaceController
@@ -55,6 +56,7 @@ final class CarPlayCoordinator: NSObject {
 
         configureNowPlayingTemplate()
         startPlaybackObservation()
+        startLibraryChangeObservation()
         setRootTemplate(animated: false)
 
         refreshTask?.cancel()
@@ -69,6 +71,7 @@ final class CarPlayCoordinator: NSObject {
         refreshTask?.cancel()
         refreshTask = nil
         stopPlaybackObservation()
+        stopLibraryChangeObservation()
 
         // Lock Screen handlers keep running after CarPlay disconnects —
         // re-point them at the main context instead of leaving them on the
@@ -155,7 +158,7 @@ final class CarPlayCoordinator: NSObject {
         item.isPlaying = isCurrentPlaylist(summary)
         item.handler = { [weak self] _, completion in
             Task { @MainActor in
-                await self?.startOverplay(summary)
+                await self?.startOverplay()
                 completion()
             }
         }
@@ -180,22 +183,41 @@ final class CarPlayCoordinator: NSObject {
         )
     }
 
-    private func startOverplay(_ summary: PlaylistSummaryPresentation) async {
+    /// Resolves the One True Playlist when tapped rather than trusting the row
+    /// it was built from — the phone can change the role while this list is up.
+    private func startOverplay() async {
         guard let playbackController, let modelContext else { return }
 
         do {
-            switch overplayIntent(for: summary) {
+            guard let playlist = try PlaylistRepository.oneTruePlaylist(in: modelContext) else {
+                refreshLibraryLists()
+                showError(title: "Nothing to play", message: "Choose a One True Playlist in Overplay on iPhone.")
+                return
+            }
+
+            let intent = CarPlayNavigationPolicy.overplayIntent(
+                oneTruePlaylistMusicID: playlist.musicPlaylistID,
+                currentPlaylistID: playbackController.currentPlaylistID,
+                hasCurrentTrack: playbackController.currentTrack != nil,
+                isPlaying: playbackController.isPlaying
+            )
+
+            switch intent {
             case .showPlayer:
                 break
             case .resumeAndShowPlayer:
                 await playbackController.play(context: modelContext)
             case .shuffleAndPlay:
-                guard let playlist = try PlaylistRepository.playlist(id: summary.id, in: modelContext) else {
-                    setRootTemplate(animated: true)
+                let settings = try SettingsRepository.settings(in: modelContext)
+                guard await playbackController.shuffleAndPlay(
+                    playlist,
+                    settings: settings,
+                    context: modelContext
+                ) else {
+                    refreshAfterTrackAction()
+                    showPlaybackFailure(title: "Playback failed")
                     return
                 }
-                let settings = try SettingsRepository.settings(in: modelContext)
-                await playbackController.shuffleAndPlay(playlist, settings: settings, context: modelContext)
             }
 
             refreshAfterTrackAction()
@@ -203,6 +225,15 @@ final class CarPlayCoordinator: NSObject {
         } catch {
             showError(title: "Playback failed", message: error.localizedDescription)
         }
+    }
+
+    /// Shuffle and resume report failure through the controller rather than by
+    /// throwing, so surface it instead of navigating to a stale player.
+    private func showPlaybackFailure(title: String) {
+        showError(
+            title: title,
+            message: playbackController?.statusMessage ?? "Apple Music playback could not start."
+        )
     }
 
     private func playlistItem(for summary: PlaylistSummaryPresentation) -> CPListItem {
@@ -351,8 +382,17 @@ final class CarPlayCoordinator: NSObject {
 
         do {
             let settings = try SettingsRepository.settings(in: modelContext)
-            await playbackController.shuffleAndPlay(playlist, scope: scope, settings: settings, context: modelContext)
+            let didShuffle = await playbackController.shuffleAndPlay(
+                playlist,
+                scope: scope,
+                settings: settings,
+                context: modelContext
+            )
             refreshAfterTrackAction()
+            guard didShuffle else {
+                showPlaybackFailure(title: "Shuffle failed")
+                return
+            }
             showNowPlaying()
         } catch {
             showError(title: "Shuffle failed", message: error.localizedDescription)
@@ -428,6 +468,30 @@ final class CarPlayCoordinator: NSObject {
         nowPlayingTemplate.isUpNextButtonEnabled = true
         nowPlayingTemplate.isAlbumArtistButtonEnabled = false
         updateNowPlayingButtons(force: true)
+    }
+
+    /// Playlist linking, One True Playlist role changes, and sync only touch
+    /// SwiftData, which the playback observation cannot see. Without this the
+    /// root menu could stay stale until playback changed or CarPlay reconnected
+    /// — which is what the manual Refresh button used to paper over.
+    private func startLibraryChangeObservation() {
+        stopLibraryChangeObservation()
+        libraryChangeObserver = NotificationCenter.default.addObserver(
+            forName: ModelContext.didSave,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.refreshLibraryLists()
+            }
+        }
+    }
+
+    private func stopLibraryChangeObservation() {
+        if let libraryChangeObserver {
+            NotificationCenter.default.removeObserver(libraryChangeObserver)
+        }
+        libraryChangeObserver = nil
     }
 
     private func startPlaybackObservation() {

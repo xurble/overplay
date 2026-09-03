@@ -44,6 +44,34 @@ struct CarPlayLibrarySnapshotTests {
         #expect(summaries.last?.playableTrackCount == 0)
     }
 
+    @Test("phone-side library changes are visible to the CarPlay context")
+    func phoneSideLibraryChangesAreVisibleToTheCarPlayContext() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let phoneContext = ModelContext(container)
+        let carPlayContext = ModelContext(container)
+
+        let original = PlaylistRecord(musicPlaylistID: "one", name: "Keepers", role: .oneTruePlaylist)
+        phoneContext.insert(original)
+        try phoneContext.save()
+
+        #expect(try CarPlayLibrarySnapshot.playlistSummaries(in: carPlayContext).map(\.title) == ["Keepers"])
+
+        // Linking a playlist on the phone must reach the CarPlay root.
+        let linked = PlaylistRecord(musicPlaylistID: "triage", name: "Inbox", role: .triage)
+        phoneContext.insert(linked)
+        try phoneContext.save()
+
+        #expect(try CarPlayLibrarySnapshot.playlistSummaries(in: carPlayContext).map(\.title) == ["Keepers", "Inbox"])
+
+        // So must a One True Playlist role change, or the Overplay row would
+        // start the former One True Playlist.
+        original.role = .triage
+        linked.role = .oneTruePlaylist
+        try phoneContext.save()
+
+        #expect(try PlaylistRepository.oneTruePlaylist(in: carPlayContext)?.musicPlaylistID == "triage")
+    }
+
     @Test func trackSummariesIncludePlayableTracksInCreatedOrder() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = ModelContext(container)
