@@ -593,7 +593,7 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func makeEvictButton() -> CPNowPlayingImageButton {
-        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "trash.fill")) { [weak self] _ in
+        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "trash")) { [weak self] _ in
             Task { @MainActor in
                 await self?.evictCurrentTrack()
             }
@@ -603,7 +603,7 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func makeRestoreButton() -> CPNowPlayingImageButton {
-        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "arrow.uturn.backward.circle.fill")) { [weak self] _ in
+        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "arrow.uturn.backward.circle")) { [weak self] _ in
             Task { @MainActor in
                 self?.restoreCurrentTrack()
             }
@@ -613,7 +613,7 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func makePromoteButton() -> CPNowPlayingImageButton {
-        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "star.fill")) { [weak self] _ in
+        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "star")) { [weak self] _ in
             Task { @MainActor in
                 await self?.promoteCurrentTrack()
             }
@@ -623,7 +623,7 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func buttonImage(systemImage: String) -> UIImage {
-        let configuration = UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold)
+        let configuration = UIImage.SymbolConfiguration(pointSize: 28, weight: .regular)
         return (UIImage(systemName: systemImage, withConfiguration: configuration) ?? UIImage())
             .withRenderingMode(.alwaysTemplate)
     }
