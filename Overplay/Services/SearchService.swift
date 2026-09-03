@@ -38,7 +38,12 @@ final class SearchService {
         do {
             var request = MusicCatalogSearchRequest(term: trimmedTerm, types: [Song.self])
             request.limit = 20
-            let response = try await request.response()
+            let response = try await MusicKitActivityLog.shared.measure(
+                .catalogSearch,
+                resultMagnitude: { Double($0.songs.count) }
+            ) {
+                try await request.response()
+            }
             let songs = Array(response.songs)
             songsByID = songs.firstValueDictionary(keyedBy: { $0.id.rawValue })
             results = songs.map {
@@ -64,7 +69,9 @@ final class SearchService {
         }
 
         let playlist = try await playlist(for: playlistID)
-        try await MusicLibrary.shared.add(song, to: playlist)
+        try await MusicKitActivityLog.shared.measure(.libraryPlaylistAddItem) {
+            try await MusicLibrary.shared.add(song, to: playlist)
+        }
         return playlist.name
     }
 

@@ -113,14 +113,20 @@ struct SettingsViewModelTests {
         resetStats: @escaping (ModelContext) throws -> Void = { _ in },
         nukeDatabase: @escaping (ModelContext) throws -> Void = { _ in },
         clearPlaybackStateAfterDatabaseReset: @escaping () -> Void = { },
-        runMusicKitDiagnostics: @escaping (OverplaySettings, ModelContext) async -> String = { _, _ in "" }
+        runMusicKitDiagnostics: @escaping (OverplaySettings, ModelContext) async -> String = { _, _ in "" },
+        loadMusicKitActivityReport: @escaping () -> MusicKitActivityReport.Summary = {
+            MusicKitActivityReport.summary(for: MusicKitActivitySnapshot(), now: .now)
+        },
+        resetMusicKitActivityLog: @escaping () -> Void = { }
     ) -> SettingsViewModel.Dependencies {
         SettingsViewModel.Dependencies(
             saveSettings: saveSettings,
             resetStats: resetStats,
             nukeDatabase: nukeDatabase,
             clearPlaybackStateAfterDatabaseReset: clearPlaybackStateAfterDatabaseReset,
-            runMusicKitDiagnostics: runMusicKitDiagnostics
+            runMusicKitDiagnostics: runMusicKitDiagnostics,
+            loadMusicKitActivityReport: loadMusicKitActivityReport,
+            resetMusicKitActivityLog: resetMusicKitActivityLog
         )
     }
 }

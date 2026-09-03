@@ -134,6 +134,22 @@ final class PlaybackController {
         return musicKitNowPlayingTrack ?? currentTrack
     }
 
+    /// Publishes system Now Playing metadata for the current display track.
+    ///
+    /// `ownsPlayback` is read from the shared player rather than from cached
+    /// state: Overplay may hold a restored display track (at launch, or after
+    /// the monitor suspended) while the shared player holds nothing, and in
+    /// that case it must not claim the system Now Playing session from
+    /// whatever really is playing.
+    private func publishNowPlayingMetadata(isPlaying: Bool) {
+        NowPlayingMetadataService.update(
+            track: nowPlayingDisplayTrack,
+            elapsed: elapsedSeconds,
+            isPlaying: isPlaying,
+            ownsPlayback: player.currentEntry != nil
+        )
+    }
+
     var nowPlayingDisplayLocalTrackID: String? {
         guard currentPlaylistID != nil else { return nil }
         return activeQueueCurrentLocalTrackID
@@ -331,6 +347,7 @@ final class PlaybackController {
     }
 
     func clearLocalStateAfterDatabaseReset() {
+        NowPlayingMetadataService.resetPublishedState()
         player.pause()
         currentTrack = nil
         musicKitNowPlayingTrack = nil
@@ -363,7 +380,7 @@ final class PlaybackController {
         LocalPlaybackStateStore.clear(flushImmediately: true)
         PlaybackWaypointStore.clear(flushImmediately: true)
         PlaybackIdentityStore.clearAll(flushImmediately: true)
-        NowPlayingMetadataService.update(track: nil, elapsed: 0, isPlaying: false)
+        NowPlayingMetadataService.update(track: nil, elapsed: 0, isPlaying: false, ownsPlayback: false)
     }
 
     func restoreLocalPlaybackDisplay(context: ModelContext) {
@@ -947,7 +964,7 @@ final class PlaybackController {
             persistLocalPlaybackState(musicItemID: musicItemID, forceFlush: true)
         }
         updateMusicKitNowPlayingTrack()
-        NowPlayingMetadataService.update(track: nowPlayingDisplayTrack, elapsed: elapsedSeconds, isPlaying: false)
+        publishNowPlayingMetadata(isPlaying: false)
     }
 
     func next(settings: OverplaySettings, context: ModelContext) async {
@@ -1371,7 +1388,7 @@ final class PlaybackController {
         if isPerformingTransition {
             elapsedSeconds = player.playbackTime
             isPlaying = player.playbackStatus == .playing
-            NowPlayingMetadataService.update(track: nowPlayingDisplayTrack, elapsed: elapsedSeconds, isPlaying: isPlaying)
+            publishNowPlayingMetadata(isPlaying: isPlaying)
             return
         }
 
@@ -1525,7 +1542,7 @@ final class PlaybackController {
         }
 
         logPlaybackRefreshIfNeeded(identity: identity)
-        NowPlayingMetadataService.update(track: nowPlayingDisplayTrack, elapsed: elapsedSeconds, isPlaying: isPlaying)
+        publishNowPlayingMetadata(isPlaying: isPlaying)
         if currentPlaylistID == nil {
             activePlaylistSnapshot = nil
         } else if !activePlaylistSnapshotNeedsRebuild,
@@ -2460,7 +2477,10 @@ final class PlaybackController {
         )
 
         if deliveryStallState.isProgressing {
-            clearDeliveryFailure()
+            // Surfaced failures clear on the first good tick so the UI is
+            // not left lying, but the recovery budget only refills once
+            // delivery has stayed healthy — see the policy for why.
+            clearDeliveryFailure(refillRecoveryBudget: deliveryStallState.hasRecoveredFromStall)
             return
         }
 
@@ -2491,6 +2511,12 @@ final class PlaybackController {
         defer { isAttemptingDeliveryRecovery = false }
         deliveryRecoveryAttempts += 1
         let attempt = deliveryRecoveryAttempts
+        MusicKitActivityLog.shared.record(
+            .playbackRecoveryAttempt,
+            magnitude: Double(attempt),
+            detail: "attempt \(attempt) interrupted=\(deliveryStallState.interruptedTicks) frozen=\(deliveryStallState.frozenTicks)",
+            notes: [.automaticRetry]
+        )
         do {
             try await player.prepareToPlay()
             try await player.play()
@@ -2511,8 +2537,10 @@ final class PlaybackController {
         statusMessage = message
     }
 
-    private func clearDeliveryFailure() {
-        deliveryRecoveryAttempts = 0
+    private func clearDeliveryFailure(refillRecoveryBudget: Bool = true) {
+        if refillRecoveryBudget {
+            deliveryRecoveryAttempts = 0
+        }
         guard isDeliveryStalled else { return }
         isDeliveryStalled = false
         if statusMessage == Self.deliveryStallMessage || statusMessage == Self.playbackStoppedMessage {
@@ -2599,11 +2627,7 @@ final class PlaybackController {
                 musicItemID: musicItemID,
                 localTrackID: displayedItem.trackID.uuidString
             )
-            NowPlayingMetadataService.update(
-                track: nowPlayingDisplayTrack,
-                elapsed: elapsedSeconds,
-                isPlaying: isPlaying
-            )
+            publishNowPlayingMetadata(isPlaying: isPlaying)
         }
 
         guard var snapshot = activePlaylistSnapshot,

@@ -6,13 +6,16 @@ import SwiftData
 struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
     let source: PlaylistSource = .appleMusic
 
+    /// Tracks requested per batch when paging a playlist's tracks.
+    static let trackPageLimit = 100
+
     private let playlistFetcher: any MusicLibraryPlaylistFetching
 
     init(playlistFetcher: any MusicLibraryPlaylistFetching = CachingMusicLibraryPlaylistFetcher.shared) {
         self.playlistFetcher = playlistFetcher
     }
 
-    func fetchLibraryPlaylists(in context: ModelContext) async throws -> [RemotePlaylistLink] {
+    func fetchLibraryPlaylists() async throws -> [RemotePlaylistLink] {
         let playlists = try await playlistFetcher.fetchAllPlaylists(pageLimit: 100)
         let appleMusicPlaylists = playlists.map {
             AppleMusicPlaylist(
@@ -28,6 +31,7 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
         playlistID: String,
         playlistName: String?,
         playlistRecord: PlaylistRecord?,
+        skipWhenRemoteUnchanged: Bool,
         in context: ModelContext
     ) async throws -> PlaylistSourceFetchResult {
         let playlist = try await loadPlaylist(
@@ -36,6 +40,26 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
             playlistRecord: playlistRecord,
             in: context
         )
+
+        // Paging a playlist's tracks is by far the most expensive part of a
+        // sync. Apple Music already tells us when the playlist last changed,
+        // so an automatic cycle can stop here when nothing has.
+        if skipWhenRemoteUnchanged,
+           PlaylistRemoteChangePolicy.isUnchanged(
+            remoteLastModifiedAt: playlist.lastModifiedDate,
+            storedLastModifiedAt: playlistRecord?.remoteLastModifiedAt,
+            hasSyncedSuccessfully: playlistRecord?.lastSyncedAt != nil
+                && playlistRecord?.lastSyncError == nil
+           ) {
+            return PlaylistSourceFetchResult(
+                snapshots: [],
+                skippedCount: 0,
+                skippedReason: "remoteUnchanged",
+                remoteLastModifiedAt: playlist.lastModifiedDate,
+                didFetchTracks: false
+            )
+        }
+
         let tracks = try await loadTracks(for: playlist)
         // Snapshot mapping JSON-encodes every track's playback data on the
         // main actor; yield periodically so large playlists don't stall UI.
@@ -47,7 +71,13 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
             }
             snapshots.append(snapshot(from: track, playlistID: playlistID))
         }
-        return PlaylistSourceFetchResult(snapshots: snapshots, skippedCount: 0, skippedReason: nil)
+        return PlaylistSourceFetchResult(
+            snapshots: snapshots,
+            skippedCount: 0,
+            skippedReason: nil,
+            remoteLastModifiedAt: playlist.lastModifiedDate,
+            didFetchTracks: true
+        )
     }
 
     func loadPlaylist(
@@ -56,6 +86,14 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
         playlistRecord: PlaylistRecord? = nil,
         in context: ModelContext? = nil
     ) async throws -> Playlist {
+        // The common case is a playlist whose stored ID is still correct, so
+        // try the single filtered lookup before paging the whole library.
+        if let playlist = try? await playlistFetcher.fetchPlaylist(id: playlistID) {
+            return playlist
+        }
+
+        // The stored ID no longer resolves. Only now is the full enumeration
+        // worth it, because name-based healing needs every candidate.
         let libraryPlaylists = try await playlistFetcher.fetchAllPlaylists(pageLimit: 100)
         let candidates = libraryPlaylists.map {
             PlaylistLibraryIDResolver.Candidate(id: $0.id.rawValue, name: $0.name)
@@ -109,11 +147,63 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
     }
 
     private func loadTracks(for playlist: Playlist) async throws -> [Track] {
-        let detailedPlaylist = try await playlist.with(.tracks)
-        return Array(detailedPlaylist.tracks ?? [])
+        try await AppleMusicPlaylistTrackLoader.loadTracks(for: playlist)
     }
 
     private func snapshot(from track: Track, playlistID: String) -> TrackSnapshot {
+        AppleMusicPlaylistTrackLoader.snapshot(from: track, playlistID: playlistID)
+    }
+}
+
+/// Loads a library playlist's complete track list.
+///
+/// Shared by every caller because the pagination matters: `with(.tracks)`
+/// returns only the first batch, and treating that as the whole playlist
+/// makes sync see phantom removals and makes a playlist rewrite drop the
+/// tracks it never saw.
+@MainActor
+enum AppleMusicPlaylistTrackLoader {
+    static func loadTracks(for playlist: Playlist) async throws -> [Track] {
+        let detailedPlaylist = try await MusicKitActivityLog.shared.measure(
+            .playlistTrackFetch,
+            detail: "first batch",
+            resultMagnitude: { Double($0.tracks?.count ?? 0) }
+        ) {
+            try await playlist.with(.tracks)
+        }
+
+        guard var collection = detailedPlaylist.tracks else { return [] }
+        var tracks = Array(collection)
+
+        while collection.hasNextBatch {
+            let batch = try await MusicKitActivityLog.shared.measure(
+                .playlistTrackFetch,
+                detail: "next batch",
+                resultMagnitude: { $0.map { Double($0.count) } }
+            ) {
+                try await collection.nextBatch(limit: AppleMusicPlaylistSourceSync.trackPageLimit)
+            }
+            guard let batch else {
+                // MusicKit promised another batch and then declined to give
+                // it. The result is an incomplete playlist, which callers
+                // must not treat as the whole remote track list, so flag it
+                // where the diagnostics report will surface it.
+                MusicKitActivityLog.shared.record(
+                    .playlistTrackFetch,
+                    magnitude: Double(tracks.count),
+                    detail: "next batch missing after hasNextBatch",
+                    notes: [.truncatedCollection]
+                )
+                break
+            }
+            tracks.append(contentsOf: batch)
+            collection = batch
+        }
+
+        return tracks
+    }
+
+    static func snapshot(from track: Track, playlistID: String) -> TrackSnapshot {
         let identity = MusicTrackIdentity.ids(for: track)
         return TrackSnapshot(
             id: track.id.rawValue,

@@ -105,7 +105,9 @@ final class MusicAuthorizationService {
             hasCheckedReadiness = true
         }
 
-        let status = await MusicAuthorization.request()
+        let status = await MusicKitActivityLog.shared.measure(.authorizationRequest) {
+            await MusicAuthorization.request()
+        }
         switch status {
         case .authorized:
             await refreshSubscription()
@@ -123,7 +125,9 @@ final class MusicAuthorizationService {
 
     private func refreshSubscription() async {
         do {
-            let subscription = try await MusicSubscription.current
+            let subscription = try await MusicKitActivityLog.shared.measure(.subscriptionCheck) {
+                try await MusicSubscription.current
+            }
             readiness = .authorized(
                 canPlayCatalogContent: subscription.canPlayCatalogContent,
                 hasCloudLibraryEnabled: subscription.hasCloudLibraryEnabled

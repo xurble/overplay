@@ -89,12 +89,41 @@ struct SettingsView: View {
             }
 
             Section {
+                if let musicKitActivityReport = viewModel.musicKitActivityReport {
+                    MusicKitActivityReportView(summary: musicKitActivityReport)
+
+                    DisclosureGroup("Full Activity Report") {
+                        Text(musicKitActivityReport.text)
+                            .font(.system(.caption2, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+
+                    Button {
+                        viewModel.refreshMusicKitActivityReport(dependencies: dependencies)
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+
+                    Button(role: .destructive) {
+                        viewModel.resetMusicKitActivityLog(dependencies: dependencies)
+                    } label: {
+                        Label("Clear Recorded Activity", systemImage: "trash")
+                    }
+                }
+            } header: {
+                Text("Apple Music Call Activity")
+            } footer: {
+                Text("Every Overplay call into Apple Music is recorded with its size, duration, and outcome, and kept across launches. Reach for this after Apple Music misbehaves system-wide.")
+                    .font(.caption)
+            }
+
+            Section {
                 Button {
                     Task { await runMusicKitDiagnostics() }
                 } label: {
                     SettingsActionLabel(
                         title: viewModel.isRunningMusicKitDiagnostics ? "Running MusicKit Diagnostics" : "Run MusicKit Diagnostics",
-                        subtitle: "Checks Apple Music authorization, playlist access, and playback readiness.",
+                        subtitle: "Checks Apple Music authorization, playlist access, and playback readiness. Makes several live Apple Music requests.",
                         systemImage: "waveform.path.ecg"
                     )
                 }
@@ -118,6 +147,9 @@ struct SettingsView: View {
         }
         .miniPlayerScrollContentInset()
         .navigationTitle("Settings")
+        .task {
+            viewModel.refreshMusicKitActivityReport(dependencies: dependencies)
+        }
         .onDisappear {
             viewModel.saveIfNeeded(settings: settings, context: modelContext, dependencies: dependencies)
         }

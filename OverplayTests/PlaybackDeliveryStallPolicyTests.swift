@@ -130,4 +130,67 @@ struct PlaybackDeliveryStallPolicyTests {
         }
         return state
     }
+
+    // MARK: - Recovery budget
+
+    @Test("one good tick does not yet count as recovered")
+    func oneGoodTickDoesNotYetCountAsRecovered() {
+        var state = PlaybackDeliveryStallPolicy.State()
+        state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.playing, playbackTime: 10))
+        state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.playing, playbackTime: 11))
+
+        #expect(state.isProgressing)
+        #expect(!state.hasRecoveredFromStall)
+    }
+
+    @Test("sustained progress counts as recovered from the stall")
+    func sustainedProgressCountsAsRecoveredFromTheStall() {
+        var state = PlaybackDeliveryStallPolicy.State()
+        state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.playing, playbackTime: 10))
+        for offset in 1...PlaybackDeliveryStallPolicy.recoveredProgressTickThreshold {
+            state = PlaybackDeliveryStallPolicy.assess(
+                state,
+                tick: tick(.playing, playbackTime: 10 + Double(offset))
+            )
+        }
+
+        #expect(state.hasRecoveredFromStall)
+    }
+
+    @Test("a stuttering player never counts as recovered")
+    func aStutteringPlayerNeverCountsAsRecovered() {
+        // The pattern the recovery budget must not be refilled by: one
+        // advancing tick, then frozen again, repeatedly. Refilling here let
+        // Overplay re-prod the shared player indefinitely.
+        var state = PlaybackDeliveryStallPolicy.State()
+        var playbackTime = 10.0
+
+        for _ in 0..<20 {
+            playbackTime += 1
+            state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.playing, playbackTime: playbackTime))
+            state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.playing, playbackTime: playbackTime))
+            #expect(!state.hasRecoveredFromStall)
+        }
+    }
+
+    @Test("an interruption resets progress towards recovery")
+    func anInterruptionResetsProgressTowardsRecovery() {
+        var state = PlaybackDeliveryStallPolicy.State()
+        state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.playing, playbackTime: 10))
+        state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.playing, playbackTime: 11))
+        state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.interrupted, playbackTime: 11))
+
+        #expect(!state.hasRecoveredFromStall)
+        #expect(state.progressingTicks == 0)
+    }
+
+    @Test("pausing resets progress towards recovery")
+    func pausingResetsProgressTowardsRecovery() {
+        var state = PlaybackDeliveryStallPolicy.State()
+        state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.playing, playbackTime: 10))
+        state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.playing, playbackTime: 11))
+        state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.paused, playbackTime: 11))
+
+        #expect(state.progressingTicks == 0)
+    }
 }

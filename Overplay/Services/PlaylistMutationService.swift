@@ -198,13 +198,22 @@ struct PlaylistMutationService {
             in: context
         )
         let song = try await song(id: musicItemID)
-        try await MusicLibrary.shared.add(song, to: playlist)
+        try await MusicKitActivityLog.shared.measure(.libraryPlaylistAddItem) {
+            try await MusicLibrary.shared.add(song, to: playlist)
+        }
     }
 
     private func song(id: String) async throws -> Song {
         var request = MusicCatalogResourceRequest<Song>(matching: \.id, equalTo: MusicItemID(id))
         request.limit = 1
-        guard let song = try await request.response().items.first else {
+        let items = try await MusicKitActivityLog.shared.measure(
+            .catalogResourceFetch,
+            detail: "song by id",
+            resultMagnitude: { Double($0.count) }
+        ) {
+            try await request.response().items
+        }
+        guard let song = items.first else {
             throw PlaylistMutationError.musicItemMissing
         }
         return song

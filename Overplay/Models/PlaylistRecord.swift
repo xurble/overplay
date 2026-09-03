@@ -12,6 +12,9 @@ final class PlaylistRecord {
     var isActive: Bool = true
     var lastSyncedAt: Date?
     var lastSyncError: String?
+    /// Apple Music's reported modification date at the last successful
+    /// sync. Lets an automatic cycle skip refetching an unchanged playlist.
+    var remoteLastModifiedAt: Date?
     var sortOrder: Int = 0
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
@@ -45,6 +48,7 @@ final class PlaylistRecord {
         isActive: Bool = true,
         lastSyncedAt: Date? = nil,
         lastSyncError: String? = nil,
+        remoteLastModifiedAt: Date? = nil,
         sortOrder: Int = 0,
         createdAt: Date = .now,
         updatedAt: Date = .now
@@ -58,6 +62,7 @@ final class PlaylistRecord {
         self.isActive = isActive
         self.lastSyncedAt = lastSyncedAt
         self.lastSyncError = lastSyncError
+        self.remoteLastModifiedAt = remoteLastModifiedAt
         self.sortOrder = sortOrder
         self.createdAt = createdAt
         self.updatedAt = updatedAt

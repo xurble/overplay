@@ -19,6 +19,12 @@ enum PlaybackDeliveryStallPolicy {
     static let progressEpsilon = 0.1
     /// Maximum automatic recovery attempts per stall episode.
     static let maximumRecoveryAttempts = 2
+    /// Consecutive progressing ticks before a stall episode counts as over
+    /// and its recovery budget may be refilled. One good tick is not enough:
+    /// a player that stutters — a moment of progress, then frozen again —
+    /// would otherwise refill the budget forever and let Overplay re-prod
+    /// the shared player indefinitely.
+    static let recoveredProgressTickThreshold = 5
 
     struct Tick {
         var playbackStatus: MusicPlayer.PlaybackStatus
@@ -34,10 +40,18 @@ enum PlaybackDeliveryStallPolicy {
         /// (playing with an advancing position) — the signal that any
         /// previously surfaced delivery failure has genuinely cleared.
         var isProgressing = false
+        /// Consecutive progressing ticks observed so far.
+        var progressingTicks = 0
 
         var isStalled: Bool {
             interruptedTicks >= interruptedTickThreshold
                 || frozenTicks >= frozenPlaybackTickThreshold
+        }
+
+        /// Whether delivery has progressed for long enough that the stall
+        /// episode is over and its recovery budget can be refilled.
+        var hasRecoveredFromStall: Bool {
+            progressingTicks >= recoveredProgressTickThreshold
         }
     }
 
@@ -49,14 +63,17 @@ enum PlaybackDeliveryStallPolicy {
         case .interrupted:
             next.interruptedTicks += 1
             next.frozenTicks = 0
+            next.progressingTicks = 0
         case .playing where tick.hasCurrentEntry:
             next.interruptedTicks = 0
             if let lastPlaybackTime = state.lastPlaybackTime,
                abs(tick.playbackTime - lastPlaybackTime) < progressEpsilon {
                 next.frozenTicks += 1
+                next.progressingTicks = 0
             } else {
                 next.frozenTicks = 0
                 next.isProgressing = state.lastPlaybackTime != nil
+                next.progressingTicks = next.isProgressing ? state.progressingTicks + 1 : 0
             }
         default:
             // Paused, stopped, seeking, or playing without an entry: not a
@@ -64,6 +81,7 @@ enum PlaybackDeliveryStallPolicy {
             // but not proof of healthy delivery either.
             next.interruptedTicks = 0
             next.frozenTicks = 0
+            next.progressingTicks = 0
         }
 
         next.lastPlaybackTime = tick.playbackTime
