@@ -79,21 +79,16 @@ struct PlaylistSyncService {
         self.appleMusicSource = appleMusicSource
     }
 
-    func fetchLibraryPlaylists(source: PlaylistSource, in context: ModelContext) async throws -> [RemotePlaylistLink] {
-        try await sourceRegistry.adapter(for: source).fetchLibraryPlaylists(in: context)
+    func fetchLibraryPlaylists(source: PlaylistSource) async throws -> [RemotePlaylistLink] {
+        try await sourceRegistry.adapter(for: source).fetchLibraryPlaylists()
     }
 
     func fetchLibraryPlaylists() async throws -> [AppleMusicPlaylist] {
         try await fetchAppleMusicLibraryPlaylists()
     }
 
-    func fetchAppleMusicLibraryPlaylists(in context: ModelContext? = nil) async throws -> [AppleMusicPlaylist] {
-        let links: [RemotePlaylistLink]
-        if let context {
-            links = try await appleMusicSource.fetchLibraryPlaylists(in: context)
-        } else {
-            links = try await appleMusicSource.fetchLibraryPlaylists(in: .ephemeral)
-        }
+    func fetchAppleMusicLibraryPlaylists() async throws -> [AppleMusicPlaylist] {
+        let links = try await appleMusicSource.fetchLibraryPlaylists()
         return links.map {
             AppleMusicPlaylist(id: $0.id, name: $0.name, trackCount: $0.trackCount)
         }
@@ -114,19 +109,40 @@ struct PlaylistSyncService {
         return try await syncPlaylist(record, in: context).fetchedCount
     }
 
+    /// - Parameter skipWhenRemoteUnchanged: Let the source skip the track
+    ///   fetch when it can prove the remote playlist has not changed. Only
+    ///   automatic cycles pass true; a user-initiated sync always reads the
+    ///   real remote state.
     @discardableResult
     func syncPlaylist(
         _ playlistRecord: PlaylistRecord,
         in context: ModelContext,
-        runIdentityMerge: Bool = true
+        runIdentityMerge: Bool = true,
+        skipWhenRemoteUnchanged: Bool = false
     ) async throws -> PlaylistSyncSummary {
         let adapter = sourceRegistry.adapter(for: playlistRecord)
         let fetchResult = try await adapter.fetchTrackSnapshots(
             playlistID: playlistRecord.musicPlaylistID,
             playlistName: playlistRecord.name,
             playlistRecord: playlistRecord,
+            skipWhenRemoteUnchanged: skipWhenRemoteUnchanged,
             in: context
         )
+
+        guard fetchResult.didFetchTracks else {
+            // Nothing was fetched because nothing changed. Record the visit
+            // so freshness gating still works, and leave the existing
+            // tracks and local order untouched.
+            var summary = PlaylistSyncSummary()
+            summary.skippedCount = max(fetchResult.skippedCount, 1)
+            summary.skippedReason = fetchResult.skippedReason ?? "remoteUnchanged"
+            playlistRecord.lastSyncedAt = .now
+            playlistRecord.lastSyncError = nil
+            playlistRecord.updatedAt = .now
+            try context.save()
+            logSyncSummary(summary, playlistRecord: playlistRecord)
+            return summary
+        }
 
         var summary = try await reconcile(
             snapshots: fetchResult.snapshots,
@@ -136,6 +152,7 @@ struct PlaylistSyncService {
         )
         summary.skippedCount += fetchResult.skippedCount
         summary.skippedReason = fetchResult.skippedReason
+        playlistRecord.remoteLastModifiedAt = fetchResult.remoteLastModifiedAt
         try context.save()
         if runIdentityMerge {
             try await TrackIdentityMergeService.mergeDuplicates(in: context)
@@ -180,17 +197,22 @@ struct PlaylistSyncService {
             sourceTracks = []
         }
 
-        let createdPlaylist = if sourceTracks.isEmpty {
-            try await MusicLibrary.shared.createPlaylist(
-                name: playlistName,
-                description: "Managed by Overplay"
-            )
-        } else {
-            try await MusicLibrary.shared.createPlaylist(
-                name: playlistName,
-                description: "Managed by Overplay",
-                items: sourceTracks
-            )
+        let createdPlaylist = try await MusicKitActivityLog.shared.measure(
+            .libraryPlaylistCreate,
+            magnitude: Double(sourceTracks.count)
+        ) {
+            if sourceTracks.isEmpty {
+                try await MusicLibrary.shared.createPlaylist(
+                    name: playlistName,
+                    description: "Managed by Overplay"
+                )
+            } else {
+                try await MusicLibrary.shared.createPlaylist(
+                    name: playlistName,
+                    description: "Managed by Overplay",
+                    items: sourceTracks
+                )
+            }
         }
         CachingMusicLibraryPlaylistFetcher.shared.invalidate()
         let libraryPlaylists = try await fetchAppleMusicLibraryPlaylists()
@@ -485,7 +507,16 @@ struct PlaylistSyncService {
             throw PlaylistSyncError.trackNotFoundInPlaylist
         }
 
-        try await MusicLibrary.shared.edit(playlist, items: remainingTracks)
+        // A single removal rewrites the whole playlist, and the rewrite is
+        // built from the possibly truncated fetch above, so the size of the
+        // list actually sent is worth recording.
+        try await MusicKitActivityLog.shared.measure(
+            .libraryPlaylistEdit,
+            magnitude: Double(remainingTracks.count),
+            detail: "rewrote playlist to remove 1 track"
+        ) {
+            try await MusicLibrary.shared.edit(playlist, items: remainingTracks)
+        }
     }
 
     func loadPlaylist(
@@ -503,25 +534,11 @@ struct PlaylistSyncService {
     }
 
     private func loadTracks(for playlist: Playlist) async throws -> [Track] {
-        let detailedPlaylist = try await playlist.with(.tracks)
-        return Array(detailedPlaylist.tracks ?? [])
+        try await AppleMusicPlaylistTrackLoader.loadTracks(for: playlist)
     }
 
     private func snapshot(from track: Track, playlistID: String) -> TrackSnapshot {
-        let identity = MusicTrackIdentity.ids(for: track)
-        return TrackSnapshot(
-            id: track.id.rawValue,
-            catalogID: identity.catalogID,
-            libraryID: identity.libraryID,
-            playlistEntryID: nil,
-            playlistID: playlistID,
-            title: track.title,
-            artistName: track.artistName,
-            albumTitle: track.albumTitle,
-            artworkURLTemplate: track.artwork?.url(width: 512, height: 512)?.absoluteString,
-            durationSeconds: track.duration,
-            musicKitPlaybackData: try? JSONEncoder().encode(track)
-        )
+        AppleMusicPlaylistTrackLoader.snapshot(from: track, playlistID: playlistID)
     }
 
     private func warmUpArtworkThemes(for snapshots: [TrackSnapshot]) {
@@ -529,15 +546,5 @@ struct PlaylistSyncService {
         Task(priority: .background) {
             await AlbumArtworkThemeWarmupService.shared.enqueue(tracks)
         }
-    }
-}
-
-private extension ModelContext {
-    static var ephemeral: ModelContext {
-        let schema = Schema([PlaylistRecord.self])
-        let container = try! ModelContainer(for: schema, configurations: [
-            ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none)
-        ])
-        return ModelContext(container)
     }
 }

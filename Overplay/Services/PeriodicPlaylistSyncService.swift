@@ -26,7 +26,14 @@ final class PeriodicPlaylistSyncService {
         automaticSyncFreshnessInterval: TimeInterval = 30 * 60,
         interPlaylistDelay: Duration = .milliseconds(500),
         syncPlaylist: @escaping @MainActor (PlaylistRecord, ModelContext) async throws -> PlaylistSyncSummary = { playlist, context in
-            try await PlaylistSyncService().syncPlaylist(playlist, in: context, runIdentityMerge: false)
+            // Automatic cycles let the source skip the track fetch for a
+            // playlist Apple Music reports as unchanged.
+            try await PlaylistSyncService().syncPlaylist(
+                playlist,
+                in: context,
+                runIdentityMerge: false,
+                skipWhenRemoteUnchanged: true
+            )
         },
         mergeDuplicateTrackIdentities: @escaping @MainActor (ModelContext) async throws -> Void = { context in
             try await TrackIdentityMergeService.mergeDuplicates(in: context)
