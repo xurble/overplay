@@ -693,6 +693,74 @@ struct PlaybackTransitionTests {
         #expect(fixture.items[0].skipCount == 1)
         #expect(try fixture.history().count == 1)
     }
+
+    // MARK: - Recovery from lost queue correlation
+
+    @Test("the primary control pauses running playback when correlation is lost")
+    func thePrimaryControlPausesRunningPlaybackWhenCorrelationIsLost() async throws {
+        // Regression for the reported failure: with correlation gone the
+        // control still renders a pause icon from `isPlaying`, but its action
+        // used to fall through to "play the default playlist", restarting the
+        // One True Playlist from its first track on every press.
+        let fixture = try await makeFixture()
+        defer { fixture.cleanUp() }
+
+        fixture.player.playbackStatus = .playing
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        let replacementsBefore = fixture.player.replaceQueueCallCount
+
+        #expect(fixture.controller.isPlaying)
+        #expect(!fixture.controller.canControlPlayback)
+
+        await fixture.controller.performPrimaryPlaybackAction(
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        #expect(fixture.player.playbackStatus == .paused)
+        #expect(fixture.player.replaceQueueCallCount == replacementsBefore)
+    }
+
+    @Test("the primary control still starts playback when nothing is playing")
+    func thePrimaryControlStillStartsPlaybackWhenNothingIsPlaying() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.cleanUp() }
+
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(!fixture.controller.isPlaying)
+
+        await fixture.controller.performPrimaryPlaybackAction(
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        #expect(fixture.player.playbackStatus == .playing)
+        #expect(fixture.player.replaceQueueCallCount == 1)
+    }
+
+    @Test("the primary control toggles normally while correlation is intact")
+    func thePrimaryControlTogglesNormallyWhileCorrelationIsIntact() async throws {
+        let fixture = try await makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+
+        #expect(fixture.controller.canControlPlayback)
+        let replacementsAfterStart = fixture.player.replaceQueueCallCount
+
+        await fixture.controller.performPrimaryPlaybackAction(
+            settings: fixture.settings,
+            context: fixture.context
+        )
+        #expect(fixture.player.playbackStatus == .paused)
+
+        await fixture.controller.performPrimaryPlaybackAction(
+            settings: fixture.settings,
+            context: fixture.context
+        )
+        #expect(fixture.player.playbackStatus == .playing)
+        // Toggling never rebuilds the queue.
+        #expect(fixture.player.replaceQueueCallCount == replacementsAfterStart)
+    }
 }
 
 @MainActor
@@ -727,6 +795,7 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     var skipToEntryConfirmationDelays: [Int] = []
     private(set) var nextCallCount = 0
     private(set) var skipToEntryCallCount = 0
+    private(set) var replaceQueueCallCount = 0
 
     private var entries: [MusicPlayer.Queue.Entry] = []
     private var currentEntryStorage: MusicPlayer.Queue.Entry?
@@ -747,6 +816,7 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     }
 
     func replaceQueue(with materialization: PlaybackQueueMaterialization) {
+        replaceQueueCallCount += 1
         entries = materialization.queueEntries
         let target = materialization.startingEntry ?? materialization.queueEntries.first
         let delay = replacementConfirmationDelays.isEmpty ? 0 : replacementConfirmationDelays.removeFirst()

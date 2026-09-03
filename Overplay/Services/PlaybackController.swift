@@ -83,6 +83,7 @@ final class PlaybackController {
     @ObservationIgnored private var lastLoggedPlaybackRefreshSignature: String?
     @ObservationIgnored private var didLogQueueEndWithoutRestart = false
     @ObservationIgnored private var deliveryStallState = PlaybackDeliveryStallPolicy.State()
+    @ObservationIgnored private var unresolvedEntryState = PlaybackUnresolvedEntryPolicy.State()
     @ObservationIgnored private var deliveryRecoveryAttempts = 0
     @ObservationIgnored private var isAttemptingDeliveryRecovery = false
     /// True while the user's last playback command was play-like. Gates
@@ -372,6 +373,7 @@ final class PlaybackController {
         unresolvableMusicItemIDs.removeAll()
         monitorIdleSince = nil
         deliveryStallState = PlaybackDeliveryStallPolicy.State()
+        unresolvedEntryState = PlaybackUnresolvedEntryPolicy.State()
         deliveryRecoveryAttempts = 0
         isDeliveryStalled = false
         playbackIntended = false
@@ -777,6 +779,21 @@ final class PlaybackController {
             || targetLocalTrackID != outgoing.localTrackID
     }
 
+    /// Drops entry-level queue correlation while keeping Overplay's belief
+    /// about what is playing, and keeping the durable restore state.
+    ///
+    /// Used when the player's current entry cannot be correlated but playback
+    /// itself is fine. The full teardown below is for a confirmed diverged
+    /// transition, where Overplay genuinely cannot say what is playing.
+    private func clearQueueCorrelationPreservingPlayback() {
+        activeQueueEntries = []
+        activeQueueIndex = nil
+        activeSession = nil
+        prefetchedArtworkTrackID = nil
+        activePlaylistSnapshotNeedsRebuild = true
+        bumpPlaybackItemMetadataVersion()
+    }
+
     private func clearQueueCorrelationAfterDivergedTransition() {
         activeQueueEntries = []
         activeQueueIndex = nil
@@ -904,6 +921,15 @@ final class PlaybackController {
     func performPrimaryPlaybackAction(settings: OverplaySettings, context: ModelContext) async {
         if canControlPlayback {
             await togglePlayPause(context: context)
+            return
+        }
+
+        // The control renders from `isPlaying`, so when the player is playing
+        // it shows a pause button. Its action has to agree, whatever Overplay
+        // knows about queue correlation — routing this to playback would
+        // restart the default playlist under a pause icon.
+        if isPlaying {
+            pause()
             return
         }
 
@@ -1399,6 +1425,14 @@ final class PlaybackController {
         updateMusicKitNowPlayingTrack()
         let identity = resolvedCurrentPlaybackIdentity(context: context)
         let hasUnresolvedConcretePlayerEntry = player.currentEntry != nil && identity == nil
+        // MusicKit can report an entry before its item is available. Hold the
+        // current belief while it hydrates instead of tearing playback state
+        // down on one observation.
+        unresolvedEntryState = PlaybackUnresolvedEntryPolicy.assess(
+            unresolvedEntryState,
+            hasUnresolvedConcreteEntry: hasUnresolvedConcretePlayerEntry
+        )
+        let hasDivergedUnresolvedPlayerEntry = unresolvedEntryState.hasDiverged
         let hasUncorrelatedConcretePlayerEntry = player.currentEntry != nil
             && identity?.isQueueCorrelated == false
         let newTrackID = identity?.musicItemID
@@ -1510,13 +1544,12 @@ final class PlaybackController {
             }
 
             evaluatePlaythroughIfNeeded(context: context)
-        } else if hasUnresolvedConcretePlayerEntry {
-            clearQueueCorrelationAfterDivergedTransition()
-            currentTrack = nil
-            durationSeconds = nil
-            activeSession = nil
-            prefetchedArtworkTrackID = nil
-            bumpPlaybackItemMetadataVersion()
+        } else if hasDivergedUnresolvedPlayerEntry {
+            // Entry-level correlation is genuinely gone, but Overplay still
+            // knows which playlist and track it started. Keep that and the
+            // durable restore state: clearing them leaves every surface
+            // unable to describe or pause playback that is still running.
+            clearQueueCorrelationPreservingPlayback()
         } else if currentTrack != nil || currentPlaylistID != nil {
             if let activeSession {
                 self.activeSession = PlaybackSessionEvaluationService.updateObservedProgress(
