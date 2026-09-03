@@ -13,6 +13,7 @@ protocol PlaybackPlayer: AnyObject {
     func pause()
     func skipToNextEntry() async throws
     func skipToPreviousEntry() async throws
+    func skipToEntry(withID entryID: String) async throws
     func appendToQueue(_ tracks: [Track]) async throws
     func disablePlaybackModes()
 }
@@ -61,6 +62,17 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
         try await player.skipToPreviousEntry()
     }
 
+    /// Jumps inside the queue that is already loaded, so everything after the
+    /// target entry survives. Rebuilding the queue would lose that order.
+    func skipToEntry(withID entryID: String) async throws {
+        guard let entry = player.queue.entries.first(where: { $0.id == entryID }) else {
+            throw PlaybackQueueEntryError.entryNotInQueue
+        }
+
+        player.queue.currentEntry = entry
+        try await player.play()
+    }
+
     func appendToQueue(_ tracks: [Track]) async throws {
         try await player.queue.insert(tracks, position: .tail)
     }
@@ -68,6 +80,17 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
     func disablePlaybackModes() {
         player.state.shuffleMode = .off
         player.state.repeatMode = .none
+    }
+}
+
+enum PlaybackQueueEntryError: LocalizedError, Equatable {
+    case entryNotInQueue
+
+    var errorDescription: String? {
+        switch self {
+        case .entryNotInQueue:
+            "That track is no longer in the Apple Music queue."
+        }
     }
 }
 
