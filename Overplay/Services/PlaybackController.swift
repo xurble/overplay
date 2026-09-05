@@ -67,6 +67,7 @@ final class PlaybackController {
 
     @ObservationIgnored private let player: any PlaybackPlayer
     @ObservationIgnored private let queueWindowPolicy: PlaybackQueueWindowPolicy
+    @ObservationIgnored private let mirrorPlaylistService: any MirrorPlaylistProviding
     @ObservationIgnored private let transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy
     @ObservationIgnored private let sleepForTransitionConfirmation: @MainActor (Duration) async -> Void
     @ObservationIgnored private var monitorTask: Task<Void, Never>?
@@ -79,6 +80,16 @@ final class PlaybackController {
     /// appended as the delivered window drains. Empty once the whole order
     /// has been handed over.
     @ObservationIgnored private var pendingQueueEntries: [PlaybackQueueEntry] = []
+    /// True while the live queue came from the Apple Music mirror playlist,
+    /// which means Apple Music owns shuffle, repeat, and the playlist wrap.
+    @ObservationIgnored private var isMirroredPlayback = false
+    @ObservationIgnored private var mirroredShuffleMode: MusicPlayer.ShuffleMode = .songs
+    /// Mirror queue members still waiting to be matched to player entries.
+    /// Apple Music materializes that queue itself and can report entries
+    /// before their items hydrate, so correlation is retried rather than
+    /// guessed at once.
+    @ObservationIgnored private var pendingMirrorCorrelation: [PendingQueueCorrelation] = []
+    @ObservationIgnored private var mirrorCorrelationAttempts = 0
     @ObservationIgnored private var hasRestoredLocalPlaybackState = false
     @ObservationIgnored private var prefetchedArtworkTrackID: String?
     @ObservationIgnored private var isRestartingQueue = false
@@ -108,6 +119,10 @@ final class PlaybackController {
     @ObservationIgnored private var unresolvableMusicItemIDs: Set<String> = []
     @ObservationIgnored var isNetworkReachable: () -> Bool = { NetworkReachabilityMonitor.shared.isReachable }
 
+    /// Consecutive refresh ticks spent waiting for a mirror queue to hydrate
+    /// before Overplay stops trying to correlate it.
+    private static let mirrorCorrelationAttemptLimit = 5
+
     static let deliveryStallMessage =
         "Playback stalled — check your network connection. Overplay will retry when the connection returns."
     static let playbackStoppedMessage =
@@ -117,6 +132,7 @@ final class PlaybackController {
         playerID: String = "main",
         player: any PlaybackPlayer = ApplicationMusicPlaybackPlayer(),
         queueWindowPolicy: PlaybackQueueWindowPolicy = .standard,
+        mirrorPlaylistService: any MirrorPlaylistProviding = MirrorPlaylistService(),
         transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy = .standard,
         sleepForTransitionConfirmation: @escaping @MainActor (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
@@ -125,6 +141,7 @@ final class PlaybackController {
         self.playerID = playerID
         self.player = player
         self.queueWindowPolicy = queueWindowPolicy
+        self.mirrorPlaylistService = mirrorPlaylistService
         self.transitionConfirmationPolicy = transitionConfirmationPolicy
         self.sleepForTransitionConfirmation = sleepForTransitionConfirmation
     }
@@ -229,12 +246,14 @@ final class PlaybackController {
 
     var shuffleEnabled: Bool {
         _ = playbackModeVersion
-        return false
+        return isMirroredPlayback && mirroredShuffleMode != .off
     }
 
     var repeatMode: MusicPlayer.RepeatMode {
         _ = playbackModeVersion
-        return .none
+        // Playlists always repeat. Apple Music performs the wrap itself while
+        // the mirror queue is live; otherwise Overplay rebuilds at queue end.
+        return isMirroredPlayback ? .all : .none
     }
 
     var repeatEnabled: Bool {
@@ -291,7 +310,7 @@ final class PlaybackController {
 
     func startMonitoring(context: ModelContext) {
         guard monitorTask == nil else { return }
-        disableMusicKitPlaybackModes()
+        applyCurrentPlaybackModes()
         monitorIdleSince = nil
         monitorTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -369,6 +388,8 @@ final class PlaybackController {
         activeSession = nil
         activeQueueEntries = []
         pendingQueueEntries = []
+        pendingMirrorCorrelation = []
+        isMirroredPlayback = false
         activeQueueIndex = nil
         activePlaylistSnapshot = nil
         prefetchedArtworkTrackID = nil
@@ -552,6 +573,33 @@ final class PlaybackController {
         settings: OverplaySettings,
         context: ModelContext
     ) async -> Bool {
+        if settings.appleMusicOwnedShuffle {
+            // Shuffling a queue Apple Music already owns is a mode change, not
+            // a rebuild: no new order, no queue hand-off, no restart.
+            mirroredShuffleMode = .songs
+            if isMirroredPlayback, currentPlaylistID == musicPlaylistID, currentPlaylistScope == scope {
+                applyMirroredPlaybackModes()
+                playbackModeVersion += 1
+                statusMessage = nil
+                return true
+            }
+
+            if let entries = try? PlaybackQueueOrchestrator.orderedCachedQueueEntries(
+                for: musicPlaylistID,
+                playerID: playerID,
+                scope: scope,
+                in: context
+            ), await startMirroredPlayback(
+                queueEntries: entries,
+                playlistID: musicPlaylistID,
+                scope: scope,
+                outgoingSessionSettings: settings,
+                context: context
+            ) {
+                return true
+            }
+        }
+
         do {
             let reshuffled = try PlaybackQueueOrchestrator.previewedReshuffledQueue(
                 playlistID: musicPlaylistID,
@@ -623,6 +671,17 @@ final class PlaybackController {
                 return
             }
 
+            if settings.appleMusicOwnedShuffle,
+               await startMirroredPlayback(
+                   queueEntries: queueEntries,
+                   playlistID: playlist.musicPlaylistID,
+                   scope: scope,
+                   outgoingSessionSettings: settings,
+                   context: context
+               ) {
+                return
+            }
+
             try await startPlayback(
                 queueEntries: queueEntries,
                 playlistID: playlist.musicPlaylistID,
@@ -673,7 +732,26 @@ final class PlaybackController {
     }
 
     private func disableMusicKitPlaybackModes() {
-        player.disablePlaybackModes()
+        player.configurePlaybackModes(shuffle: .off, repeat: .none)
+    }
+
+    /// Re-asserts whichever mode ownership is currently in force. Overplay's
+    /// own explicit order needs MusicKit's modes off; a mirror queue needs
+    /// them on. Asserting the wrong one turns every monitor restart into a
+    /// fight with the player over mode state.
+    private func applyCurrentPlaybackModes() {
+        if isMirroredPlayback {
+            applyMirroredPlaybackModes()
+        } else {
+            disableMusicKitPlaybackModes()
+        }
+    }
+
+    /// Hands shuffle and repeat to Apple Music for the mirror queue. Repeat is
+    /// always `.all` because Overplay's playlists always repeat; letting the
+    /// player wrap removes the queue-end rebuild entirely.
+    private func applyMirroredPlaybackModes() {
+        player.configurePlaybackModes(shuffle: mirroredShuffleMode, repeat: .all)
     }
 
     private func musicPlaybackFailureMessage(for error: Error) -> String {
@@ -806,6 +884,8 @@ final class PlaybackController {
         activeQueueEntries = []
         activeQueueIndex = nil
         pendingQueueEntries = []
+        pendingMirrorCorrelation = []
+        isMirroredPlayback = false
         currentPlaylistID = nil
         currentPlaylistScope = .active
         currentPlaylistItem = nil
@@ -883,6 +963,8 @@ final class PlaybackController {
                 activeSession = nil
                 updateActiveQueue(realizedEntries: materialization.realizedEntries, startingAt: localTrackID)
                 pendingQueueEntries = heldBackEntries
+                pendingMirrorCorrelation = []
+                isMirroredPlayback = false
                 playbackIntended = true
                 clearDeliveryFailure()
                 currentPlaylistID = playlistID
@@ -951,6 +1033,147 @@ final class PlaybackController {
             snapshots: player.queueEntrySnapshots,
             reservedEntryIDs: Set(activeQueueEntries.map(\.queueEntryID))
         ))
+    }
+
+    /// Starts playback from the Apple Music mirror playlist, handing shuffle,
+    /// repeat, and queue paging to Apple Music.
+    ///
+    /// Returns false when the mirror could not be prepared or the player did
+    /// not take the queue, which means the caller should fall back to
+    /// Overplay's own windowed track queue.
+    private func startMirroredPlayback(
+        queueEntries: [PlaybackQueueEntry],
+        playlistID: String,
+        scope: PlaylistPlaybackScope,
+        outgoingSessionSettings: OverplaySettings?,
+        context: ModelContext
+    ) async -> Bool {
+        guard !queueEntries.isEmpty else { return false }
+
+        let mirror: Playlist
+        do {
+            mirror = try await mirrorPlaylistService.mirroredPlaylist(
+                for: playlistID,
+                scope: scope,
+                tracks: queueEntries.map(\.musicTrack),
+                linkedPlaylistIDs: linkedPlaylistIDs(context: context)
+            )
+        } catch {
+            TrackMetadataDiagnostics.log("mirror playlist unavailable: \(error.localizedDescription)")
+            return false
+        }
+
+        await refresh(context: context)
+        let outgoing = captureOutgoingPlaybackTransition()
+        warmUpTask?.cancel()
+        warmUpTask = nil
+
+        // Apple Music builds the queue from the playlist, so its entry IDs
+        // cannot be predicted. Any entry change counts as confirmation, and
+        // correlation happens afterwards against the live queue.
+        let result = await performPlayerConfirmedTransition(
+            outgoingEntryID: outgoing.entryID,
+            expectedEntryIDs: nil,
+            command: {
+                applyMirroredPlaybackModes()
+                player.replaceQueue(withPlaylist: mirror)
+                try await player.play()
+            },
+            onObservedTransition: { _ in
+                if let outgoingSessionSettings,
+                   shouldEvaluateOutgoingTransition(
+                       outgoing,
+                       targetPlaylistID: playlistID,
+                       targetLocalTrackID: nil
+                   ) {
+                    evaluateOutgoingTransition(
+                        outgoing,
+                        settings: outgoingSessionSettings,
+                        naturalCompletion: false,
+                        context: context
+                    )
+                }
+
+                activeSession = nil
+                mirrorCorrelationAttempts = 0
+                correlateMirroredQueue(with: queueEntries.map(PendingQueueCorrelation.init(entry:)))
+                pendingQueueEntries = []
+                isMirroredPlayback = true
+                playbackIntended = true
+                clearDeliveryFailure()
+                currentPlaylistID = playlistID
+                currentPlaylistScope = scope
+                playbackModeVersion += 1
+                statusMessage = nil
+                startMonitoring(context: context)
+            },
+            onUnconfirmed: {
+                await restorePlayerQueueAfterUnconfirmedTransition(outgoing, context: context)
+            }
+        )
+
+        switch result {
+        case .confirmed, .diverged:
+            await refresh(context: context)
+            await ArtworkCacheService.shared.touchPlaylistUsage(playlistID)
+            return true
+        case .failed, .timedOut, .rejected:
+            await refresh(context: context)
+            return false
+        }
+    }
+
+    /// Adopts the player's own queue order for a mirror queue. Apple Music
+    /// built it, so that order — shuffled or not — is the truth; Overplay only
+    /// maps it back to local rows on Apple Music item ID.
+    private func correlateMirroredQueue(with members: [PendingQueueCorrelation]) {
+        let realizedEntries = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(
+            expected: members,
+            snapshots: player.queueEntrySnapshots
+        )
+
+        // The bar is being able to name what is playing. Until the queue
+        // correlates that far, hold the members for a later tick — and drop
+        // the outgoing queue rather than leaving it in place, because
+        // correlating against the previous playlist's entries would record
+        // skips and playthroughs against the wrong rows.
+        guard let currentEntryID = player.currentEntry?.id,
+              realizedEntries.contains(where: { $0.queueEntryID == currentEntryID }) else {
+            pendingMirrorCorrelation = members
+            activeQueueEntries = []
+            activeQueueIndex = nil
+            return
+        }
+
+        pendingMirrorCorrelation = []
+        updateActiveQueue(realizedEntries: realizedEntries, startingAt: nil)
+        updateActiveQueueCurrentTrackID(
+            realizedEntries.first { $0.queueEntryID == currentEntryID }?.localTrackID
+        )
+    }
+
+    /// Retries mirror queue correlation while Apple Music hydrates the items
+    /// it reported. Bounded, because identity still resolves from the
+    /// player's own reported item without queue correlation: giving up costs
+    /// in-queue navigation, not track identity or skip counting.
+    private func retryMirrorCorrelationIfNeeded() {
+        guard !pendingMirrorCorrelation.isEmpty, !isPerformingTransition else { return }
+
+        mirrorCorrelationAttempts += 1
+        correlateMirroredQueue(with: pendingMirrorCorrelation)
+        guard !pendingMirrorCorrelation.isEmpty,
+              mirrorCorrelationAttempts >= Self.mirrorCorrelationAttemptLimit else {
+            return
+        }
+
+        TrackMetadataDiagnostics.log(
+            "mirror queue correlation abandoned after \(mirrorCorrelationAttempts) attempts"
+        )
+        pendingMirrorCorrelation = []
+    }
+
+    private func linkedPlaylistIDs(context: ModelContext) -> [String] {
+        ((try? PlaylistRepository.allPlaylists(in: context)) ?? []).map(\.musicPlaylistID)
     }
 
     func togglePlayPause(context: ModelContext) async {
@@ -1125,10 +1348,24 @@ final class PlaybackController {
     }
 
     func toggleShuffle(context: ModelContext) async {
+        if isMirroredPlayback {
+            await setShuffleEnabled(mirroredShuffleMode == .off, context: context)
+            return
+        }
+
         await reshuffleCurrentPlaylist(context: context)
     }
 
     func setShuffleEnabled(_ isEnabled: Bool, context: ModelContext) async {
+        if isMirroredPlayback {
+            mirroredShuffleMode = isEnabled ? .songs : .off
+            applyMirroredPlaybackModes()
+            playbackModeVersion += 1
+            return
+        }
+
+        // Overplay-owned order has no unshuffled order to return to, so
+        // switching shuffle off is a no-op beyond refreshing mode state.
         guard isEnabled else {
             playbackModeVersion += 1
             return
@@ -1475,6 +1712,7 @@ final class PlaybackController {
         let oldCurrentItemLocalTrackID = currentPlaylistItem?.trackID.uuidString
         let oldActiveQueueLocalTrackID = activeQueueCurrentLocalTrackID
         updateMusicKitNowPlayingTrack()
+        retryMirrorCorrelationIfNeeded()
         let identity = resolvedCurrentPlaybackIdentity(context: context)
         let hasUnresolvedConcretePlayerEntry = player.currentEntry != nil && identity == nil
         // MusicKit can report an entry before its item is available. Hold the
@@ -1562,7 +1800,12 @@ final class PlaybackController {
             elapsedSeconds = currentPlaybackTime
         }
 
-        if hasUncorrelatedConcretePlayerEntry {
+        // A mirror queue that has not finished hydrating is uncorrelated by
+        // design, so tearing playback state down here would destroy the very
+        // playlist identity the pending correlation is about to restore. The
+        // wait is bounded by `mirrorCorrelationAttemptLimit`, after which
+        // normal divergence handling resumes.
+        if hasUncorrelatedConcretePlayerEntry, pendingMirrorCorrelation.isEmpty {
             // A concrete MusicKit entry outside the realized queue is the
             // authority, but it cannot inherit the outgoing playlist row or
             // restoration identity. Preserve the resolved item below while
@@ -2382,7 +2625,10 @@ final class PlaybackController {
     ) async -> Bool {
         guard let currentPlaylistID,
               (try? currentPlaylist(in: context)) != nil,
-              !isRestartingQueue else {
+              !isRestartingQueue,
+              // Apple Music repeats the mirror queue itself, so a queue end
+              // there is not Overplay's to rebuild.
+              !isMirroredPlayback else {
             return false
         }
 

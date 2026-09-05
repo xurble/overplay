@@ -10,6 +10,10 @@ final class OverplaySettings {
     var minimumSkipListeningSeconds: Double = 10
     var playthroughThresholdPercentage: Double = 90
     var protectKeptTracks: Bool = false
+    /// Hands playback to a mirror playlist in Apple Music and lets Apple Music
+    /// own shuffle and repeat, instead of Overplay pushing an explicit order.
+    /// Off until verified on a real device with an Apple Music subscription.
+    var appleMusicOwnedShuffle: Bool = false
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
@@ -21,6 +25,7 @@ final class OverplaySettings {
         minimumSkipListeningSeconds: Double = 10,
         playthroughThresholdPercentage: Double = 90,
         protectKeptTracks: Bool = false,
+        appleMusicOwnedShuffle: Bool = false,
         createdAt: Date = .now,
         updatedAt: Date = .now
     ) {
@@ -31,6 +36,7 @@ final class OverplaySettings {
         self.minimumSkipListeningSeconds = minimumSkipListeningSeconds
         self.playthroughThresholdPercentage = playthroughThresholdPercentage
         self.protectKeptTracks = protectKeptTracks
+        self.appleMusicOwnedShuffle = appleMusicOwnedShuffle
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

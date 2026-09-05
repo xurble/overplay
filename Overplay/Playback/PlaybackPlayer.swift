@@ -11,6 +11,9 @@ protocol PlaybackPlayer: AnyObject {
     var queueEntrySnapshots: [PlayerQueueEntrySnapshot] { get }
 
     func replaceQueue(with materialization: PlaybackQueueMaterialization)
+    /// Hands the player a playlist entity instead of materialized entries, so
+    /// Apple Music fetches, pages, and orders the queue itself.
+    func replaceQueue(withPlaylist playlist: Playlist)
     func prepareToPlay() async throws
     func play() async throws
     func pause()
@@ -18,7 +21,7 @@ protocol PlaybackPlayer: AnyObject {
     func skipToPreviousEntry() async throws
     func skipToEntry(withID entryID: String) async throws
     func appendToQueue(_ tracks: [Track]) async throws
-    func disablePlaybackModes()
+    func configurePlaybackModes(shuffle: MusicPlayer.ShuffleMode, repeat repeatMode: MusicPlayer.RepeatMode)
 }
 
 @MainActor
@@ -54,6 +57,18 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
                 materialization.queueEntries,
                 startingAt: materialization.startingEntry
             )
+        }
+    }
+
+    /// Queueing the playlist itself keeps the hand-off to a single reference
+    /// instead of one entry per track, and lets Apple Music own the ordering.
+    func replaceQueue(withPlaylist playlist: Playlist) {
+        MusicKitActivityLog.shared.measure(
+            .queueReplace,
+            magnitude: 1,
+            detail: "playlist entity"
+        ) {
+            player.queue = ApplicationMusicPlayer.Queue(for: [playlist])
         }
     }
 
@@ -112,10 +127,14 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
         }
     }
 
-    func disablePlaybackModes() {
+    func configurePlaybackModes(shuffle: MusicPlayer.ShuffleMode, repeat repeatMode: MusicPlayer.RepeatMode) {
+        guard player.state.shuffleMode != shuffle || player.state.repeatMode != repeatMode else {
+            return
+        }
+
         MusicKitActivityLog.shared.measure(.playerModeReset) {
-            player.state.shuffleMode = .off
-            player.state.repeatMode = .none
+            player.state.shuffleMode = shuffle
+            player.state.repeatMode = repeatMode
         }
     }
 }

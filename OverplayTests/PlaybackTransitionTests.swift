@@ -96,6 +96,175 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[6].id.rawValue)
     }
 
+    @Test("with Apple Music owning shuffle, the player is handed a playlist and the modes")
+    func mirroredPlaybackHandsThePlayerAPlaylistAndTheModes() async throws {
+        let mirror = StubMirrorPlaylistService(
+            playlist: try makeStubPlaylist(id: "mirror.1", name: "Overplay Queue")
+        )
+        let fixture = try makeFixture(mirrorPlaylistService: mirror)
+        defer { fixture.cleanUp() }
+        fixture.settings.appleMusicOwnedShuffle = true
+        fixture.player.playlistQueueEntries = fixture.musicTracks.map { MusicPlayer.Queue.Entry($0) }
+
+        await fixture.controller.playPlaylist(
+            fixture.playlist,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        #expect(fixture.player.replacedPlaylistIDs == ["mirror.1"])
+        #expect(fixture.player.configuredShuffleModes.last == .songs)
+        #expect(fixture.player.configuredRepeatModes.last == .all)
+        #expect(mirror.requestedTrackIDs.first == fixture.musicTracks.map(\.id.rawValue))
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
+        #expect(fixture.controller.shuffleEnabled)
+        #expect(fixture.controller.repeatMode == .all)
+    }
+
+    @Test("the mirror is never pointed at a playlist the user linked")
+    func mirrorIsNeverPointedAtALinkedPlaylist() async throws {
+        let mirror = StubMirrorPlaylistService(
+            playlist: try makeStubPlaylist(id: "mirror.1", name: "Overplay Queue")
+        )
+        let fixture = try makeFixture(mirrorPlaylistService: mirror)
+        defer { fixture.cleanUp() }
+        fixture.settings.appleMusicOwnedShuffle = true
+        fixture.player.playlistQueueEntries = fixture.musicTracks.map { MusicPlayer.Queue.Entry($0) }
+
+        await fixture.controller.playPlaylist(
+            fixture.playlist,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        // The guard only works if the controller actually tells the service
+        // which playlists are the user's.
+        let linkedPlaylistIDs = try #require(mirror.requestedLinkedPlaylistIDs.first)
+        #expect(linkedPlaylistIDs.contains(fixture.playlist.musicPlaylistID))
+        #expect(!linkedPlaylistIDs.contains("mirror.1"))
+    }
+
+    @Test("shuffling a mirrored queue changes the mode without rebuilding the queue")
+    func shufflingAMirroredQueueChangesTheModeWithoutRebuilding() async throws {
+        let mirror = StubMirrorPlaylistService(
+            playlist: try makeStubPlaylist(id: "mirror.1", name: "Overplay Queue")
+        )
+        let fixture = try makeFixture(mirrorPlaylistService: mirror)
+        defer { fixture.cleanUp() }
+        fixture.settings.appleMusicOwnedShuffle = true
+        fixture.player.playlistQueueEntries = fixture.musicTracks.map { MusicPlayer.Queue.Entry($0) }
+        await fixture.controller.playPlaylist(
+            fixture.playlist,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        let replacementsBeforeShuffle = fixture.player.replaceQueueCallCount
+        let mirrorRequestsBeforeShuffle = mirror.requestedTrackIDs.count
+
+        await fixture.controller.setShuffleEnabled(false, context: fixture.context)
+        #expect(!fixture.controller.shuffleEnabled)
+        #expect(fixture.player.configuredShuffleModes.last == .off)
+
+        await fixture.controller.toggleShuffle(context: fixture.context)
+        #expect(fixture.controller.shuffleEnabled)
+        #expect(fixture.player.configuredShuffleModes.last == .songs)
+
+        #expect(fixture.player.replaceQueueCallCount == replacementsBeforeShuffle)
+        #expect(mirror.requestedTrackIDs.count == mirrorRequestsBeforeShuffle)
+    }
+
+    @Test("an unavailable mirror falls back to Overplay's own queue rather than failing")
+    func unavailableMirrorFallsBackToOverplayQueue() async throws {
+        let mirror = StubMirrorPlaylistService()
+        let fixture = try makeFixture(mirrorPlaylistService: mirror)
+        defer { fixture.cleanUp() }
+        fixture.settings.appleMusicOwnedShuffle = true
+
+        try await fixture.start(at: 0)
+
+        #expect(mirror.requestedTrackIDs.count == 1)
+        #expect(fixture.player.replacedPlaylistIDs.isEmpty)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
+        #expect(!fixture.controller.shuffleEnabled)
+        #expect(fixture.controller.repeatMode == .none)
+    }
+
+    @Test("an unhydrated mirror queue correlates on a later tick, not against the old playlist")
+    func unhydratedMirrorQueueCorrelatesOnALaterTick() async throws {
+        let mirror = StubMirrorPlaylistService(
+            playlist: try makeStubPlaylist(id: "mirror.1", name: "Overplay Queue")
+        )
+        let fixture = try makeFixture(mirrorPlaylistService: mirror)
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+
+        let other = try fixture.addPlaylist(prefix: "other", trackCount: 3)
+        fixture.settings.appleMusicOwnedShuffle = true
+        fixture.player.playlistQueueEntries = other.musicTracks.map { MusicPlayer.Queue.Entry($0) }
+        fixture.player.withholdsQueueItemIDs = true
+
+        await fixture.controller.playPlaylist(
+            other.playlist,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        // The outgoing playlist's entries must not survive as the live queue.
+        let playedStaleTrack = await fixture.controller.playTrackInCurrentQueue(
+            localTrackID: fixture.tracks[2].id.uuidString,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+        #expect(!playedStaleTrack)
+
+        fixture.player.withholdsQueueItemIDs = false
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        let playedMirroredTrack = await fixture.controller.playTrackInCurrentQueue(
+            localTrackID: other.tracks[2].id.uuidString,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+        #expect(playedMirroredTrack)
+    }
+
+    @Test("mirror correlation gives up after a bounded wait rather than retrying forever")
+    func mirrorCorrelationGivesUpAfterABoundedWait() async throws {
+        let mirror = StubMirrorPlaylistService(
+            playlist: try makeStubPlaylist(id: "mirror.1", name: "Overplay Queue")
+        )
+        let fixture = try makeFixture(mirrorPlaylistService: mirror)
+        defer { fixture.cleanUp() }
+        fixture.settings.appleMusicOwnedShuffle = true
+        fixture.player.playlistQueueEntries = fixture.musicTracks.map { MusicPlayer.Queue.Entry($0) }
+        fixture.player.withholdsQueueItemIDs = true
+
+        await fixture.controller.playPlaylist(
+            fixture.playlist,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        for _ in 0..<6 {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+
+        // Correlation has been abandoned, so a late hydration no longer
+        // rebuilds the queue view. Identity still resolves from the player's
+        // reported item, which is what keeps skip counting alive.
+        fixture.player.withholdsQueueItemIDs = false
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        let playedMirroredTrack = await fixture.controller.playTrackInCurrentQueue(
+            localTrackID: fixture.tracks[2].id.uuidString,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+        #expect(!playedMirroredTrack)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
+    }
+
     @Test("delayed Next keeps every published surface on outgoing until confirmation")
     func delayedNextKeepsPublishedStateOnOutgoingUntilConfirmation() async throws {
         let fixture = try makeFixture()
@@ -843,8 +1012,13 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     var nextFailuresRemaining = 0
     var previousFailuresRemaining = 0
     var nextConfirmationDelays: [Int] = []
-    var appendedTrackBatchSizes: [Int] = []
+    var replacedPlaylistIDs: [String] = []
+    /// What the player materializes when handed a playlist entity.
+    var playlistQueueEntries: [MusicPlayer.Queue.Entry] = []
     var queuedEntryCount: Int { entries.count }
+    var configuredShuffleModes: [MusicPlayer.ShuffleMode] = []
+    var configuredRepeatModes: [MusicPlayer.RepeatMode] = []
+    var appendedTrackBatchSizes: [Int] = []
     var previousConfirmationDelays: [Int] = []
     var replacementConfirmationDelays: [Int] = []
     var clearCurrentEntryWhileReplacementPending = false
@@ -968,11 +1142,30 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
         entries.append(contentsOf: tracks.map { MusicPlayer.Queue.Entry($0) })
     }
 
+    /// Simulates Apple Music reporting queue entries before their items
+    /// hydrate, which is the normal case for a queue it materialized itself.
+    var withholdsQueueItemIDs = false
+
     var queueEntrySnapshots: [PlayerQueueEntrySnapshot] {
-        entries.map { PlayerQueueEntrySnapshot(id: $0.id, musicItemID: $0.item?.id.rawValue) }
+        entries.map {
+            PlayerQueueEntrySnapshot(
+                id: $0.id,
+                musicItemID: withholdsQueueItemIDs ? nil : $0.item?.id.rawValue
+            )
+        }
     }
 
-    func disablePlaybackModes() {}
+    func replaceQueue(withPlaylist playlist: Playlist) {
+        replaceQueueCallCount += 1
+        replacedPlaylistIDs.append(playlist.id.rawValue)
+        entries = playlistQueueEntries
+        scheduleTransition(to: playlistQueueEntries.first, afterReads: 0)
+    }
+
+    func configurePlaybackModes(shuffle: MusicPlayer.ShuffleMode, repeat repeatMode: MusicPlayer.RepeatMode) {
+        configuredShuffleModes.append(shuffle)
+        configuredRepeatModes.append(repeatMode)
+    }
 
     func releaseBlockedNextCommand() {
         blockedNextContinuation?.resume()
@@ -1131,7 +1324,8 @@ private struct PlaybackTransitionFixture {
 private func makeFixture(
     maximumObservationCount: Int = 5,
     trackCount: Int = 3,
-    queueWindowPolicy: PlaybackQueueWindowPolicy = .standard
+    queueWindowPolicy: PlaybackQueueWindowPolicy = .standard,
+    mirrorPlaylistService: any MirrorPlaylistProviding = StubMirrorPlaylistService()
 ) throws -> PlaybackTransitionFixture {
     LocalPlaybackStateStore.clear(flushImmediately: true)
     let container = try OverplayTestSupport.makeModelContainer()
@@ -1154,6 +1348,7 @@ private func makeFixture(
         playerID: playerID,
         player: player,
         queueWindowPolicy: queueWindowPolicy,
+        mirrorPlaylistService: mirrorPlaylistService,
         transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy(
             maximumObservationCount: maximumObservationCount,
             observationInterval: .zero
@@ -1176,4 +1371,50 @@ private func makeFixture(
         sleepProbe: sleepProbe,
         playerID: playerID
     )
+}
+
+
+/// Stands in for `MirrorPlaylistService` so tests never touch the real Apple
+/// Music library. Defaults to failing, which is the state a simulator is
+/// always in.
+@MainActor
+private final class StubMirrorPlaylistService: MirrorPlaylistProviding {
+    enum Failure: Error {
+        case mirrorUnavailable
+    }
+
+    var playlist: Playlist?
+    private(set) var requestedTrackIDs: [[String]] = []
+    private(set) var requestedLinkedPlaylistIDs: [[String]] = []
+
+    init(playlist: Playlist? = nil) {
+        self.playlist = playlist
+    }
+
+    func mirroredPlaylist(
+        for sourcePlaylistID: String,
+        scope: PlaylistPlaybackScope,
+        tracks: [Track],
+        linkedPlaylistIDs: [String]
+    ) async throws -> Playlist {
+        requestedTrackIDs.append(tracks.map(\.id.rawValue))
+        requestedLinkedPlaylistIDs.append(linkedPlaylistIDs)
+        guard let playlist else {
+            throw Failure.mirrorUnavailable
+        }
+
+        return playlist
+    }
+}
+
+private func makeStubPlaylist(id: String, name: String) throws -> Playlist {
+    let json = """
+    {
+      "id": "\(id)",
+      "type": "library-playlists",
+      "href": "/v1/me/library/playlists/\(id)",
+      "attributes": { "name": "\(name)", "canEdit": true, "hasCatalog": false }
+    }
+    """
+    return try JSONDecoder().decode(Playlist.self, from: Data(json.utf8))
 }

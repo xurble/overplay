@@ -43,6 +43,7 @@ Music's global play count or skip count.
 | `RETIRE-001` | Retirement is always authoritative locally. Current-track retirement attempts remote deletion only for a managed One True Playlist; playlist-row and triage retirement are local-only. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/PlaylistRemoteMutationPolicy.swift` |
 | `PLAY-001` | Overplay owns full queue order. Shuffle is a one-shot reshuffle and restart; playlist repeat rebuilds a fresh shuffled queue. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/PlaybackOrderEngine.swift` |
 | `PLAY-002` | The queue is handed to MusicKit a window at a time and topped up as it drains, never as one whole-playlist payload. | `Overplay/Playback/PlaybackQueueWindowPolicy.swift`, `OverplayTests/PlaybackQueueWindowPolicyTests.swift` |
+| `PLAY-003` | With Apple Music-owned shuffle enabled, playback runs from an Overplay-owned mirror playlist and Apple Music owns shuffle, repeat, and the playlist wrap. Any mirror failure falls back to `PLAY-001`. | `Overplay/Services/MirrorPlaylistService.swift`, `OverplayTests/MirrorPlaylistPolicyTests.swift` |
 | `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
 | `HISTORY-001` | History is filterable and paged. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
 | `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, playlist selection, and MusicKit diagnostics. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
@@ -580,9 +581,38 @@ Repeat behavior:
   player is stopped or paused) and only triggers the repeat rebuild when the
   outgoing track was observed near its end, so an external stop mid-track or a
   queue that ended unobserved during suspension does not restart playback.
-- Platform/system UI may still expose repeat or shuffle concepts, but Overplay
-  should keep its own MusicKit shuffle and repeat modes off and treat local
-  order as authoritative.
+- Platform/system UI may still expose repeat or shuffle concepts, but while
+  Overplay owns the order it keeps its own MusicKit shuffle and repeat modes
+  off and treats local order as authoritative.
+
+### Apple Music-owned shuffle (mirror playback)
+
+An opt-in settings toggle, `appleMusicOwnedShuffle`, inverts order ownership.
+It is off by default and needs device verification before it can become the
+default, because MusicKit shuffle behaviour cannot be exercised in the
+simulator.
+
+When it is on:
+
+- Overplay maintains one disposable Apple Music playlist it owns, "Overplay
+  Queue", holding exactly the playable tracks for the playlist and scope being
+  played. The user's own playlists are never rewritten for playback.
+- The player is handed that playlist as an entity rather than a track list, so
+  Apple Music fetches, pages, and orders the queue itself.
+- Apple Music owns shuffle (`.songs`/`.off`) and repeat (`.all`). Pressing
+  shuffle on an already-mirrored queue is a mode change with no new order, no
+  queue hand-off, and no restart. Queue end is Apple Music's to wrap, so
+  Overplay does not rebuild at the end of a playlist.
+- The mirror is rewritten only when its contents have actually drifted, so
+  replaying the same playlist costs no Apple Music library writes.
+- The mirror is never pointed at a playlist the user has linked. Because it is
+  always rebuildable from SwiftData, the whole-playlist rewrite that
+  `MusicLibrary.edit(_:items:)` requires is safe to aim at it.
+- Queue entries are correlated back to local rows on Apple Music item ID and
+  adopted in the player's own order, because Apple Music decided that order.
+- Any failure to prepare the mirror, or a player that does not take the queue,
+  falls back to Overplay-owned order with the capped window. Playback never
+  fails because the mirror was unavailable.
 
 Additions, retirements, and restores:
 

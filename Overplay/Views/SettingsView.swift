@@ -63,6 +63,19 @@ struct SettingsView: View {
             }
 
             Section {
+                SettingsLabeledToggle(
+                    title: "Apple Music Owns Shuffle",
+                    subtitle: "Plays through an Overplay-managed Apple Music playlist and lets Apple Music shuffle, repeat, and page the queue.",
+                    isOn: $settings.appleMusicOwnedShuffle
+                )
+            } header: {
+                Text("Playback Engine")
+            } footer: {
+                Text("Off means Overplay pushes its own explicit order to Apple Music. On is lighter on Apple Music but needs verifying on a real device with an Apple Music subscription.")
+                    .font(.caption)
+            }
+
+            Section {
                 Button(role: .destructive) {
                     showResetConfirmation = true
                 } label: {
