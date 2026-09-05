@@ -66,6 +66,7 @@ final class PlaybackController {
     private(set) var playbackModeVersion = 0
 
     @ObservationIgnored private let player: any PlaybackPlayer
+    @ObservationIgnored private let queueWindowPolicy: PlaybackQueueWindowPolicy
     @ObservationIgnored private let transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy
     @ObservationIgnored private let sleepForTransitionConfirmation: @MainActor (Duration) async -> Void
     @ObservationIgnored private var monitorTask: Task<Void, Never>?
@@ -74,6 +75,10 @@ final class PlaybackController {
     @ObservationIgnored private var activePlaylistSnapshotNeedsRebuild = false
     @ObservationIgnored private var activeQueueEntries: [RealizedPlaybackQueueEntry] = []
     @ObservationIgnored private var activeQueueIndex: Int?
+    /// Ordered entries deliberately held back from the player's queue,
+    /// appended as the delivered window drains. Empty once the whole order
+    /// has been handed over.
+    @ObservationIgnored private var pendingQueueEntries: [PlaybackQueueEntry] = []
     @ObservationIgnored private var hasRestoredLocalPlaybackState = false
     @ObservationIgnored private var prefetchedArtworkTrackID: String?
     @ObservationIgnored private var isRestartingQueue = false
@@ -111,6 +116,7 @@ final class PlaybackController {
     init(
         playerID: String = "main",
         player: any PlaybackPlayer = ApplicationMusicPlaybackPlayer(),
+        queueWindowPolicy: PlaybackQueueWindowPolicy = .standard,
         transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy = .standard,
         sleepForTransitionConfirmation: @escaping @MainActor (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
@@ -118,6 +124,7 @@ final class PlaybackController {
     ) {
         self.playerID = playerID
         self.player = player
+        self.queueWindowPolicy = queueWindowPolicy
         self.transitionConfirmationPolicy = transitionConfirmationPolicy
         self.sleepForTransitionConfirmation = sleepForTransitionConfirmation
     }
@@ -361,6 +368,7 @@ final class PlaybackController {
         currentPlaylistScope = .active
         activeSession = nil
         activeQueueEntries = []
+        pendingQueueEntries = []
         activeQueueIndex = nil
         activePlaylistSnapshot = nil
         prefetchedArtworkTrackID = nil
@@ -797,6 +805,7 @@ final class PlaybackController {
     private func clearQueueCorrelationAfterDivergedTransition() {
         activeQueueEntries = []
         activeQueueIndex = nil
+        pendingQueueEntries = []
         currentPlaylistID = nil
         currentPlaylistScope = .active
         currentPlaylistItem = nil
@@ -833,7 +842,16 @@ final class PlaybackController {
         warmUpTask?.cancel()
         warmUpTask = nil
 
-        let materialization = PlaybackQueueMaterializer.materialize(queueEntries, startingAt: localTrackID)
+        // Hand the player a window rather than the whole playlist: the queue
+        // replacement is the largest payload Overplay sends MusicKit, and the
+        // rest is appended as the window drains.
+        let startIndex = localTrackID
+            .flatMap { localTrackID in queueEntries.firstIndex { $0.localTrackID == localTrackID } }
+            ?? 0
+        let window = queueWindowPolicy.split(entryCount: queueEntries.count, startIndex: startIndex)
+        let deliveredEntries = Array(queueEntries[window.delivered])
+        let heldBackEntries = Array(queueEntries[window.pending])
+        let materialization = PlaybackQueueMaterializer.materialize(deliveredEntries, startingAt: localTrackID)
         let expectedEntryIDs = Set(materialization.realizedEntries.map(\.queueEntryID))
         let result = await performPlayerConfirmedTransition(
             outgoingEntryID: outgoing.entryID,
@@ -864,6 +882,7 @@ final class PlaybackController {
                 }
                 activeSession = nil
                 updateActiveQueue(realizedEntries: materialization.realizedEntries, startingAt: localTrackID)
+                pendingQueueEntries = heldBackEntries
                 playbackIntended = true
                 clearDeliveryFailure()
                 currentPlaylistID = playlistID
@@ -899,6 +918,39 @@ final class PlaybackController {
         case .rejected:
             throw PlaybackTransitionError.transitionInProgress
         }
+    }
+
+    /// Appends the next slice of held-back entries once the delivered window
+    /// runs low, so queue hand-off cost stays flat however long the playlist
+    /// grows.
+    private func topUpPlayerQueueIfNeeded() async {
+        guard !pendingQueueEntries.isEmpty,
+              !isPerformingTransition,
+              !isRestartingQueue,
+              let activeQueueIndex else {
+            return
+        }
+
+        let count = queueWindowPolicy.topUpCount(
+            remainingAhead: activeQueueEntries.count - activeQueueIndex - 1,
+            pendingCount: pendingQueueEntries.count
+        )
+        guard count > 0 else { return }
+
+        let batch = Array(pendingQueueEntries.prefix(count))
+        do {
+            try await player.appendToQueue(batch.map(\.musicTrack))
+        } catch {
+            TrackMetadataDiagnostics.log("queue top-up failed: \(error.localizedDescription)")
+            return
+        }
+
+        pendingQueueEntries.removeFirst(count)
+        activeQueueEntries.append(contentsOf: PlaybackQueueSnapshotCorrelator.realizedEntries(
+            expected: batch.map(PendingQueueCorrelation.init(entry:)),
+            snapshots: player.queueEntrySnapshots,
+            reservedEntryIDs: Set(activeQueueEntries.map(\.queueEntryID))
+        ))
     }
 
     func togglePlayPause(context: ModelContext) async {
@@ -1435,6 +1487,7 @@ final class PlaybackController {
         let hasDivergedUnresolvedPlayerEntry = unresolvedEntryState.hasDiverged
         let hasUncorrelatedConcretePlayerEntry = player.currentEntry != nil
             && identity?.isQueueCorrelated == false
+        await topUpPlayerQueueIfNeeded()
         let newTrackID = identity?.musicItemID
         let newLocalTrackID = identity?.localTrackID
         let currentPlaybackTime = player.playbackTime

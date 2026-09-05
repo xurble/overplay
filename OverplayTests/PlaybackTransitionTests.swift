@@ -37,6 +37,65 @@ struct PlaybackTransitionTests {
         ) == .diverged(entryID: "external"))
     }
 
+    @Test("a long playlist reaches the player one window at a time")
+    func longPlaylistReachesThePlayerOneWindowAtATime() async throws {
+        let fixture = try makeFixture(
+            trackCount: 12,
+            queueWindowPolicy: PlaybackQueueWindowPolicy(windowSize: 4, topUpThreshold: 1, topUpBatchSize: 3)
+        )
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+
+        #expect(fixture.player.queuedEntryCount == 4)
+        #expect(fixture.player.appendedTrackBatchSizes.isEmpty)
+
+        fixture.player.advanceExternally()
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(fixture.player.appendedTrackBatchSizes.isEmpty)
+
+        fixture.player.advanceExternally()
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(fixture.player.appendedTrackBatchSizes == [3])
+        #expect(fixture.player.queuedEntryCount == 7)
+    }
+
+    @Test("a topped-up entry is correlated, so it still resolves to its local row")
+    func toppedUpEntryStillResolvesToItsLocalRow() async throws {
+        let fixture = try makeFixture(
+            trackCount: 8,
+            queueWindowPolicy: PlaybackQueueWindowPolicy(windowSize: 3, topUpThreshold: 1, topUpBatchSize: 2)
+        )
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        #expect(fixture.player.queuedEntryCount == 3)
+
+        // Tracks 3 and 4 only reach the player as a top-up batch.
+        fixture.player.advanceExternally()
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(fixture.player.appendedTrackBatchSizes == [2])
+        #expect(fixture.player.queuedEntryCount == 5)
+
+        for _ in 0..<2 {
+            fixture.player.advanceExternally()
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[3].id.rawValue)
+    }
+
+    @Test("starting part-way through a playlist queues from that track onwards")
+    func startingPartWayThroughQueuesFromThatTrackOnwards() async throws {
+        let fixture = try makeFixture(
+            trackCount: 12,
+            queueWindowPolicy: PlaybackQueueWindowPolicy(windowSize: 4, topUpThreshold: 1, topUpBatchSize: 3)
+        )
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 6)
+
+        #expect(fixture.player.queuedEntryCount == 4)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[6].id.rawValue)
+    }
+
     @Test("delayed Next keeps every published surface on outgoing until confirmation")
     func delayedNextKeepsPublishedStateOnOutgoingUntilConfirmation() async throws {
         let fixture = try makeFixture()
@@ -784,6 +843,8 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     var nextFailuresRemaining = 0
     var previousFailuresRemaining = 0
     var nextConfirmationDelays: [Int] = []
+    var appendedTrackBatchSizes: [Int] = []
+    var queuedEntryCount: Int { entries.count }
     var previousConfirmationDelays: [Int] = []
     var replacementConfirmationDelays: [Int] = []
     var clearCurrentEntryWhileReplacementPending = false
@@ -903,7 +964,12 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     }
 
     func appendToQueue(_ tracks: [Track]) async throws {
+        appendedTrackBatchSizes.append(tracks.count)
         entries.append(contentsOf: tracks.map { MusicPlayer.Queue.Entry($0) })
+    }
+
+    var queueEntrySnapshots: [PlayerQueueEntrySnapshot] {
+        entries.map { PlayerQueueEntrySnapshot(id: $0.id, musicItemID: $0.item?.id.rawValue) }
     }
 
     func disablePlaybackModes() {}
@@ -1062,11 +1128,15 @@ private struct PlaybackTransitionFixture {
 }
 
 @MainActor
-private func makeFixture(maximumObservationCount: Int = 5) throws -> PlaybackTransitionFixture {
+private func makeFixture(
+    maximumObservationCount: Int = 5,
+    trackCount: Int = 3,
+    queueWindowPolicy: PlaybackQueueWindowPolicy = .standard
+) throws -> PlaybackTransitionFixture {
     LocalPlaybackStateStore.clear(flushImmediately: true)
     let container = try OverplayTestSupport.makeModelContainer()
     let context = container.mainContext
-    let added = try PlaybackTransitionFixture.insertPlaylist(prefix: "main", trackCount: 3, context: context)
+    let added = try PlaybackTransitionFixture.insertPlaylist(prefix: "main", trackCount: trackCount, context: context)
     let settings = OverplaySettings(
         selectedPlaylistID: added.playlist.musicPlaylistID,
         selectedPlaylistName: added.playlist.name,
@@ -1083,6 +1153,7 @@ private func makeFixture(maximumObservationCount: Int = 5) throws -> PlaybackTra
     let controller = PlaybackController(
         playerID: playerID,
         player: player,
+        queueWindowPolicy: queueWindowPolicy,
         transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy(
             maximumObservationCount: maximumObservationCount,
             observationInterval: .zero

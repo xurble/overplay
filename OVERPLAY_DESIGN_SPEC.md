@@ -42,6 +42,7 @@ Music's global play count or skip count.
 | `MUT-002` | Apple Music search can add songs only to active playlists that allow remote writes. | `Overplay/ViewModels/SearchMusicViewModel.swift`, `OverplayTests/SearchMusicViewModelTests.swift` |
 | `RETIRE-001` | Retirement is always authoritative locally. Current-track retirement attempts remote deletion only for a managed One True Playlist; playlist-row and triage retirement are local-only. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/PlaylistRemoteMutationPolicy.swift` |
 | `PLAY-001` | Overplay owns full queue order. Shuffle is a one-shot reshuffle and restart; playlist repeat rebuilds a fresh shuffled queue. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/PlaybackOrderEngine.swift` |
+| `PLAY-002` | The queue is handed to MusicKit a window at a time and topped up as it drains, never as one whole-playlist payload. | `Overplay/Playback/PlaybackQueueWindowPolicy.swift`, `OverplayTests/PlaybackQueueWindowPolicyTests.swift` |
 | `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
 | `HISTORY-001` | History is filterable and paged. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
 | `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, playlist selection, and MusicKit diagnostics. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
@@ -539,10 +540,14 @@ Local order state:
 
 Starting playback:
 
-- Starting a playlist sends the full current local order for the selected scope
-  to MusicKit.
-- If the user starts at a specific track, MusicKit should start at that track
-  within the full queue.
+- Starting a playlist sends the current local order for the selected scope to
+  MusicKit as a capped window, not as one whole-playlist payload. The rest is
+  appended as the window drains, so hand-off cost stays flat however long the
+  One True Playlist grows.
+- Entries before the starting track are not queued. Starting part-way through a
+  playlist queues from that track onwards, the way Apple Music does.
+- If the user starts at a specific track, MusicKit should start at that track,
+  which is the first entry of the delivered window.
 - If no track is requested, playback starts at the first track in local order.
 - MusicKit and Overplay UI should be reconciled immediately after queue setup so
   every surface agrees on the current track and queue position.
