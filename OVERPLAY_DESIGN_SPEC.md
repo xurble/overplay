@@ -42,6 +42,7 @@ Music's global play count or skip count.
 | `MUT-002` | Apple Music search can add songs only to active playlists that allow remote writes. | `Overplay/ViewModels/SearchMusicViewModel.swift`, `OverplayTests/SearchMusicViewModelTests.swift` |
 | `RETIRE-001` | Retirement is always authoritative locally. Current-track retirement attempts remote deletion only for a managed One True Playlist; playlist-row and triage retirement are local-only. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/PlaylistRemoteMutationPolicy.swift` |
 | `PLAY-001` | Overplay owns full queue order. Shuffle is a one-shot reshuffle and restart; playlist repeat rebuilds a fresh shuffled queue. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/PlaybackOrderEngine.swift` |
+| `PLAY-002` | The queue is handed to MusicKit a window at a time and topped up as it drains, never as one whole-playlist payload. | `Overplay/Playback/PlaybackQueueWindowPolicy.swift`, `OverplayTests/PlaybackQueueWindowPolicyTests.swift` |
 | `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
 | `HISTORY-001` | History is filterable and paged. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
 | `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, playlist selection, and MusicKit diagnostics. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
@@ -539,10 +540,14 @@ Local order state:
 
 Starting playback:
 
-- Starting a playlist sends the full current local order for the selected scope
-  to MusicKit.
-- If the user starts at a specific track, MusicKit should start at that track
-  within the full queue.
+- Starting a playlist sends the current local order for the selected scope to
+  MusicKit as a capped window, not as one whole-playlist payload. The rest is
+  appended as the window drains, so hand-off cost stays flat however long the
+  One True Playlist grows.
+- Entries before the starting track are not queued. Starting part-way through a
+  playlist queues from that track onwards, the way Apple Music does.
+- If the user starts at a specific track, MusicKit should start at that track,
+  which is the first entry of the delivered window.
 - If no track is requested, playback starts at the first track in local order.
 - MusicKit and Overplay UI should be reconciled immediately after queue setup so
   every surface agrees on the current track and queue position.
@@ -554,8 +559,8 @@ Shuffle behavior:
 
 - Shuffle is a one-shot action, not a persistent selected mode.
 - Pressing shuffle creates a new full-playlist random order, saves it locally,
-  sends the full new queue to MusicKit, and restarts playback from the first
-  track at position zero.
+  sends the new queue to MusicKit as a capped window, and restarts playback
+  from the first track at position zero.
 - The currently or most recently played track must not appear in the top five
   tracks of the new order.
 - For playlists with two to four tracks, keep the currently or most recently
@@ -570,7 +575,8 @@ Repeat behavior:
   iOS or CarPlay UI, and repeat-one is not part of the playback model.
 - When the last track is played through or skipped past, Overplay evaluates the
   outgoing track, creates a fresh shuffled order using the same placement rules,
-  saves it, sends the full queue to MusicKit, and starts from the first track.
+  saves it, sends the queue to MusicKit as a capped window, and starts from the
+  first track.
 - Queue end is detected from the player state (no current entry while the
   player is stopped or paused) and only triggers the repeat rebuild when the
   outgoing track was observed near its end, so an external stop mid-track or a
@@ -584,8 +590,9 @@ Additions, retirements, and restores:
 - Playlist additions from MusicKit sync, SwiftData sync, manual add, or
   promotion append to the end of the current Active local order.
 - If the changed playlist is currently playing, playable additions should also
-  be appended to the live MusicKit queue when possible without restarting
-  playback.
+  be appended without restarting playback: to the live MusicKit queue when the
+  whole order is already delivered, otherwise behind the entries still held
+  back, so play order keeps matching local order.
 - If the changed playlist is currently playing, refresh the active playlist
   projection immediately after the durable SwiftData/local-order mutation so
   visible rows do not wait for SwiftData query invalidation.
