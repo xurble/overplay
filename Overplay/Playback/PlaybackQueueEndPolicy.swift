@@ -34,12 +34,20 @@ enum PlaybackQueueEndPolicy {
     /// skip to, or the player has already abandoned its entry. An unknown
     /// queue position cannot rule out queue end, so it keeps the restart
     /// path (which is non-destructive until play() succeeds).
+    ///
+    /// Since the queue is delivered a window at a time, sitting at the end of
+    /// the correlated queue no longer implies the end of the playlist: with
+    /// entries still to hand over, a throw there is a delivery failure, and
+    /// treating it as queue end would reshuffle and overwrite the stored
+    /// order, losing the user's place mid-playlist.
     static func skipFailureIndicatesQueueEnd(
         activeQueueIndex: Int?,
         activeQueueCount: Int,
-        hasCurrentEntry: Bool
+        hasCurrentEntry: Bool,
+        hasUndeliveredEntries: Bool = false
     ) -> Bool {
         guard hasCurrentEntry else { return true }
+        guard !hasUndeliveredEntries else { return false }
         guard let activeQueueIndex, activeQueueCount > 0 else { return true }
         return activeQueueIndex >= activeQueueCount - 1
     }
