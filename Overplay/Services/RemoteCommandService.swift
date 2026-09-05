@@ -32,13 +32,19 @@ struct PlaybackRemoteCommandAvailability: Equatable, Sendable {
         isTransitionInFlight: Bool,
         isDeliveryStalled: Bool
     ) -> PlaybackRemoteCommandAvailability {
-        guard !isTransitionInFlight, hasRestorablePlayback else {
+        // Audio that is actually playing must always be stoppable, even when
+        // Overplay has nothing restorable to describe. Gating this on
+        // restorable playback once disabled pause on the Lock Screen, Control
+        // Center, CarPlay and AirPods simultaneously.
+        guard !isTransitionInFlight, hasRestorablePlayback || isPlaying else {
             return .unavailable
         }
 
         return PlaybackRemoteCommandAvailability(
             canPlay: !isPlaying || isDeliveryStalled,
-            canPause: canControlPlayback && isPlaying && !isDeliveryStalled,
+            // Deliberately not gated on queue correlation: pausing the shared
+            // player never needs it.
+            canPause: isPlaying && !isDeliveryStalled,
             canTogglePlayPause: true,
             canSkipToNext: canControlPlayback,
             canSkipToPrevious: canControlPlayback,

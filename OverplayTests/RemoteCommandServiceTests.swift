@@ -81,6 +81,65 @@ struct RemoteCommandServiceTests {
         #expect(deliveryFailure.canSkipToPrevious)
     }
 
+    @Test("pause stays available when playback is running but correlation is lost")
+    func pauseStaysAvailableWhenPlaybackIsRunningButCorrelationIsLost() {
+        // Regression: an un-hydrated player entry used to clear playlist and
+        // track state, which made this exact combination return .unavailable
+        // and disabled pause on the Lock Screen, Control Center, CarPlay and
+        // AirPods at once while audio kept playing.
+        let lostCorrelation = PlaybackRemoteCommandAvailability.make(
+            canControlPlayback: false,
+            hasRestorablePlayback: false,
+            isPlaying: true,
+            isTransitionInFlight: false,
+            isDeliveryStalled: false
+        )
+
+        #expect(lostCorrelation != .unavailable)
+        #expect(lostCorrelation.canPause)
+        #expect(lostCorrelation.canTogglePlayPause)
+        #expect(!lostCorrelation.canPlay)
+        // Queue-dependent commands still need correlation.
+        #expect(!lostCorrelation.canSkipToNext)
+        #expect(!lostCorrelation.canSkipToPrevious)
+        #expect(!lostCorrelation.canShuffle)
+    }
+
+    @Test("pause is available with correlation lost but restorable playback known")
+    func pauseIsAvailableWithCorrelationLostButRestorablePlaybackKnown() {
+        let availability = PlaybackRemoteCommandAvailability.make(
+            canControlPlayback: false,
+            hasRestorablePlayback: true,
+            isPlaying: true,
+            isTransitionInFlight: false,
+            isDeliveryStalled: false
+        )
+
+        #expect(availability.canPause)
+    }
+
+    @Test("nothing is offered while nothing is playing and nothing is restorable")
+    func nothingIsOfferedWhileNothingIsPlayingAndNothingIsRestorable() {
+        #expect(PlaybackRemoteCommandAvailability.make(
+            canControlPlayback: false,
+            hasRestorablePlayback: false,
+            isPlaying: false,
+            isTransitionInFlight: false,
+            isDeliveryStalled: false
+        ) == .unavailable)
+    }
+
+    @Test("a transition in flight still suppresses everything")
+    func aTransitionInFlightStillSuppressesEverything() {
+        #expect(PlaybackRemoteCommandAvailability.make(
+            canControlPlayback: false,
+            hasRestorablePlayback: false,
+            isPlaying: true,
+            isTransitionInFlight: true,
+            isDeliveryStalled: false
+        ) == .unavailable)
+    }
+
     @Test("activate update and deactivate manage lifecycle state")
     func activateUpdateAndDeactivateManageLifecycleState() throws {
         let container = try OverplayTestSupport.makeModelContainer()
