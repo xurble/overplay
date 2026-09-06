@@ -486,7 +486,9 @@ final class PlaybackController {
         // skipping to an entry from it would fail as a stall instead of
         // letting the caller build a fresh queue.
         await refresh(context: context)
-        guard let target = activeQueueEntries.first(where: { $0.localTrackID == localTrackID }) else {
+        // The queue is only a window onto the order, so a track can be in the
+        // list the user tapped without being in the player's queue yet.
+        guard let target = await resolveLiveQueueEntry(localTrackID: localTrackID) else {
             return false
         }
 
@@ -977,6 +979,29 @@ final class PlaybackController {
             )
         }
 
+        await deliverPendingEntries(count: count, reason: "top-up")
+    }
+
+    /// Hands the leading `count` held-back entries to the player and accounts
+    /// for them. The single place the held-back tail is consumed, so top-up
+    /// and reach-ahead cannot drift apart in how they handle a queue replaced
+    /// mid-append.
+    @discardableResult
+    private func deliverPendingEntries(count: Int, reason: String) async -> Bool {
+        // `refresh` exits early during a transition, so `pendingQueueEntries`
+        // can still describe the outgoing queue while another surface replaces
+        // the live one. Appending then puts one playlist's tail onto another's
+        // queue, ahead of the generation bump that would have caught it. These
+        // guards belong here rather than in a caller: this is the only place
+        // the held-back tail is consumed.
+        guard count > 0,
+              count <= pendingQueueEntries.count,
+              !isToppingUpQueue,
+              !isPerformingTransition,
+              !isRestartingQueue else {
+            return false
+        }
+
         let batch = Array(pendingQueueEntries.prefix(count))
         let generation = queueGeneration
         isToppingUpQueue = true
@@ -984,8 +1009,8 @@ final class PlaybackController {
         do {
             try await player.appendToQueue(batch.map(\.musicTrack))
         } catch {
-            TrackMetadataDiagnostics.log("queue top-up failed: \(error.localizedDescription)")
-            return
+            TrackMetadataDiagnostics.log("queue \(reason) failed: \(error.localizedDescription)")
+            return false
         }
 
         // A queue replacement can land while the append is in flight. Comparing
@@ -993,12 +1018,71 @@ final class PlaybackController {
         // the tail is identified by generation. Consuming a stale count here
         // would drop entries from the new play order, or trap outright.
         guard generation == queueGeneration, pendingQueueEntries.count >= count else {
-            return
+            return false
         }
 
         pendingQueueEntries.removeFirst(count)
         deliveredUncorrelatedEntries.append(contentsOf: batch.map(PendingQueueCorrelation.init(entry:)))
         correlateDeliveredEntriesIfNeeded()
+        return true
+    }
+
+    /// Hands over enough of the held-back tail to reach a track the user asked
+    /// for by name, so an in-queue skip stays possible instead of degrading
+    /// into a queue replacement.
+    ///
+    /// Windowing made this necessary: the track is in the playback order the
+    /// user is looking at, but not in the queue the player holds. Rebuilding
+    /// from it plays the right track but drops everything before it, which on
+    /// a browse-heavy surface like CarPlay turns an ordinary track tap into a
+    /// queue replacement and a truncated history.
+    private func reachPendingEntry(localTrackID: String) async -> Bool {
+        guard let index = pendingQueueEntries.firstIndex(where: { $0.localTrackID == localTrackID }),
+              let count = queueWindowPolicy.reachAheadCount(toPendingIndex: index) else {
+            return false
+        }
+
+        return await deliverPendingEntries(count: count, reason: "reach-ahead")
+    }
+
+    /// Resolves a directly requested track to an entry of the live queue,
+    /// reaching into the held-back tail when the queue does not hold it yet.
+    ///
+    /// Returns nil only when the queue genuinely cannot serve the track, which
+    /// is the caller's signal to rebuild. Every transient state is waited out
+    /// rather than mistaken for absence — a delivery already in flight, a
+    /// transition being confirmed, or entries the player has accepted but not
+    /// yet reported item IDs for. Mistaking any of those for "not here" costs
+    /// a queue replacement and the history behind the listener, which is the
+    /// exact outcome reaching exists to avoid.
+    private func resolveLiveQueueEntry(localTrackID: String) async -> RealizedPlaybackQueueEntry? {
+        for _ in 0..<max(transitionConfirmationPolicy.maximumObservationCount, 1) {
+            if let entry = activeQueueEntries.first(where: { $0.localTrackID == localTrackID }) {
+                return entry
+            }
+
+            // Delivered, but MusicKit has not reported an item ID for it yet.
+            // It is in the player's queue; only the correlation is missing.
+            if deliveredUncorrelatedEntries.contains(where: { $0.localTrackID == localTrackID }) {
+                correlateDeliveredEntriesIfNeeded()
+                await sleepForTransitionConfirmation(transitionConfirmationPolicy.observationInterval)
+                continue
+            }
+
+            // Another delivery or transition is mid-flight, so the tail and the
+            // correlated queue are both still settling. Deciding now would read
+            // an in-flight batch as absent.
+            if isToppingUpQueue || isPerformingTransition || isRestartingQueue {
+                await sleepForTransitionConfirmation(transitionConfirmationPolicy.observationInterval)
+                continue
+            }
+
+            guard await reachPendingEntry(localTrackID: localTrackID) else {
+                return nil
+            }
+        }
+
+        return activeQueueEntries.first { $0.localTrackID == localTrackID }
     }
 
     /// Correlates appended entries as Apple Music hydrates the items behind

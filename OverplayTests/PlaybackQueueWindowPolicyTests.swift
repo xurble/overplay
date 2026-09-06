@@ -53,6 +53,29 @@ struct PlaybackQueueWindowPolicyTests {
         #expect(policy.topUpCount(remainingAhead: 0, pendingCount: 0) == 0)
     }
 
+    @Test("a nearby requested track is reached rather than rebuilt around")
+    func nearbyRequestedTrackIsReached() {
+        // windowSize 5, so reach-ahead is capped at 5 by default.
+        #expect(policy.reachAheadCount(toPendingIndex: 0) == 1)
+        #expect(policy.reachAheadCount(toPendingIndex: 4) == 5)
+    }
+
+    @Test("a distant requested track falls back to replacing the queue")
+    func distantRequestedTrackFallsBackToReplacement() {
+        // Past the window a replacement starting at the track moves less data
+        // than reaching it, so reaching stops being the better trade.
+        #expect(policy.reachAheadCount(toPendingIndex: 5) == nil)
+        #expect(policy.reachAheadCount(toPendingIndex: 500) == nil)
+        #expect(policy.reachAheadCount(toPendingIndex: -1) == nil)
+    }
+
+    @Test("reach-ahead never hands over more than a fresh window would")
+    func reachAheadNeverExceedsAWindow() {
+        let shipped = PlaybackQueueWindowPolicy.standard
+        let largest = (0..<5_000).compactMap(shipped.reachAheadCount(toPendingIndex:)).max() ?? 0
+        #expect(largest <= shipped.windowSize)
+    }
+
     @Test("the shipped policy caps hand-off well below a long playlist")
     func shippedPolicyCapsHandOff() {
         let split = PlaybackQueueWindowPolicy.standard.split(entryCount: 2_000, startIndex: 0)
