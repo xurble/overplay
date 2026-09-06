@@ -6,6 +6,9 @@ protocol PlaybackPlayer: AnyObject {
     var currentEntry: MusicPlayer.Queue.Entry? { get }
     var playbackStatus: MusicPlayer.PlaybackStatus { get }
     var playbackTime: TimeInterval { get set }
+    /// The player's live queue, reduced to what Overplay needs to correlate
+    /// entries it did not construct itself.
+    var queueEntrySnapshots: [PlayerQueueEntrySnapshot] { get }
 
     func replaceQueue(with materialization: PlaybackQueueMaterialization)
     func prepareToPlay() async throws
@@ -33,6 +36,12 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
     var playbackTime: TimeInterval {
         get { player.playbackTime }
         set { player.playbackTime = newValue }
+    }
+
+    var queueEntrySnapshots: [PlayerQueueEntrySnapshot] {
+        player.queue.entries.map {
+            PlayerQueueEntrySnapshot(id: $0.id, musicItemID: $0.item?.id.rawValue)
+        }
     }
 
     func replaceQueue(with materialization: PlaybackQueueMaterialization) {
