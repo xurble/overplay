@@ -113,9 +113,25 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
     }
 
     func disablePlaybackModes() {
+        // Called on every play, every queue rebuild, every monitor start and
+        // at launch, usually against modes that are already off.
+        guard PlaybackModeResetPolicy.needsReset(
+            shuffleMode: player.state.shuffleMode,
+            repeatMode: player.state.repeatMode
+        ) else {
+            // Recorded so the activity report can tell a working guard apart
+            // from a code path that never ran.
+            MusicKitActivityLog.shared.record(.playerModeReset, detail: "already off, skipped")
+            return
+        }
+
         MusicKitActivityLog.shared.measure(.playerModeReset) {
             player.state.shuffleMode = .off
-            player.state.repeatMode = .none
+            // Spelled out: `MusicPlayer.State.repeatMode` is optional, so a
+            // bare `.none` assigns `Optional.none` instead of the repeat mode
+            // — which is what this line did until the guard above started
+            // reading the value back and the compiler warning surfaced.
+            player.state.repeatMode = MusicPlayer.RepeatMode.none
         }
     }
 }
