@@ -25,6 +25,15 @@ nonisolated enum MusicKitActivityReport {
     static let idleNowPlayingWriteCount = 60
     static let automaticRetryWindowMinutes = 10
     static let automaticRetryCount = 4
+    /// How much slower a call has to get, against its own earlier baseline,
+    /// before the slowdown is worth reporting. Apple Music degrading under
+    /// Overplay is visible here long before playback actually fails.
+    static let latencyDegradationFactor: Double = 8
+    /// Absolute floor, so a call going from 1ms to 8ms is not news.
+    static let latencyDegradationFloorMilliseconds: Double = 250
+    /// Timed samples needed on each side of the comparison for it to mean
+    /// anything.
+    static let latencyMinimumSamplesPerSide = 3
 
     // MARK: - Types
 
@@ -86,11 +95,13 @@ nonisolated enum MusicKitActivityReport {
         enum Severity: String, Equatable, Sendable {
             case critical
             case warning
+            case info
 
             var label: String {
                 switch self {
                 case .critical: "CRITICAL"
                 case .warning: "WARNING"
+                case .info: "EARLIER"
                 }
             }
         }
@@ -98,6 +109,27 @@ nonisolated enum MusicKitActivityReport {
         var severity: Severity
         var title: String
         var detail: String
+        /// When the behaviour was last observed. Nil for concerns that
+        /// describe a standing rate rather than a past event.
+        var lastObservedAt: Date?
+        /// False once the triggering window has passed. A report read hours
+        /// later must still show what happened, or the worst moment of a
+        /// session reads as "none detected".
+        var isActive: Bool
+
+        init(
+            severity: Severity,
+            title: String,
+            detail: String,
+            lastObservedAt: Date? = nil,
+            isActive: Bool = true
+        ) {
+            self.severity = severity
+            self.title = title
+            self.detail = detail
+            self.lastObservedAt = lastObservedAt
+            self.isActive = isActive
+        }
     }
 
     struct Summary: Equatable, Sendable {
@@ -371,19 +403,26 @@ nonisolated enum MusicKitActivityReport {
 
         for failure in failures
         where failure.count >= repeatedFailureCount
-            && failure.lastAt >= now.addingTimeInterval(-Double(repeatedFailureWindowMinutes) * 60)
             && !failure.classification.indicatesServiceRefusal {
+            // Deliberately not filtered by recency. This report is read after
+            // the fact at least as often as during, and a burst that has aged
+            // out of its window is exactly what the reader came looking for.
+            let isActive = failure.lastAt >= now.addingTimeInterval(-Double(repeatedFailureWindowMinutes) * 60)
             concerns.append(Concern(
-                severity: .warning,
-                title: "Repeated identical failure",
+                severity: isActive ? .warning : .info,
+                title: isActive ? "Repeated identical failure" : "Repeated identical failure (earlier)",
                 detail: """
                 \(failure.operation.title) failed \(failure.count)x with \(failure.domain) \
                 \(failure.code) (\(failure.classification.title)), last at \
                 \(timeText(failure.lastAt)). Repeating a call that keeps failing the same way \
                 is the shape of a retry storm.
-                """
+                """,
+                lastObservedAt: failure.lastAt,
+                isActive: isActive
             ))
         }
+
+        concerns.append(contentsOf: latencyConcerns(events: events, now: now))
 
         let automaticRetries = count(
             of: [.playbackRecoveryAttempt],
@@ -420,6 +459,72 @@ nonisolated enum MusicKitActivityReport {
         }
 
         return concerns
+    }
+
+    /// Flags calls that have become dramatically slower than they were earlier
+    /// in the same session.
+    ///
+    /// This is the earliest available warning that the shared Apple Music
+    /// services are degrading: the same request, at the same size, taking
+    /// hundreds of times longer. It shows up well before playback starts
+    /// failing, which is the point at which a call log stops being useful.
+    static func latencyConcerns(
+        events: [MusicKitActivityEvent],
+        now: Date
+    ) -> [Concern] {
+        var concerns: [Concern] = []
+        let timedByOperation = Dictionary(
+            grouping: events.filter { $0.durationMilliseconds != nil },
+            by: \.operation
+        )
+
+        for operation in MusicKitActivityOperation.allCases {
+            guard let timed = timedByOperation[operation],
+                  timed.count >= latencyMinimumSamplesPerSide * 2 else {
+                continue
+            }
+
+            let ordered = timed.sorted { $0.startedAt < $1.startedAt }
+            let half = ordered.count / 2
+            let baseline = median(ordered.prefix(half).compactMap(\.durationMilliseconds))
+            let recent = median(ordered.suffix(half).compactMap(\.durationMilliseconds))
+            guard let baseline, let recent,
+                  recent >= latencyDegradationFloorMilliseconds,
+                  recent >= latencyDegradationFactor * max(baseline, 1) else {
+                continue
+            }
+
+            concerns.append(Concern(
+                severity: .warning,
+                title: "Apple Music is getting slower",
+                detail: """
+                \(operation.title) went from a median of \(millisecondsText(baseline)) earlier in \
+                this session to \(millisecondsText(recent)) recently, across \(ordered.count) \
+                timed calls. The same request taking far longer is the shared Apple Music \
+                services degrading, and it precedes playback failing rather than following it.
+                """,
+                lastObservedAt: ordered.last?.startedAt,
+                isActive: true
+            ))
+        }
+
+        return concerns
+    }
+
+    private static func median(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+
+        let sorted = values.sorted()
+        let middle = sorted.count / 2
+        return sorted.count.isMultiple(of: 2)
+            ? (sorted[middle - 1] + sorted[middle]) / 2
+            : sorted[middle]
+    }
+
+    private static func millisecondsText(_ milliseconds: Double) -> String {
+        milliseconds >= 1000
+            ? String(format: "%.1fs", milliseconds / 1000)
+            : String(format: "%.0fms", milliseconds)
     }
 
     // MARK: - Text
