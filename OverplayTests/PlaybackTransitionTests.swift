@@ -344,6 +344,121 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
     }
 
+    @Test("a reached track still resolves while MusicKit is hydrating its item ID")
+    func reachedTrackResolvesWhileHydrating() async throws {
+        let fixture = try makeFixture(
+            trackCount: 20,
+            queueWindowPolicy: PlaybackQueueWindowPolicy(
+                windowSize: 4,
+                topUpThreshold: 1,
+                topUpBatchSize: 2,
+                maximumReachAhead: 6
+            )
+        )
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let replacementsBefore = fixture.player.replaceQueueCallCount
+
+        // The insert succeeds but the player reports no item IDs yet, so the
+        // reached entry is delivered-but-uncorrelated. Treating that as absent
+        // is what would send CarPlay back to replacing the queue.
+        fixture.player.withholdsQueueItemIDs = true
+        fixture.sleepProbe.handler = { fixture.player.withholdsQueueItemIDs = false }
+
+        let didSkip = await fixture.controller.playTrackInCurrentQueue(
+            localTrackID: fixture.tracks[6].id.uuidString,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        #expect(didSkip)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[6].id.rawValue)
+        #expect(fixture.player.replaceQueueCallCount == replacementsBefore)
+    }
+
+    @Test("a tap during an in-flight top-up waits for it instead of rebuilding")
+    func tapDuringInFlightTopUpWaitsInsteadOfRebuilding() async throws {
+        let fixture = try makeFixture(
+            trackCount: 20,
+            queueWindowPolicy: PlaybackQueueWindowPolicy(
+                windowSize: 4,
+                topUpThreshold: 2,
+                topUpBatchSize: 4,
+                maximumReachAhead: 8
+            )
+        )
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let replacementsBefore = fixture.player.replaceQueueCallCount
+
+        // Tap while an ordinary top-up is suspended in its append. The target
+        // is inside the in-flight batch, so deciding now would be wrong. The
+        // tap runs concurrently rather than from inside the append, because
+        // the append must stay free to finish — that is what the tap waits on.
+        var tap: Task<Bool, Never>?
+        fixture.player.onAppendToQueue = {
+            tap = Task { @MainActor in
+                await fixture.controller.playTrackInCurrentQueue(
+                    localTrackID: fixture.tracks[5].id.uuidString,
+                    settings: fixture.settings,
+                    context: fixture.context
+                )
+            }
+            // Let the tap start and observe the delivery in flight.
+            await Task.yield()
+        }
+
+        fixture.player.advanceExternally()
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        let didSkip = await tap?.value ?? false
+        #expect(didSkip)
+        #expect(fixture.player.replaceQueueCallCount == replacementsBefore)
+    }
+
+    @Test("a tap mid-transition never appends the outgoing playlist's tail")
+    func tapMidTransitionNeverAppendsTheOutgoingTail() async throws {
+        let fixture = try makeFixture(
+            trackCount: 20,
+            queueWindowPolicy: PlaybackQueueWindowPolicy(
+                windowSize: 4,
+                topUpThreshold: 1,
+                topUpBatchSize: 2,
+                maximumReachAhead: 8
+            )
+        )
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+
+        let other = try fixture.addPlaylist(prefix: "other", trackCount: 20)
+        let appendsBefore = fixture.player.appendedTrackBatchSizes.count
+
+        // Another surface is mid-transition to a different playlist. A CarPlay
+        // tap arriving now must not append playlist A's held-back tail onto
+        // playlist B's freshly replaced queue.
+        //
+        // In this path the resolver's own in-flight wait is what stops it; the
+        // guards inside `deliverPendingEntries` are a second line for any
+        // future caller that does not go through the resolver, and removing
+        // them alone does not fail this test.
+        fixture.player.onPlay = {
+            _ = await fixture.controller.playTrackInCurrentQueue(
+                localTrackID: fixture.tracks[6].id.uuidString,
+                settings: fixture.settings,
+                context: fixture.context
+            )
+        }
+
+        await fixture.controller.playPlaylist(
+            other.playlist,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        #expect(fixture.player.appendedTrackBatchSizes.count == appendsBefore)
+        #expect(fixture.controller.currentPlaylistID == other.playlist.musicPlaylistID)
+    }
+
     @Test("delayed Next keeps every published surface on outgoing until confirmation")
     func delayedNextKeepsPublishedStateOnOutgoingUntilConfirmation() async throws {
         let fixture = try makeFixture()
@@ -1138,6 +1253,10 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     func prepareToPlay() async throws {}
 
     func play() async throws {
+        if let onPlay {
+            self.onPlay = nil
+            await onPlay()
+        }
         if playFailuresRemaining > 0 {
             playFailuresRemaining -= 1
             throw Failure.commandFailed
@@ -1226,6 +1345,9 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     /// Runs while an append is in flight, so tests can reproduce the queue
     /// being replaced underneath a top-up.
     var onAppendToQueue: (() async -> Void)?
+    /// Runs inside `play()`, which the controller awaits while a transition is
+    /// still in flight, so tests can act on a concurrent surface mid-transition.
+    var onPlay: (() async -> Void)?
 
     var queueEntrySnapshots: [PlayerQueueEntrySnapshot] {
         entries.map {
