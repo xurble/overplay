@@ -266,6 +266,84 @@ struct PlaybackTransitionTests {
         #expect(fixture.player.queuedEntryCount == deliveredBefore)
     }
 
+    @Test("tapping a track just past the window skips into it instead of rebuilding")
+    func trackJustPastTheWindowSkipsInsteadOfRebuilding() async throws {
+        let fixture = try makeFixture(
+            trackCount: 20,
+            queueWindowPolicy: PlaybackQueueWindowPolicy(
+                windowSize: 4,
+                topUpThreshold: 1,
+                topUpBatchSize: 2,
+                maximumReachAhead: 6
+            )
+        )
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        #expect(fixture.player.queuedEntryCount == 4)
+        let replacementsBefore = fixture.player.replaceQueueCallCount
+
+        // Track 6 is in the order the user is looking at, but not in the queue
+        // the player holds. This is the ordinary CarPlay track tap.
+        let didSkip = await fixture.controller.playTrackInCurrentQueue(
+            localTrackID: fixture.tracks[6].id.uuidString,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        #expect(didSkip)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[6].id.rawValue)
+        // No queue replacement, so the tracks behind the listener survive.
+        #expect(fixture.player.replaceQueueCallCount == replacementsBefore)
+        // At least the four delivered plus the three reached; ordinary top-up
+        // may then add more now that playback sits near the delivered edge.
+        #expect(fixture.player.queuedEntryCount >= 7)
+    }
+
+    @Test("a track too far ahead is left to the caller to rebuild around")
+    func trackTooFarAheadIsLeftToTheCaller() async throws {
+        let fixture = try makeFixture(
+            trackCount: 40,
+            queueWindowPolicy: PlaybackQueueWindowPolicy(
+                windowSize: 4,
+                topUpThreshold: 1,
+                topUpBatchSize: 2,
+                maximumReachAhead: 3
+            )
+        )
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let appendsBefore = fixture.player.appendedTrackBatchSizes.count
+
+        let didSkip = await fixture.controller.playTrackInCurrentQueue(
+            localTrackID: fixture.tracks[30].id.uuidString,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        // Reaching 27 entries ahead would move more than a fresh window does,
+        // so the caller rebuilds from the track instead.
+        #expect(!didSkip)
+        #expect(fixture.player.appendedTrackBatchSizes.count == appendsBefore)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
+    }
+
+    @Test("a track in no queue at all is still left to the caller")
+    func trackInNoQueueAtAllIsStillLeftToTheCaller() async throws {
+        let fixture = try makeFixture(trackCount: 3)
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let other = try fixture.addPlaylist(prefix: "other", trackCount: 3)
+
+        let didSkip = await fixture.controller.playTrackInCurrentQueue(
+            localTrackID: other.tracks[1].id.uuidString,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        #expect(!didSkip)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
+    }
+
     @Test("delayed Next keeps every published surface on outgoing until confirmation")
     func delayedNextKeepsPublishedStateOnOutgoingUntilConfirmation() async throws {
         let fixture = try makeFixture()
