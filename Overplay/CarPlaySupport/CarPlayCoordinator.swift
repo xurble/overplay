@@ -206,14 +206,18 @@ final class CarPlayCoordinator: NSObject {
             case .showPlayer:
                 break
             case .resumeAndShowPlayer:
-                await playbackController.play(context: modelContext)
+                await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+                    await playbackController.play(context: modelContext)
+                }
             case .shuffleAndPlay:
                 let settings = try SettingsRepository.settings(in: modelContext)
-                guard await playbackController.shuffleAndPlay(
-                    playlist,
-                    settings: settings,
-                    context: modelContext
-                ) else {
+                guard await MusicKitActivityLog.shared.withOrigin(.carPlay, {
+                    await playbackController.shuffleAndPlay(
+                        playlist,
+                        settings: settings,
+                        context: modelContext
+                    )
+                }) else {
                     refreshAfterTrackAction()
                     showPlaybackFailure(title: "Playback failed")
                     return
@@ -382,12 +386,14 @@ final class CarPlayCoordinator: NSObject {
 
         do {
             let settings = try SettingsRepository.settings(in: modelContext)
-            let didShuffle = await playbackController.shuffleAndPlay(
-                playlist,
-                scope: scope,
-                settings: settings,
-                context: modelContext
-            )
+            let didShuffle = await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+                await playbackController.shuffleAndPlay(
+                    playlist,
+                    scope: scope,
+                    settings: settings,
+                    context: modelContext
+                )
+            }
             refreshAfterTrackAction()
             guard didShuffle else {
                 showPlaybackFailure(title: "Shuffle failed")
@@ -431,19 +437,29 @@ final class CarPlayCoordinator: NSObject {
             switch intent {
             case .showPlayer:
                 if !playbackController.isPlaying {
-                    await playbackController.play(context: modelContext)
+                    await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+                        await playbackController.play(context: modelContext)
+                    }
                 }
             case .skipInLiveQueue:
-                let didSkip = await playbackController.playTrackInCurrentQueue(
-                    localTrackID: trackID.uuidString,
-                    settings: settings,
-                    context: modelContext
-                )
+                let didSkip = await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+                    await playbackController.playTrackInCurrentQueue(
+                        localTrackID: trackID.uuidString,
+                        settings: settings,
+                        context: modelContext
+                    )
+                }
                 if !didSkip {
-                    await playbackController.playPlaylist(playlist, startingAt: track, scope: scope, settings: settings, context: modelContext)
+                    await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+                        await playbackController.playPlaylist(
+                            playlist, startingAt: track, scope: scope, settings: settings, context: modelContext
+                        )
+                    }
                 }
             case .startPlaylist:
-                await playbackController.playPlaylist(playlist, startingAt: track, scope: scope, settings: settings, context: modelContext)
+                await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+                        await playbackController.playPlaylist(playlist, startingAt: track, scope: scope, settings: settings, context: modelContext)
+                    }
             }
 
             refreshAfterTrackAction()

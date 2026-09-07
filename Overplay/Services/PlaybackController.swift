@@ -830,6 +830,23 @@ final class PlaybackController {
     }
 
     private func clearQueueCorrelationAfterDivergedTransition() {
+        // The most consequential thing Overplay does to itself: this drops the
+        // playlist, the rest of the queue and the durable restore point. From
+        // a call log alone it is invisible, which made a device failure much
+        // harder to read than it needed to be.
+        //
+        // Recorded only when there is something to drop. The predicate that
+        // reaches here cannot be cleared by this function — it reads the array
+        // this empties — so the 1 Hz tick calls it again every second, and an
+        // unconditional record would fill the whole event buffer with no-ops
+        // during exactly the failure it is meant to explain.
+        if !activeQueueEntries.isEmpty || currentPlaylistID != nil {
+            MusicKitActivityLog.shared.record(
+                .queueCorrelationCleared,
+                magnitude: Double(activeQueueEntries.count),
+                detail: currentPlaylistID == nil ? "no current playlist" : "diverged transition"
+            )
+        }
         activeQueueEntries = []
         activeQueueIndex = nil
         setPendingQueueEntries([])
@@ -1718,7 +1735,19 @@ final class PlaybackController {
             let queueEndLocalTrackID = oldLocalTrackID
                 ?? oldCurrentItemLocalTrackID
                 ?? oldActiveQueueLocalTrackID
-            if let oldTrackID, PlaybackQueueEndPolicy.shouldRestartAfterQueueEnd(session: activeSession) {
+            // `queueDidEnd` is a state, not an edge: no current entry while
+            // stopped stays true every tick until something changes it. Record
+            // once per queue end, reusing the flag that already exists to
+            // edge-trigger the neighbouring diagnostic below.
+            let willRestart = oldTrackID != nil
+                && PlaybackQueueEndPolicy.shouldRestartAfterQueueEnd(session: activeSession)
+            if !didLogQueueEndWithoutRestart {
+                MusicKitActivityLog.shared.record(
+                    .queueEndObserved,
+                    detail: willRestart ? "restart attempted" : "no restart"
+                )
+            }
+            if let oldTrackID, willRestart {
                 TrackMetadataDiagnostics.log(
                     "queue ended naturally status=\(player.playbackStatus) lastTrackID=\(oldTrackID) lastLocalTrackID=\(queueEndLocalTrackID ?? "nil")"
                 )
@@ -2607,6 +2636,26 @@ final class PlaybackController {
 
         isRestartingQueue = true
         defer { isRestartingQueue = false }
+        return await MusicKitActivityLog.shared.withOrigin(.automatic) {
+            await performQueueEndRestart(
+                currentPlaylistID: currentPlaylistID,
+                lastMusicItemID: lastMusicItemID,
+                lastLocalTrackID: lastLocalTrackID,
+                settings: settings,
+                naturalCompletion: naturalCompletion,
+                context: context
+            )
+        }
+    }
+
+    private func performQueueEndRestart(
+        currentPlaylistID: String,
+        lastMusicItemID: String,
+        lastLocalTrackID: String?,
+        settings: OverplaySettings,
+        naturalCompletion: Bool,
+        context: ModelContext
+    ) async -> Bool {
         let outgoing = captureOutgoingPlaybackTransition()
 
         do {
@@ -2799,7 +2848,9 @@ final class PlaybackController {
             )
         }
 
-        await attemptDeliveryRecoveryIfNeeded()
+        await MusicKitActivityLog.shared.withOrigin(.automatic) {
+            await attemptDeliveryRecoveryIfNeeded()
+        }
     }
 
     private func attemptDeliveryRecoveryIfNeeded() async {
@@ -2839,6 +2890,11 @@ final class PlaybackController {
     }
 
     private func reportDeliveryFailure(message: String) {
+        // Only on the edge: a stall that persists would otherwise fill the
+        // log with the same line every tick.
+        if !isDeliveryStalled {
+            MusicKitActivityLog.shared.record(.deliveryStallDetected, detail: message)
+        }
         isDeliveryStalled = true
         statusMessage = message
     }

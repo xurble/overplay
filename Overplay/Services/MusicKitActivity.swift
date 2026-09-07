@@ -36,7 +36,18 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     case playerSkipPrevious
     case playerSkipToEntry
     case playerModeReset
+    /// The mode reset the guard skipped because both modes already read off.
+    /// Recorded so the report can tell a working guard from a path that
+    /// never ran.
+    case playerModeResetSkipped
     case playbackRecoveryAttempt
+
+    // Overplay's own playback decisions. Not Apple Music calls, but they
+    // cause the calls above, and diagnosing a failure from the call log
+    // alone means guessing at them.
+    case queueCorrelationCleared
+    case deliveryStallDetected
+    case queueEndObserved
 
     // System media surfaces.
     case nowPlayingInfoWrite
@@ -53,6 +64,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case player
         case systemMediaSurface
         case asset
+        case playbackDecision
 
         var title: String {
             switch self {
@@ -61,6 +73,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
             case .player: "Shared player commands"
             case .systemMediaSurface: "System media surfaces"
             case .asset: "Artwork downloads"
+            case .playbackDecision: "Overplay playback decisions"
             }
         }
     }
@@ -75,13 +88,15 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
             .libraryWrite
         case .queueReplace, .queueAppend, .playerPrepare, .playerPlay, .playerPause,
              .playerSkipNext, .playerSkipPrevious, .playerSkipToEntry, .playerModeReset,
-             .playbackRecoveryAttempt:
+             .playerModeResetSkipped, .playbackRecoveryAttempt:
             .player
         case .nowPlayingInfoWrite, .nowPlayingInfoWriteWhilePaused, .nowPlayingInfoClear,
              .remoteCommandReceived:
             .systemMediaSurface
         case .artworkDownload:
             .asset
+        case .queueCorrelationCleared, .deliveryStallDetected, .queueEndObserved:
+            .playbackDecision
         }
     }
 
@@ -95,6 +110,10 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case .libraryTrackQuery: "Library track query"
         case .subscriptionCheck: "Subscription check"
         case .authorizationRequest: "Authorization request"
+        case .playerModeResetSkipped: "Player mode reset (skipped)"
+        case .queueCorrelationCleared: "Queue correlation cleared"
+        case .deliveryStallDetected: "Delivery stall detected"
+        case .queueEndObserved: "Queue end observed"
         case .libraryPlaylistCreate: "Playlist create"
         case .libraryPlaylistEdit: "Playlist rewrite"
         case .libraryPlaylistAddItem: "Playlist add item"
@@ -122,7 +141,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     var isHighFrequency: Bool {
         switch self {
         case .nowPlayingInfoWrite, .nowPlayingInfoWriteWhilePaused, .nowPlayingInfoClear,
-             .playerModeReset, .artworkDownload:
+             .playerModeReset, .playerModeResetSkipped, .artworkDownload:
             true
         default:
             false
@@ -150,6 +169,31 @@ nonisolated enum MusicKitActivityNote: String, Codable, Sendable {
     case externalSurface
 }
 
+/// Which surface asked for the command being recorded.
+///
+/// The single most useful thing missing from a call log after the fact is
+/// whether a burst of retries came from the user, another playback surface,
+/// or Overplay retrying itself.
+/// No origin means Overplay's own UI. Every other initiator tags itself, so
+/// the absence is meaningful rather than merely unknown — but only for as
+/// long as that stays true, which is why each is set at a single choke point.
+nonisolated enum MusicKitActivityOrigin: String, Codable, Equatable, Sendable {
+    case carPlay
+    case remoteCommand
+    /// Overplay acting without anyone asking: the end-of-playlist rebuild and
+    /// delivery-stall recovery. The shape most worth telling apart from a
+    /// user retrying.
+    case automatic
+
+    var title: String {
+        switch self {
+        case .carPlay: "CarPlay"
+        case .remoteCommand: "remote command"
+        case .automatic: "automatic"
+        }
+    }
+}
+
 nonisolated struct MusicKitActivityEvent: Codable, Equatable, Sendable {
     var operation: MusicKitActivityOperation
     var startedAt: Date
@@ -160,6 +204,9 @@ nonisolated struct MusicKitActivityEvent: Codable, Equatable, Sendable {
     var magnitude: Double?
     var detail: String?
     var notes: [MusicKitActivityNote]
+    /// Nil for calls Overplay makes without a surface asking, and for events
+    /// recorded before origins were tracked.
+    var origin: MusicKitActivityOrigin?
     var errorDomain: String?
     var errorCode: Int?
     var errorDescription: String?
@@ -171,6 +218,7 @@ nonisolated struct MusicKitActivityEvent: Codable, Equatable, Sendable {
         magnitude: Double? = nil,
         detail: String? = nil,
         notes: [MusicKitActivityNote] = [],
+        origin: MusicKitActivityOrigin? = nil,
         errorDomain: String? = nil,
         errorCode: Int? = nil,
         errorDescription: String? = nil
@@ -181,6 +229,7 @@ nonisolated struct MusicKitActivityEvent: Codable, Equatable, Sendable {
         self.magnitude = magnitude
         self.detail = detail
         self.notes = notes
+        self.origin = origin
         self.errorDomain = errorDomain
         self.errorCode = errorCode
         self.errorDescription = errorDescription

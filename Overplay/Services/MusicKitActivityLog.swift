@@ -37,6 +37,18 @@ nonisolated final class MusicKitActivityLog: Sendable {
     /// session leading up to a failure.
     static let defaultRetainedMinutes = 240
 
+    /// The surface issuing the command currently being recorded.
+    ///
+    /// Ambient rather than a parameter because the player wrapper does the
+    /// recording and has no view of who asked. A task-local rather than
+    /// shared state because this log is written from several isolation
+    /// domains at once — the 1 Hz playback tick, the artwork actor, sync —
+    /// and a shared stack would attribute a background call to whichever
+    /// command happened to be in flight, then pop the wrong entry when they
+    /// overlapped. Task-locals scope to the task tree and are inherited by
+    /// child tasks, which is exactly the semantics wanted.
+    @TaskLocal static var currentOrigin: MusicKitActivityOrigin?
+
     private struct Storage {
         var snapshot = MusicKitActivitySnapshot()
         var didLoad = false
@@ -70,6 +82,16 @@ nonisolated final class MusicKitActivityLog: Sendable {
         self.now = now
     }
 
+    /// Attributes everything recorded inside `body` to `origin`.
+    func withOrigin<T>(_ origin: MusicKitActivityOrigin, _ body: () async -> T) async -> T {
+        await Self.$currentOrigin.withValue(origin) { await body() }
+    }
+
+    /// Synchronous variant, for command paths that never suspend.
+    func withOrigin<T>(_ origin: MusicKitActivityOrigin, _ body: () throws -> T) rethrows -> T {
+        try Self.$currentOrigin.withValue(origin) { try body() }
+    }
+
     static func defaultFileURL() -> URL? {
         guard let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             return nil
@@ -99,6 +121,7 @@ nonisolated final class MusicKitActivityLog: Sendable {
             magnitude: magnitude,
             detail: detail,
             notes: notes,
+            origin: Self.currentOrigin,
             errorDomain: nsError?.domain,
             errorCode: nsError?.code,
             errorDescription: nsError?.localizedDescription
@@ -348,13 +371,16 @@ nonisolated final class MusicKitActivityLog: Sendable {
         let duration = event.durationMilliseconds.map { String(format: "%.0fms", $0) } ?? "-"
         let magnitude = event.magnitude.map { String(format: "%.0f", $0) } ?? "-"
         let notes = event.notes.isEmpty ? "-" : event.notes.map(\.rawValue).joined(separator: ",")
+        // The unified log is the sysdiagnose artifact, which is the kind of
+        // log that motivated recording origin at all.
+        let via = event.origin?.rawValue ?? "-"
 
         if event.didFail {
             logger.error(
                 """
                 op=\(operation, privacy: .public) outcome=failed dur=\(duration, privacy: .public) \
                 size=\(magnitude, privacy: .public) notes=\(notes, privacy: .public) \
-                domain=\(event.errorDomain ?? "nil", privacy: .public) \
+                via=\(via, privacy: .public) domain=\(event.errorDomain ?? "nil", privacy: .public) \
                 code=\(event.errorCode ?? 0, privacy: .public) \
                 error=\(event.errorDescription ?? "nil", privacy: .public) \
                 detail=\(event.detail ?? "-", privacy: .public)
@@ -375,7 +401,7 @@ nonisolated final class MusicKitActivityLog: Sendable {
                 """
                 op=\(operation, privacy: .public) outcome=ok dur=\(duration, privacy: .public) \
                 size=\(magnitude, privacy: .public) notes=\(notes, privacy: .public) \
-                detail=\(event.detail ?? "-", privacy: .public)
+                via=\(via, privacy: .public) detail=\(event.detail ?? "-", privacy: .public)
                 """
             )
         }

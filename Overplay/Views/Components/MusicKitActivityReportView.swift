@@ -68,6 +68,7 @@ struct MusicKitActivityConcernRow: View {
         switch concern.severity {
         case .critical: "exclamationmark.octagon.fill"
         case .warning: "exclamationmark.triangle.fill"
+        case .info: "clock.arrow.circlepath"
         }
     }
 
@@ -75,6 +76,7 @@ struct MusicKitActivityConcernRow: View {
         switch concern.severity {
         case .critical: .red
         case .warning: .orange
+        case .info: .secondary
         }
     }
 }
