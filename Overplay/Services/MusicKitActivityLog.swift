@@ -37,15 +37,19 @@ nonisolated final class MusicKitActivityLog: Sendable {
     /// session leading up to a failure.
     static let defaultRetainedMinutes = 240
 
+    /// The surface issuing the command currently being recorded.
+    ///
+    /// Ambient rather than a parameter because the player wrapper does the
+    /// recording and has no view of who asked. A task-local rather than
+    /// shared state because this log is written from several isolation
+    /// domains at once — the 1 Hz playback tick, the artwork actor, sync —
+    /// and a shared stack would attribute a background call to whichever
+    /// command happened to be in flight, then pop the wrong entry when they
+    /// overlapped. Task-locals scope to the task tree and are inherited by
+    /// child tasks, which is exactly the semantics wanted.
+    @TaskLocal static var currentOrigin: MusicKitActivityOrigin?
+
     private struct Storage {
-        /// The surface currently issuing playback commands, as a stack so
-        /// nesting restores the outer value rather than clearing it.
-        ///
-        /// Ambient rather than a parameter because the player wrapper does
-        /// the recording and has no view of who asked. Playback commands are
-        /// issued from the main actor one at a time, so set/restore around a
-        /// command is sound; concurrent origins would need a task-local.
-        var origins: [MusicKitActivityOrigin] = []
         var snapshot = MusicKitActivitySnapshot()
         var didLoad = false
         var isDirty = false
@@ -80,20 +84,12 @@ nonisolated final class MusicKitActivityLog: Sendable {
 
     /// Attributes everything recorded inside `body` to `origin`.
     func withOrigin<T>(_ origin: MusicKitActivityOrigin, _ body: () async -> T) async -> T {
-        state.withLock { $0.origins.append(origin) }
-        defer { state.withLock { _ = $0.origins.popLast() } }
-        return await body()
+        await Self.$currentOrigin.withValue(origin) { await body() }
     }
 
     /// Synchronous variant, for command paths that never suspend.
     func withOrigin<T>(_ origin: MusicKitActivityOrigin, _ body: () throws -> T) rethrows -> T {
-        state.withLock { $0.origins.append(origin) }
-        defer { state.withLock { _ = $0.origins.popLast() } }
-        return try body()
-    }
-
-    private var currentOrigin: MusicKitActivityOrigin? {
-        state.withLock { $0.origins.last }
+        try Self.$currentOrigin.withValue(origin) { try body() }
     }
 
     static func defaultFileURL() -> URL? {
@@ -125,7 +121,7 @@ nonisolated final class MusicKitActivityLog: Sendable {
             magnitude: magnitude,
             detail: detail,
             notes: notes,
-            origin: currentOrigin,
+            origin: Self.currentOrigin,
             errorDomain: nsError?.domain,
             errorCode: nsError?.code,
             errorDescription: nsError?.localizedDescription
@@ -375,13 +371,16 @@ nonisolated final class MusicKitActivityLog: Sendable {
         let duration = event.durationMilliseconds.map { String(format: "%.0fms", $0) } ?? "-"
         let magnitude = event.magnitude.map { String(format: "%.0f", $0) } ?? "-"
         let notes = event.notes.isEmpty ? "-" : event.notes.map(\.rawValue).joined(separator: ",")
+        // The unified log is the sysdiagnose artifact, which is the kind of
+        // log that motivated recording origin at all.
+        let via = event.origin?.rawValue ?? "-"
 
         if event.didFail {
             logger.error(
                 """
                 op=\(operation, privacy: .public) outcome=failed dur=\(duration, privacy: .public) \
                 size=\(magnitude, privacy: .public) notes=\(notes, privacy: .public) \
-                domain=\(event.errorDomain ?? "nil", privacy: .public) \
+                via=\(via, privacy: .public) domain=\(event.errorDomain ?? "nil", privacy: .public) \
                 code=\(event.errorCode ?? 0, privacy: .public) \
                 error=\(event.errorDescription ?? "nil", privacy: .public) \
                 detail=\(event.detail ?? "-", privacy: .public)
@@ -402,7 +401,7 @@ nonisolated final class MusicKitActivityLog: Sendable {
                 """
                 op=\(operation, privacy: .public) outcome=ok dur=\(duration, privacy: .public) \
                 size=\(magnitude, privacy: .public) notes=\(notes, privacy: .public) \
-                detail=\(event.detail ?? "-", privacy: .public)
+                via=\(via, privacy: .public) detail=\(event.detail ?? "-", privacy: .public)
                 """
             )
         }

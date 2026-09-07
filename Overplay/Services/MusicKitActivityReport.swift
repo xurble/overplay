@@ -34,6 +34,11 @@ nonisolated enum MusicKitActivityReport {
     /// Timed samples needed on each side of the comparison for it to mean
     /// anything.
     static let latencyMinimumSamplesPerSide = 3
+    /// A degradation older than this is history rather than a live warning.
+    static let latencyActiveWindowMinutes = 60
+    /// Events are never time-pruned, so a burst from days ago would otherwise
+    /// be reported forever, across relaunches.
+    static let failureReportingMaximumAgeHours = 24
 
     // MARK: - Types
 
@@ -97,11 +102,20 @@ nonisolated enum MusicKitActivityReport {
             case warning
             case info
 
+            /// Lower sorts first.
+            var rank: Int {
+                switch self {
+                case .critical: 0
+                case .warning: 1
+                case .info: 2
+                }
+            }
+
             var label: String {
                 switch self {
                 case .critical: "CRITICAL"
                 case .warning: "WARNING"
-                case .info: "EARLIER"
+                case .info: "INFO"
                 }
             }
         }
@@ -403,6 +417,7 @@ nonisolated enum MusicKitActivityReport {
 
         for failure in failures
         where failure.count >= repeatedFailureCount
+            && failure.lastAt >= now.addingTimeInterval(-Double(failureReportingMaximumAgeHours) * 3600)
             && !failure.classification.indicatesServiceRefusal {
             // Deliberately not filtered by recency. This report is read after
             // the fact at least as often as during, and a burst that has aged
@@ -458,7 +473,11 @@ nonisolated enum MusicKitActivityReport {
             ))
         }
 
-        return concerns
+        return concerns.sorted { left, right in
+            left.severity.rank != right.severity.rank
+                ? left.severity.rank < right.severity.rank
+                : (left.lastObservedAt ?? .distantPast) > (right.lastObservedAt ?? .distantPast)
+        }
     }
 
     /// Flags calls that have become dramatically slower than they were earlier
@@ -486,11 +505,21 @@ nonisolated enum MusicKitActivityReport {
 
             let ordered = timed.sorted { $0.startedAt < $1.startedAt }
             let half = ordered.count / 2
-            let baseline = median(ordered.prefix(half).compactMap(\.durationMilliseconds))
-            let recent = median(ordered.suffix(half).compactMap(\.durationMilliseconds))
-            guard let baseline, let recent,
-                  recent >= latencyDegradationFloorMilliseconds,
-                  recent >= latencyDegradationFactor * max(baseline, 1) else {
+            // Normalise by the recorded size where there is one. A playlist
+            // track fetch of 169 items legitimately takes longer than one of
+            // 25, and comparing them raw invents a slowdown that buries the
+            // real ones.
+            // Two different questions, so two different units. The ratio is
+            // size-normalised, because a bigger payload legitimately takes
+            // longer. The floor is absolute, because a call has to actually be
+            // slow to be worth reporting — applying the floor to a per-item
+            // rate would silence every real case.
+            let baselineRate = median(ordered.prefix(half).compactMap(normalisedDuration))
+            let recentRate = median(ordered.suffix(half).compactMap(normalisedDuration))
+            let recentElapsed = median(ordered.suffix(half).compactMap(\.durationMilliseconds))
+            guard let baselineRate, let recentRate, let recentElapsed,
+                  recentElapsed >= latencyDegradationFloorMilliseconds,
+                  recentRate >= latencyDegradationFactor * max(baselineRate, 0.001) else {
                 continue
             }
 
@@ -498,17 +527,26 @@ nonisolated enum MusicKitActivityReport {
                 severity: .warning,
                 title: "Apple Music is getting slower",
                 detail: """
-                \(operation.title) went from a median of \(millisecondsText(baseline)) earlier in \
-                this session to \(millisecondsText(recent)) recently, across \(ordered.count) \
-                timed calls. The same request taking far longer is the shared Apple Music \
-                services degrading, and it precedes playback failing rather than following it.
+                \(operation.title) is now taking a median of \(millisecondsText(recentElapsed)), \
+                and is \(String(format: "%.0f", recentRate / max(baselineRate, 0.001)))x slower per \
+                item than earlier across \(ordered.count) timed calls. \
+                The same request taking far longer is the shared Apple Music services degrading, \
+                and it precedes playback failing rather than following it.
                 """,
                 lastObservedAt: ordered.last?.startedAt,
-                isActive: true
+                isActive: ordered.last.map { $0.startedAt >= now.addingTimeInterval(-Double(latencyActiveWindowMinutes) * 60) } ?? false
             ))
         }
 
         return concerns
+    }
+
+    /// Duration per unit of recorded size, so calls of different sizes are
+    /// comparable. Falls back to raw duration when the call has no size.
+    private static func normalisedDuration(_ event: MusicKitActivityEvent) -> Double? {
+        guard let durationMilliseconds = event.durationMilliseconds else { return nil }
+        guard let magnitude = event.magnitude, magnitude >= 1 else { return durationMilliseconds }
+        return durationMilliseconds / magnitude
     }
 
     private static func median(_ values: [Double]) -> Double? {

@@ -328,8 +328,8 @@ struct MusicKitActivityReportTests {
         #expect(concerns.filter { $0.severity == .critical }.count == 1)
     }
 
-    @Test("an old repeated failure is not flagged as a current retry storm")
-    func anOldRepeatedFailureIsNotFlaggedAsACurrentRetryStorm() {
+    @Test("an old repeated failure is reported as history, not as a current retry storm")
+    func anOldRepeatedFailureIsReportedAsHistory() {
         let secondsOutsideWindow = Double(MusicKitActivityReport.repeatedFailureWindowMinutes) * 60 + 60
         let snapshot = MusicKitActivitySnapshot(
             events: (0..<MusicKitActivityReport.repeatedFailureCount).map { index in
@@ -344,7 +344,13 @@ struct MusicKitActivityReportTests {
 
         let concerns = MusicKitActivityReport.summary(for: snapshot, now: Self.now).concerns
 
-        #expect(!concerns.contains { $0.title == "Repeated identical failure" })
+        // Still reported — a burst that has aged out of its window is exactly
+        // what a post-mortem read came looking for — but never as if it were
+        // happening now.
+        let failureConcerns = concerns.filter { $0.title.hasPrefix("Repeated identical failure") }
+        #expect(failureConcerns.count == 1)
+        #expect(failureConcerns.first?.isActive == false)
+        #expect(!concerns.contains { $0.isActive && $0.title.hasPrefix("Repeated identical failure") })
     }
 
     @Test("an automatic recovery loop is flagged")

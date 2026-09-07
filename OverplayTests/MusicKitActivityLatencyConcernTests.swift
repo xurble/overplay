@@ -230,3 +230,134 @@ struct MusicKitActivityOriginTests {
         #expect(event.operation == .playerPlay)
     }
 }
+
+
+@Suite("Activity log: origin scoping")
+struct MusicKitActivityOriginScopingTests {
+    private func makeLog() -> MusicKitActivityLog {
+        MusicKitActivityLog(fileURL: nil, persistDelay: .seconds(3600))
+    }
+
+    @Test("a command's origin reaches the recorded event")
+    func originReachesTheEvent() async {
+        let log = makeLog()
+        await log.withOrigin(.carPlay) {
+            log.record(.playerPlay)
+        }
+
+        #expect(log.snapshot().events.last?.origin == .carPlay)
+    }
+
+    @Test("origin does not leak past the command that set it")
+    func originDoesNotLeakPastTheCommand() async {
+        let log = makeLog()
+        await log.withOrigin(.remoteCommand) { log.record(.playerPlay) }
+        log.record(.artworkDownload)
+
+        let events = log.snapshot().events
+        #expect(events.first(where: { $0.operation == .playerPlay })?.origin == .remoteCommand)
+        #expect(events.first(where: { $0.operation == .artworkDownload })?.origin == nil)
+    }
+
+    @Test("nesting restores the outer origin rather than clearing it")
+    func nestingRestoresTheOuterOrigin() async {
+        let log = makeLog()
+        await log.withOrigin(.carPlay) {
+            await log.withOrigin(.automatic) { log.record(.playerSkipNext) }
+            log.record(.playerPlay)
+        }
+
+        let events = log.snapshot().events
+        #expect(events.first(where: { $0.operation == .playerSkipNext })?.origin == .automatic)
+        #expect(events.first(where: { $0.operation == .playerPlay })?.origin == .carPlay)
+    }
+
+    @Test("a concurrent recorder is not attributed to another task's command")
+    func concurrentRecorderIsNotMisattributed() async {
+        // The log is written from several isolation domains at once. A shared
+        // stack would tag this background call with whatever command happened
+        // to be in flight.
+        let log = makeLog()
+        await log.withOrigin(.carPlay) {
+            await Task.detached { log.record(.artworkDownload) }.value
+            log.record(.playerPlay)
+        }
+
+        let events = log.snapshot().events
+        #expect(events.first(where: { $0.operation == .artworkDownload })?.origin == nil)
+        #expect(events.first(where: { $0.operation == .playerPlay })?.origin == .carPlay)
+    }
+}
+
+@Suite("Activity report: latency compares like with like")
+struct MusicKitActivityLatencySizeTests {
+    private let start = Date(timeIntervalSince1970: 3_000_000)
+
+    private func sized(
+        _ offsetMinutes: Double,
+        milliseconds: Double,
+        size: Double
+    ) -> MusicKitActivityEvent {
+        MusicKitActivityEvent(
+            operation: .playlistTrackFetch,
+            startedAt: start.addingTimeInterval(offsetMinutes * 60),
+            durationMilliseconds: milliseconds,
+            magnitude: size
+        )
+    }
+
+    @Test("a bigger payload taking proportionally longer is not a slowdown")
+    func biggerPayloadIsNotASlowdown() {
+        // 25 items at 5ms then 169 items at ~34ms is the same speed per item.
+        let events = [
+            sized(0, milliseconds: 5, size: 25),
+            sized(1, milliseconds: 5, size: 25),
+            sized(2, milliseconds: 5, size: 25),
+            sized(10, milliseconds: 340, size: 1690),
+            sized(11, milliseconds: 340, size: 1690),
+            sized(12, milliseconds: 340, size: 1690)
+        ]
+
+        #expect(MusicKitActivityReport.latencyConcerns(
+            events: events,
+            now: start.addingTimeInterval(20 * 60)
+        ).isEmpty)
+    }
+
+    @Test("the same payload getting slower is still reported")
+    func samePayloadGettingSlowerIsReported() {
+        let events = [
+            sized(0, milliseconds: 8, size: 169),
+            sized(1, milliseconds: 7, size: 169),
+            sized(2, milliseconds: 9, size: 169),
+            sized(10, milliseconds: 4603, size: 169),
+            sized(11, milliseconds: 4200, size: 169),
+            sized(12, milliseconds: 3900, size: 169)
+        ]
+
+        let concerns = MusicKitActivityReport.latencyConcerns(
+            events: events,
+            now: start.addingTimeInterval(13 * 60)
+        )
+        #expect(concerns.count == 1)
+        #expect(concerns.first?.isActive == true)
+    }
+
+    @Test("a degradation that stopped hours ago is reported but not active")
+    func staleDegradationIsNotActive() {
+        let events = [
+            sized(0, milliseconds: 8, size: 169),
+            sized(1, milliseconds: 7, size: 169),
+            sized(2, milliseconds: 9, size: 169),
+            sized(10, milliseconds: 4603, size: 169),
+            sized(11, milliseconds: 4200, size: 169),
+            sized(12, milliseconds: 3900, size: 169)
+        ]
+
+        let concerns = MusicKitActivityReport.latencyConcerns(
+            events: events,
+            now: start.addingTimeInterval(6 * 60 * 60)
+        )
+        #expect(concerns.first?.isActive == false)
+    }
+}

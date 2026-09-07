@@ -834,11 +834,19 @@ final class PlaybackController {
         // playlist, the rest of the queue and the durable restore point. From
         // a call log alone it is invisible, which made a device failure much
         // harder to read than it needed to be.
-        MusicKitActivityLog.shared.record(
-            .queueCorrelationCleared,
-            magnitude: Double(activeQueueEntries.count),
-            detail: currentPlaylistID == nil ? "no current playlist" : "diverged transition"
-        )
+        //
+        // Recorded only when there is something to drop. The predicate that
+        // reaches here cannot be cleared by this function — it reads the array
+        // this empties — so the 1 Hz tick calls it again every second, and an
+        // unconditional record would fill the whole event buffer with no-ops
+        // during exactly the failure it is meant to explain.
+        if !activeQueueEntries.isEmpty || currentPlaylistID != nil {
+            MusicKitActivityLog.shared.record(
+                .queueCorrelationCleared,
+                magnitude: Double(activeQueueEntries.count),
+                detail: currentPlaylistID == nil ? "no current playlist" : "diverged transition"
+            )
+        }
         activeQueueEntries = []
         activeQueueIndex = nil
         setPendingQueueEntries([])
@@ -1727,13 +1735,19 @@ final class PlaybackController {
             let queueEndLocalTrackID = oldLocalTrackID
                 ?? oldCurrentItemLocalTrackID
                 ?? oldActiveQueueLocalTrackID
+            // `queueDidEnd` is a state, not an edge: no current entry while
+            // stopped stays true every tick until something changes it. Record
+            // once per queue end, reusing the flag that already exists to
+            // edge-trigger the neighbouring diagnostic below.
             let willRestart = oldTrackID != nil
                 && PlaybackQueueEndPolicy.shouldRestartAfterQueueEnd(session: activeSession)
-            MusicKitActivityLog.shared.record(
-                .queueEndObserved,
-                detail: willRestart ? "restarting" : "no restart"
-            )
-            if let oldTrackID, PlaybackQueueEndPolicy.shouldRestartAfterQueueEnd(session: activeSession) {
+            if !didLogQueueEndWithoutRestart {
+                MusicKitActivityLog.shared.record(
+                    .queueEndObserved,
+                    detail: willRestart ? "restart attempted" : "no restart"
+                )
+            }
+            if let oldTrackID, willRestart {
                 TrackMetadataDiagnostics.log(
                     "queue ended naturally status=\(player.playbackStatus) lastTrackID=\(oldTrackID) lastLocalTrackID=\(queueEndLocalTrackID ?? "nil")"
                 )
@@ -2834,7 +2848,9 @@ final class PlaybackController {
             )
         }
 
-        await attemptDeliveryRecoveryIfNeeded()
+        await MusicKitActivityLog.shared.withOrigin(.automatic) {
+            await attemptDeliveryRecoveryIfNeeded()
+        }
     }
 
     private func attemptDeliveryRecoveryIfNeeded() async {

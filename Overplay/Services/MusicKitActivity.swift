@@ -174,15 +174,19 @@ nonisolated enum MusicKitActivityNote: String, Codable, Sendable {
 /// The single most useful thing missing from a call log after the fact is
 /// whether a burst of retries came from the user, another playback surface,
 /// or Overplay retrying itself.
+/// No origin means Overplay's own UI. Every other initiator tags itself, so
+/// the absence is meaningful rather than merely unknown — but only for as
+/// long as that stays true, which is why each is set at a single choke point.
 nonisolated enum MusicKitActivityOrigin: String, Codable, Equatable, Sendable {
-    case app
     case carPlay
     case remoteCommand
+    /// Overplay acting without anyone asking: the end-of-playlist rebuild and
+    /// delivery-stall recovery. The shape most worth telling apart from a
+    /// user retrying.
     case automatic
 
     var title: String {
         switch self {
-        case .app: "app"
         case .carPlay: "CarPlay"
         case .remoteCommand: "remote command"
         case .automatic: "automatic"
