@@ -556,14 +556,11 @@ Local order state:
 
 Starting playback:
 
-- Starting a playlist sends the current local order for the selected scope to
-  MusicKit as a capped window, not as one whole-playlist payload. The rest is
-  appended as the window drains, so hand-off cost stays flat however long the
-  One True Playlist grows.
-- Entries before the starting track are not queued. Starting part-way through a
-  playlist queues from that track onwards, the way Apple Music does.
-- If the user starts at a specific track, MusicKit should start at that track,
-  which is the first entry of the delivered window.
+- Starting a playlist sends the complete local order for the selected scope to
+  MusicKit in one queue (`PLAY-005`), because MusicKit can only shuffle or
+  repeat what it holds.
+- If the user starts at a specific track, MusicKit starts at that track within
+  the full queue, so the tracks before it remain available to Previous.
 - If no track is requested, playback starts at the first track in local order.
 - MusicKit and Overplay UI should be reconciled immediately after queue setup so
   every surface agrees on the current track and queue position.
@@ -593,10 +590,11 @@ Additions, retirements, and restores:
 
 - Playlist additions from MusicKit sync, SwiftData sync, manual add, or
   promotion append to the end of the current Active local order.
-- If the changed playlist is currently playing, playable additions should also
-  be appended without restarting playback: to the live MusicKit queue when the
-  whole order is already delivered, otherwise behind the entries still held
-  back, so play order keeps matching local order.
+- If the changed playlist is currently playing, playable additions are
+  appended to the live MusicKit queue without restarting playback. The player
+  creates those entries, so they are correlated back to local rows on Apple
+  Music item ID and retried until they resolve — an appended entry that never
+  correlates would read as queue divergence.
 - If the changed playlist is currently playing, refresh the active playlist
   projection immediately after the durable SwiftData/local-order mutation so
   visible rows do not wait for SwiftData query invalidation.
@@ -871,16 +869,12 @@ templates connected to the shared playback controller.
 
 Show:
 
-- A one-tap `Overplay` entry point at the top of the root menu. It opens Now
-  Playing when the One True Playlist is already the live queue, resuming first
-  if playback is paused, and otherwise reshuffles the One True Playlist and
-  starts it from the new first track.
-- A row for the One True Playlist, opening its track list.
+- A row for the One True Playlist, opening its track list. There is no
+  one-tap entry point above it: two similar-looking rows is one too many for
+  a driver to disambiguate.
 - Active linked triage playlists in a separate section, opening the same track
   list.
-- A `Shuffle` row at the top of every track list, reshuffling the scope being
-  shown and starting from the new first track.
-- Tracks in their current local order below the shuffle row.
+- Tracks in their current local order, and nothing else in the list.
 - The currently playing Retired playlist context if playback was started from
   Retired on iOS.
 - Current track title, artist, album, and artwork where CarPlay templates
@@ -963,7 +957,7 @@ Settings:
 - Minimum listening time before skip can count.
 - Playthrough threshold percentage.
 - Reset all Overplay skip counts, playthrough counts, retirement state, and
-  legacy protection state without changing Apple Music playlist contents.
+  legacy state without changing Apple Music playlist contents.
 - Nuke all Overplay SwiftData records locally and save those deletions for
   iCloud propagation, then recreate default settings and clear local playback
   state. Apple Music playlists are not deleted.
@@ -1147,8 +1141,9 @@ Local JSON file only:
 - `updatedAt: Date`
 
 The obsolete `protectKeptTracks` setting and playlist-item `protected` flag
-have been removed. They are excluded from the product model
-and are slated for removal with their dead controller and presentation paths.
+have been removed, along with the controller and presentation paths that read
+them. They existed only to shield tracks from automatic eviction, which no
+longer exists.
 
 ## Edge Cases
 

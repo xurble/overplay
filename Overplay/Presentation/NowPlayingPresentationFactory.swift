@@ -117,7 +117,9 @@ enum NowPlayingPresentationFactory {
             trackID: nowPlaying.trackID,
             playlistRole: playbackController.currentPlaylistRole(context: context),
             skipCount: nowPlaying.skipCount,
-            isEvicted: nowPlaying.isEvicted
+            isEvicted: nowPlaying.isEvicted,
+            isShuffling: playbackController.shuffleEnabled,
+            repeatMode: playbackController.repeatMode
         )
     }
 

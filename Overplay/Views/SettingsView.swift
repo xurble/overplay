@@ -68,7 +68,7 @@ struct SettingsView: View {
                 } label: {
                     SettingsActionLabel(
                         title: "Reset All Local Overplay Stats",
-                        subtitle: "Clears skip, playthrough, protection, and retired state without changing Apple Music playlists.",
+                        subtitle: "Clears skip, playthrough, and retired state without changing Apple Music playlists.",
                         systemImage: "arrow.counterclockwise"
                     )
                 }
@@ -159,7 +159,7 @@ struct SettingsView: View {
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("This clears Overplay skip, playthrough, protection, and retired state. It does not delete Apple Music playlist content.")
+            Text("This clears Overplay skip, playthrough, and retired state. It does not delete Apple Music playlist content.")
         }
         .confirmationDialog("Nuke local and iCloud data?", isPresented: $showNukeConfirmation, titleVisibility: .visible) {
             Button("Nuke Database", role: .destructive) {

@@ -2,17 +2,6 @@ import Foundation
 import SwiftData
 
 enum TrackActionService {
-    /// Kept as the name the UI uses. With auto-eviction gone this is exactly
-    /// a skip-count reset — there is no protection left to apply.
-    static func keepCurrentTrack(
-        _ item: PlaylistItemRecord,
-        playlist: PlaylistRecord,
-        message: String,
-        in context: ModelContext
-    ) throws {
-        try resetSkipCount(item, playlist: playlist, message: message, in: context)
-    }
-
     static func resetSkipCount(
         _ item: PlaylistItemRecord,
         playlist: PlaylistRecord,

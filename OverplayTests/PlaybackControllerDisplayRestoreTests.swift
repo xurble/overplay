@@ -334,62 +334,6 @@ struct PlaybackControllerDisplayRestoreTests {
         return (container, context, currentPlaylist, currentTrack, currentItem, targetPlaylist, targetTrack, targetItem)
     }
 
-    @Test("keep current refreshes displayed skip count")
-    func keepCurrentRefreshesDisplayedSkipCount() throws {
-        let previousState = LocalPlaybackStateStore.load()
-        defer {
-            if let previousState {
-                LocalPlaybackStateStore.save(previousState)
-            } else {
-                LocalPlaybackStateStore.clear()
-            }
-        }
-
-        let container = try OverplayTestSupport.makeModelContainer()
-        let context = container.mainContext
-        let controller = PlaybackController()
-        let settings = OverplaySettings()
-        context.insert(settings)
-        let playlist = PlaylistRecord(
-            musicPlaylistID: "playlist-1",
-            name: "Main",
-            role: .oneTruePlaylist
-        )
-        let track = TrackRecord(
-            catalogID: "music-1",
-            libraryID: "music-1",
-            title: "Ready Track",
-            artistName: "Ready Artist",
-            durationSeconds: 180
-        )
-        let item = PlaylistItemRecord(
-            playlistID: playlist.id,
-            trackID: track.id,
-            skipCount: 2
-        )
-        context.insert(playlist)
-        context.insert(track)
-        context.insert(item)
-        LocalPlaybackStateStore.save(LocalPlaybackState(
-            playlistID: playlist.musicPlaylistID,
-            musicItemID: "music-1",
-            elapsedSeconds: 42,
-            wasPlaying: false,
-            updatedAt: Date(timeIntervalSince1970: 100),
-            localTrackID: track.id.uuidString
-        ))
-
-        controller.restoreLocalPlaybackDisplay(context: context)
-        #expect(controller.displayedSkipCount == 2)
-        #expect(controller.activePlaylistSnapshot?.rows.first?.skipCount == 2)
-
-        controller.keepCurrent(settings: settings, context: context)
-
-        #expect(item.skipCount == 0)
-        #expect(controller.displayedSkipCount == 0)
-        #expect(controller.activePlaylistSnapshot?.rows.first?.skipCount == 0)
-    }
-
     @Test("reset current skip count refreshes displayed metadata")
     func resetCurrentSkipCountRefreshesDisplayedMetadata() throws {
         let previousState = LocalPlaybackStateStore.load()
