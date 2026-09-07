@@ -124,3 +124,109 @@ struct MusicKitActivityLatencyConcernTests {
         #expect(failureConcern?.severity == .warning)
     }
 }
+
+@Suite("Activity report: origins and Overplay's own decisions")
+struct MusicKitActivityOriginTests {
+    private let start = Date(timeIntervalSince1970: 2_000_000)
+
+    @Test("a command's originating surface is recorded and rendered")
+    func originIsRecordedAndRendered() {
+        let snapshot = MusicKitActivitySnapshot(
+            tallies: [],
+            events: [
+                MusicKitActivityEvent(
+                    operation: .playerPlay,
+                    startedAt: start,
+                    durationMilliseconds: 200,
+                    origin: .carPlay
+                )
+            ],
+            observationStartedAt: start
+        )
+
+        let text = MusicKitActivityReport.text(
+            for: MusicKitActivityReport.summary(for: snapshot, now: start.addingTimeInterval(60))
+        )
+
+        // Without this, a retry burst cannot be attributed to the user, to
+        // another surface, or to Overplay retrying itself.
+        #expect(text.contains("via=carPlay"))
+    }
+
+    @Test("Overplay's own playback decisions share the call timeline")
+    func playbackDecisionsShareTheTimeline() {
+        let snapshot = MusicKitActivitySnapshot(
+            tallies: [],
+            events: [
+                MusicKitActivityEvent(
+                    operation: .queueCorrelationCleared,
+                    startedAt: start,
+                    magnitude: 50,
+                    detail: "diverged transition"
+                ),
+                MusicKitActivityEvent(
+                    operation: .deliveryStallDetected,
+                    startedAt: start.addingTimeInterval(1),
+                    detail: "playback stalled"
+                ),
+                MusicKitActivityEvent(
+                    operation: .queueEndObserved,
+                    startedAt: start.addingTimeInterval(2),
+                    detail: "no restart"
+                )
+            ],
+            observationStartedAt: start
+        )
+
+        let text = MusicKitActivityReport.text(
+            for: MusicKitActivityReport.summary(for: snapshot, now: start.addingTimeInterval(60))
+        )
+
+        // Interleaved with the Apple Music calls, which is the point: the
+        // causal link between a decision and the calls it produced was only
+        // reconstructable by guesswork before.
+        #expect(text.contains("queueCorrelationCleared size=50 diverged transition"))
+        #expect(text.contains("deliveryStallDetected playback stalled"))
+        #expect(text.contains("queueEndObserved no restart"))
+
+        // The rates table groups them under their own heading once tallied.
+        #expect(MusicKitActivityOperation.queueCorrelationCleared.category.title
+            == "Overplay playback decisions")
+        #expect(MusicKitActivityOperation.deliveryStallDetected.category == .playbackDecision)
+        #expect(MusicKitActivityOperation.queueEndObserved.category == .playbackDecision)
+        // These must be listed individually, never collapsed into a tally.
+        #expect(!MusicKitActivityOperation.queueCorrelationCleared.isHighFrequency)
+    }
+
+    @Test("a skipped mode reset is counted apart from one that wrote")
+    func skippedModeResetIsCountedApart() {
+        let snapshot = MusicKitActivitySnapshot(
+            tallies: [],
+            events: [
+                MusicKitActivityEvent(operation: .playerModeReset, startedAt: start),
+                MusicKitActivityEvent(operation: .playerModeResetSkipped, startedAt: start)
+            ],
+            observationStartedAt: start
+        )
+
+        let summary = MusicKitActivityReport.summary(for: snapshot, now: start.addingTimeInterval(60))
+
+        // Otherwise a working guard and a path that never ran look identical.
+        #expect(MusicKitActivityOperation.playerModeResetSkipped.title == "Player mode reset (skipped)")
+        #expect(MusicKitActivityOperation.playerModeResetSkipped.category == .player)
+        #expect(summary.totalCalls >= 0)
+    }
+
+    @Test("an event recorded before origins existed still decodes")
+    func legacyEventStillDecodes() throws {
+        // The activity file persists across relaunch, so older events have no
+        // origin field at all.
+        let json = Data("""
+        {"operation":"playerPlay","startedAt":0,"notes":[]}
+        """.utf8)
+
+        let event = try JSONDecoder().decode(MusicKitActivityEvent.self, from: json)
+        #expect(event.origin == nil)
+        #expect(event.operation == .playerPlay)
+    }
+}

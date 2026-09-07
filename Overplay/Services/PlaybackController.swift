@@ -830,6 +830,15 @@ final class PlaybackController {
     }
 
     private func clearQueueCorrelationAfterDivergedTransition() {
+        // The most consequential thing Overplay does to itself: this drops the
+        // playlist, the rest of the queue and the durable restore point. From
+        // a call log alone it is invisible, which made a device failure much
+        // harder to read than it needed to be.
+        MusicKitActivityLog.shared.record(
+            .queueCorrelationCleared,
+            magnitude: Double(activeQueueEntries.count),
+            detail: currentPlaylistID == nil ? "no current playlist" : "diverged transition"
+        )
         activeQueueEntries = []
         activeQueueIndex = nil
         setPendingQueueEntries([])
@@ -1718,6 +1727,12 @@ final class PlaybackController {
             let queueEndLocalTrackID = oldLocalTrackID
                 ?? oldCurrentItemLocalTrackID
                 ?? oldActiveQueueLocalTrackID
+            let willRestart = oldTrackID != nil
+                && PlaybackQueueEndPolicy.shouldRestartAfterQueueEnd(session: activeSession)
+            MusicKitActivityLog.shared.record(
+                .queueEndObserved,
+                detail: willRestart ? "restarting" : "no restart"
+            )
             if let oldTrackID, PlaybackQueueEndPolicy.shouldRestartAfterQueueEnd(session: activeSession) {
                 TrackMetadataDiagnostics.log(
                     "queue ended naturally status=\(player.playbackStatus) lastTrackID=\(oldTrackID) lastLocalTrackID=\(queueEndLocalTrackID ?? "nil")"
@@ -2607,6 +2622,26 @@ final class PlaybackController {
 
         isRestartingQueue = true
         defer { isRestartingQueue = false }
+        return await MusicKitActivityLog.shared.withOrigin(.automatic) {
+            await performQueueEndRestart(
+                currentPlaylistID: currentPlaylistID,
+                lastMusicItemID: lastMusicItemID,
+                lastLocalTrackID: lastLocalTrackID,
+                settings: settings,
+                naturalCompletion: naturalCompletion,
+                context: context
+            )
+        }
+    }
+
+    private func performQueueEndRestart(
+        currentPlaylistID: String,
+        lastMusicItemID: String,
+        lastLocalTrackID: String?,
+        settings: OverplaySettings,
+        naturalCompletion: Bool,
+        context: ModelContext
+    ) async -> Bool {
         let outgoing = captureOutgoingPlaybackTransition()
 
         do {
@@ -2839,6 +2874,11 @@ final class PlaybackController {
     }
 
     private func reportDeliveryFailure(message: String) {
+        // Only on the edge: a stall that persists would otherwise fill the
+        // log with the same line every tick.
+        if !isDeliveryStalled {
+            MusicKitActivityLog.shared.record(.deliveryStallDetected, detail: message)
+        }
         isDeliveryStalled = true
         statusMessage = message
     }

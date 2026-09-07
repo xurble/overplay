@@ -440,10 +440,14 @@ final class CarPlayCoordinator: NSObject {
                     context: modelContext
                 )
                 if !didSkip {
-                    await playbackController.playPlaylist(playlist, startingAt: track, scope: scope, settings: settings, context: modelContext)
+                    await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+                        await playbackController.playPlaylist(playlist, startingAt: track, scope: scope, settings: settings, context: modelContext)
+                    }
                 }
             case .startPlaylist:
-                await playbackController.playPlaylist(playlist, startingAt: track, scope: scope, settings: settings, context: modelContext)
+                await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+                        await playbackController.playPlaylist(playlist, startingAt: track, scope: scope, settings: settings, context: modelContext)
+                    }
             }
 
             refreshAfterTrackAction()

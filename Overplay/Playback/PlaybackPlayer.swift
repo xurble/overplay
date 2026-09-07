@@ -121,7 +121,7 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
         ) else {
             // Recorded so the activity report can tell a working guard apart
             // from a code path that never ran.
-            MusicKitActivityLog.shared.record(.playerModeReset, detail: "already off, skipped")
+            MusicKitActivityLog.shared.record(.playerModeResetSkipped)
             return
         }
 

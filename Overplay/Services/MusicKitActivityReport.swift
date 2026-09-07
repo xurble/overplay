@@ -546,7 +546,11 @@ nonisolated enum MusicKitActivityReport {
             lines.append("")
             lines.append("Concerns:")
             for concern in summary.concerns {
-                lines.append("  [\(concern.severity.label)] \(concern.title)")
+                var header = "  [\(concern.severity.label)] \(concern.title)"
+                if let lastObservedAt = concern.lastObservedAt {
+                    header += " (last \(timeText(lastObservedAt)))"
+                }
+                lines.append(header)
                 lines.append("    \(collapseWhitespace(concern.detail))")
             }
         }
@@ -603,6 +607,9 @@ nonisolated enum MusicKitActivityReport {
                 }
                 if let durationMilliseconds = event.durationMilliseconds {
                     line += String(format: " %.0fms", durationMilliseconds)
+                }
+                if let origin = event.origin {
+                    line += " via=\(origin.rawValue)"
                 }
                 if !event.notes.isEmpty {
                     line += " notes=\(event.notes.map(\.rawValue).joined(separator: ","))"

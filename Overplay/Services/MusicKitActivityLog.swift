@@ -38,6 +38,14 @@ nonisolated final class MusicKitActivityLog: Sendable {
     static let defaultRetainedMinutes = 240
 
     private struct Storage {
+        /// The surface currently issuing playback commands, as a stack so
+        /// nesting restores the outer value rather than clearing it.
+        ///
+        /// Ambient rather than a parameter because the player wrapper does
+        /// the recording and has no view of who asked. Playback commands are
+        /// issued from the main actor one at a time, so set/restore around a
+        /// command is sound; concurrent origins would need a task-local.
+        var origins: [MusicKitActivityOrigin] = []
         var snapshot = MusicKitActivitySnapshot()
         var didLoad = false
         var isDirty = false
@@ -70,6 +78,24 @@ nonisolated final class MusicKitActivityLog: Sendable {
         self.now = now
     }
 
+    /// Attributes everything recorded inside `body` to `origin`.
+    func withOrigin<T>(_ origin: MusicKitActivityOrigin, _ body: () async -> T) async -> T {
+        state.withLock { $0.origins.append(origin) }
+        defer { state.withLock { _ = $0.origins.popLast() } }
+        return await body()
+    }
+
+    /// Synchronous variant, for command paths that never suspend.
+    func withOrigin<T>(_ origin: MusicKitActivityOrigin, _ body: () throws -> T) rethrows -> T {
+        state.withLock { $0.origins.append(origin) }
+        defer { state.withLock { _ = $0.origins.popLast() } }
+        return try body()
+    }
+
+    private var currentOrigin: MusicKitActivityOrigin? {
+        state.withLock { $0.origins.last }
+    }
+
     static func defaultFileURL() -> URL? {
         guard let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             return nil
@@ -99,6 +125,7 @@ nonisolated final class MusicKitActivityLog: Sendable {
             magnitude: magnitude,
             detail: detail,
             notes: notes,
+            origin: currentOrigin,
             errorDomain: nsError?.domain,
             errorCode: nsError?.code,
             errorDescription: nsError?.localizedDescription

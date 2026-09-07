@@ -96,10 +96,12 @@ final class RemoteCommandService {
                 return .noActionableNowPlayingItem
             }
             Task { @MainActor in
-                if let settings = try? SettingsRepository.settings(in: context) {
-                    await playbackController.playCurrentOrDefault(settings: settings, context: context)
-                } else {
-                    await playbackController.play(context: context)
+                await MusicKitActivityLog.shared.withOrigin(.remoteCommand) {
+                    if let settings = try? SettingsRepository.settings(in: context) {
+                        await playbackController.playCurrentOrDefault(settings: settings, context: context)
+                    } else {
+                        await playbackController.play(context: context)
+                    }
                 }
             }
             return .success
@@ -112,7 +114,9 @@ final class RemoteCommandService {
             guard playbackController.remoteCommandAvailability.canPause else {
                 return .noActionableNowPlayingItem
             }
-            Task { @MainActor in playbackController.pause() }
+            Task { @MainActor in
+                MusicKitActivityLog.shared.withOrigin(.remoteCommand) { playbackController.pause() }
+            }
             return .success
         })
         targetTokens.append(commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
@@ -124,15 +128,17 @@ final class RemoteCommandService {
                 return .noActionableNowPlayingItem
             }
             Task { @MainActor in
-                if playbackController.canControlPlayback {
-                    await playbackController.togglePlayPause(context: context)
-                    return
-                }
+                await MusicKitActivityLog.shared.withOrigin(.remoteCommand) {
+                    if playbackController.canControlPlayback {
+                        await playbackController.togglePlayPause(context: context)
+                        return
+                    }
 
-                if let settings = try? SettingsRepository.settings(in: context) {
-                    await playbackController.performPrimaryPlaybackAction(settings: settings, context: context)
-                } else {
-                    await playbackController.togglePlayPause(context: context)
+                    if let settings = try? SettingsRepository.settings(in: context) {
+                        await playbackController.performPrimaryPlaybackAction(settings: settings, context: context)
+                    } else {
+                        await playbackController.togglePlayPause(context: context)
+                    }
                 }
             }
             return .success
@@ -157,7 +163,9 @@ final class RemoteCommandService {
             }
             Task { @MainActor in
                 let previousTrackID = playbackController.currentTrack?.id
-                await playbackController.previous(context: context)
+                await MusicKitActivityLog.shared.withOrigin(.remoteCommand) {
+                    await playbackController.previous(context: context)
+                }
                 Self.logger.info(
                     "Remote previous track command changed track from \(previousTrackID ?? "nil", privacy: .public) to \(playbackController.currentTrack?.id ?? "nil", privacy: .public)"
                 )
@@ -218,7 +226,9 @@ final class RemoteCommandService {
 
         Task { @MainActor in
             let previousTrackID = playbackController.currentTrack?.id
-            await playbackController.next(settings: settings, context: context)
+            await MusicKitActivityLog.shared.withOrigin(.remoteCommand) {
+                await playbackController.next(settings: settings, context: context)
+            }
             Self.logger.info(
                 "Remote next track command changed track from \(previousTrackID ?? "nil", privacy: .public) to \(playbackController.currentTrack?.id ?? "nil", privacy: .public)"
             )
@@ -284,7 +294,9 @@ final class RemoteCommandService {
         }
 
         _ = shuffleType
-        let didReshuffle = await playbackController.reshuffleCurrentPlaylist(context: context)
+        let didReshuffle = await MusicKitActivityLog.shared.withOrigin(.remoteCommand) {
+            await playbackController.reshuffleCurrentPlaylist(context: context)
+        }
         syncPlaybackState(from: playbackController)
         guard didReshuffle else {
             return .commandFailed
