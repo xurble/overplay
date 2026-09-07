@@ -34,20 +34,20 @@ enum PlaybackQueueEndPolicy {
     /// skip to, or the player has already abandoned its entry. An unknown
     /// queue position cannot rule out queue end, so it keeps the restart
     /// path (which is non-destructive until play() succeeds).
-    ///
-    /// Since the queue is delivered a window at a time, sitting at the end of
-    /// the correlated queue no longer implies the end of the playlist: with
-    /// entries still to hand over, a throw there is a delivery failure, and
-    /// treating it as queue end would reshuffle and overwrite the stored
-    /// order, losing the user's place mid-playlist.
     static func skipFailureIndicatesQueueEnd(
         activeQueueIndex: Int?,
         activeQueueCount: Int,
         hasCurrentEntry: Bool,
-        hasUndeliveredEntries: Bool = false
+        isShuffling: Bool
     ) -> Bool {
         guard hasCurrentEntry else { return true }
-        guard !hasUndeliveredEntries else { return false }
+        // `activeQueueIndex` is a position in Overplay's local order, which is
+        // the play order only while shuffle is off. Under shuffle, sitting at
+        // the last local index says nothing about being at the end of
+        // playback, so a throw there is a delivery failure rather than an
+        // exhausted queue — and MusicKit owns shuffle now, so this is the
+        // normal case rather than the exception.
+        guard !isShuffling else { return false }
         guard let activeQueueIndex, activeQueueCount > 0 else { return true }
         return activeQueueIndex >= activeQueueCount - 1
     }

@@ -37,8 +37,8 @@ struct NewSwiftDataModelTests {
             skipCount: 3,
             playthroughCount: 1,
             evictedAt: .now,
-            evictionReason: .skipCount,
-            evictionSource: .playbackRule
+            evictionReason: .manual,
+            evictionSource: .user
         ))
         context.insert(HistoryEvent(
             playlistID: playlistID,
@@ -63,8 +63,8 @@ struct NewSwiftDataModelTests {
         #expect(items.count == 1)
         #expect(items.first?.playlistID == playlistID)
         #expect(items.first?.trackID == trackID)
-        #expect(items.first?.evictionReason == .skipCount)
-        #expect(items.first?.evictionSource == .playbackRule)
+        #expect(items.first?.evictionReason == .manual)
+        #expect(items.first?.evictionSource == .user)
         #expect(items.first?.isPlayable == false)
         #expect(events.count == 1)
         #expect(events.first?.eventType == .evicted)

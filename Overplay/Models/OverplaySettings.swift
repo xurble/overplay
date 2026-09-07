@@ -9,7 +9,6 @@ final class OverplaySettings {
     var skipThresholdPercentage: Double = 50
     var minimumSkipListeningSeconds: Double = 10
     var playthroughThresholdPercentage: Double = 90
-    var protectKeptTracks: Bool = false
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
@@ -20,7 +19,6 @@ final class OverplaySettings {
         skipThresholdPercentage: Double = 50,
         minimumSkipListeningSeconds: Double = 10,
         playthroughThresholdPercentage: Double = 90,
-        protectKeptTracks: Bool = false,
         createdAt: Date = .now,
         updatedAt: Date = .now
     ) {
@@ -30,7 +28,6 @@ final class OverplaySettings {
         self.skipThresholdPercentage = skipThresholdPercentage
         self.minimumSkipListeningSeconds = minimumSkipListeningSeconds
         self.playthroughThresholdPercentage = playthroughThresholdPercentage
-        self.protectKeptTracks = protectKeptTracks
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

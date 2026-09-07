@@ -48,6 +48,9 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     case queueCorrelationCleared
     case deliveryStallDetected
     case queueEndObserved
+    /// A shuffle or repeat change Overplay noticed rather than made — the only
+    /// evidence that another surface touched the modes.
+    case playerModeObserved
 
     // System media surfaces.
     case nowPlayingInfoWrite
@@ -95,7 +98,8 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
             .systemMediaSurface
         case .artworkDownload:
             .asset
-        case .queueCorrelationCleared, .deliveryStallDetected, .queueEndObserved:
+        case .queueCorrelationCleared, .deliveryStallDetected, .queueEndObserved,
+             .playerModeObserved:
             .playbackDecision
         }
     }
@@ -114,6 +118,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case .queueCorrelationCleared: "Queue correlation cleared"
         case .deliveryStallDetected: "Delivery stall detected"
         case .queueEndObserved: "Queue end observed"
+        case .playerModeObserved: "Playback mode changed elsewhere"
         case .libraryPlaylistCreate: "Playlist create"
         case .libraryPlaylistEdit: "Playlist rewrite"
         case .libraryPlaylistAddItem: "Playlist add item"

@@ -1,4 +1,5 @@
 import MediaPlayer
+@preconcurrency import MusicKit
 
 enum RemotePlaybackModeMapper {
     static func shuffleType(for shuffleEnabled: Bool) -> MPShuffleType {
@@ -15,6 +16,26 @@ enum RemotePlaybackModeMapper {
             .off
         default:
             .items
+        }
+    }
+}
+
+extension RemotePlaybackModeMapper {
+    /// MusicKit and MediaPlayer describe repeat with different types, and the
+    /// system control speaks the MediaPlayer one.
+    static func repeatType(for repeatMode: MusicKit.MusicPlayer.RepeatMode) -> MPRepeatType {
+        switch repeatMode {
+        case .all: .all
+        case .one: .one
+        default: .off
+        }
+    }
+
+    static func repeatMode(for repeatType: MPRepeatType) -> MusicKit.MusicPlayer.RepeatMode {
+        switch repeatType {
+        case .all: .all
+        case .one: .one
+        default: MusicKit.MusicPlayer.RepeatMode.none
         }
     }
 }

@@ -115,19 +115,6 @@ struct TrackSummaryPresentationTests {
 
 @Suite("Track state badge presentation")
 struct TrackStateBadgePresentationTests {
-    @Test("labels and icons prioritize protected and retired state")
-    func labelsAndIcons() {
-        let protected = TrackStateBadgePresentation(isEvicted: true, isProtected: true)
-        let evicted = TrackStateBadgePresentation(isEvicted: true, isProtected: false)
-        let active = TrackStateBadgePresentation(isEvicted: false, isProtected: false)
-
-        #expect(protected.title == "Protected")
-        #expect(protected.systemImage == "shield.fill")
-        #expect(evicted.title == "Retired")
-        #expect(evicted.systemImage == "trash.fill")
-        #expect(active.title == "Active")
-        #expect(active.systemImage == "music.note")
-    }
 }
 
 @Suite("Now playing presentation")
@@ -147,8 +134,7 @@ struct NowPlayingPresentationTests {
             durationSeconds: nil,
             skipCount: 2,
             playthroughCount: 1,
-            isEvicted: false,
-            isProtected: false
+            isEvicted: false
         )
 
         #expect(presentation.title == "Nothing playing")
@@ -205,50 +191,6 @@ struct NowPlayingPresentationTests {
 
 @Suite("Now playing presentation factory")
 struct NowPlayingPresentationFactoryTests {
-    @Test("factory resolves protected retired and active badge states")
-    @MainActor
-    func factoryBadgeStates() throws {
-        let container = try OverplayTestSupport.makeModelContainer()
-        let context = container.mainContext
-        let settings = try SettingsRepository.settings(in: context)
-        let controller = PlaybackController()
-        controller.currentTrack = CurrentPlaybackTrack(id: "music-1", title: "Track", artistName: "Artist")
-        let track = TrackRecord(title: "Track", artistName: "Artist")
-        context.insert(track)
-        let playlistID = UUID()
-
-        controller.currentPlaylistItem = PlaylistItemRecord(playlistID: playlistID, trackID: track.id, skipCount: 0)
-        let active = NowPlayingPresentationFactory.trackStateBadgePresentation(
-            playbackController: controller,
-            settings: settings
-        )
-        #expect(active.title == "Active")
-
-        controller.currentPlaylistItem = PlaylistItemRecord(
-            playlistID: playlistID,
-            trackID: track.id,
-            skipCount: 0,
-            protected: true
-        )
-        let protected = NowPlayingPresentationFactory.trackStateBadgePresentation(
-            playbackController: controller,
-            settings: settings
-        )
-        #expect(protected.title == "Protected")
-
-        controller.currentPlaylistItem = PlaylistItemRecord(
-            playlistID: playlistID,
-            trackID: track.id,
-            skipCount: 2,
-            evictedAt: .now
-        )
-        let retired = NowPlayingPresentationFactory.trackStateBadgePresentation(
-            playbackController: controller,
-            settings: settings
-        )
-        #expect(retired.title == "Retired")
-    }
-
     @Test("factory handles missing current track")
     @MainActor
     func factoryMissingTrack() {

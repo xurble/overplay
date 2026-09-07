@@ -21,8 +21,8 @@ struct DashboardSummaryTests {
                     trackID: evictedTrackID,
                     skipCount: 3,
                     evictedAt: .now,
-                    evictionReason: .skipCount,
-                    evictionSource: .playbackRule
+                    evictionReason: .manual,
+                    evictionSource: .user
                 )
             ]
         )

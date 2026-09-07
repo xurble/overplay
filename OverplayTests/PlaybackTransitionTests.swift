@@ -37,110 +37,110 @@ struct PlaybackTransitionTests {
         ) == .diverged(entryID: "external"))
     }
 
-    @Test("a long playlist reaches the player one window at a time")
-    func longPlaylistReachesThePlayerOneWindowAtATime() async throws {
-        let fixture = try makeFixture(
-            trackCount: 12,
-            queueWindowPolicy: PlaybackQueueWindowPolicy(windowSize: 4, topUpThreshold: 1, topUpBatchSize: 3)
-        )
+    @Test("a mode changed by another surface reaches Overplay")
+    func modeChangedByAnotherSurfaceReachesOverplay() async throws {
+        let fixture = try makeFixture()
         defer { fixture.cleanUp() }
         try await fixture.start(at: 0)
+        #expect(!fixture.controller.shuffleEnabled)
 
-        #expect(fixture.player.queuedEntryCount == 4)
-        #expect(fixture.player.appendedTrackBatchSizes.isEmpty)
-
-        fixture.player.advanceExternally()
+        // The Lock Screen, Siri or the Music app writing the mode directly.
+        // `MusicPlayer.State` is not observable, so without noticing the
+        // change Overplay would keep reporting the stale value forever.
+        let versionBefore = fixture.controller.playbackModeVersion
+        fixture.player.shuffleMode = .songs
+        fixture.player.repeatMode = .all
         await fixture.controller.reconcilePlayerState(context: fixture.context)
-        #expect(fixture.player.appendedTrackBatchSizes.isEmpty)
 
-        fixture.player.advanceExternally()
+        #expect(fixture.controller.shuffleEnabled)
+        #expect(fixture.controller.repeatMode == .all)
+        // The getters read the player directly, so their values are fresh
+        // regardless. What an external change has to do is invalidate the
+        // observation, or no surface redraws.
+        #expect(fixture.controller.playbackModeVersion > versionBefore)
+
+        let versionAfterNotice = fixture.controller.playbackModeVersion
         await fixture.controller.reconcilePlayerState(context: fixture.context)
-        #expect(fixture.player.appendedTrackBatchSizes == [3])
-        #expect(fixture.player.queuedEntryCount == 7)
+        #expect(fixture.controller.playbackModeVersion == versionAfterNotice)
     }
 
-    @Test("a topped-up entry is correlated, so it still resolves to its local row")
-    func toppedUpEntryStillResolvesToItsLocalRow() async throws {
-        let fixture = try makeFixture(
-            trackCount: 8,
-            queueWindowPolicy: PlaybackQueueWindowPolicy(windowSize: 3, topUpThreshold: 1, topUpBatchSize: 2)
-        )
+    @Test("a queue end is handled once, not once per tick")
+    func queueEndIsHandledOncePerEnd() async throws {
+        let fixture = try makeFixture()
         defer { fixture.cleanUp() }
-        try await fixture.start(at: 0)
-        #expect(fixture.player.queuedEntryCount == 3)
-
-        // Tracks 3 and 4 only reach the player as a top-up batch.
-        fixture.player.advanceExternally()
+        try await fixture.start(at: 2)
+        fixture.player.playbackTime = 179
         await fixture.controller.reconcilePlayerState(context: fixture.context)
-        #expect(fixture.player.appendedTrackBatchSizes == [2])
-        #expect(fixture.player.queuedEntryCount == 5)
 
-        for _ in 0..<2 {
-            fixture.player.advanceExternally()
+        let recordedBefore = MusicKitActivityLog.shared.snapshot().events
+            .filter { $0.operation == .queueEndObserved }
+            .count
+
+        fixture.player.finishQueueNaturally()
+        // `queueDidEnd` is a state, so every one of these ticks sees it. The
+        // playthrough count alone cannot prove the guard works — that is
+        // protected separately by `session.hasEvaluated` — so assert the
+        // recording the guard actually governs.
+        for _ in 0..<5 {
             await fixture.controller.reconcilePlayerState(context: fixture.context)
         }
 
-        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[3].id.rawValue)
+        let recordedAfter = MusicKitActivityLog.shared.snapshot().events
+            .filter { $0.operation == .queueEndObserved }
+            .count
+        #expect(recordedAfter - recordedBefore == 1)
+        #expect(fixture.items[2].playthroughCount == 1)
+        #expect(!fixture.controller.isDeliveryStalled)
+        #expect(fixture.controller.statusMessage == nil)
     }
 
-    @Test("starting part-way through a playlist queues from that track onwards")
-    func startingPartWayThroughQueuesFromThatTrackOnwards() async throws {
-        let fixture = try makeFixture(
-            trackCount: 12,
-            queueWindowPolicy: PlaybackQueueWindowPolicy(windowSize: 4, topUpThreshold: 1, topUpBatchSize: 3)
-        )
-        defer { fixture.cleanUp() }
-        try await fixture.start(at: 6)
-
-        #expect(fixture.player.queuedEntryCount == 4)
-        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[6].id.rawValue)
-    }
-
-    @Test("an unhydrated top-up does not run away, and correlates on a later tick")
-    func unhydratedTopUpDoesNotRunAway() async throws {
-        let fixture = try makeFixture(
-            trackCount: 40,
-            queueWindowPolicy: PlaybackQueueWindowPolicy(windowSize: 3, topUpThreshold: 1, topUpBatchSize: 2)
-        )
+    @Test("an appended entry awaiting hydration never tears playback down")
+    func appendedEntryAwaitingHydrationNeverTearsPlaybackDown() async throws {
+        let fixture = try makeFixture()
         defer { fixture.cleanUp() }
         try await fixture.start(at: 0)
+        let added = try fixture.addPlaylist(prefix: "appended", trackCount: 1)
+        fixture.context.insert(PlaylistItemRecord(
+            playlistID: fixture.playlist.id,
+            trackID: added.tracks[0].id,
+            createdAt: .now
+        ))
+        try fixture.context.save()
 
+        // Sync adds a track to the playing playlist, and the player reports
+        // that entry as current before its item hydrates.
         fixture.player.withholdsQueueItemIDs = true
-        fixture.player.advanceExternally()
-        await fixture.controller.reconcilePlayerState(context: fixture.context)
-        #expect(fixture.player.appendedTrackBatchSizes == [2])
-
-        // Appended-but-unhydrated entries still count as delivered, so
-        // further ticks must not keep topping up on top of them.
-        for _ in 0..<3 {
-            await fixture.controller.reconcilePlayerState(context: fixture.context)
-        }
-        #expect(fixture.player.appendedTrackBatchSizes == [2])
-
-        // Nor may the wait tear playback state down as if the queue diverged.
-        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[1].id.rawValue)
-
-        fixture.player.withholdsQueueItemIDs = false
-        await fixture.controller.reconcilePlayerState(context: fixture.context)
-
-        let playedToppedUpTrack = await fixture.controller.playTrackInCurrentQueue(
-            localTrackID: fixture.tracks[4].id.uuidString,
-            settings: fixture.settings,
+        await fixture.controller.appendLiveQueueEntries(
+            localTrackIDs: [added.tracks[0].id.uuidString],
+            playlistID: fixture.playlist.musicPlaylistID,
             context: fixture.context
         )
-        #expect(playedToppedUpTrack)
+        fixture.player.withholdsCurrentEntryItem = true
+        for _ in fixture.musicTracks {
+            fixture.player.advanceExternally()
+        }
+        for _ in 0..<8 {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(fixture.controller.canControlPlayback)
+
+        fixture.player.withholdsQueueItemIDs = false
+        fixture.player.withholdsCurrentEntryItem = false
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        #expect(fixture.controller.currentTrack?.id == added.musicTracks[0].id.rawValue)
+        #expect(fixture.controller.canControlPlayback)
     }
 
-    @Test("a queue replaced while a top-up is in flight does not consume the new tail")
-    func queueReplacedDuringTopUpDoesNotConsumeTheNewTail() async throws {
-        let fixture = try makeFixture(
-            trackCount: 40,
-            queueWindowPolicy: PlaybackQueueWindowPolicy(windowSize: 3, topUpThreshold: 1, topUpBatchSize: 2)
-        )
+    @Test("a queue replacement during append cannot mask a later external takeover")
+    func queueReplacementDuringAppendCannotMaskExternalTakeover() async throws {
+        let fixture = try makeFixture()
         defer { fixture.cleanUp() }
         try await fixture.start(at: 0)
+        let other = try fixture.addPlaylist(prefix: "other", trackCount: 3)
 
-        let other = try fixture.addPlaylist(prefix: "other", trackCount: 40)
+        fixture.player.withholdsQueueItemIDs = true
         fixture.player.onAppendToQueue = {
             await fixture.controller.playPlaylist(
                 other.playlist,
@@ -148,315 +148,52 @@ struct PlaybackTransitionTests {
                 context: fixture.context
             )
         }
-
-        fixture.player.advanceExternally()
-        await fixture.controller.reconcilePlayerState(context: fixture.context)
-
-        // The held-back tail now belongs to the new playlist. Consuming the
-        // in-flight batch from it would trap or drop the wrong entries.
-        #expect(fixture.controller.currentPlaylistID == other.playlist.musicPlaylistID)
-        await fixture.controller.reconcilePlayerState(context: fixture.context)
-        #expect(fixture.controller.currentTrack?.id == other.musicTracks[0].id.rawValue)
-    }
-
-    @Test("the end-of-playlist rebuild is windowed like every other queue replacement")
-    func endOfPlaylistRebuildIsWindowed() async throws {
-        let fixture = try makeFixture(
-            trackCount: 30,
-            queueWindowPolicy: PlaybackQueueWindowPolicy(windowSize: 4, topUpThreshold: 1, topUpBatchSize: 3)
-        )
-        defer { fixture.cleanUp() }
-        try await fixture.start(at: 0)
-        #expect(fixture.player.queuedEntryCount == 4)
-
-        fixture.player.playbackTime = 179
-        await fixture.controller.reconcilePlayerState(context: fixture.context)
-        fixture.player.finishQueueNaturally()
-        await fixture.controller.reconcilePlayerState(context: fixture.context)
-
-        // The repeat rebuild is the most repeated queue replacement Overplay
-        // makes, so it must not hand over the whole playlist.
-        #expect(fixture.player.queuedEntryCount == 4)
-    }
-
-    @Test("playing into an entry awaiting correlation never tears playback down")
-    func playingIntoAnEntryAwaitingCorrelationNeverTearsPlaybackDown() async throws {
-        let fixture = try makeFixture(
-            trackCount: 40,
-            queueWindowPolicy: PlaybackQueueWindowPolicy(windowSize: 3, topUpThreshold: 1, topUpBatchSize: 2)
-        )
-        defer { fixture.cleanUp() }
-        try await fixture.start(at: 0)
-
-        fixture.player.withholdsQueueItemIDs = true
-        fixture.player.advanceExternally()
-        await fixture.controller.reconcilePlayerState(context: fixture.context)
-        #expect(fixture.player.appendedTrackBatchSizes == [2])
-
-        // Advance past the delivered window and into a topped-up entry. Its
-        // item resolves, but it is not in the correlated queue, which is the
-        // state the suppression exists for — without it this tick runs the
-        // diverged-queue teardown and playback loses its playlist.
-        for _ in 0..<2 {
-            fixture.player.advanceExternally()
-            await fixture.controller.reconcilePlayerState(context: fixture.context)
-        }
-        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[3].id.rawValue)
-        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
-
-        // Well past any tick budget the old design would have exhausted.
-        for _ in 0..<12 {
-            await fixture.controller.reconcilePlayerState(context: fixture.context)
-        }
-        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
-        #expect(LocalPlaybackStateStore.load() != nil)
-
-        fixture.player.withholdsQueueItemIDs = false
-        await fixture.controller.reconcilePlayerState(context: fixture.context)
-
-        let playedToppedUpTrack = await fixture.controller.playTrackInCurrentQueue(
-            localTrackID: fixture.tracks[4].id.uuidString,
-            settings: fixture.settings,
-            context: fixture.context
-        )
-        #expect(playedToppedUpTrack)
-    }
-
-    @Test("an external queue takeover still tears down, even on a track Overplay appended")
-    func externalQueueTakeoverStillTearsDown() async throws {
-        let fixture = try makeFixture(
-            trackCount: 40,
-            queueWindowPolicy: PlaybackQueueWindowPolicy(windowSize: 3, topUpThreshold: 1, topUpBatchSize: 2)
-        )
-        defer { fixture.cleanUp() }
-        try await fixture.start(at: 0)
-
-        fixture.player.withholdsQueueItemIDs = true
-        fixture.player.advanceExternally()
-        await fixture.controller.reconcilePlayerState(context: fixture.context)
-        #expect(fixture.player.appendedTrackBatchSizes == [2])
-
-        // Something else replaces the queue with a track Overplay had queued.
-        // Overplay's own entries are gone, so correlation can never succeed —
-        // suppressing this would hide the takeover for the life of the queue.
-        fixture.player.replaceQueueExternally(with: [fixture.musicTracks[4]])
-        await fixture.controller.reconcilePlayerState(context: fixture.context)
-
-        #expect(fixture.controller.currentPlaylistID == nil)
-    }
-
-    @Test("tracks added to a windowed queue keep local order instead of jumping the tail")
-    func tracksAddedToAWindowedQueueKeepLocalOrder() async throws {
-        let fixture = try makeFixture(
-            trackCount: 20,
-            queueWindowPolicy: PlaybackQueueWindowPolicy(windowSize: 3, topUpThreshold: 1, topUpBatchSize: 2)
-        )
-        defer { fixture.cleanUp() }
-        try await fixture.start(at: 0)
-        let deliveredBefore = fixture.player.queuedEntryCount
-
         await fixture.controller.appendLiveQueueEntries(
-            localTrackIDs: [fixture.tracks[19].id.uuidString],
+            localTrackIDs: [fixture.tracks[2].id.uuidString],
             playlistID: fixture.playlist.musicPlaylistID,
             context: fixture.context
         )
 
-        // The live queue is only a window, so an addition must go behind the
-        // held-back tail rather than ahead of it.
-        #expect(fixture.player.queuedEntryCount == deliveredBefore)
+        #expect(fixture.controller.currentPlaylistID == other.playlist.musicPlaylistID)
+
+        // The new external queue happens to contain the song from the stale
+        // append. Its entry must not be adopted as part of the replacement
+        // playlist merely because the song IDs match.
+        fixture.player.withholdsQueueItemIDs = false
+        fixture.player.replaceQueueExternally(with: [fixture.musicTracks[2]])
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        #expect(fixture.controller.currentPlaylistID == nil)
+        #expect(fixture.controller.activePlaylistSnapshot == nil)
     }
 
-    @Test("tapping a track just past the window skips into it instead of rebuilding")
-    func trackJustPastTheWindowSkipsInsteadOfRebuilding() async throws {
-        let fixture = try makeFixture(
-            trackCount: 20,
-            queueWindowPolicy: PlaybackQueueWindowPolicy(
-                windowSize: 4,
-                topUpThreshold: 1,
-                topUpBatchSize: 2,
-                maximumReachAhead: 6
-            )
-        )
-        defer { fixture.cleanUp() }
-        try await fixture.start(at: 0)
-        #expect(fixture.player.queuedEntryCount == 4)
-        let replacementsBefore = fixture.player.replaceQueueCallCount
-
-        // Track 6 is in the order the user is looking at, but not in the queue
-        // the player holds. This is the ordinary CarPlay track tap.
-        let didSkip = await fixture.controller.playTrackInCurrentQueue(
-            localTrackID: fixture.tracks[6].id.uuidString,
-            settings: fixture.settings,
-            context: fixture.context
-        )
-
-        #expect(didSkip)
-        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[6].id.rawValue)
-        // No queue replacement, so the tracks behind the listener survive.
-        #expect(fixture.player.replaceQueueCallCount == replacementsBefore)
-        // At least the four delivered plus the three reached; ordinary top-up
-        // may then add more now that playback sits near the delivered edge.
-        #expect(fixture.player.queuedEntryCount >= 7)
-    }
-
-    @Test("a track too far ahead is left to the caller to rebuild around")
-    func trackTooFarAheadIsLeftToTheCaller() async throws {
-        let fixture = try makeFixture(
-            trackCount: 40,
-            queueWindowPolicy: PlaybackQueueWindowPolicy(
-                windowSize: 4,
-                topUpThreshold: 1,
-                topUpBatchSize: 2,
-                maximumReachAhead: 3
-            )
-        )
-        defer { fixture.cleanUp() }
-        try await fixture.start(at: 0)
-        let appendsBefore = fixture.player.appendedTrackBatchSizes.count
-
-        let didSkip = await fixture.controller.playTrackInCurrentQueue(
-            localTrackID: fixture.tracks[30].id.uuidString,
-            settings: fixture.settings,
-            context: fixture.context
-        )
-
-        // Reaching 27 entries ahead would move more than a fresh window does,
-        // so the caller rebuilds from the track instead.
-        #expect(!didSkip)
-        #expect(fixture.player.appendedTrackBatchSizes.count == appendsBefore)
-        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
-    }
-
-    @Test("a track in no queue at all is still left to the caller")
-    func trackInNoQueueAtAllIsStillLeftToTheCaller() async throws {
-        let fixture = try makeFixture(trackCount: 3)
+    @Test("a queue replacement clears an earlier pending append correlation")
+    func queueReplacementClearsEarlierPendingAppendCorrelation() async throws {
+        let fixture = try makeFixture()
         defer { fixture.cleanUp() }
         try await fixture.start(at: 0)
         let other = try fixture.addPlaylist(prefix: "other", trackCount: 3)
 
-        let didSkip = await fixture.controller.playTrackInCurrentQueue(
-            localTrackID: other.tracks[1].id.uuidString,
-            settings: fixture.settings,
-            context: fixture.context
-        )
-
-        #expect(!didSkip)
-        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
-    }
-
-    @Test("a reached track still resolves while MusicKit is hydrating its item ID")
-    func reachedTrackResolvesWhileHydrating() async throws {
-        let fixture = try makeFixture(
-            trackCount: 20,
-            queueWindowPolicy: PlaybackQueueWindowPolicy(
-                windowSize: 4,
-                topUpThreshold: 1,
-                topUpBatchSize: 2,
-                maximumReachAhead: 6
-            )
-        )
-        defer { fixture.cleanUp() }
-        try await fixture.start(at: 0)
-        let replacementsBefore = fixture.player.replaceQueueCallCount
-
-        // The insert succeeds but the player reports no item IDs yet, so the
-        // reached entry is delivered-but-uncorrelated. Treating that as absent
-        // is what would send CarPlay back to replacing the queue.
         fixture.player.withholdsQueueItemIDs = true
-        fixture.sleepProbe.handler = { fixture.player.withholdsQueueItemIDs = false }
-
-        let didSkip = await fixture.controller.playTrackInCurrentQueue(
-            localTrackID: fixture.tracks[6].id.uuidString,
-            settings: fixture.settings,
+        await fixture.controller.appendLiveQueueEntries(
+            localTrackIDs: [fixture.tracks[2].id.uuidString],
+            playlistID: fixture.playlist.musicPlaylistID,
             context: fixture.context
         )
-
-        #expect(didSkip)
-        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[6].id.rawValue)
-        #expect(fixture.player.replaceQueueCallCount == replacementsBefore)
-    }
-
-    @Test("a tap during an in-flight top-up waits for it instead of rebuilding")
-    func tapDuringInFlightTopUpWaitsInsteadOfRebuilding() async throws {
-        let fixture = try makeFixture(
-            trackCount: 20,
-            queueWindowPolicy: PlaybackQueueWindowPolicy(
-                windowSize: 4,
-                topUpThreshold: 2,
-                topUpBatchSize: 4,
-                maximumReachAhead: 8
-            )
-        )
-        defer { fixture.cleanUp() }
-        try await fixture.start(at: 0)
-        let replacementsBefore = fixture.player.replaceQueueCallCount
-
-        // Tap while an ordinary top-up is suspended in its append. The target
-        // is inside the in-flight batch, so deciding now would be wrong. The
-        // tap runs concurrently rather than from inside the append, because
-        // the append must stay free to finish — that is what the tap waits on.
-        var tap: Task<Bool, Never>?
-        fixture.player.onAppendToQueue = {
-            tap = Task { @MainActor in
-                await fixture.controller.playTrackInCurrentQueue(
-                    localTrackID: fixture.tracks[5].id.uuidString,
-                    settings: fixture.settings,
-                    context: fixture.context
-                )
-            }
-            // Let the tap start and observe the delivery in flight.
-            await Task.yield()
-        }
-
-        fixture.player.advanceExternally()
-        await fixture.controller.reconcilePlayerState(context: fixture.context)
-
-        let didSkip = await tap?.value ?? false
-        #expect(didSkip)
-        #expect(fixture.player.replaceQueueCallCount == replacementsBefore)
-    }
-
-    @Test("a tap mid-transition never appends the outgoing playlist's tail")
-    func tapMidTransitionNeverAppendsTheOutgoingTail() async throws {
-        let fixture = try makeFixture(
-            trackCount: 20,
-            queueWindowPolicy: PlaybackQueueWindowPolicy(
-                windowSize: 4,
-                topUpThreshold: 1,
-                topUpBatchSize: 2,
-                maximumReachAhead: 8
-            )
-        )
-        defer { fixture.cleanUp() }
-        try await fixture.start(at: 0)
-
-        let other = try fixture.addPlaylist(prefix: "other", trackCount: 20)
-        let appendsBefore = fixture.player.appendedTrackBatchSizes.count
-
-        // Another surface is mid-transition to a different playlist. A CarPlay
-        // tap arriving now must not append playlist A's held-back tail onto
-        // playlist B's freshly replaced queue.
-        //
-        // In this path the resolver's own in-flight wait is what stops it; the
-        // guards inside `deliverPendingEntries` are a second line for any
-        // future caller that does not go through the resolver, and removing
-        // them alone does not fail this test.
-        fixture.player.onPlay = {
-            _ = await fixture.controller.playTrackInCurrentQueue(
-                localTrackID: fixture.tracks[6].id.uuidString,
-                settings: fixture.settings,
-                context: fixture.context
-            )
-        }
-
         await fixture.controller.playPlaylist(
             other.playlist,
             settings: fixture.settings,
             context: fixture.context
         )
 
-        #expect(fixture.player.appendedTrackBatchSizes.count == appendsBefore)
         #expect(fixture.controller.currentPlaylistID == other.playlist.musicPlaylistID)
+
+        fixture.player.withholdsQueueItemIDs = false
+        fixture.player.replaceQueueExternally(with: [fixture.musicTracks[2]])
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        #expect(fixture.controller.currentPlaylistID == nil)
+        #expect(fixture.controller.activePlaylistSnapshot == nil)
     }
 
     @Test("delayed Next keeps every published surface on outgoing until confirmation")
@@ -624,91 +361,6 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
         #expect(fixture.items[0].skipCount == 0)
         #expect(try fixture.history().isEmpty)
-    }
-
-    @Test("a failed shuffle reports failure so CarPlay does not navigate")
-    func failedShuffleReportsFailure() async throws {
-        let fixture = try makeFixture()
-        defer { fixture.cleanUp() }
-        try await fixture.start(at: 0)
-        fixture.player.playFailuresRemaining = 1
-
-        let didShuffle = await fixture.controller.shuffleAndPlay(
-            fixture.playlist,
-            settings: fixture.settings,
-            context: fixture.context
-        )
-
-        #expect(!didShuffle)
-        #expect(fixture.controller.statusMessage != nil)
-    }
-
-    @Test("a timed-out shuffle reports failure so CarPlay does not navigate")
-    func timedOutShuffleReportsFailure() async throws {
-        let fixture = try makeFixture(maximumObservationCount: 2)
-        defer { fixture.cleanUp() }
-        try await fixture.start(at: 0)
-        fixture.player.replacementConfirmationDelays = [5]
-
-        let didShuffle = await fixture.controller.shuffleAndPlay(
-            fixture.playlist,
-            settings: fixture.settings,
-            context: fixture.context
-        )
-
-        #expect(!didShuffle)
-        #expect(fixture.controller.statusMessage == PlaybackTransitionError.confirmationTimedOut.localizedDescription)
-    }
-
-    @Test("shuffling a playlist with no playable tracks reports failure")
-    func shufflingAPlaylistWithNoPlayableTracksReportsFailure() async throws {
-        let fixture = try makeFixture()
-        defer { fixture.cleanUp() }
-        let empty = try fixture.addPlaylist(prefix: "empty", trackCount: 0)
-
-        let didShuffle = await fixture.controller.shuffleAndPlay(
-            empty.playlist,
-            settings: fixture.settings,
-            context: fixture.context
-        )
-
-        #expect(!didShuffle)
-        #expect(fixture.controller.statusMessage != nil)
-    }
-
-    @Test("shuffling a playlist that is not playing starts it from the new first track")
-    func shufflingAnotherPlaylistStartsFromTheNewFirstTrack() async throws {
-        let fixture = try makeFixture()
-        defer { fixture.cleanUp() }
-        try await fixture.start(at: 0)
-        fixture.player.playbackTime = 15
-        await fixture.controller.reconcilePlayerState(context: fixture.context)
-        let other = try fixture.addPlaylist(prefix: "other", trackCount: 4)
-        defer {
-            PlaybackOrderStore.clear(
-                playerID: fixture.playerID,
-                musicPlaylistID: other.playlist.musicPlaylistID,
-                flushImmediately: true
-            )
-        }
-
-        let started = await fixture.controller.shuffleAndPlay(
-            other.playlist,
-            settings: fixture.settings,
-            context: fixture.context
-        )
-
-        #expect(started)
-        #expect(fixture.controller.currentPlaylistID == other.playlist.musicPlaylistID)
-        let orderedTrackIDs = fixture.controller
-            .playbackOrderState(for: other.playlist.musicPlaylistID)
-            .orderedTrackIDs
-        #expect(orderedTrackIDs.count == other.tracks.count)
-        let firstIndex = try #require(other.tracks.firstIndex { $0.id.uuidString == orderedTrackIDs.first })
-        #expect(fixture.controller.currentTrack?.id == other.musicTracks[firstIndex].id.rawValue)
-        // The outgoing track from the previous playlist is still evaluated once.
-        #expect(fixture.items[0].skipCount == 1)
-        #expect(try fixture.history().count == 1)
     }
 
     @Test("failed and timed-out Next preserve identity and commit no history")
@@ -907,44 +559,71 @@ struct PlaybackTransitionTests {
         #expect(try fixture.history().isEmpty)
     }
 
-    @Test("shuffle and repeat restart evaluate outgoing tracks only after confirmation")
-    func shuffleAndRepeatRestartEvaluateOutgoingAfterConfirmation() async throws {
-        let shuffle = try makeFixture()
-        defer { shuffle.cleanUp() }
-        try await shuffle.start(at: 0)
-        shuffle.player.playbackTime = 15
-        await shuffle.controller.reconcilePlayerState(context: shuffle.context)
-        let outgoingID = shuffle.controller.currentTrack?.id
+    @Test("shuffle is a mode change, not a reorder and restart")
+    func shuffleIsAModeChangeNotAReorderAndRestart() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 15
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        let replacementsBefore = fixture.player.replaceQueueCallCount
 
-        await shuffle.controller.reshuffleCurrentPlaylist(context: shuffle.context)
+        await fixture.controller.setShuffleEnabled(true, context: fixture.context)
 
-        let shuffledOrder = PlaybackOrderStore.state(
-            playerID: shuffle.playerID,
-            musicPlaylistID: shuffle.playlist.musicPlaylistID
-        ).orderedTrackIDs
-        #expect(shuffle.controller.currentTrack?.id != outgoingID)
-        #expect(shuffle.controller.activePlaylistSnapshot?.rows.map(\.localTrackID) == shuffledOrder)
-        #expect(shuffle.items[0].skipCount == 1)
-        #expect(try shuffle.history().count == 1)
+        // MusicKit shuffles the queue it already holds: nothing is reordered,
+        // requeued or restarted, and the current track keeps playing — so no
+        // skip is counted against it either.
+        #expect(fixture.controller.shuffleEnabled)
+        #expect(fixture.player.shuffleMode == .songs)
+        #expect(fixture.player.replaceQueueCallCount == replacementsBefore)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
+        #expect(fixture.items[0].skipCount == 0)
+        #expect(try fixture.history().isEmpty)
 
-        let repeatFixture = try makeFixture()
-        defer { repeatFixture.cleanUp() }
-        try await repeatFixture.start(at: 2)
-        repeatFixture.player.playbackTime = 179
-        await repeatFixture.controller.reconcilePlayerState(context: repeatFixture.context)
-        repeatFixture.player.finishQueueNaturally()
+        await fixture.controller.toggleShuffle(context: fixture.context)
+        #expect(!fixture.controller.shuffleEnabled)
+        #expect(fixture.player.shuffleMode == .off)
+    }
 
-        await repeatFixture.controller.reconcilePlayerState(context: repeatFixture.context)
+    @Test("repeat cycles off, all, one and is never rebuilt by Overplay")
+    func repeatCyclesAndIsNeverRebuiltByOverplay() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let replacementsBefore = fixture.player.replaceQueueCallCount
 
-        let repeatedOrder = PlaybackOrderStore.state(
-            playerID: repeatFixture.playerID,
-            musicPlaylistID: repeatFixture.playlist.musicPlaylistID
-        ).orderedTrackIDs
-        #expect(repeatFixture.controller.currentTrack?.id != repeatFixture.musicTracks[2].id.rawValue)
-        #expect(repeatFixture.controller.activePlaylistSnapshot?.rows.map(\.localTrackID) == repeatedOrder)
-        #expect(repeatFixture.items[2].playthroughCount == 1)
-        #expect(repeatFixture.items[2].skipCount == 0)
-        #expect(try repeatFixture.history().count == 1)
+        await fixture.controller.cycleRepeatMode(context: fixture.context)
+        #expect(fixture.player.repeatMode == .all)
+        #expect(fixture.controller.repeatModeTitle == "All")
+
+        await fixture.controller.cycleRepeatMode(context: fixture.context)
+        #expect(fixture.player.repeatMode == .one)
+        #expect(fixture.controller.repeatsSingleTrack)
+
+        await fixture.controller.cycleRepeatMode(context: fixture.context)
+        #expect(fixture.player.repeatMode == MusicPlayer.RepeatMode.none)
+        #expect(!fixture.controller.repeatEnabled)
+
+        #expect(fixture.player.replaceQueueCallCount == replacementsBefore)
+    }
+
+    @Test("the last track is credited at queue end, and Overplay does not restart")
+    func lastTrackIsCreditedAtQueueEndWithoutRestarting() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 2)
+        fixture.player.playbackTime = 179
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        let replacementsBefore = fixture.player.replaceQueueCallCount
+
+        fixture.player.finishQueueNaturally()
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        // MusicKit owns repeat, so nothing plays next unless it says so — but
+        // the track that just finished still has to be counted.
+        #expect(fixture.items[2].playthroughCount == 1)
+        #expect(fixture.items[2].skipCount == 0)
+        #expect(fixture.player.replaceQueueCallCount == replacementsBefore)
     }
 
     @Test("externally observed natural advance uses the same reconciliation path")
@@ -1239,6 +918,10 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
         return currentEntryStorage
     }
 
+    var currentEntryItem: MusicPlayer.Queue.Entry.Item? {
+        withholdsCurrentEntryItem ? nil : currentEntryStorage?.item
+    }
+
     func replaceQueue(with materialization: PlaybackQueueMaterialization) {
         replaceQueueCallCount += 1
         entries = materialization.queueEntries
@@ -1342,6 +1025,8 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     /// Simulates Apple Music reporting queue entries before their items
     /// hydrate, which the real player does for entries it materializes.
     var withholdsQueueItemIDs = false
+    /// Simulates the same hydration delay on the already-current entry.
+    var withholdsCurrentEntryItem = false
     /// Runs while an append is in flight, so tests can reproduce the queue
     /// being replaced underneath a top-up.
     var onAppendToQueue: (() async -> Void)?
@@ -1358,7 +1043,8 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
         }
     }
 
-    func disablePlaybackModes() {}
+    var shuffleMode: MusicPlayer.ShuffleMode = .off
+    var repeatMode: MusicPlayer.RepeatMode = MusicPlayer.RepeatMode.none
 
     func releaseBlockedNextCommand() {
         blockedNextContinuation?.resume()
@@ -1523,8 +1209,7 @@ private struct PlaybackTransitionFixture {
 @MainActor
 private func makeFixture(
     maximumObservationCount: Int = 5,
-    trackCount: Int = 3,
-    queueWindowPolicy: PlaybackQueueWindowPolicy = .standard
+    trackCount: Int = 3
 ) throws -> PlaybackTransitionFixture {
     LocalPlaybackStateStore.clear(flushImmediately: true)
     let container = try OverplayTestSupport.makeModelContainer()
@@ -1546,7 +1231,6 @@ private func makeFixture(
     let controller = PlaybackController(
         playerID: playerID,
         player: player,
-        queueWindowPolicy: queueWindowPolicy,
         transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy(
             maximumObservationCount: maximumObservationCount,
             observationInterval: .zero

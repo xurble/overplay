@@ -18,7 +18,6 @@ struct SettingsRepositoryTests {
         #expect(settings.skipThresholdPercentage == 50)
         #expect(settings.minimumSkipListeningSeconds == 10)
         #expect(settings.playthroughThresholdPercentage == 90)
-        #expect(!settings.protectKeptTracks)
     }
 
     @Test("clamps saved settings into supported ranges")

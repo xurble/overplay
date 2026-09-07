@@ -17,8 +17,8 @@ struct PlaylistRemoteMutationPolicyTests {
             playlistID: playlist.id,
             trackID: UUID(),
             evictedAt: Date(timeIntervalSince1970: 100),
-            evictionReason: .skipCount,
-            evictionSource: .playbackRule
+            evictionReason: .manual,
+            evictionSource: .user
         )
 
         #expect(PlaylistRemoteMutationPolicy.shouldDeleteRemotelyAfterEviction(

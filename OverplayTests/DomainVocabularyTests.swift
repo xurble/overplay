@@ -55,11 +55,9 @@ struct DomainVocabularyTests {
 
     @Test("eviction raw values are stable")
     func evictionRawValuesAreStable() {
-        #expect(EvictionReason.skipCount.rawValue == "skipCount")
         #expect(EvictionReason.manual.rawValue == "manual")
         #expect(EvictionReason.remoteRemoval.rawValue == "remoteRemoval")
         #expect(EvictionSource.user.rawValue == "user")
-        #expect(EvictionSource.playbackRule.rawValue == "playbackRule")
         #expect(EvictionSource.appleMusicSync.rawValue == "appleMusicSync")
     }
 
@@ -80,7 +78,7 @@ struct DomainVocabularyTests {
         try assertRoundTrips(HistoryEventType.promoted)
         try assertRoundTrips(HistoryEventSource.sync)
         try assertRoundTrips(PlaybackReconciliationMechanism.musicKitPlayCount)
-        try assertRoundTrips(EvictionReason.skipCount)
+        try assertRoundTrips(EvictionReason.manual)
         try assertRoundTrips(EvictionSource.appleMusicSync)
         try assertRoundTrips(RemoteMutationStatus.failed)
     }

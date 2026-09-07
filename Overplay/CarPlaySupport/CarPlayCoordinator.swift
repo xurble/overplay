@@ -119,13 +119,13 @@ final class CarPlayCoordinator: NSObject {
                 ])]
             }
 
-            let oneTruePlaylist = summaries.first { $0.role == .oneTruePlaylist }
-            var playbackItems = [overplayItem(for: oneTruePlaylist)]
-            if let oneTruePlaylist {
-                playbackItems.append(playlistItem(for: oneTruePlaylist))
+            // Playlists, then tracks, then Now Playing. Nothing else: a
+            // driver should not have to read a menu.
+            var sections: [CPListSection] = []
+            if let oneTruePlaylist = summaries.first(where: { $0.role == .oneTruePlaylist }) {
+                sections.append(CPListSection(items: [playlistItem(for: oneTruePlaylist)]))
             }
 
-            var sections = [CPListSection(items: playbackItems)]
             let triageItems = summaries
                 .filter { $0.role != .oneTruePlaylist }
                 .map(playlistItem(for:))
@@ -137,97 +137,6 @@ final class CarPlayCoordinator: NSObject {
             return [
                 CPListSection(items: [disabledItem(title: "Could not load playlists", detail: error.localizedDescription)])
             ]
-        }
-    }
-
-    /// One-tap "just play something": resumes the One True Playlist when it is
-    /// already the live queue, otherwise reshuffles it and starts from the top.
-    private func overplayItem(for summary: PlaylistSummaryPresentation?) -> CPListItem {
-        guard let summary else {
-            return disabledItem(title: "Overplay", detail: "Choose a One True Playlist in Overplay on iPhone.")
-        }
-
-        // A live playlist stays tappable even with nothing playable to shuffle,
-        // so a retired context started on the phone can still reach the player.
-        let intent = overplayIntent(for: summary)
-        guard intent != .shuffleAndPlay || summary.playableTrackCount > 0 else {
-            return disabledItem(title: "Overplay", detail: "No playable tracks. Sync \(summary.title) in Overplay.")
-        }
-
-        let item = CPListItem(text: "Overplay", detailText: overplayDetailText(for: intent, title: summary.title))
-        item.isPlaying = isCurrentPlaylist(summary)
-        item.handler = { [weak self] _, completion in
-            Task { @MainActor in
-                await self?.startOverplay()
-                completion()
-            }
-        }
-        return item
-    }
-
-    private func overplayDetailText(for intent: CarPlayOverplayIntent, title: String) -> String {
-        switch intent {
-        case .showPlayer, .resumeAndShowPlayer:
-            "Continue \(title)"
-        case .shuffleAndPlay:
-            "Shuffle \(title)"
-        }
-    }
-
-    private func overplayIntent(for summary: PlaylistSummaryPresentation) -> CarPlayOverplayIntent {
-        CarPlayNavigationPolicy.overplayIntent(
-            oneTruePlaylistMusicID: summary.musicPlaylistID,
-            currentPlaylistID: playbackController?.currentPlaylistID,
-            hasCurrentTrack: playbackController?.currentTrack != nil,
-            isPlaying: playbackController?.isPlaying ?? false
-        )
-    }
-
-    /// Resolves the One True Playlist when tapped rather than trusting the row
-    /// it was built from — the phone can change the role while this list is up.
-    private func startOverplay() async {
-        guard let playbackController, let modelContext else { return }
-
-        do {
-            guard let playlist = try PlaylistRepository.oneTruePlaylist(in: modelContext) else {
-                refreshLibraryLists()
-                showError(title: "Nothing to play", message: "Choose a One True Playlist in Overplay on iPhone.")
-                return
-            }
-
-            let intent = CarPlayNavigationPolicy.overplayIntent(
-                oneTruePlaylistMusicID: playlist.musicPlaylistID,
-                currentPlaylistID: playbackController.currentPlaylistID,
-                hasCurrentTrack: playbackController.currentTrack != nil,
-                isPlaying: playbackController.isPlaying
-            )
-
-            switch intent {
-            case .showPlayer:
-                break
-            case .resumeAndShowPlayer:
-                await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-                    await playbackController.play(context: modelContext)
-                }
-            case .shuffleAndPlay:
-                let settings = try SettingsRepository.settings(in: modelContext)
-                guard await MusicKitActivityLog.shared.withOrigin(.carPlay, {
-                    await playbackController.shuffleAndPlay(
-                        playlist,
-                        settings: settings,
-                        context: modelContext
-                    )
-                }) else {
-                    refreshAfterTrackAction()
-                    showPlaybackFailure(title: "Playback failed")
-                    return
-                }
-            }
-
-            refreshAfterTrackAction()
-            showNowPlaying()
-        } catch {
-            showError(title: "Playback failed", message: error.localizedDescription)
         }
     }
 
@@ -347,62 +256,13 @@ final class CarPlayCoordinator: NSObject {
             )
         }
 
-        var sections = [
-            CPListSection(items: [shuffleItem(for: playlist, scope: scope, isEnabled: !tracks.isEmpty)])
-        ]
-
         guard !tracks.isEmpty else {
-            sections.append(CPListSection(items: [
+            return [CPListSection(items: [
                 disabledItem(title: "No playable tracks", detail: "Sync this playlist in Overplay.")
-            ]))
-            return sections
+            ])]
         }
 
-        sections.append(CPListSection(items: tracks.map { trackItem($0, playlist: playlist, scope: scope) }))
-        return sections
-    }
-
-    private func shuffleItem(
-        for playlist: PlaylistRecord,
-        scope: PlaylistPlaybackScope,
-        isEnabled: Bool
-    ) -> CPListItem {
-        guard isEnabled else {
-            return disabledItem(title: "Shuffle", detail: "No playable tracks to shuffle.")
-        }
-
-        let item = CPListItem(text: "Shuffle", detailText: "New order, starting from the top")
-        item.handler = { [weak self] _, completion in
-            Task { @MainActor in
-                await self?.shuffle(playlist, scope: scope)
-                completion()
-            }
-        }
-        return item
-    }
-
-    private func shuffle(_ playlist: PlaylistRecord, scope: PlaylistPlaybackScope) async {
-        guard let playbackController, let modelContext else { return }
-
-        do {
-            let settings = try SettingsRepository.settings(in: modelContext)
-            let didShuffle = await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-                await playbackController.shuffleAndPlay(
-                    playlist,
-                    scope: scope,
-                    settings: settings,
-                    context: modelContext
-                )
-            }
-            refreshAfterTrackAction()
-            guard didShuffle else {
-                showPlaybackFailure(title: "Shuffle failed")
-                return
-            }
-            showNowPlaying()
-        } catch {
-            showError(title: "Shuffle failed", message: error.localizedDescription)
-        }
+        return [CPListSection(items: tracks.map { trackItem($0, playlist: playlist, scope: scope) })]
     }
 
     private func carPlayDisplayScope(for playlist: PlaylistRecord) -> PlaylistPlaybackScope {
@@ -533,10 +393,11 @@ final class CarPlayCoordinator: NSObject {
             _ = playbackController.currentPlaylistID
             _ = playbackController.currentTrack?.id
             _ = playbackController.displayedSkipCount
-            _ = playbackController.displayedIsProtected
             _ = playbackController.displayedIsEvicted
             _ = playbackController.activePlaylistSnapshot?.updatedAt
             _ = playbackController.isDeliveryStalled
+            _ = playbackController.shuffleEnabled
+            _ = playbackController.repeatMode
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, generation == self.playbackObservationGeneration else { return }
@@ -594,18 +455,51 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func nowPlayingActionButtons(for signature: CarPlayNowPlayingButtonSignature) -> [CPNowPlayingButton] {
-        if signature.isEvicted {
-            return [makeRestoreButton()]
+        CarPlayNowPlayingActionPolicy.actions(
+            playlistRole: signature.playlistRole,
+            isRetired: signature.isEvicted
+        ).map { action in
+            switch action {
+            case .shuffle: makeShuffleButton()
+            case .repeatMode: makeRepeatButton()
+            case .promote: makePromoteButton()
+            case .retire: makeEvictButton()
+            case .restore: makeRestoreButton()
+            }
         }
+    }
 
-        if signature.playlistRole == .triage {
-            return [
-                makePromoteButton(),
-                makeEvictButton()
-            ]
+    /// CarPlay's own shuffle control, so it looks and behaves like every other
+    /// audio app in the car. `isSelected` reflects MusicKit's mode rather than
+    /// anything Overplay keeps.
+    private func makeShuffleButton() -> CPNowPlayingShuffleButton {
+        let button = CPNowPlayingShuffleButton { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let modelContext = self.modelContext else { return }
+                await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+                    await self.playbackController?.toggleShuffle(context: modelContext)
+                }
+                _ = self.updateNowPlayingButtons(force: true)
+            }
         }
+        button.isEnabled = playbackController?.currentTrack != nil
+        button.isSelected = playbackController?.shuffleEnabled ?? false
+        return button
+    }
 
-        return [makeEvictButton()]
+    private func makeRepeatButton() -> CPNowPlayingRepeatButton {
+        let button = CPNowPlayingRepeatButton { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let modelContext = self.modelContext else { return }
+                await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+                    await self.playbackController?.cycleRepeatMode(context: modelContext)
+                }
+                _ = self.updateNowPlayingButtons(force: true)
+            }
+        }
+        button.isEnabled = playbackController?.currentTrack != nil
+        button.isSelected = playbackController?.repeatEnabled ?? false
+        return button
     }
 
     private func makeEvictButton() -> CPNowPlayingImageButton {

@@ -212,15 +212,9 @@ struct TrackPlaybackFactsView: View {
             Label(presentation.playSkipMetricText, systemImage: "waveform.path.ecg")
 
             if presentation.isEvicted {
-                let badge = TrackStateBadgePresentation(isEvicted: true, isProtected: false)
+                let badge = TrackStateBadgePresentation(isEvicted: true)
                 Label(badge.title, systemImage: badge.systemImage)
                     .foregroundStyle(.red)
-            }
-
-            if presentation.isProtected {
-                let badge = TrackStateBadgePresentation(isEvicted: false, isProtected: true)
-                Label(badge.title, systemImage: badge.systemImage)
-                    .foregroundStyle(.green)
             }
         }
         .font(.subheadline.weight(.semibold))

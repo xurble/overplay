@@ -41,9 +41,11 @@ Music's global play count or skip count.
 | `MUT-001` | Successful promotion adds or reactivates the destination item, records history, and locally retires the source triage item. | `Overplay/Services/PlaylistMutationService.swift`, `OverplayTests/PlaylistMutationServiceTests.swift` |
 | `MUT-002` | Apple Music search can add songs only to active playlists that allow remote writes. | `Overplay/ViewModels/SearchMusicViewModel.swift`, `OverplayTests/SearchMusicViewModelTests.swift` |
 | `RETIRE-001` | Retirement is always authoritative locally. Current-track retirement attempts remote deletion only for a managed One True Playlist; playlist-row and triage retirement are local-only. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/PlaylistRemoteMutationPolicy.swift` |
-| `PLAY-001` | **RESCINDED.** Overplay owns full queue order. Shuffle is a one-shot reshuffle and restart; playlist repeat rebuilds a fresh shuffled queue. Still implemented; superseded by `PLAY-004`. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/PlaybackOrderEngine.swift` |
-| `PLAY-002` | **AT RISK.** The queue is handed to MusicKit a window at a time and topped up as it drains, never as one whole-playlist payload. Implemented, but a window cannot satisfy `PLAY-004` — see the direction change below. | `Overplay/Playback/PlaybackQueueWindowPolicy.swift`, `OverplayTests/PlaybackQueueWindowPolicyTests.swift` |
-| `PLAY-004` | **NOT YET IMPLEMENTED.** MusicKit owns shuffle and repeat. Overplay reads those modes rather than forcing them off, and does not reorder or rebuild the queue to emulate them. | Not yet implemented |
+| `PLAY-001` | **WITHDRAWN.** Overplay owned queue order, shuffle and repeat. Replaced by `PLAY-004`; no longer implemented. | — |
+| `PLAY-002` | **WITHDRAWN.** The queue was handed over a window at a time. A window cannot be shuffled or repeated by MusicKit, so it could not coexist with `PLAY-004`; device evidence also showed hand-off size was not the cause of the Apple Music failures it was built for. | — |
+| `PLAY-004` | MusicKit owns shuffle and repeat. Overplay reads both modes, writes what a surface asked for, and never reorders or rebuilds the queue to emulate them. | `Overplay/Services/PlaybackController.swift`, `Overplay/Playback/PlaybackPlayer.swift` |
+| `PLAY-005` | Overplay hands MusicKit the complete playback order for the selected scope in one queue, because MusicKit can only shuffle or repeat what it holds. | `Overplay/Services/PlaybackController.swift` |
+| `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing. | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
 | `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
 | `HISTORY-001` | History is filterable and paged. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
 | `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, playlist selection, and MusicKit diagnostics. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
@@ -241,7 +243,7 @@ queue setup, playback, or skip/playthrough evaluation.
 The cache has a default 250 MB budget. When it exceeds that budget, eviction
 starts with artwork associated only with least-recently-used playlists, then
 least-recently-accessed files within those groups. Artwork associated with the
-currently playing playlist is protected during the active eviction pass.
+currently playing playlist is preserved during the artwork cache eviction pass.
 
 ## Sync Behaviour
 
@@ -511,30 +513,22 @@ playlist, and playlist scope. Each linked playlist has separate **Active** and
 **Retired** local orders. There is no separate unshuffled order to restore
 during playback.
 
-> **Direction change (2026-09-06): shuffle and repeat move to MusicKit.**
+> **Direction change (2026-09-07): shuffle and repeat belong to MusicKit.**
 >
-> Overplay is to stop owning shuffle and repeat. MusicKit becomes authoritative
-> for both: Overplay reads the modes instead of forcing them off, and stops
-> reordering or rebuilding the queue to emulate them. `PLAY-001` is rescinded
-> and `PLAY-004` replaces it.
+> Overplay no longer owns shuffle, repeat or the end-of-playlist rebuild.
+> MusicKit is authoritative for both modes: Overplay reads them, writes what a
+> surface asked for, and leaves the wrap to the player. `PLAY-001` is
+> withdrawn.
 >
-> Everything in this section below the line still describes the **implemented**
-> behaviour, which has not changed yet. Subsections that the new standard
-> rescinds are marked. The rescission is deliberate: it is recorded before the
-> implementation so the gap is explicit rather than discovered later.
->
-> **Known blocker.** `PLAY-002` (windowed hand-off) and `PLAY-004` cannot both
-> hold with a materialized track queue: a `repeatMode` of `.all` over a
-> 50-entry window repeats the window, and MusicKit shuffle shuffles only the
-> window. Satisfying both requires handing MusicKit a playlist *entity* instead
-> of tracks, which is the mirror playlist design in issue #17. The alternative
-> is reverting `PLAY-002` and handing over whole playlists again, which
-> reinstates the payload the Apple Music failure investigation was about.
+> `PLAY-002`, the windowed hand-off, is withdrawn with it. A window cannot be
+> shuffled or repeated by MusicKit, and 69 hours of device evidence showed the
+> Apple Music failures it was built to prevent happening anyway, with capped
+> queues and 385 total calls. It cost complexity without buying protection.
 
-MusicKit currently receives an explicit queue from Overplay, delivered a capped
-window at a time and topped up as it drains, while MusicKit shuffle and repeat
-modes are forced off. Overplay currently owns repeat by reshuffling and
-rebuilding the queue when the end is reached. This keeps skip tracking,
+MusicKit receives the complete playback order for the selected scope in one
+queue, because it can only shuffle or repeat what it holds. Overplay owns
+queue *contents* — which tracks, filtered by local retirement — and MusicKit
+owns the order they play in. This keeps skip tracking,
 retirement filtering, playlist display order, CarPlay, system controls, and
 remote commands aligned to the same source of truth.
 
@@ -562,14 +556,11 @@ Local order state:
 
 Starting playback:
 
-- Starting a playlist sends the current local order for the selected scope to
-  MusicKit as a capped window, not as one whole-playlist payload. The rest is
-  appended as the window drains, so hand-off cost stays flat however long the
-  One True Playlist grows.
-- Entries before the starting track are not queued. Starting part-way through a
-  playlist queues from that track onwards, the way Apple Music does.
-- If the user starts at a specific track, MusicKit should start at that track,
-  which is the first entry of the delivered window.
+- Starting a playlist sends the complete local order for the selected scope to
+  MusicKit in one queue (`PLAY-005`), because MusicKit can only shuffle or
+  repeat what it holds.
+- If the user starts at a specific track, MusicKit starts at that track within
+  the full queue, so the tracks before it remain available to Previous.
 - If no track is requested, playback starts at the first track in local order.
 - MusicKit and Overplay UI should be reconciled immediately after queue setup so
   every surface agrees on the current track and queue position.
@@ -577,45 +568,33 @@ Starting playback:
   the active playlist projection from the same SwiftData records and local
   order used to build the queue.
 
-Shuffle behavior (**rescinded by `PLAY-004`; still implemented**):
+Shuffle and repeat behavior:
 
-- Shuffle is a one-shot action, not a persistent selected mode.
-- Pressing shuffle creates a new full-playlist random order, saves it locally,
-  sends the new queue to MusicKit as a capped window, and restarts playback
-  from the first track at position zero.
-- The currently or most recently played track must not appear in the top five
-  tracks of the new order.
-- For playlists with two to four tracks, keep the currently or most recently
-  played track out of the first position.
-- For a one-track playlist, the single track remains the whole order.
-- There is no shuffle-off behavior because there is no preserved unshuffled
-  order to return to.
-
-Repeat behavior (**rescinded by `PLAY-004`; still implemented**):
-
-- Playlists always repeat. There is no user-facing repeat button in Overplay's
-  iOS or CarPlay UI, and repeat-one is not part of the playback model.
-- When the last track is played through or skipped past, Overplay evaluates the
-  outgoing track, creates a fresh shuffled order using the same placement rules,
-  saves it, sends the queue to MusicKit as a capped window, and starts from the
-  first track.
-- Queue end is detected from the player state (no current entry while the
-  player is stopped or paused) and only triggers the repeat rebuild when the
-  outgoing track was observed near its end, so an external stop mid-track or a
-  queue that ended unobserved during suspension does not restart playback.
-- Platform/system UI may still expose repeat or shuffle concepts, but Overplay
-  currently keeps its own MusicKit shuffle and repeat modes off and treats
-  local order as authoritative. Under `PLAY-004` this inverts: a shuffle or
-  repeat change from any surface becomes authoritative and Overplay follows it.
+- MusicKit owns both. Overplay reads `shuffleMode` and `repeatMode` and writes
+  what a surface asked for; it never forces them to a value of its own.
+- Shuffle is a persistent mode, toggled. Turning it on does not reorder the
+  local order, replace the queue, or restart playback — MusicKit shuffles the
+  queue it already holds, and the current track keeps playing.
+- Repeat cycles off, all, one, the way a system repeat control does.
+- There is no end-of-playlist rebuild. When the queue is exhausted Overplay
+  credits the track that just finished and stops; whether anything plays next
+  is MusicKit's decision.
+- A shuffle or repeat change from any surface — Lock Screen, Control Center,
+  CarPlay, Siri, the app — is authoritative, and every other surface reflects
+  it because they all read the same player state.
+- Local order remains the playlist's display order and the order handed to
+  MusicKit. It is no longer a playback *sequence* once shuffle is on, so the
+  upcoming order is not knowable and no surface claims otherwise.
 
 Additions, retirements, and restores:
 
 - Playlist additions from MusicKit sync, SwiftData sync, manual add, or
   promotion append to the end of the current Active local order.
-- If the changed playlist is currently playing, playable additions should also
-  be appended without restarting playback: to the live MusicKit queue when the
-  whole order is already delivered, otherwise behind the entries still held
-  back, so play order keeps matching local order.
+- If the changed playlist is currently playing, playable additions are
+  appended to the live MusicKit queue without restarting playback. The player
+  creates those entries, so they are correlated back to local rows on Apple
+  Music item ID and retried until they resolve — an appended entry that never
+  correlates would read as queue divergence.
 - If the changed playlist is currently playing, refresh the active playlist
   projection immediately after the durable SwiftData/local-order mutation so
   visible rows do not wait for SwiftData query invalidation.
@@ -890,16 +869,12 @@ templates connected to the shared playback controller.
 
 Show:
 
-- A one-tap `Overplay` entry point at the top of the root menu. It opens Now
-  Playing when the One True Playlist is already the live queue, resuming first
-  if playback is paused, and otherwise reshuffles the One True Playlist and
-  starts it from the new first track.
-- A row for the One True Playlist, opening its track list.
+- A row for the One True Playlist, opening its track list. There is no
+  one-tap entry point above it: two similar-looking rows is one too many for
+  a driver to disambiguate.
 - Active linked triage playlists in a separate section, opening the same track
   list.
-- A `Shuffle` row at the top of every track list, reshuffling the scope being
-  shown and starting from the new first track.
-- Tracks in their current local order below the shuffle row.
+- Tracks in their current local order, and nothing else in the list.
 - The currently playing Retired playlist context if playback was started from
   Retired on iOS.
 - Current track title, artist, album, and artwork where CarPlay templates
@@ -982,7 +957,7 @@ Settings:
 - Minimum listening time before skip can count.
 - Playthrough threshold percentage.
 - Reset all Overplay skip counts, playthrough counts, retirement state, and
-  legacy protection state without changing Apple Music playlist contents.
+  legacy state without changing Apple Music playlist contents.
 - Nuke all Overplay SwiftData records locally and save those deletions for
   iCloud propagation, then recreate default settings and clear local playback
   state. Apple Music playlists are not deleted.
@@ -1020,9 +995,8 @@ window through the standard app settings command as well as in-app navigation.
 
 - Own Apple Music playback.
 - Build full app-owned MusicKit queues from the current local playlist order.
-- Own local playback order, one-shot reshuffle/restart behavior, and
-  end-of-playlist repeat by rebuilding from a fresh shuffled order.
-  **Rescinded by `PLAY-004`; still implemented.**
+- Own local playback order as the playlist's display order and the order
+  handed to MusicKit. Shuffle, repeat and the playlist wrap belong to MusicKit.
 - Track play sessions.
 - Publish current playback state.
 - Forward transitions to shared playback evaluation and track action services.
@@ -1166,9 +1140,10 @@ Local JSON file only:
 - `createdAt: Date`
 - `updatedAt: Date`
 
-The implementation still persists the obsolete `protectKeptTracks` setting
-and playlist-item `protected` flag. They are excluded from the product model
-and are slated for removal with their dead controller and presentation paths.
+The obsolete `protectKeptTracks` setting and playlist-item `protected` flag
+have been removed, along with the controller and presentation paths that read
+them. They existed only to shield tracks from automatic eviction, which no
+longer exists.
 
 ## Edge Cases
 
@@ -1210,7 +1185,8 @@ The following are not requirements of the current product:
   system Settings after authorization denial.
 - CarPlay skip-history-only browsing.
 - Explicit Now Playing artwork publication through `MPNowPlayingInfoCenter`.
-- User-facing keep/protection behavior. Persisted protection fields and dead
+- User-facing keep/protection behavior, and the automatic eviction it
+  existed to guard against. Eviction is a manual decision. Persisted
   controller APIs are obsolete implementation debt and must not be treated as
   product behavior.
 
@@ -1226,32 +1202,44 @@ The following are not requirements of the current product:
 - Suspended-playback background refresh delivery, multi-device convergence,
   and the playback/device checklist in `TODO.md` still require physical-device
   verification with an Apple Music subscription.
-- Obsolete keep/protection persistence and propagation remain in the codebase
-  pending removal; they are excluded from every requirement in this document.
+- Keep/protection has been removed. It existed only to shield tracks from
+  automatic eviction, which no longer exists: eviction is entirely manual.
 
 ## CarPlay
 
-CarPlay is a current iPhone-supported product surface. The app target has the
-CarPlay audio entitlement and declares a CarPlay template application scene.
+CarPlay is the primary product surface, not a companion to the phone UI. Most
+listening happens there, so every playback and curation action a driver needs
+has to be reachable in the car — an action available only on the phone is,
+for practical purposes, unavailable.
+
+The app target has the CarPlay audio entitlement and declares a CarPlay
+template application scene.
 
 The app architecture should keep playback, now-playing metadata, and remote
 commands independent of SwiftUI views so CarPlay templates use the same shared
 services as the phone UI.
 
+Navigation is three levels and nothing more (`CAR-001`): the root lists the
+One True Playlist and the active triage playlists, a playlist lists its
+tracks, and a track opens Now Playing. There are no shuffle rows and no
+one-tap play row — a driver should not have to read a menu to tell two
+similar entries apart.
+
 CarPlay supports:
 
-- Play or resume the One True Playlist from a single root row, reshuffling it
-  first when it is not already the live queue.
 - Browse the One True Playlist and active triage playlists.
 - Browse playlist tracks with playthrough and skip totals in row detail.
-- Shuffle the playlist being browsed and start it from the new first track.
-- Skip to a track inside the live queue without rebuilding it.
+- Select a track to play it, skipping inside the live queue when the playlist
+  is already playing so the order after it survives.
 - Show the current Retired playlist context when the user started Retired
-  playback from iOS, including shuffling that Retired order.
-- Now Playing controls.
-- Retire the current Active track.
-- Promote the current triage track and advance playback after success.
-- Restore the current track when it belongs to a Retired playlist context.
+  playback from iOS.
+- Now Playing transport controls, provided by the system.
+- Shuffle and repeat, as the system's own Now Playing controls, reflecting and
+  setting MusicKit's modes (`PLAY-004`).
+- Retire the current track.
+- Promote the current triage track, whether or not it is retired — deciding to
+  keep a track you had set aside is the point of hearing it again.
+- Restore the current track when it is retired.
 - Return to the root menu from Now Playing.
 
 CarPlay does not provide a separate skip-history browser. The app publishes

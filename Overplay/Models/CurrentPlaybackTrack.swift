@@ -10,7 +10,6 @@ struct CurrentPlaybackTrack: Equatable, Sendable {
     var skipCount: Int
     var playthroughCount: Int
     var evictedAt: Date?
-    var protected: Bool
 
     var isEvicted: Bool {
         evictedAt != nil
@@ -25,8 +24,7 @@ struct CurrentPlaybackTrack: Equatable, Sendable {
         durationSeconds: Double? = nil,
         skipCount: Int = 0,
         playthroughCount: Int = 0,
-        evictedAt: Date? = nil,
-        protected: Bool = false
+        evictedAt: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -37,7 +35,6 @@ struct CurrentPlaybackTrack: Equatable, Sendable {
         self.skipCount = skipCount
         self.playthroughCount = playthroughCount
         self.evictedAt = evictedAt
-        self.protected = protected
     }
 
     init(_ track: TrackRecord, musicItemID: String, item: PlaylistItemRecord?) {
@@ -50,8 +47,7 @@ struct CurrentPlaybackTrack: Equatable, Sendable {
             durationSeconds: track.durationSeconds,
             skipCount: item?.skipCount ?? 0,
             playthroughCount: item?.playthroughCount ?? 0,
-            evictedAt: item?.evictedAt,
-            protected: item?.protected ?? false
+            evictedAt: item?.evictedAt
         )
     }
 

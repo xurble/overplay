@@ -152,7 +152,8 @@ struct RemoteCommandServiceTests {
         let initialTargetCount = service.registeredTargetCount
 
         #expect(service.isActive)
-        #expect(initialTargetCount == 6)
+        // Shuffle and repeat are both real commands under PLAY-004.
+        #expect(initialTargetCount == 7)
         #expect(service.context === firstContext)
 
         service.update(playbackController: playbackController, context: secondContext)
@@ -213,12 +214,14 @@ struct RemoteCommandServiceTests {
 
         service.syncPlaybackModes(from: playbackController)
 
+        // Both modes are published as they actually are. Repeat was hard-coded
+        // to `.all`, which advertised a mode Overplay was not in.
         #expect(commandCenter.changeShuffleModeCommand.currentShuffleType == .off)
-        #expect(commandCenter.changeRepeatModeCommand.currentRepeatType == .all)
+        #expect(commandCenter.changeRepeatModeCommand.currentRepeatType == .off)
     }
 
-    @Test("activation disables repeat command")
-    func activationDisablesRepeatCommand() throws {
+    @Test("activation offers repeat as a real control")
+    func activationOffersRepeatAsARealControl() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = ModelContext(container)
         let playbackController = PlaybackController()
@@ -230,8 +233,9 @@ struct RemoteCommandServiceTests {
 
         service.activate(playbackController: playbackController, context: context)
 
-        #expect(!commandCenter.changeRepeatModeCommand.isEnabled)
-        #expect(commandCenter.changeRepeatModeCommand.currentRepeatType == .all)
+        // MusicKit owns repeat, so the system control has to be able to set
+        // it rather than being disabled and lying about its value.
+        #expect(commandCenter.changeRepeatModeCommand.currentRepeatType == .off)
     }
 
     @Test("command center disables empty state, permits display restore, and disables after reset")

@@ -35,7 +35,6 @@ struct ActivePlaylistSnapshotTests {
             trackID: secondTrack.id,
             sortOrder: 20,
             skipCount: 3,
-            protected: true,
             createdAt: Date(timeIntervalSince1970: 2)
         )
         let state = PlaybackOrderState(
@@ -56,7 +55,6 @@ struct ActivePlaylistSnapshotTests {
         #expect(snapshot.rows.map(\.id) == [secondItem.id, firstItem.id])
         #expect(snapshot.rows.first?.title == "Second")
         #expect(snapshot.rows.first?.skipCount == 3)
-        #expect(snapshot.rows.first?.isProtected == true)
         #expect(snapshot.rows.first?.isCurrent == true)
         #expect(snapshot.rows.last?.playthroughCount == 2)
         #expect(snapshot.rows.last?.artworkURLString == "https://example.com/first.jpg")
@@ -88,13 +86,11 @@ struct ActivePlaylistSnapshotTests {
 
         item.skipCount = 5
         item.playthroughCount = 3
-        item.protected = true
         let patched = try #require(snapshot.updatingRow(for: item))
 
         #expect(patched.rows.map(\.id) == snapshot.rows.map(\.id))
         #expect(patched.rows.first?.skipCount == 5)
         #expect(patched.rows.first?.playthroughCount == 3)
-        #expect(patched.rows.first?.isProtected == true)
         #expect(patched.rows.first?.isCurrent == snapshot.rows.first?.isCurrent)
     }
 
@@ -195,7 +191,6 @@ struct ActivePlaylistSnapshotTests {
         item.skipCount += 1
         item.playthroughCount += 1
         item.skipCount = 0
-        item.protected = true
         item.evictedAt = Date(timeIntervalSince1970: 100)
 
         let snapshot = ActivePlaylistSnapshot(
@@ -208,7 +203,6 @@ struct ActivePlaylistSnapshotTests {
 
         #expect(snapshot.rows.first?.skipCount == 0)
         #expect(snapshot.rows.first?.playthroughCount == 1)
-        #expect(snapshot.rows.first?.isProtected == true)
         #expect(snapshot.rows.first?.isEvicted == true)
         #expect(snapshot.rows.first?.isPlayable == false)
     }

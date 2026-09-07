@@ -64,8 +64,7 @@ struct EvictionEngineTests {
         let item = PlaylistItemRecord(
             playlistID: playlist.id,
             trackID: UUID(),
-            skipCount: 2,
-            protected: true
+            skipCount: 2
         )
         context.insert(settings)
         context.insert(playlist)

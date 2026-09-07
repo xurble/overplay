@@ -18,7 +18,7 @@ struct PlaybackTrackResolverTests {
             artistName: "Ready Artist",
             durationSeconds: 180
         )
-        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id, skipCount: 2, protected: true)
+        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id, skipCount: 2)
         context.insert(playlist)
         context.insert(track)
         context.insert(item)
@@ -34,7 +34,6 @@ struct PlaybackTrackResolverTests {
         #expect(currentTrack.id == "library-1")
         #expect(currentTrack.title == "Ready Track")
         #expect(currentTrack.skipCount == 2)
-        #expect(currentTrack.protected)
     }
 
     @Test("current playback track ignores a stale playlist item")
@@ -57,8 +56,7 @@ struct PlaybackTrackResolverTests {
         let staleItem = PlaylistItemRecord(
             playlistID: playlist.id,
             trackID: staleTrack.id,
-            skipCount: 4,
-            protected: true
+            skipCount: 4
         )
         context.insert(playlist)
         context.insert(staleTrack)
@@ -77,7 +75,6 @@ struct PlaybackTrackResolverTests {
         #expect(currentTrack.title == "Current Track")
         #expect(currentTrack.artistName == "Current Artist")
         #expect(currentTrack.skipCount == 0)
-        #expect(!currentTrack.protected)
     }
 
     @Test("current playback track can trust a queue correlated playlist item")

@@ -104,8 +104,8 @@ struct PlaylistMutationServiceTests {
             playlistID: oneTruePlaylist.id,
             trackID: track.id,
             evictedAt: Date(timeIntervalSince1970: 60),
-            evictionReason: .skipCount,
-            evictionSource: .playbackRule
+            evictionReason: .manual,
+            evictionSource: .user
         )
         context.insert(sourcePlaylist)
         context.insert(oneTruePlaylist)

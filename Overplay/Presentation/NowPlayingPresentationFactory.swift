@@ -34,8 +34,7 @@ enum NowPlayingPresentationFactory {
             playthroughThresholdPercentage: settings.playthroughThresholdPercentage,
             skipCount: playbackController.displayedSkipCount,
             playthroughCount: playbackController.displayedPlaythroughCount,
-            isEvicted: playbackController.displayedIsEvicted,
-            isProtected: playbackController.displayedIsProtected
+            isEvicted: playbackController.displayedIsEvicted
         )
     }
 
@@ -74,8 +73,7 @@ enum NowPlayingPresentationFactory {
             playthroughThresholdPercentage: settings.playthroughThresholdPercentage,
             skipCount: displayedSkipCount,
             playthroughCount: playbackController.displayedPlaythroughCount(context: context),
-            isEvicted: playbackController.displayedIsEvicted(context: context),
-            isProtected: playbackController.displayedIsProtected(context: context)
+            isEvicted: playbackController.displayedIsEvicted(context: context)
         )
     }
 
@@ -85,8 +83,7 @@ enum NowPlayingPresentationFactory {
     ) -> TrackStateBadgePresentation {
         _ = settings
         return TrackStateBadgePresentation(
-            isEvicted: playbackController.displayedIsEvicted,
-            isProtected: playbackController.displayedIsProtected
+            isEvicted: playbackController.displayedIsEvicted
         )
     }
 
@@ -97,10 +94,8 @@ enum NowPlayingPresentationFactory {
     ) -> TrackStateBadgePresentation {
         _ = settings
         let isEvicted = playbackController.displayedIsEvicted(context: context)
-        let isProtected = playbackController.displayedIsProtected(context: context)
         return TrackStateBadgePresentation(
-            isEvicted: isEvicted,
-            isProtected: isProtected
+            isEvicted: isEvicted
         )
     }
 
@@ -122,8 +117,9 @@ enum NowPlayingPresentationFactory {
             trackID: nowPlaying.trackID,
             playlistRole: playbackController.currentPlaylistRole(context: context),
             skipCount: nowPlaying.skipCount,
-            isProtected: nowPlaying.isProtected,
-            isEvicted: nowPlaying.isEvicted
+            isEvicted: nowPlaying.isEvicted,
+            isShuffling: playbackController.shuffleEnabled,
+            repeatMode: playbackController.repeatMode
         )
     }
 

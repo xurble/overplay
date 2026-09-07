@@ -71,8 +71,8 @@ enum PreviewContainer {
             skipCount: 3,
             lastSeenInPlaylistAt: .now,
             evictedAt: .now,
-            evictionReason: .skipCount,
-            evictionSource: .playbackRule
+            evictionReason: .manual,
+            evictionSource: .user
         ))
         try? context.save()
         return Fixture(container: container, settings: settings, playlist: playlist)

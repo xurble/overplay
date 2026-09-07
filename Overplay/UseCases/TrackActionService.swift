@@ -2,33 +2,6 @@ import Foundation
 import SwiftData
 
 enum TrackActionService {
-    static func keepCurrentTrack(
-        _ item: PlaylistItemRecord,
-        playlist: PlaylistRecord,
-        protect: Bool,
-        message: String,
-        in context: ModelContext
-    ) throws {
-        item.skipCount = 0
-        if protect {
-            item.protected = true
-        }
-        item.updatedAt = .now
-        EventRepository.logHistory(
-            playlistID: playlist.id,
-            trackID: item.trackID,
-            eventType: .skipIgnored,
-            source: .user,
-            skipCountAtEvent: item.skipCount,
-            message: message,
-            in: context
-        )
-        try context.save()
-        TrackMetadataDiagnostics.log(
-            "manual keep saved playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) protect=\(protect)"
-        )
-    }
-
     static func resetSkipCount(
         _ item: PlaylistItemRecord,
         playlist: PlaylistRecord,
@@ -50,45 +23,6 @@ enum TrackActionService {
         try context.save()
         TrackMetadataDiagnostics.log(
             "manual reset skip count saved playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) previousSkips=\(previousSkipCount)"
-        )
-    }
-
-    static func protectTrack(
-        _ item: PlaylistItemRecord,
-        playlist: PlaylistRecord,
-        message: String,
-        in context: ModelContext
-    ) throws {
-        try setProtected(
-            item,
-            playlist: playlist,
-            isProtected: true,
-            message: message,
-            in: context
-        )
-    }
-
-    static func setProtected(
-        _ item: PlaylistItemRecord,
-        playlist: PlaylistRecord,
-        isProtected: Bool,
-        message: String,
-        in context: ModelContext
-    ) throws {
-        item.protected = isProtected
-        item.updatedAt = .now
-        EventRepository.logHistory(
-            playlistID: playlist.id,
-            trackID: item.trackID,
-            eventType: .skipIgnored,
-            source: .user,
-            skipCountAtEvent: item.skipCount,
-            message: message,
-            in: context
-        )
-        try context.save()
-        TrackMetadataDiagnostics.log(
-            "manual protected state saved playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) isProtected=\(isProtected)"
         )
     }
 
