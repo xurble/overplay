@@ -4,7 +4,7 @@ import Foundation
 enum CarPlayNowPlayingAction: Equatable, Sendable {
     /// MusicKit's own shuffle, reflected and toggled.
     case shuffle
-    /// MusicKit's own repeat, cycling off, all, one.
+    /// MusicKit's own repeat-all mode, toggled on and off.
     case repeatMode
     /// Move this track into the One True Playlist. Triage only — that is what
     /// a triage playlist is for.

@@ -425,6 +425,60 @@ struct PlaylistManagementViewModelTests {
         #expect(playedScope == .retired)
     }
 
+    @Test("playlist play forwards the selected scope")
+    func playlistPlayForwardsSelectedScope() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main")
+        let settings = OverplaySettings()
+        let viewModel = PlaylistManagementViewModel()
+        var playedPlaylistID: String?
+        var playedScope: PlaylistPlaybackScope?
+        let dependencies = makeDependencies(
+            playPlaylist: { playlist, scope, _, _ in
+                playedPlaylistID = playlist.musicPlaylistID
+                playedScope = scope
+            }
+        )
+
+        await viewModel.playPlaylist(
+            playlist: playlist,
+            settings: settings,
+            scope: .retired,
+            isCurrentPlaylist: false,
+            context: context,
+            dependencies: dependencies
+        )
+
+        #expect(playedPlaylistID == playlist.musicPlaylistID)
+        #expect(playedScope == .retired)
+    }
+
+    @Test("playlist play does not restart the current queue")
+    func playlistPlayDoesNotRestartCurrentQueue() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main")
+        let settings = OverplaySettings()
+        let viewModel = PlaylistManagementViewModel()
+        var playCallCount = 0
+        let dependencies = makeDependencies(
+            playPlaylist: { _, _, _, _ in
+                playCallCount += 1
+            }
+        )
+
+        await viewModel.playPlaylist(
+            playlist: playlist,
+            settings: settings,
+            isCurrentPlaylist: true,
+            context: context,
+            dependencies: dependencies
+        )
+
+        #expect(playCallCount == 0)
+    }
+
     @Test("promote triage item reports success and clears progress state")
     func promoteTriageItemReportsSuccessAndClearsProgressState() async throws {
         let container = try OverplayTestSupport.makeModelContainer()

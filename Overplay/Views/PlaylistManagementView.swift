@@ -40,12 +40,29 @@ struct PlaylistManagementView: View {
 
         List {
             Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label(detail.playlist.roleTitle, systemImage: detail.playlist.iconIntent.systemImage)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(roleTint(for: detail.playlist))
-                    Text(playlist.name)
-                        .font(.title2.bold())
+                VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(detail.playlist.roleTitle, systemImage: detail.playlist.iconIntent.systemImage)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(roleTint(for: detail.playlist))
+                        Text(playlist.name)
+                            .font(.title2.bold())
+                    }
+
+                    Button {
+                        Task { await playPlaylist() }
+                    } label: {
+                        Label(
+                            viewModel.playButtonTitle(isCurrentPlaylist: isCurrentPlaylistScope),
+                            systemImage: "play.fill"
+                        )
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(isCurrentPlaylistScope || !detail.rows.contains { $0.isPlayable })
                 }
                 .padding(.vertical, 4)
             }
@@ -134,6 +151,7 @@ struct PlaylistManagementView: View {
                             systemImage: "play.fill"
                         )
                     }
+                    .disabled(isCurrentPlaylistScope || !detail.rows.contains { $0.isPlayable })
 
                     Button {
                         Task { await syncPlaylist() }

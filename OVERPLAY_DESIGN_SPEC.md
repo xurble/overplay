@@ -575,7 +575,8 @@ Shuffle and repeat behavior:
 - Shuffle is a persistent mode, toggled. Turning it on does not reorder the
   local order, replace the queue, or restart playback — MusicKit shuffles the
   queue it already holds, and the current track keeps playing.
-- Repeat cycles off, all, one, the way a system repeat control does.
+- Overplay's repeat control toggles repeat-all on and off. Repeat-one set by
+  another system surface remains authoritative and is reflected as not-all.
 - There is no end-of-playlist rebuild. When the queue is exhausted Overplay
   credits the track that just finished and stops; whether anything plays next
   is MusicKit's decision.

@@ -103,7 +103,9 @@ enum NowPlayingPresentationFactory {
         playbackController: PlaybackController
     ) -> PlaybackControlsPresentation {
         PlaybackControlsPresentation(
-            isPlaying: playbackController.isPlaying
+            isPlaying: playbackController.isPlaying,
+            isShuffling: playbackController.shuffleEnabled,
+            isRepeatingAll: playbackController.repeatAllEnabled
         )
     }
 

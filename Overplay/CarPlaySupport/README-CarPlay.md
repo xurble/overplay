@@ -56,7 +56,8 @@ user starts a Retired playlist context from iOS and then uses CarPlay, CarPlay
 displays that current Retired context through the shared playback state.
 
 The shared Now Playing template installs the system shuffle and repeat
-buttons, which reflect and set MusicKit's own modes (`PLAY-004`), followed by
+buttons, which reflect and set MusicKit's own modes (`PLAY-004`). Repeat is an
+intentional repeat-all/off toggle on both iPhone and CarPlay. These are followed by
 the track actions chosen by `CarPlayNowPlayingActionPolicy`: Retire for an
 active track, Restore for a retired one, and Promote for any triage track —
 retired or not, because deciding to keep a track you had set aside is the
