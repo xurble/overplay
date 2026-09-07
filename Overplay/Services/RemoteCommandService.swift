@@ -278,6 +278,7 @@ final class RemoteCommandService {
             commandCenter.previousTrackCommand.removeTarget(token)
             commandCenter.togglePlayPauseCommand.removeTarget(token)
             commandCenter.changeShuffleModeCommand.removeTarget(token)
+            commandCenter.changeRepeatModeCommand.removeTarget(token)
         }
         targetTokens.removeAll()
         playbackController = nil

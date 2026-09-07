@@ -90,36 +90,110 @@ struct PlaybackTransitionTests {
             .count
         #expect(recordedAfter - recordedBefore == 1)
         #expect(fixture.items[2].playthroughCount == 1)
+        #expect(!fixture.controller.isDeliveryStalled)
+        #expect(fixture.controller.statusMessage == nil)
     }
 
     @Test("an appended entry awaiting hydration never tears playback down")
     func appendedEntryAwaitingHydrationNeverTearsPlaybackDown() async throws {
-        let fixture = try makeFixture(trackCount: 6)
+        let fixture = try makeFixture()
         defer { fixture.cleanUp() }
         try await fixture.start(at: 0)
+        let added = try fixture.addPlaylist(prefix: "appended", trackCount: 1)
+        fixture.context.insert(PlaylistItemRecord(
+            playlistID: fixture.playlist.id,
+            trackID: added.tracks[0].id,
+            createdAt: .now
+        ))
+        try fixture.context.save()
 
         // Sync adds a track to the playing playlist, and the player reports
-        // the appended entry before its item hydrates.
+        // that entry as current before its item hydrates.
         fixture.player.withholdsQueueItemIDs = true
         await fixture.controller.appendLiveQueueEntries(
-            localTrackIDs: [fixture.tracks[5].id.uuidString],
+            localTrackIDs: [added.tracks[0].id.uuidString],
             playlistID: fixture.playlist.musicPlaylistID,
             context: fixture.context
         )
+        fixture.player.withholdsCurrentEntryItem = true
+        for _ in fixture.musicTracks {
+            fixture.player.advanceExternally()
+        }
         for _ in 0..<8 {
             await fixture.controller.reconcilePlayerState(context: fixture.context)
         }
         #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(fixture.controller.canControlPlayback)
 
         fixture.player.withholdsQueueItemIDs = false
+        fixture.player.withholdsCurrentEntryItem = false
         await fixture.controller.reconcilePlayerState(context: fixture.context)
 
-        let didSkip = await fixture.controller.playTrackInCurrentQueue(
-            localTrackID: fixture.tracks[5].id.uuidString,
+        #expect(fixture.controller.currentTrack?.id == added.musicTracks[0].id.rawValue)
+        #expect(fixture.controller.canControlPlayback)
+    }
+
+    @Test("a queue replacement during append cannot mask a later external takeover")
+    func queueReplacementDuringAppendCannotMaskExternalTakeover() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let other = try fixture.addPlaylist(prefix: "other", trackCount: 3)
+
+        fixture.player.withholdsQueueItemIDs = true
+        fixture.player.onAppendToQueue = {
+            await fixture.controller.playPlaylist(
+                other.playlist,
+                settings: fixture.settings,
+                context: fixture.context
+            )
+        }
+        await fixture.controller.appendLiveQueueEntries(
+            localTrackIDs: [fixture.tracks[2].id.uuidString],
+            playlistID: fixture.playlist.musicPlaylistID,
+            context: fixture.context
+        )
+
+        #expect(fixture.controller.currentPlaylistID == other.playlist.musicPlaylistID)
+
+        // The new external queue happens to contain the song from the stale
+        // append. Its entry must not be adopted as part of the replacement
+        // playlist merely because the song IDs match.
+        fixture.player.withholdsQueueItemIDs = false
+        fixture.player.replaceQueueExternally(with: [fixture.musicTracks[2]])
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        #expect(fixture.controller.currentPlaylistID == nil)
+        #expect(fixture.controller.activePlaylistSnapshot == nil)
+    }
+
+    @Test("a queue replacement clears an earlier pending append correlation")
+    func queueReplacementClearsEarlierPendingAppendCorrelation() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let other = try fixture.addPlaylist(prefix: "other", trackCount: 3)
+
+        fixture.player.withholdsQueueItemIDs = true
+        await fixture.controller.appendLiveQueueEntries(
+            localTrackIDs: [fixture.tracks[2].id.uuidString],
+            playlistID: fixture.playlist.musicPlaylistID,
+            context: fixture.context
+        )
+        await fixture.controller.playPlaylist(
+            other.playlist,
             settings: fixture.settings,
             context: fixture.context
         )
-        #expect(didSkip)
+
+        #expect(fixture.controller.currentPlaylistID == other.playlist.musicPlaylistID)
+
+        fixture.player.withholdsQueueItemIDs = false
+        fixture.player.replaceQueueExternally(with: [fixture.musicTracks[2]])
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        #expect(fixture.controller.currentPlaylistID == nil)
+        #expect(fixture.controller.activePlaylistSnapshot == nil)
     }
 
     @Test("delayed Next keeps every published surface on outgoing until confirmation")
@@ -844,6 +918,10 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
         return currentEntryStorage
     }
 
+    var currentEntryItem: MusicPlayer.Queue.Entry.Item? {
+        withholdsCurrentEntryItem ? nil : currentEntryStorage?.item
+    }
+
     func replaceQueue(with materialization: PlaybackQueueMaterialization) {
         replaceQueueCallCount += 1
         entries = materialization.queueEntries
@@ -947,6 +1025,8 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     /// Simulates Apple Music reporting queue entries before their items
     /// hydrate, which the real player does for entries it materializes.
     var withholdsQueueItemIDs = false
+    /// Simulates the same hydration delay on the already-current entry.
+    var withholdsCurrentEntryItem = false
     /// Runs while an append is in flight, so tests can reproduce the queue
     /// being replaced underneath a top-up.
     var onAppendToQueue: (() async -> Void)?

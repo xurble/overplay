@@ -4,6 +4,9 @@ import Foundation
 @MainActor
 protocol PlaybackPlayer: AnyObject {
     var currentEntry: MusicPlayer.Queue.Entry? { get }
+    /// The current entry's item can temporarily be unavailable while MusicKit
+    /// hydrates an entry it has already made current.
+    var currentEntryItem: MusicPlayer.Queue.Entry.Item? { get }
     var playbackStatus: MusicPlayer.PlaybackStatus { get }
     var playbackTime: TimeInterval { get set }
     /// The player's live queue, reduced to what Overplay needs to correlate
@@ -30,6 +33,10 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
 
     var currentEntry: MusicPlayer.Queue.Entry? {
         player.queue.currentEntry
+    }
+
+    var currentEntryItem: MusicPlayer.Queue.Entry.Item? {
+        player.queue.currentEntry?.item
     }
 
     var playbackStatus: MusicPlayer.PlaybackStatus {

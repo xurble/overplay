@@ -96,6 +96,10 @@ final class PlaybackController {
     /// ID for yet. Correlation is retried until it succeeds, because reaching
     /// an uncorrelated entry reads as divergence and tears playback down.
     @ObservationIgnored private var appendedUncorrelatedEntries: [PendingQueueCorrelation] = []
+    /// Bumped whenever the live queue correlation is replaced or discarded.
+    /// An append that returns against an older generation must not register
+    /// entries from the queue it started against.
+    @ObservationIgnored private var appendCorrelationGeneration = 0
     @ObservationIgnored private var deliveryStallState = PlaybackDeliveryStallPolicy.State()
     @ObservationIgnored private var unresolvedEntryState = PlaybackUnresolvedEntryPolicy.State()
     @ObservationIgnored private var deliveryRecoveryAttempts = 0
@@ -369,6 +373,7 @@ final class PlaybackController {
         currentPlaylistScope = .active
         activeSession = nil
         activeQueueEntries = []
+        resetAppendedQueueCorrelations()
         activeQueueIndex = nil
         activePlaylistSnapshot = nil
         prefetchedArtworkTrackID = nil
@@ -411,6 +416,7 @@ final class PlaybackController {
             isPlaying = false
             activeSession = restored.activeSession
             activeQueueEntries = []
+            resetAppendedQueueCorrelations()
             activeQueueIndex = nil
             statusMessage = nil
             bumpPlaybackItemMetadataVersion()
@@ -581,8 +587,15 @@ final class PlaybackController {
 
     private func updateActiveQueue(realizedEntries: [RealizedPlaybackQueueEntry], startingAt localTrackID: String?) {
         let state = PlaybackQueueCoordinator.activeQueueState(entries: realizedEntries, startingAt: localTrackID)
+        resetAppendedQueueCorrelations()
         activeQueueEntries = state.entries
         activeQueueIndex = state.index
+    }
+
+    /// Invalidates append work associated with the previous live queue.
+    private func resetAppendedQueueCorrelations() {
+        appendedUncorrelatedEntries = []
+        appendCorrelationGeneration &+= 1
     }
 
     private func updateActiveQueueCurrentTrackID(_ localTrackID: String?) {
@@ -713,6 +726,7 @@ final class PlaybackController {
     private func clearQueueCorrelationPreservingPlayback() {
         activeQueueEntries = []
         activeQueueIndex = nil
+        resetAppendedQueueCorrelations()
         activeSession = nil
         prefetchedArtworkTrackID = nil
         activePlaylistSnapshotNeedsRebuild = true
@@ -739,6 +753,7 @@ final class PlaybackController {
         }
         activeQueueEntries = []
         activeQueueIndex = nil
+        resetAppendedQueueCorrelations()
         currentPlaylistID = nil
         currentPlaylistScope = .active
         currentPlaylistItem = nil
@@ -1312,7 +1327,7 @@ final class PlaybackController {
         // down on one observation.
         unresolvedEntryState = PlaybackUnresolvedEntryPolicy.assess(
             unresolvedEntryState,
-            hasUnresolvedConcreteEntry: hasUnresolvedConcretePlayerEntry
+            hasUnresolvedConcreteEntry: hasUnresolvedConcretePlayerEntry && !isAwaitingOwnQueueHydration
         )
         let hasDivergedUnresolvedPlayerEntry = unresolvedEntryState.hasDiverged
         let hasUncorrelatedConcretePlayerEntry = player.currentEntry != nil
@@ -1352,22 +1367,27 @@ final class PlaybackController {
                     detail: endedNaturally ? "played out" : "stopped mid-track"
                 )
             }
-            if let oldTrackID, endedNaturally, isNewQueueEnd {
-                // The last track finished. Credit it, then stop: MusicKit owns
-                // repeat, so whether anything plays next is its decision.
-                TrackMetadataDiagnostics.log(
-                    "queue ended naturally status=\(player.playbackStatus) lastTrackID=\(oldTrackID) lastLocalTrackID=\(queueEndLocalTrackID ?? "nil")"
-                )
-                didLogQueueEndWithoutRestart = false
-                if let settings = monitoredSettings(context: context) {
-                    evaluateActiveSession(
-                        settings: settings,
-                        context: context,
-                        naturalCompletion: true,
-                        elapsedSeconds: activeSession?.lastObservedPlaybackTime,
-                        durationSeconds: activeSession?.durationSeconds,
-                        fallbackLocalTrackID: queueEndLocalTrackID
+            if endedNaturally {
+                playbackIntended = false
+                if let oldTrackID, isNewQueueEnd {
+                    // The last track finished. Credit it, then stop: MusicKit
+                    // owns repeat, so whether anything plays next is its
+                    // decision. Later observations of the same ended state
+                    // remain a clean stop rather than becoming a stall.
+                    TrackMetadataDiagnostics.log(
+                        "queue ended naturally status=\(player.playbackStatus) lastTrackID=\(oldTrackID) lastLocalTrackID=\(queueEndLocalTrackID ?? "nil")"
                     )
+                    didLogQueueEndWithoutRestart = false
+                    if let settings = monitoredSettings(context: context) {
+                        evaluateActiveSession(
+                            settings: settings,
+                            context: context,
+                            naturalCompletion: true,
+                            elapsedSeconds: activeSession?.lastObservedPlaybackTime,
+                            durationSeconds: activeSession?.durationSeconds,
+                            fallbackLocalTrackID: queueEndLocalTrackID
+                        )
+                    }
                 }
             } else {
                 // The player abandoned the queue mid-track and the
@@ -1468,6 +1488,7 @@ final class PlaybackController {
             activeSession = nil
             activeQueueEntries = []
             activeQueueIndex = nil
+            resetAppendedQueueCorrelations()
             currentPlaylistID = nil
             currentPlaylistScope = .active
             activePlaylistSnapshot = nil
@@ -1900,7 +1921,7 @@ final class PlaybackController {
             musicItemID: musicItemID,
             playlistItem: playlistItem,
             musicPlaylistID: currentPlaylistID,
-            queueItem: player.currentEntry?.item,
+            queueItem: player.currentEntryItem,
             trustPlaylistItem: trustPlaylistItem,
             in: context
         )
@@ -1938,7 +1959,7 @@ final class PlaybackController {
 
     private func resolvedCurrentPlaybackIdentity(context: ModelContext) -> CurrentPlaybackIdentity? {
         if let queueEntry = player.currentEntry {
-            let queueReportedTrackID = queueEntry.item?.id.rawValue
+            let queueReportedTrackID = player.currentEntryItem?.id.rawValue
             if let realizedEntry = activeQueueEntries.first(where: { $0.queueEntryID == queueEntry.id }) {
                 updateActiveQueueCurrentTrackID(realizedEntry.localTrackID)
                 let musicItemID = queueReportedTrackID ?? realizedEntry.queuedMusicItemID
@@ -2070,7 +2091,7 @@ final class PlaybackController {
             currentPlaylistItem: currentPlaylistItem,
             trustedPlaylistItem: trustedPlaylistItem,
             currentPlaylistID: currentPlaylistID,
-            queueItem: player.currentEntry?.item,
+            queueItem: player.currentEntryItem,
             in: context
         )
         if currentPlaylistItem?.id != update.playlistItem?.id {
@@ -2094,7 +2115,10 @@ final class PlaybackController {
     /// cannot fall out of the player's order while hydration completes
     /// piecemeal.
     private func correlateAppendedEntries() {
-        guard !appendedUncorrelatedEntries.isEmpty else { return }
+        guard !appendedUncorrelatedEntries.isEmpty,
+              playerStillHoldsOverplayQueue() else {
+            return
+        }
 
         let realizedEntries = PlaybackQueueSnapshotCorrelator.realizedEntries(
             expected: appendedUncorrelatedEntries,
@@ -2119,10 +2143,29 @@ final class PlaybackController {
     /// such discards the playlist, the queue and the durable restore point for
     /// a queue playing exactly what Overplay asked for.
     private func isAwaitingAppendCorrelation(_ identity: CurrentPlaybackIdentity) -> Bool {
-        appendedUncorrelatedEntries.contains { member in
+        guard playerStillHoldsOverplayQueue() else { return false }
+
+        return appendedUncorrelatedEntries.contains { member in
             member.matches(identity.musicItemID)
                 || (identity.localTrackID.map { $0 == member.localTrackID } ?? false)
         }
+    }
+
+    /// Whether any entry Overplay handed the player is still in its live
+    /// queue. This prevents a same-song external takeover from inheriting a
+    /// pending append correlation after Overplay's queue has disappeared.
+    private func playerStillHoldsOverplayQueue() -> Bool {
+        guard !activeQueueEntries.isEmpty else { return false }
+
+        let liveEntryIDs = Set(player.queueEntrySnapshots.map(\.id))
+        return activeQueueEntries.contains { liveEntryIDs.contains($0.queueEntryID) }
+    }
+
+    /// A current entry without an item is expected while MusicKit is still
+    /// hydrating a queue member Overplay appended itself. It must not age into
+    /// divergence while the rest of Overplay's queue is demonstrably live.
+    private var isAwaitingOwnQueueHydration: Bool {
+        !appendedUncorrelatedEntries.isEmpty && playerStillHoldsOverplayQueue()
     }
 
     /// MusicKit owns shuffle and repeat, and `MusicPlayer.State` is not
@@ -2160,7 +2203,7 @@ final class PlaybackController {
         }
 
         guard let track = PlaybackTrackResolver.currentPlaybackTrack(
-            from: currentEntry.item,
+            from: player.currentEntryItem,
             playlistID: currentPlaylistID
         ) else {
             if !activeQueueEntries.contains(where: { $0.queueEntryID == currentEntry.id }),
@@ -2648,7 +2691,13 @@ final class PlaybackController {
                 tracksByID: inputs.tracksByID
             )
             guard !entries.isEmpty else { return }
+            let generation = appendCorrelationGeneration
             try await player.appendToQueue(entries.map(\.musicTrack))
+            guard generation == appendCorrelationGeneration,
+                  currentPlaylistID == playlistID,
+                  playerStillHoldsOverplayQueue() else {
+                return
+            }
             // The player creates these entries, so they have to be correlated
             // back rather than assumed: it can report them under the other
             // Apple Music ID domain, or before their items hydrate. Anything

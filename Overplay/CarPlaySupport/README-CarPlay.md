@@ -12,8 +12,8 @@ entitlement, and `Config/Info.plist` declares a CarPlay scene using
   isolated from the SwiftUI iPhone/iPad shell.
 - `CarPlayLibrarySnapshot` builds testable playlist summaries for the CarPlay
   list UI.
-- `CarPlayNavigationPolicy` decides what the root `Overplay` row and the track
-  rows do, free of CarPlay types so the rules are testable.
+- `CarPlayNavigationPolicy` decides what track rows do, free of CarPlay types
+  so the rules are testable.
 - `AppRuntime.shared` provides the shared model container, playback controller,
   authorization service, and remote command service used by both phone UI and
   CarPlay.
@@ -45,10 +45,6 @@ controller reports these failures by returning `false` and setting
 `statusMessage` rather than throwing, so CarPlay checks the result and shows an
 alert instead of navigating to a player that is not playing what was asked for.
 
-The `Overplay` row resolves the current One True Playlist when it is tapped
-rather than trusting the row it was drawn from, because the phone can change
-that role while the menu is on screen.
-
 There is no manual refresh. Visible lists are rebuilt from two triggers: the
 playback observation below, and a `ModelContext.didSave` observation that
 catches phone-side library changes — linking a playlist, changing the One True
@@ -69,8 +65,8 @@ point of hearing it again. Its Up Next button returns to the root menu.
 ## Verification
 
 The app target builds and unit tests cover CarPlay playlist summary ordering,
-playable counts, template refresh targeting, the root/track navigation rules in
-`CarPlayNavigationPolicy`, and the shared in-queue skip and shuffle-and-play
-paths in `PlaybackController`. CarPlay simulator or device verification is
-still required for scene launch, template presentation, and in-car playback
-controls.
+playable counts, template refresh targeting, track navigation rules in
+`CarPlayNavigationPolicy`, Now Playing action policy, and the shared in-queue
+skip and playback-mode paths in `PlaybackController`. CarPlay simulator or
+device verification is still required for scene launch, template presentation,
+and in-car playback controls.
