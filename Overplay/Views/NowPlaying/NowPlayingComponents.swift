@@ -247,10 +247,32 @@ struct PlaybackModeControlsView: View {
                 Label(controlsPresentation.shuffleTitle, systemImage: controlsPresentation.shuffleSystemImage)
                     .frame(maxWidth: .infinity)
             }
+            .accessibilityValue(controlsPresentation.isShuffling ? "On" : "Off")
             .fullScreenPlayerControlStyle(
                 palette: controlPalette,
-                prominence: .secondary,
-                fallbackTint: .secondary.opacity(0.24)
+                prominence: controlsPresentation.isShuffling ? .selected : .secondary,
+                fallbackTint: controlsPresentation.isShuffling ? .accentColor : .secondary,
+                fallbackStyle: controlsPresentation.isShuffling ? .borderedProminent : .bordered
+            )
+
+            Button {
+                Task {
+                    await playbackController.toggleRepeatAll(context: modelContext)
+                    runtime.remoteCommandService.syncPlaybackModes(from: playbackController)
+                }
+            } label: {
+                Label(
+                    controlsPresentation.repeatAllTitle,
+                    systemImage: controlsPresentation.repeatAllSystemImage
+                )
+                .frame(maxWidth: .infinity)
+            }
+            .accessibilityValue(controlsPresentation.isRepeatingAll ? "On" : "Off")
+            .fullScreenPlayerControlStyle(
+                palette: controlPalette,
+                prominence: controlsPresentation.isRepeatingAll ? .selected : .secondary,
+                fallbackTint: controlsPresentation.isRepeatingAll ? .accentColor : .secondary,
+                fallbackStyle: controlsPresentation.isRepeatingAll ? .borderedProminent : .bordered
             )
         }
     }

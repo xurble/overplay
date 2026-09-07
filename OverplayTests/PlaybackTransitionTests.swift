@@ -575,6 +575,9 @@ struct PlaybackTransitionTests {
         // skip is counted against it either.
         #expect(fixture.controller.shuffleEnabled)
         #expect(fixture.player.shuffleMode == .songs)
+        #expect(NowPlayingPresentationFactory.playbackControlsPresentation(
+            playbackController: fixture.controller
+        ).isShuffling)
         #expect(fixture.player.replaceQueueCallCount == replacementsBefore)
         #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
         #expect(fixture.items[0].skipCount == 0)
@@ -583,26 +586,36 @@ struct PlaybackTransitionTests {
         await fixture.controller.toggleShuffle(context: fixture.context)
         #expect(!fixture.controller.shuffleEnabled)
         #expect(fixture.player.shuffleMode == .off)
+        #expect(!NowPlayingPresentationFactory.playbackControlsPresentation(
+            playbackController: fixture.controller
+        ).isShuffling)
     }
 
-    @Test("repeat cycles off, all, one and is never rebuilt by Overplay")
-    func repeatCyclesAndIsNeverRebuiltByOverplay() async throws {
+    @Test("repeat all toggles on and off without rebuilding the queue")
+    func repeatAllTogglesWithoutRebuildingQueue() async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanUp() }
         try await fixture.start(at: 0)
         let replacementsBefore = fixture.player.replaceQueueCallCount
 
-        await fixture.controller.cycleRepeatMode(context: fixture.context)
+        await fixture.controller.toggleRepeatAll(context: fixture.context)
         #expect(fixture.player.repeatMode == .all)
-        #expect(fixture.controller.repeatModeTitle == "All")
+        #expect(fixture.controller.repeatAllEnabled)
+        #expect(NowPlayingPresentationFactory.playbackControlsPresentation(
+            playbackController: fixture.controller
+        ).isRepeatingAll)
 
-        await fixture.controller.cycleRepeatMode(context: fixture.context)
-        #expect(fixture.player.repeatMode == .one)
-        #expect(fixture.controller.repeatsSingleTrack)
-
-        await fixture.controller.cycleRepeatMode(context: fixture.context)
+        await fixture.controller.toggleRepeatAll(context: fixture.context)
         #expect(fixture.player.repeatMode == MusicPlayer.RepeatMode.none)
-        #expect(!fixture.controller.repeatEnabled)
+        #expect(!fixture.controller.repeatAllEnabled)
+        #expect(!NowPlayingPresentationFactory.playbackControlsPresentation(
+            playbackController: fixture.controller
+        ).isRepeatingAll)
+
+        fixture.player.repeatMode = .one
+        await fixture.controller.toggleRepeatAll(context: fixture.context)
+        #expect(fixture.player.repeatMode == .all)
+        #expect(fixture.controller.repeatAllEnabled)
 
         #expect(fixture.player.replaceQueueCallCount == replacementsBefore)
     }

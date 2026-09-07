@@ -492,13 +492,13 @@ final class CarPlayCoordinator: NSObject {
             Task { @MainActor in
                 guard let self, let modelContext = self.modelContext else { return }
                 await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-                    await self.playbackController?.cycleRepeatMode(context: modelContext)
+                    await self.playbackController?.toggleRepeatAll(context: modelContext)
                 }
                 _ = self.updateNowPlayingButtons(force: true)
             }
         }
         button.isEnabled = playbackController?.currentTrack != nil
-        button.isSelected = playbackController?.repeatEnabled ?? false
+        button.isSelected = playbackController?.repeatAllEnabled ?? false
         return button
     }
 

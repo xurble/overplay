@@ -238,23 +238,9 @@ final class PlaybackController {
         return player.repeatMode
     }
 
-    var repeatEnabled: Bool {
+    var repeatAllEnabled: Bool {
         _ = playbackModeVersion
-        return player.repeatMode != MusicPlayer.RepeatMode.none
-    }
-
-    var repeatsSingleTrack: Bool {
-        _ = playbackModeVersion
-        return player.repeatMode == .one
-    }
-
-    var repeatModeTitle: String {
-        _ = playbackModeVersion
-        switch player.repeatMode {
-        case .all: return "All"
-        case .one: return "One"
-        default: return "Off"
-        }
+        return player.repeatMode == .all
     }
 
     func playbackOrderState(
@@ -1045,15 +1031,9 @@ final class PlaybackController {
         await refresh(context: context)
     }
 
-    /// Cycles the way a system repeat control does: off, all, one.
-    func cycleRepeatMode(context: ModelContext) async {
-        player.repeatMode = switch player.repeatMode {
-        case MusicPlayer.RepeatMode.none: .all
-        case .all: .one
-        default: MusicPlayer.RepeatMode.none
-        }
-        playbackModeVersion += 1
-        await refresh(context: context)
+    /// Keeps Overplay's repeat control intentionally binary: off or repeat all.
+    func toggleRepeatAll(context: ModelContext) async {
+        await setRepeatMode(repeatAllEnabled ? MusicPlayer.RepeatMode.none : .all, context: context)
     }
 
     func setRepeatMode(_ mode: MusicPlayer.RepeatMode, context: ModelContext) async {

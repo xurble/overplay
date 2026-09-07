@@ -2,6 +2,8 @@ import Foundation
 
 struct PlaybackControlsPresentation: Equatable, Sendable {
     let isPlaying: Bool
+    let isShuffling: Bool
+    let isRepeatingAll: Bool
 
     var primarySystemImage: String {
         isPlaying ? "pause.fill" : "play.fill"
@@ -17,6 +19,14 @@ struct PlaybackControlsPresentation: Equatable, Sendable {
 
     var shuffleTitle: String {
         "Shuffle"
+    }
+
+    var repeatAllSystemImage: String {
+        "repeat"
+    }
+
+    var repeatAllTitle: String {
+        "Repeat All"
     }
 
     var skipForwardSystemImage: String {
