@@ -73,6 +73,10 @@ final class PlaybackController {
     @ObservationIgnored private var activeSession: TrackPlaySession?
     @ObservationIgnored private var activePlaylistSnapshotNeedsRebuild = false
     @ObservationIgnored private var activeQueueEntries: [RealizedPlaybackQueueEntry] = []
+    /// Where the current track sits in `activeQueueEntries`, which is
+    /// Overplay's local order. A correlation cursor, not a play position: once
+    /// MusicKit is shuffling, the order it plays in is its own and unknowable
+    /// from here.
     @ObservationIgnored private var activeQueueIndex: Int?
     @ObservationIgnored private var hasRestoredLocalPlaybackState = false
     @ObservationIgnored private var prefetchedArtworkTrackID: String?
@@ -960,7 +964,8 @@ final class PlaybackController {
             if PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
                 activeQueueIndex: activeQueueIndex,
                 activeQueueCount: activeQueueEntries.count,
-                hasCurrentEntry: player.currentEntry != nil
+                hasCurrentEntry: player.currentEntry != nil,
+                isShuffling: shuffleEnabled
             ), outgoing.musicItemID != nil {
                 // The queue really is exhausted. MusicKit owns repeat, so
                 // whether anything plays next is its decision, not Overplay's.

@@ -528,4 +528,69 @@ struct PlaybackControllerDisplayRestoreTests {
             retiredTrack.id.uuidString
         ])
     }
+
+    @Test("reset all local stats refreshes displayed metadata")
+    func resetAllLocalStatsRefreshesDisplayedMetadata() throws {
+        let previousState = LocalPlaybackStateStore.load()
+        defer {
+            if let previousState {
+                LocalPlaybackStateStore.save(previousState)
+            } else {
+                LocalPlaybackStateStore.clear()
+            }
+        }
+
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let controller = PlaybackController()
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "playlist-1",
+            name: "Main",
+            role: .oneTruePlaylist
+        )
+        let track = TrackRecord(
+            catalogID: "music-1",
+            libraryID: "music-1",
+            title: "Ready Track",
+            artistName: "Ready Artist",
+            durationSeconds: 180
+        )
+        let item = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: track.id,
+            skipCount: 4,
+            playthroughCount: 2,
+            evictedAt: Date(timeIntervalSince1970: 200)
+        )
+        context.insert(playlist)
+        context.insert(track)
+        context.insert(item)
+        LocalPlaybackStateStore.save(LocalPlaybackState(
+            playlistID: playlist.musicPlaylistID,
+            musicItemID: "music-1",
+            elapsedSeconds: 42,
+            wasPlaying: false,
+            updatedAt: Date(timeIntervalSince1970: 100),
+            localTrackID: track.id.uuidString
+        ))
+
+        controller.restoreLocalPlaybackDisplay(context: context)
+        let previousMetadataVersion = controller.playbackItemMetadataVersion
+        #expect(controller.displayedSkipCount == 4)
+        #expect(controller.displayedPlaythroughCount == 2)
+        #expect(controller.displayedIsEvicted)
+
+        try controller.resetAllLocalStats(context: context)
+
+        #expect(item.skipCount == 0)
+        #expect(item.playthroughCount == 0)
+        #expect(item.evictedAt == nil)
+        #expect(controller.displayedSkipCount == 0)
+        #expect(controller.displayedPlaythroughCount == 0)
+        #expect(!controller.displayedIsEvicted)
+        #expect(controller.activePlaylistSnapshot?.rows.first?.skipCount == 0)
+        #expect(controller.activePlaylistSnapshot?.rows.first?.playthroughCount == 0)
+        #expect(controller.activePlaylistSnapshot?.rows.first?.isEvicted == false)
+        #expect(controller.playbackItemMetadataVersion > previousMetadataVersion)
+    }
 }

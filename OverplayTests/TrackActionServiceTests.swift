@@ -61,4 +61,31 @@ struct TrackActionServiceTests {
         #expect(history.first?.message == "Evicted manually")
     }
 
+
+    @Test("restore track clears eviction state and logs history")
+    func restoreTrackClearsEvictionStateAndLogsHistory() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(musicPlaylistID: "playlist-1", name: "Main", role: .oneTruePlaylist)
+        let item = PlaylistItemRecord(
+            playlistID: playlist.id,
+            trackID: UUID(),
+            skipCount: 2,
+            evictedAt: Date(timeIntervalSince1970: 100),
+            evictionReason: .manual,
+            evictionSource: .user
+        )
+        context.insert(playlist)
+        context.insert(item)
+
+        try TrackActionService.restoreTrack(item, playlist: playlist, in: context)
+
+        let history = try context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(item.evictedAt == nil)
+        #expect(item.evictionReason == nil)
+        #expect(item.evictionSource == nil)
+        #expect(history.first?.eventType == .restored)
+        #expect(history.first?.message == "Restored locally")
+        #expect(history.first?.skipCountAtEvent == 2)
+    }
 }

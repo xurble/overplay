@@ -37,9 +37,17 @@ enum PlaybackQueueEndPolicy {
     static func skipFailureIndicatesQueueEnd(
         activeQueueIndex: Int?,
         activeQueueCount: Int,
-        hasCurrentEntry: Bool
+        hasCurrentEntry: Bool,
+        isShuffling: Bool
     ) -> Bool {
         guard hasCurrentEntry else { return true }
+        // `activeQueueIndex` is a position in Overplay's local order, which is
+        // the play order only while shuffle is off. Under shuffle, sitting at
+        // the last local index says nothing about being at the end of
+        // playback, so a throw there is a delivery failure rather than an
+        // exhausted queue — and MusicKit owns shuffle now, so this is the
+        // normal case rather than the exception.
+        guard !isShuffling else { return false }
         guard let activeQueueIndex, activeQueueCount > 0 else { return true }
         return activeQueueIndex >= activeQueueCount - 1
     }

@@ -62,30 +62,35 @@ struct PlaybackQueueEndPolicyTests {
         #expect(!PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
             activeQueueIndex: 3,
             activeQueueCount: 10,
-            hasCurrentEntry: true
+            hasCurrentEntry: true,
+            isShuffling: false
         ))
         // On the final entry, skipping past the end throws — queue end.
         #expect(PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
             activeQueueIndex: 9,
             activeQueueCount: 10,
-            hasCurrentEntry: true
+            hasCurrentEntry: true,
+            isShuffling: false
         ))
         // The player abandoned its entry — cannot rule out queue end.
         #expect(PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
             activeQueueIndex: 3,
             activeQueueCount: 10,
-            hasCurrentEntry: false
+            hasCurrentEntry: false,
+            isShuffling: false
         ))
         // Unknown queue position — cannot rule out queue end.
         #expect(PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
             activeQueueIndex: nil,
             activeQueueCount: 10,
-            hasCurrentEntry: true
+            hasCurrentEntry: true,
+            isShuffling: false
         ))
         #expect(PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
             activeQueueIndex: 3,
             activeQueueCount: 0,
-            hasCurrentEntry: true
+            hasCurrentEntry: true,
+            isShuffling: false
         ))
     }
 
@@ -97,5 +102,41 @@ struct PlaybackQueueEndPolicyTests {
             durationSeconds: durationSeconds,
             hasEvaluated: false
         )
+    }
+
+    @Test("a skip failure while shuffling is never read as queue end")
+    func skipFailureWhileShufflingIsNeverQueueEnd() {
+        // `activeQueueIndex` is a position in Overplay's local order, which is
+        // the play order only while shuffle is off. MusicKit owns shuffle now,
+        // so the last local index is routinely not the last track played.
+        #expect(!PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
+            activeQueueIndex: 9,
+            activeQueueCount: 10,
+            hasCurrentEntry: true,
+            isShuffling: true
+        ))
+
+        // Same position, shuffle off: local order is the play order, so the
+        // inference still holds.
+        #expect(PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
+            activeQueueIndex: 9,
+            activeQueueCount: 10,
+            hasCurrentEntry: true,
+            isShuffling: false
+        ))
+    }
+
+    @Test("an abandoned queue is queue end whether shuffling or not")
+    func abandonedQueueIsQueueEndEitherWay() {
+        // No current entry is unambiguous: the player has nothing left,
+        // whatever order it was playing in.
+        for isShuffling in [true, false] {
+            #expect(PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
+                activeQueueIndex: 3,
+                activeQueueCount: 10,
+                hasCurrentEntry: false,
+                isShuffling: isShuffling
+            ))
+        }
     }
 }
