@@ -9,6 +9,10 @@ protocol PlaybackPlayer: AnyObject {
     /// The player's live queue, reduced to what Overplay needs to correlate
     /// entries it did not construct itself.
     var queueEntrySnapshots: [PlayerQueueEntrySnapshot] { get }
+    /// MusicKit owns these now: Overplay reads them and writes what a surface
+    /// asked for, rather than holding them off.
+    var shuffleMode: MusicPlayer.ShuffleMode { get set }
+    var repeatMode: MusicPlayer.RepeatMode { get set }
 
     func replaceQueue(with materialization: PlaybackQueueMaterialization)
     func prepareToPlay() async throws
@@ -18,7 +22,6 @@ protocol PlaybackPlayer: AnyObject {
     func skipToPreviousEntry() async throws
     func skipToEntry(withID entryID: String) async throws
     func appendToQueue(_ tracks: [Track]) async throws
-    func disablePlaybackModes()
 }
 
 @MainActor
@@ -112,26 +115,28 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
         }
     }
 
-    func disablePlaybackModes() {
-        // Called on every play, every queue rebuild, every monitor start and
-        // at launch, usually against modes that are already off.
-        guard PlaybackModeResetPolicy.needsReset(
-            shuffleMode: player.state.shuffleMode,
-            repeatMode: player.state.repeatMode
-        ) else {
-            // Recorded so the activity report can tell a working guard apart
-            // from a code path that never ran.
-            MusicKitActivityLog.shared.record(.playerModeResetSkipped)
-            return
+    /// Both accessors are optional on `MusicPlayer.State`; nil means MusicKit
+    /// has not reported one yet, which reads as off rather than unknown
+    /// because a surface has to show something.
+    var shuffleMode: MusicPlayer.ShuffleMode {
+        get { player.state.shuffleMode ?? .off }
+        set {
+            guard player.state.shuffleMode != newValue else { return }
+            MusicKitActivityLog.shared.measure(.playerModeReset, detail: "shuffle=\(newValue)") {
+                player.state.shuffleMode = newValue
+            }
         }
+    }
 
-        MusicKitActivityLog.shared.measure(.playerModeReset) {
-            player.state.shuffleMode = .off
-            // Spelled out: `MusicPlayer.State.repeatMode` is optional, so a
-            // bare `.none` assigns `Optional.none` instead of the repeat mode
-            // — which is what this line did until the guard above started
-            // reading the value back and the compiler warning surfaced.
-            player.state.repeatMode = MusicPlayer.RepeatMode.none
+    var repeatMode: MusicPlayer.RepeatMode {
+        // Spelled out: a bare `.none` against an optional binds to
+        // `Optional.none`, which is a different case entirely.
+        get { player.state.repeatMode ?? MusicPlayer.RepeatMode.none }
+        set {
+            guard player.state.repeatMode != newValue else { return }
+            MusicKitActivityLog.shared.measure(.playerModeReset, detail: "repeat=\(newValue)") {
+                player.state.repeatMode = newValue
+            }
         }
     }
 }

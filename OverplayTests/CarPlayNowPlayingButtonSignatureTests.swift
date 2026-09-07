@@ -6,65 +6,6 @@ import Testing
 @MainActor
 @Suite("CarPlay now playing button signature", .serialized)
 struct CarPlayNowPlayingButtonSignatureTests {
-    @Test("reflects presentation state for track facts")
-    func reflectsPresentationState() throws {
-        let container = try OverplayTestSupport.makeModelContainer()
-        let context = container.mainContext
-        let settings = try SettingsRepository.settings(in: context)
-        let controller = PlaybackController()
-        let playlist = PlaylistRecord(
-            musicPlaylistID: "playlist-1",
-            name: "Main",
-            role: .oneTruePlaylist
-        )
-        let track = TrackRecord(
-            catalogID: "music-1",
-            libraryID: "music-1",
-            title: "Ready Track",
-            artistName: "Ready Artist"
-        )
-        let item = PlaylistItemRecord(
-            playlistID: playlist.id,
-            trackID: track.id,
-            skipCount: 2,
-            protected: true
-        )
-        context.insert(playlist)
-        context.insert(track)
-        context.insert(item)
-
-        controller.currentPlaylistID = playlist.musicPlaylistID
-        controller.currentTrack = CurrentPlaybackTrack(
-            id: "music-1",
-            title: track.title,
-            artistName: track.artistName
-        )
-        controller.currentPlaylistItem = item
-
-        let signature = CarPlayNowPlayingButtonSignature.make(
-            playbackController: controller,
-            settings: settings,
-            context: context
-        )
-        let nowPlaying = NowPlayingPresentationFactory.presentation(
-            playbackController: controller,
-            settings: settings,
-            context: context
-        )
-        let badge = NowPlayingPresentationFactory.trackStateBadgePresentation(
-            playbackController: controller,
-            settings: settings,
-            context: context
-        )
-
-        #expect(signature.trackID == nowPlaying.trackID)
-        #expect(signature.playlistRole == .oneTruePlaylist)
-        #expect(signature.skipCount == nowPlaying.skipCount)
-        #expect(signature.isProtected == nowPlaying.isProtected)
-        #expect(signature.isEvicted == nowPlaying.isEvicted)
-        #expect(badge.title == "Protected")
-    }
-
     @Test("changes when retired presentation state changes")
     func changesWithRetiredPresentation() throws {
         let container = try OverplayTestSupport.makeModelContainer()

@@ -49,15 +49,15 @@ enum PlaybackReconciliationMechanism: String, CaseIterable, Codable, Hashable, S
     case musicKitPlayCount
 }
 
+/// Why an item left a playlist. Eviction is a manual decision now, so the
+/// only automatic reason left is Apple Music removing the track upstream.
 enum EvictionReason: String, CaseIterable, Codable, Hashable, Sendable {
-    case skipCount
     case manual
     case remoteRemoval
 }
 
 enum EvictionSource: String, CaseIterable, Codable, Hashable, Sendable {
     case user
-    case playbackRule
     case appleMusicSync
 }
 

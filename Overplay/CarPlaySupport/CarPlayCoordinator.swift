@@ -393,10 +393,11 @@ final class CarPlayCoordinator: NSObject {
             _ = playbackController.currentPlaylistID
             _ = playbackController.currentTrack?.id
             _ = playbackController.displayedSkipCount
-            _ = playbackController.displayedIsProtected
             _ = playbackController.displayedIsEvicted
             _ = playbackController.activePlaylistSnapshot?.updatedAt
             _ = playbackController.isDeliveryStalled
+            _ = playbackController.shuffleEnabled
+            _ = playbackController.repeatMode
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, generation == self.playbackObservationGeneration else { return }
@@ -459,11 +460,46 @@ final class CarPlayCoordinator: NSObject {
             isRetired: signature.isEvicted
         ).map { action in
             switch action {
+            case .shuffle: makeShuffleButton()
+            case .repeatMode: makeRepeatButton()
             case .promote: makePromoteButton()
             case .retire: makeEvictButton()
             case .restore: makeRestoreButton()
             }
         }
+    }
+
+    /// CarPlay's own shuffle control, so it looks and behaves like every other
+    /// audio app in the car. `isSelected` reflects MusicKit's mode rather than
+    /// anything Overplay keeps.
+    private func makeShuffleButton() -> CPNowPlayingShuffleButton {
+        let button = CPNowPlayingShuffleButton { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let modelContext = self.modelContext else { return }
+                await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+                    await self.playbackController?.toggleShuffle(context: modelContext)
+                }
+                _ = self.updateNowPlayingButtons(force: true)
+            }
+        }
+        button.isEnabled = playbackController?.currentTrack != nil
+        button.isSelected = playbackController?.shuffleEnabled ?? false
+        return button
+    }
+
+    private func makeRepeatButton() -> CPNowPlayingRepeatButton {
+        let button = CPNowPlayingRepeatButton { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let modelContext = self.modelContext else { return }
+                await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+                    await self.playbackController?.cycleRepeatMode(context: modelContext)
+                }
+                _ = self.updateNowPlayingButtons(force: true)
+            }
+        }
+        button.isEnabled = playbackController?.currentTrack != nil
+        button.isSelected = playbackController?.repeatEnabled ?? false
+        return button
     }
 
     private func makeEvictButton() -> CPNowPlayingImageButton {

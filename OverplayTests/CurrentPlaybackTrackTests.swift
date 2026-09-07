@@ -20,8 +20,7 @@ struct CurrentPlaybackTrackTests {
             trackID: track.id,
             skipCount: 2,
             playthroughCount: 3,
-            evictedAt: Date(timeIntervalSince1970: 100),
-            protected: true
+            evictedAt: Date(timeIntervalSince1970: 100)
         )
 
         let currentTrack = CurrentPlaybackTrack(track, musicItemID: "catalog-1", item: item)
@@ -33,6 +32,5 @@ struct CurrentPlaybackTrackTests {
         #expect(currentTrack.skipCount == 2)
         #expect(currentTrack.playthroughCount == 3)
         #expect(currentTrack.isEvicted)
-        #expect(currentTrack.protected)
     }
 }

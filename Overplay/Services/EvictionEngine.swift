@@ -234,8 +234,6 @@ private extension EvictionSource {
         switch self {
         case .user:
             .user
-        case .playbackRule:
-            .playback
         case .appleMusicSync:
             .appleMusic
         }

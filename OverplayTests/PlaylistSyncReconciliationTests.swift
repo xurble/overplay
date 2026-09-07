@@ -342,8 +342,8 @@ struct PlaylistSyncReconciliationTests {
         )
         let item = try #require(PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context).first)
         item.evictedAt = Date(timeIntervalSince1970: 150)
-        item.evictionReason = .skipCount
-        item.evictionSource = .playbackRule
+        item.evictionReason = .manual
+        item.evictionSource = .user
 
         try await PlaylistSyncService().reconcile(
             snapshots: [],
@@ -353,8 +353,8 @@ struct PlaylistSyncReconciliationTests {
         )
 
         #expect(item.evictedAt == Date(timeIntervalSince1970: 150))
-        #expect(item.evictionReason == .skipCount)
-        #expect(item.evictionSource == .playbackRule)
+        #expect(item.evictionReason == .manual)
+        #expect(item.evictionSource == .user)
     }
 
     private func snapshot(id: String, title: String) -> TrackSnapshot {

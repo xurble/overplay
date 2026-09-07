@@ -700,8 +700,7 @@ struct PlaybackSessionEvaluationServiceTests {
         let item = PlaylistItemRecord(
             playlistID: playlist.id,
             trackID: track.id,
-            skipCount: skipCount,
-            protected: protected
+            skipCount: skipCount
         )
         context.insert(playlist)
         context.insert(track)

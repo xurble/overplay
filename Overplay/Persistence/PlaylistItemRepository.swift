@@ -30,7 +30,6 @@ enum PlaylistItemRepository {
             item.evictedAt = nil
             item.evictionReason = nil
             item.evictionSource = nil
-            item.protected = false
             item.updatedAt = .now
         }
 
@@ -161,7 +160,6 @@ enum PlaylistItemRepository {
                 keeper.evictedAt = latestUpdatedItem.evictedAt
                 keeper.evictionReason = latestUpdatedItem.evictionReason
                 keeper.evictionSource = latestUpdatedItem.evictionSource
-                keeper.protected = latestUpdatedItem.protected
             }
 
             for duplicate in duplicates {

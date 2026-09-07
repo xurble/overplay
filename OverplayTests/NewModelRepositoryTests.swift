@@ -578,9 +578,8 @@ struct NewModelRepositoryTests {
             lastPlayedAt: Date(timeIntervalSince1970: 100),
             lastSkippedAt: Date(timeIntervalSince1970: 200),
             evictedAt: Date(timeIntervalSince1970: 300),
-            evictionReason: .skipCount,
-            evictionSource: .playbackRule,
-            protected: true
+            evictionReason: .manual,
+            evictionSource: .user
         )
         context.insert(item)
 
@@ -593,7 +592,6 @@ struct NewModelRepositoryTests {
         #expect(item.evictedAt == nil)
         #expect(item.evictionReason == nil)
         #expect(item.evictionSource == nil)
-        #expect(!item.protected)
     }
 
     @Test("event repository writes history events")

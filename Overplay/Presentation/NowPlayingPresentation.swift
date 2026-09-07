@@ -23,7 +23,6 @@ struct NowPlayingPresentation: Equatable, Sendable {
     let skipCountText: String
     let playSkipMetricText: String
     let isEvicted: Bool
-    let isProtected: Bool
 
     init(
         trackID: String? = nil,
@@ -39,8 +38,7 @@ struct NowPlayingPresentation: Equatable, Sendable {
         playthroughThresholdPercentage: Double = 90,
         skipCount: Int,
         playthroughCount: Int = 0,
-        isEvicted: Bool,
-        isProtected: Bool
+        isEvicted: Bool
     ) {
         self.trackID = trackID
         self.title = title ?? "Nothing playing"
@@ -64,7 +62,6 @@ struct NowPlayingPresentation: Equatable, Sendable {
         self.skipCountText = Self.pluralized(skipCount, singular: "skip")
         self.playSkipMetricText = "\(Self.pluralized(playthroughCount, singular: "play")) / \(Self.pluralized(skipCount, singular: "skip"))"
         self.isEvicted = isEvicted
-        self.isProtected = isProtected
     }
 
     static func formatTime(_ seconds: Double) -> String {

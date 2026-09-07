@@ -5,7 +5,6 @@ struct CarPlayNowPlayingButtonSignature: Equatable {
     var trackID: String?
     var playlistRole: PlaylistRole? = nil
     var skipCount: Int
-    var isProtected: Bool
     var isEvicted: Bool
 
     static func make(

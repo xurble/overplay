@@ -16,7 +16,6 @@ final class PlaylistItemRecord {
     var evictedAt: Date?
     var evictionReasonRawValue: String?
     var evictionSourceRawValue: String?
-    var protected: Bool = false
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
@@ -44,7 +43,6 @@ final class PlaylistItemRecord {
         evictedAt: Date? = nil,
         evictionReason: EvictionReason? = nil,
         evictionSource: EvictionSource? = nil,
-        protected: Bool = false,
         createdAt: Date = .now,
         updatedAt: Date = .now
     ) {
@@ -61,7 +59,6 @@ final class PlaylistItemRecord {
         self.evictedAt = evictedAt
         self.evictionReasonRawValue = evictionReason?.rawValue
         self.evictionSourceRawValue = evictionSource?.rawValue
-        self.protected = protected
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

@@ -66,7 +66,6 @@ final class PlaybackController {
     private(set) var playbackModeVersion = 0
 
     @ObservationIgnored private let player: any PlaybackPlayer
-    @ObservationIgnored private let queueWindowPolicy: PlaybackQueueWindowPolicy
     @ObservationIgnored private let transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy
     @ObservationIgnored private let sleepForTransitionConfirmation: @MainActor (Duration) async -> Void
     @ObservationIgnored private var monitorTask: Task<Void, Never>?
@@ -75,18 +74,6 @@ final class PlaybackController {
     @ObservationIgnored private var activePlaylistSnapshotNeedsRebuild = false
     @ObservationIgnored private var activeQueueEntries: [RealizedPlaybackQueueEntry] = []
     @ObservationIgnored private var activeQueueIndex: Int?
-    /// Ordered entries deliberately held back from the player's queue,
-    /// appended as the delivered window drains. Empty once the whole order
-    /// has been handed over.
-    @ObservationIgnored private var pendingQueueEntries: [PlaybackQueueEntry] = []
-    /// Entries the player has accepted but whose queue entries it has not yet
-    /// reported an item for. They count as delivered so top-up cannot run
-    /// away, and are correlated on later ticks as Apple Music hydrates them.
-    @ObservationIgnored private var deliveredUncorrelatedEntries: [PendingQueueCorrelation] = []
-    @ObservationIgnored private var isToppingUpQueue = false
-    /// Bumped whenever the player's queue is replaced. A top-up that started
-    /// against an older generation must not consume the new queue's tail.
-    @ObservationIgnored private var queueGeneration = 0
     @ObservationIgnored private var hasRestoredLocalPlaybackState = false
     @ObservationIgnored private var prefetchedArtworkTrackID: String?
     @ObservationIgnored private var isRestartingQueue = false
@@ -124,7 +111,6 @@ final class PlaybackController {
     init(
         playerID: String = "main",
         player: any PlaybackPlayer = ApplicationMusicPlaybackPlayer(),
-        queueWindowPolicy: PlaybackQueueWindowPolicy = .standard,
         transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy = .standard,
         sleepForTransitionConfirmation: @escaping @MainActor (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
@@ -132,7 +118,6 @@ final class PlaybackController {
     ) {
         self.playerID = playerID
         self.player = player
-        self.queueWindowPolicy = queueWindowPolicy
         self.transitionConfirmationPolicy = transitionConfirmationPolicy
         self.sleepForTransitionConfirmation = sleepForTransitionConfirmation
     }
@@ -215,16 +200,6 @@ final class PlaybackController {
         return displayedPlaylistItem(context: context)?.playthroughCount ?? currentTrack?.playthroughCount ?? 0
     }
 
-    var displayedIsProtected: Bool {
-        _ = playbackItemMetadataVersion
-        return currentPlaylistItem?.protected == true || currentTrack?.protected == true
-    }
-
-    func displayedIsProtected(context: ModelContext) -> Bool {
-        _ = playbackItemMetadataVersion
-        return displayedPlaylistItem(context: context)?.protected == true || currentTrack?.protected == true
-    }
-
     var displayedIsEvicted: Bool {
         _ = playbackItemMetadataVersion
         return currentPlaylistItem?.evictedAt != nil || currentTrack?.isEvicted == true
@@ -237,25 +212,31 @@ final class PlaybackController {
 
     var shuffleEnabled: Bool {
         _ = playbackModeVersion
-        return false
+        return player.shuffleMode != .off
     }
 
     var repeatMode: MusicPlayer.RepeatMode {
         _ = playbackModeVersion
-        return .none
+        return player.repeatMode
     }
 
     var repeatEnabled: Bool {
         _ = playbackModeVersion
-        return true
+        return player.repeatMode != MusicPlayer.RepeatMode.none
     }
 
     var repeatsSingleTrack: Bool {
-        false
+        _ = playbackModeVersion
+        return player.repeatMode == .one
     }
 
     var repeatModeTitle: String {
-        "All"
+        _ = playbackModeVersion
+        switch player.repeatMode {
+        case .all: return "All"
+        case .one: return "One"
+        default: return "Off"
+        }
     }
 
     func playbackOrderState(
@@ -299,7 +280,6 @@ final class PlaybackController {
 
     func startMonitoring(context: ModelContext) {
         guard monitorTask == nil else { return }
-        disableMusicKitPlaybackModes()
         monitorIdleSince = nil
         monitorTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -350,7 +330,6 @@ final class PlaybackController {
     }
 
     private func warmUpPlayerConnection() async {
-        disableMusicKitPlaybackModes()
         do {
             try await player.prepareToPlay()
         } catch {
@@ -376,7 +355,6 @@ final class PlaybackController {
         currentPlaylistScope = .active
         activeSession = nil
         activeQueueEntries = []
-        setPendingQueueEntries([])
         activeQueueIndex = nil
         activePlaylistSnapshot = nil
         prefetchedArtworkTrackID = nil
@@ -486,9 +464,7 @@ final class PlaybackController {
         // skipping to an entry from it would fail as a stall instead of
         // letting the caller build a fresh queue.
         await refresh(context: context)
-        // The queue is only a window onto the order, so a track can be in the
-        // list the user tapped without being in the player's queue yet.
-        guard let target = await resolveLiveQueueEntry(localTrackID: localTrackID) else {
+        guard let target = activeQueueEntries.first(where: { $0.localTrackID == localTrackID }) else {
             return false
         }
 
@@ -673,36 +649,6 @@ final class PlaybackController {
         )
     }
 
-    private struct WindowedQueue {
-        var materialization: PlaybackQueueMaterialization
-        var heldBackEntries: [PlaybackQueueEntry]
-    }
-
-    /// Splits an ordered queue into the window handed to the player now and
-    /// the tail held back for top-ups. Every path that replaces the player's
-    /// queue goes through here, including the end-of-playlist rebuild, which
-    /// is the most repeated queue replacement Overplay makes.
-    private func windowedQueue(
-        from entries: [PlaybackQueueEntry],
-        startingAt localTrackID: String?
-    ) -> WindowedQueue {
-        let startIndex = localTrackID
-            .flatMap { localTrackID in entries.firstIndex { $0.localTrackID == localTrackID } }
-            ?? 0
-        let window = queueWindowPolicy.split(entryCount: entries.count, startIndex: startIndex)
-        return WindowedQueue(
-            materialization: PlaybackQueueMaterializer.materialize(
-                Array(entries[window.delivered]),
-                startingAt: localTrackID
-            ),
-            heldBackEntries: Array(entries[window.pending])
-        )
-    }
-
-    private func disableMusicKitPlaybackModes() {
-        player.disablePlaybackModes()
-    }
-
     private func musicPlaybackFailureMessage(for error: Error) -> String {
         let nsError = error as NSError
         if nsError.domain == "MPMusicPlayerControllerErrorDomain" {
@@ -849,7 +795,6 @@ final class PlaybackController {
         }
         activeQueueEntries = []
         activeQueueIndex = nil
-        setPendingQueueEntries([])
         currentPlaylistID = nil
         currentPlaylistScope = .active
         currentPlaylistItem = nil
@@ -886,18 +831,15 @@ final class PlaybackController {
         warmUpTask?.cancel()
         warmUpTask = nil
 
-        // Hand the player a window rather than the whole playlist: the queue
-        // replacement is the largest payload Overplay sends MusicKit, and the
-        // rest is appended as the window drains.
-        let windowed = windowedQueue(from: queueEntries, startingAt: localTrackID)
-        let materialization = windowed.materialization
+        // The whole order, in one hand-off. MusicKit owns shuffle and repeat
+        // now, and it can only shuffle or loop what it actually holds.
+        let materialization = PlaybackQueueMaterializer.materialize(queueEntries, startingAt: localTrackID)
         let expectedEntryIDs = Set(materialization.realizedEntries.map(\.queueEntryID))
         let result = await performPlayerConfirmedTransition(
             outgoingEntryID: outgoing.entryID,
             expectedEntryIDs: expectedEntryIDs,
             command: {
-                disableMusicKitPlaybackModes()
-                player.replaceQueue(with: materialization)
+                        player.replaceQueue(with: materialization)
                 try await player.play()
             },
             onObservedTransition: { confirmation in
@@ -921,8 +863,7 @@ final class PlaybackController {
                 }
                 activeSession = nil
                 updateActiveQueue(realizedEntries: materialization.realizedEntries, startingAt: localTrackID)
-                setPendingQueueEntries(windowed.heldBackEntries)
-                playbackIntended = true
+                        playbackIntended = true
                 clearDeliveryFailure()
                 currentPlaylistID = playlistID
                 currentPlaylistScope = scope
@@ -957,220 +898,6 @@ final class PlaybackController {
         case .rejected:
             throw PlaybackTransitionError.transitionInProgress
         }
-    }
-
-    /// Appends the next slice of held-back entries once the delivered window
-    /// runs low, so queue hand-off cost stays flat however long the playlist
-    /// grows.
-    /// The single writer for the held-back tail. Replacing it always
-    /// invalidates any top-up in flight and any entry still awaiting
-    /// correlation, both of which describe the queue being replaced.
-    private func setPendingQueueEntries(_ entries: [PlaybackQueueEntry]) {
-        pendingQueueEntries = entries
-        deliveredUncorrelatedEntries = []
-        queueGeneration &+= 1
-    }
-
-    private func topUpPlayerQueueIfNeeded() async {
-        guard !isToppingUpQueue,
-              !pendingQueueEntries.isEmpty,
-              !isPerformingTransition,
-              !isRestartingQueue,
-              let activeQueueIndex else {
-            return
-        }
-
-        // Entries appended but not yet correlated are still in the player's
-        // queue, so they count as delivered. Without them a queue waiting to
-        // hydrate would look empty ahead and top up on every tick.
-        let count = queueWindowPolicy.topUpCount(
-            remainingAhead: activeQueueEntries.count - activeQueueIndex - 1
-                + deliveredUncorrelatedEntries.count,
-            pendingCount: pendingQueueEntries.count
-        )
-        guard count > 0 else { return }
-
-        if !deliveredUncorrelatedEntries.isEmpty {
-            TrackMetadataDiagnostics.log(
-                "queue top-up proceeding with \(deliveredUncorrelatedEntries.count) entries still awaiting correlation"
-            )
-        }
-
-        await deliverPendingEntries(count: count, reason: "top-up")
-    }
-
-    /// Hands the leading `count` held-back entries to the player and accounts
-    /// for them. The single place the held-back tail is consumed, so top-up
-    /// and reach-ahead cannot drift apart in how they handle a queue replaced
-    /// mid-append.
-    @discardableResult
-    private func deliverPendingEntries(count: Int, reason: String) async -> Bool {
-        // `refresh` exits early during a transition, so `pendingQueueEntries`
-        // can still describe the outgoing queue while another surface replaces
-        // the live one. Appending then puts one playlist's tail onto another's
-        // queue, ahead of the generation bump that would have caught it. These
-        // guards belong here rather than in a caller: this is the only place
-        // the held-back tail is consumed.
-        guard count > 0,
-              count <= pendingQueueEntries.count,
-              !isToppingUpQueue,
-              !isPerformingTransition,
-              !isRestartingQueue else {
-            return false
-        }
-
-        let batch = Array(pendingQueueEntries.prefix(count))
-        let generation = queueGeneration
-        isToppingUpQueue = true
-        defer { isToppingUpQueue = false }
-        do {
-            try await player.appendToQueue(batch.map(\.musicTrack))
-        } catch {
-            TrackMetadataDiagnostics.log("queue \(reason) failed: \(error.localizedDescription)")
-            return false
-        }
-
-        // A queue replacement can land while the append is in flight. Comparing
-        // contents is not enough — a restore rebuilds an identical tail — so
-        // the tail is identified by generation. Consuming a stale count here
-        // would drop entries from the new play order, or trap outright.
-        guard generation == queueGeneration, pendingQueueEntries.count >= count else {
-            return false
-        }
-
-        pendingQueueEntries.removeFirst(count)
-        deliveredUncorrelatedEntries.append(contentsOf: batch.map(PendingQueueCorrelation.init(entry:)))
-        correlateDeliveredEntriesIfNeeded()
-        return true
-    }
-
-    /// Hands over enough of the held-back tail to reach a track the user asked
-    /// for by name, so an in-queue skip stays possible instead of degrading
-    /// into a queue replacement.
-    ///
-    /// Windowing made this necessary: the track is in the playback order the
-    /// user is looking at, but not in the queue the player holds. Rebuilding
-    /// from it plays the right track but drops everything before it, which on
-    /// a browse-heavy surface like CarPlay turns an ordinary track tap into a
-    /// queue replacement and a truncated history.
-    private func reachPendingEntry(localTrackID: String) async -> Bool {
-        guard let index = pendingQueueEntries.firstIndex(where: { $0.localTrackID == localTrackID }),
-              let count = queueWindowPolicy.reachAheadCount(toPendingIndex: index) else {
-            return false
-        }
-
-        return await deliverPendingEntries(count: count, reason: "reach-ahead")
-    }
-
-    /// Resolves a directly requested track to an entry of the live queue,
-    /// reaching into the held-back tail when the queue does not hold it yet.
-    ///
-    /// Returns nil only when the queue genuinely cannot serve the track, which
-    /// is the caller's signal to rebuild. Every transient state is waited out
-    /// rather than mistaken for absence — a delivery already in flight, a
-    /// transition being confirmed, or entries the player has accepted but not
-    /// yet reported item IDs for. Mistaking any of those for "not here" costs
-    /// a queue replacement and the history behind the listener, which is the
-    /// exact outcome reaching exists to avoid.
-    private func resolveLiveQueueEntry(localTrackID: String) async -> RealizedPlaybackQueueEntry? {
-        for _ in 0..<max(transitionConfirmationPolicy.maximumObservationCount, 1) {
-            if let entry = activeQueueEntries.first(where: { $0.localTrackID == localTrackID }) {
-                return entry
-            }
-
-            // Delivered, but MusicKit has not reported an item ID for it yet.
-            // It is in the player's queue; only the correlation is missing.
-            if deliveredUncorrelatedEntries.contains(where: { $0.localTrackID == localTrackID }) {
-                correlateDeliveredEntriesIfNeeded()
-                await sleepForTransitionConfirmation(transitionConfirmationPolicy.observationInterval)
-                continue
-            }
-
-            // Another delivery or transition is mid-flight, so the tail and the
-            // correlated queue are both still settling. Deciding now would read
-            // an in-flight batch as absent.
-            if isToppingUpQueue || isPerformingTransition || isRestartingQueue {
-                await sleepForTransitionConfirmation(transitionConfirmationPolicy.observationInterval)
-                continue
-            }
-
-            guard await reachPendingEntry(localTrackID: localTrackID) else {
-                return nil
-            }
-        }
-
-        return activeQueueEntries.first { $0.localTrackID == localTrackID }
-    }
-
-    /// Correlates appended entries as Apple Music hydrates the items behind
-    /// them. Unbounded on purpose: an entry whose item has resolved can always
-    /// be matched, so this drains as hydration completes, and abandoning it
-    /// early is what turns a hydrating queue into a torn-down one.
-    private func correlateDeliveredEntriesIfNeeded() {
-        guard !deliveredUncorrelatedEntries.isEmpty else { return }
-
-        let realizedEntries = PlaybackQueueSnapshotCorrelator.realizedEntries(
-            expected: deliveredUncorrelatedEntries,
-            snapshots: player.queueEntrySnapshots,
-            reservedEntryIDs: Set(activeQueueEntries.map(\.queueEntryID))
-        )
-
-        // Adopt only the leading run that correlated. Hydration completes
-        // piecemeal, and taking a later entry before an earlier one would put
-        // `activeQueueEntries` out of the player's order, which every position
-        // calculation downstream depends on.
-        let correlatedLocalTrackIDs = Set(realizedEntries.map(\.localTrackID))
-        let leadingRun = deliveredUncorrelatedEntries.prefix {
-            correlatedLocalTrackIDs.contains($0.localTrackID)
-        }
-        guard !leadingRun.isEmpty else { return }
-
-        // Retire on local track ID. A realized entry carries the ID the player
-        // reported, which on a cross-domain match is deliberately not the ID
-        // the track was queued with — comparing those would retire nothing.
-        let adoptedLocalTrackIDs = Set(leadingRun.map(\.localTrackID))
-        activeQueueEntries.append(
-            contentsOf: realizedEntries.filter { adoptedLocalTrackIDs.contains($0.localTrackID) }
-        )
-        deliveredUncorrelatedEntries.removeFirst(leadingRun.count)
-    }
-
-    /// Whether an uncorrelated player entry is one Overplay itself appended
-    /// and is still waiting to correlate.
-    ///
-    /// This is the difference between "the queue diverged" and "our own
-    /// top-up has not been matched yet". Only the former may tear playback
-    /// state down; treating the latter as divergence discards the rest of the
-    /// playlist and the durable restore state for a queue that is playing
-    /// exactly what Overplay asked for.
-    private func isAwaitingCorrelation(_ identity: CurrentPlaybackIdentity) -> Bool {
-        guard playerStillHoldsOverplayQueue() else { return false }
-
-        return deliveredUncorrelatedEntries.contains { member in
-            member.matches(identity.musicItemID)
-                || (identity.localTrackID.map { $0 == member.localTrackID } ?? false)
-        }
-    }
-
-    /// Whether any entry Overplay handed the player is still in its queue.
-    ///
-    /// Without this, an external takeover that happens to land on a track
-    /// Overplay had appended would look like a top-up awaiting correlation
-    /// forever: the entries it would match against are gone, so correlation
-    /// can never succeed and the divergence would be suppressed for the life
-    /// of the queue.
-    private func playerStillHoldsOverplayQueue() -> Bool {
-        guard !activeQueueEntries.isEmpty else { return false }
-
-        let liveEntryIDs = Set(player.queueEntrySnapshots.map(\.id))
-        return activeQueueEntries.contains { liveEntryIDs.contains($0.queueEntryID) }
-    }
-
-    /// True while Overplay is waiting on Apple Music to hydrate entries it
-    /// appended itself. Those entries are the expected cause of an
-    /// unresolvable current entry after a top-up, and are not divergence.
-    private var isAwaitingOwnQueueHydration: Bool {
-        !deliveredUncorrelatedEntries.isEmpty && playerStillHoldsOverplayQueue()
     }
 
     func togglePlayPause(context: ModelContext) async {
@@ -1293,17 +1020,17 @@ final class PlaybackController {
             if PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
                 activeQueueIndex: activeQueueIndex,
                 activeQueueCount: activeQueueEntries.count,
-                hasCurrentEntry: player.currentEntry != nil,
-                hasUndeliveredEntries: !pendingQueueEntries.isEmpty
-                    || !deliveredUncorrelatedEntries.isEmpty
-            ), let lastMusicItemID = outgoing.musicItemID,
-               await handleQueueEnded(
-                   lastMusicItemID: lastMusicItemID,
-                   lastLocalTrackID: outgoing.localTrackID,
-                   settings: settings,
-                   naturalCompletion: false,
-                   context: context
-               ) {
+                hasCurrentEntry: player.currentEntry != nil
+            ), outgoing.musicItemID != nil {
+                // The queue really is exhausted. MusicKit owns repeat, so
+                // whether anything plays next is its decision, not Overplay's.
+                evaluateOutgoingTransition(
+                    outgoing,
+                    settings: settings,
+                    naturalCompletion: false,
+                    context: context
+                )
+                await refresh(context: context)
                 return
             }
             await refresh(context: context)
@@ -1347,34 +1074,45 @@ final class PlaybackController {
     }
 
     func toggleShuffle(context: ModelContext) async {
-        await reshuffleCurrentPlaylist(context: context)
+        await setShuffleEnabled(!shuffleEnabled, context: context)
     }
 
+    /// A mode change, not a rebuild. MusicKit shuffles the queue it already
+    /// holds, so nothing is reordered, requeued or restarted.
     func setShuffleEnabled(_ isEnabled: Bool, context: ModelContext) async {
-        guard isEnabled else {
-            playbackModeVersion += 1
-            return
-        }
-        await reshuffleCurrentPlaylist(context: context)
+        player.shuffleMode = isEnabled ? .songs : .off
+        playbackModeVersion += 1
+        await refresh(context: context)
     }
 
+    /// Cycles the way a system repeat control does: off, all, one.
+    func cycleRepeatMode(context: ModelContext) async {
+        player.repeatMode = switch player.repeatMode {
+        case MusicPlayer.RepeatMode.none: .all
+        case .all: .one
+        default: MusicPlayer.RepeatMode.none
+        }
+        playbackModeVersion += 1
+        await refresh(context: context)
+    }
+
+    func setRepeatMode(_ mode: MusicPlayer.RepeatMode, context: ModelContext) async {
+        player.repeatMode = mode
+        playbackModeVersion += 1
+        await refresh(context: context)
+    }
+
+    /// Kept for the remote shuffle command, which asks for shuffle rather
+    /// than for a new order.
     @discardableResult
     func reshuffleCurrentPlaylist(context: ModelContext) async -> Bool {
-        guard let currentPlaylistID else {
+        guard currentPlaylistID != nil else {
             statusMessage = "Choose a playlist first."
             return false
         }
-        guard let settings = monitoredSettings(context: context) else {
-            statusMessage = "Playback settings are unavailable."
-            return false
-        }
 
-        return await shuffleAndPlay(
-            musicPlaylistID: currentPlaylistID,
-            scope: currentPlaylistScope,
-            settings: settings,
-            context: context
-        )
+        await setShuffleEnabled(true, context: context)
+        return true
     }
 
     func currentPlaylistRole(context: ModelContext) -> PlaylistRole? {
@@ -1461,7 +1199,6 @@ final class PlaybackController {
             try TrackActionService.keepCurrentTrack(
                 target.item,
                 playlist: target.playlist,
-                protect: settings.protectKeptTracks,
                 message: "Kept by user",
                 in: context
             )
@@ -1491,60 +1228,6 @@ final class PlaybackController {
         rebuildActivePlaylistSnapshot(context: context)
         statusMessage = "Promoted \(currentTrack?.title ?? "track") to the One True Playlist."
         await next(settings: settings, context: context)
-    }
-
-    @discardableResult
-    func protectCurrentTrack(context: ModelContext, message: String = "Protected by user") -> Bool {
-        guard let target = currentPlaybackTarget(context: context) else {
-            statusMessage = "Choose a linked playlist track to protect."
-            return false
-        }
-
-        do {
-            try TrackActionService.protectTrack(
-                target.item,
-                playlist: target.playlist,
-                message: message,
-                in: context
-            )
-        } catch {
-            statusMessage = error.localizedDescription
-            return false
-        }
-        currentPlaylistItem = target.item
-        syncPlaybackMetadata(for: target.musicItemID, trustedPlaylistItem: target.item, context: context)
-        rebuildActivePlaylistSnapshot(context: context)
-        return true
-    }
-
-    @discardableResult
-    func toggleCurrentKeep(
-        context: ModelContext,
-        enabledMessage: String = "Keep turned on by user",
-        disabledMessage: String = "Keep turned off by user"
-    ) -> Bool {
-        guard let target = currentPlaybackTarget(context: context) else {
-            statusMessage = "Choose a linked playlist track to toggle keep."
-            return false
-        }
-
-        let shouldProtect = !target.item.protected
-        do {
-            try TrackActionService.setProtected(
-                target.item,
-                playlist: target.playlist,
-                isProtected: shouldProtect,
-                message: shouldProtect ? enabledMessage : disabledMessage,
-                in: context
-            )
-        } catch {
-            statusMessage = error.localizedDescription
-            return false
-        }
-        currentPlaylistItem = target.item
-        syncPlaybackMetadata(for: target.musicItemID, trustedPlaylistItem: target.item, context: context)
-        rebuildActivePlaylistSnapshot(context: context)
-        return true
     }
 
     @discardableResult
@@ -1697,19 +1380,14 @@ final class PlaybackController {
         let oldCurrentItemLocalTrackID = currentPlaylistItem?.trackID.uuidString
         let oldActiveQueueLocalTrackID = activeQueueCurrentLocalTrackID
         updateMusicKitNowPlayingTrack()
-        correlateDeliveredEntriesIfNeeded()
         let identity = resolvedCurrentPlaybackIdentity(context: context)
         let hasUnresolvedConcretePlayerEntry = player.currentEntry != nil && identity == nil
         // MusicKit can report an entry before its item is available. Hold the
         // current belief while it hydrates instead of tearing playback state
         // down on one observation.
-        // Entries Apple Music materialized for a top-up routinely report
-        // before their items hydrate, so an unresolvable entry mid-queue is
-        // now expected where it used to mean trouble. Do not let it age into
-        // divergence while Overplay is still waiting on its own append.
         unresolvedEntryState = PlaybackUnresolvedEntryPolicy.assess(
             unresolvedEntryState,
-            hasUnresolvedConcreteEntry: hasUnresolvedConcretePlayerEntry && !isAwaitingOwnQueueHydration
+            hasUnresolvedConcreteEntry: hasUnresolvedConcretePlayerEntry
         )
         let hasDivergedUnresolvedPlayerEntry = unresolvedEntryState.hasDiverged
         let hasUncorrelatedConcretePlayerEntry = player.currentEntry != nil
@@ -1739,28 +1417,30 @@ final class PlaybackController {
             // stopped stays true every tick until something changes it. Record
             // once per queue end, reusing the flag that already exists to
             // edge-trigger the neighbouring diagnostic below.
-            let willRestart = oldTrackID != nil
+            let endedNaturally = oldTrackID != nil
                 && PlaybackQueueEndPolicy.shouldRestartAfterQueueEnd(session: activeSession)
             if !didLogQueueEndWithoutRestart {
                 MusicKitActivityLog.shared.record(
                     .queueEndObserved,
-                    detail: willRestart ? "restart attempted" : "no restart"
+                    detail: endedNaturally ? "played out" : "stopped mid-track"
                 )
             }
-            if let oldTrackID, willRestart {
+            if let oldTrackID, endedNaturally {
+                // The last track finished. Credit it, then stop: MusicKit owns
+                // repeat, so whether anything plays next is its decision.
                 TrackMetadataDiagnostics.log(
                     "queue ended naturally status=\(player.playbackStatus) lastTrackID=\(oldTrackID) lastLocalTrackID=\(queueEndLocalTrackID ?? "nil")"
                 )
                 didLogQueueEndWithoutRestart = false
-                if let settings = monitoredSettings(context: context),
-                   await handleQueueEnded(
-                    lastMusicItemID: oldTrackID,
-                    lastLocalTrackID: queueEndLocalTrackID,
-                    settings: settings,
-                    naturalCompletion: true,
-                    context: context
-                ) {
-                    return
+                if let settings = monitoredSettings(context: context) {
+                    evaluateActiveSession(
+                        settings: settings,
+                        context: context,
+                        naturalCompletion: true,
+                        elapsedSeconds: activeSession?.lastObservedPlaybackTime,
+                        durationSeconds: activeSession?.durationSeconds,
+                        fallbackLocalTrackID: queueEndLocalTrackID
+                    )
                 }
             } else {
                 // The player abandoned the queue mid-track and the
@@ -1800,11 +1480,7 @@ final class PlaybackController {
             elapsedSeconds = currentPlaybackTime
         }
 
-        // An entry Overplay appended itself is uncorrelated by design until
-        // the player reports its item. Suppression is keyed on that entry
-        // rather than on a tick budget, so a genuinely external entry still
-        // tears down immediately and a slow hydration never does.
-        if hasUncorrelatedConcretePlayerEntry, identity.map({ !isAwaitingCorrelation($0) }) ?? true {
+        if hasUncorrelatedConcretePlayerEntry {
             // A concrete MusicKit entry outside the realized queue is the
             // authority, but it cannot inherit the outgoing playlist row or
             // restoration identity. Preserve the resolved item below while
@@ -1869,7 +1545,6 @@ final class PlaybackController {
             prefetchedArtworkTrackID = nil
             // Nothing is playing, so the held-back tail describes no queue.
             // Left in place it would retain the whole decoded playlist.
-            setPendingQueueEntries([])
         }
 
         logPlaybackRefreshIfNeeded(identity: identity)
@@ -1894,9 +1569,6 @@ final class PlaybackController {
             hasCurrentEntry: player.currentEntry != nil,
             playbackTime: currentPlaybackTime
         )
-        // Last, so this tick's decisions are all made from one observation of
-        // the player rather than across a suspension point.
-        await topUpPlayerQueueIfNeeded()
     }
 
     private func applyResolvedPlaybackIdentity(_ identity: CurrentPlaybackIdentity, context: ModelContext) {
@@ -2621,123 +2293,6 @@ final class PlaybackController {
         )
     }
 
-    private func handleQueueEnded(
-        lastMusicItemID: String,
-        lastLocalTrackID: String? = nil,
-        settings: OverplaySettings,
-        naturalCompletion: Bool,
-        context: ModelContext
-    ) async -> Bool {
-        guard let currentPlaylistID,
-              (try? currentPlaylist(in: context)) != nil,
-              !isRestartingQueue else {
-            return false
-        }
-
-        isRestartingQueue = true
-        defer { isRestartingQueue = false }
-        return await MusicKitActivityLog.shared.withOrigin(.automatic) {
-            await performQueueEndRestart(
-                currentPlaylistID: currentPlaylistID,
-                lastMusicItemID: lastMusicItemID,
-                lastLocalTrackID: lastLocalTrackID,
-                settings: settings,
-                naturalCompletion: naturalCompletion,
-                context: context
-            )
-        }
-    }
-
-    private func performQueueEndRestart(
-        currentPlaylistID: String,
-        lastMusicItemID: String,
-        lastLocalTrackID: String?,
-        settings: OverplaySettings,
-        naturalCompletion: Bool,
-        context: ModelContext
-    ) async -> Bool {
-        let outgoing = captureOutgoingPlaybackTransition()
-
-        do {
-            let reshuffled = try PlaybackQueueOrchestrator.previewedReshuffledQueue(
-                playlistID: currentPlaylistID,
-                playerID: playerID,
-                scope: currentPlaylistScope,
-                avoiding: lastLocalTrackID ?? localTrackID(
-                    matching: lastMusicItemID,
-                    playlistID: currentPlaylistID,
-                    context: context
-                ),
-                in: context
-            )
-            guard !reshuffled.entries.isEmpty else { return false }
-
-            let startingLocalTrackID = reshuffled.entries.first?.localTrackID
-            let windowed = windowedQueue(from: reshuffled.entries, startingAt: startingLocalTrackID)
-            let materialization = windowed.materialization
-            let expectedEntryIDs = Set(materialization.realizedEntries.map(\.queueEntryID))
-            let result = await performPlayerConfirmedTransition(
-                outgoingEntryID: outgoing.entryID,
-                expectedEntryIDs: expectedEntryIDs,
-                command: {
-                    disableMusicKitPlaybackModes()
-                    player.replaceQueue(with: materialization)
-                    try await player.play()
-                },
-                onObservedTransition: { confirmation in
-                    evaluateOutgoingTransition(
-                        outgoing,
-                        settings: settings,
-                        naturalCompletion: naturalCompletion,
-                        context: context
-                    )
-                    guard case .confirmed = confirmation else {
-                        clearQueueCorrelationAfterDivergedTransition()
-                        return
-                    }
-                    activeSession = nil
-                    updateActiveQueue(
-                        realizedEntries: materialization.realizedEntries,
-                        startingAt: startingLocalTrackID
-                    )
-                    setPendingQueueEntries(windowed.heldBackEntries)
-                    persistConfirmedPlaybackOrder(
-                        reshuffled.orderedTrackIDs,
-                        playlistID: currentPlaylistID,
-                        scope: currentPlaylistScope
-                    )
-                    playbackIntended = true
-                },
-                onUnconfirmed: {
-                    await restorePlayerQueueAfterUnconfirmedTransition(outgoing, context: context)
-                }
-            )
-
-            switch result {
-            case .confirmed:
-                await refresh(context: context)
-                return true
-            case .diverged:
-                statusMessage = "Apple Music moved to a different track while restarting the queue."
-                await refresh(context: context)
-                return true
-            case .failed(let error):
-                await refresh(context: context)
-                reportDeliveryFailure(message: musicPlaybackFailureMessage(for: error))
-                return false
-            case .timedOut:
-                await refresh(context: context)
-                reportDeliveryFailure(message: PlaybackTransitionError.confirmationTimedOut.localizedDescription)
-                return false
-            case .rejected:
-                return false
-            }
-        } catch {
-            statusMessage = error.localizedDescription
-            return false
-        }
-    }
-
     /// A queue replacement changed the live player before confirmation. The
     /// stored order was deliberately not overwritten, so rebuild that queue,
     /// restore its position/play intent, and re-correlate the realized IDs.
@@ -2761,9 +2316,10 @@ final class PlaybackController {
             return
         }
 
-        let windowed = windowedQueue(from: entries, startingAt: outgoing.localTrackID)
-        let materialization = windowed.materialization
-        setPendingQueueEntries(windowed.heldBackEntries)
+        let materialization = PlaybackQueueMaterializer.materialize(
+            entries,
+            startingAt: outgoing.localTrackID
+        )
         player.replaceQueue(with: materialization)
         player.playbackTime = outgoing.elapsedSeconds
         if outgoing.wasPlaying {
@@ -3103,26 +2659,15 @@ final class PlaybackController {
                 tracksByID: inputs.tracksByID
             )
             guard !entries.isEmpty else { return }
-            guard pendingQueueEntries.isEmpty else {
-                // The live queue is only a window. Appending to its tail would
-                // put these tracks ahead of everything still held back, so
-                // play order would stop matching local order. Queue them
-                // behind the tail instead.
-                pendingQueueEntries.append(contentsOf: entries)
-                return
-            }
-
-            // Hand over a window's worth and hold the rest back, so a large
-            // sync cannot become an unbounded insert.
-            let delivered = Array(entries.prefix(queueWindowPolicy.windowSize))
-            pendingQueueEntries = Array(entries.dropFirst(delivered.count))
-            try await player.appendToQueue(delivered.map(\.musicTrack))
-            // Register them like any other top-up: an entry the player holds
-            // but Overplay never correlated reads as divergence when reached.
-            deliveredUncorrelatedEntries.append(
-                contentsOf: delivered.map(PendingQueueCorrelation.init(entry:))
-            )
-            correlateDeliveredEntriesIfNeeded()
+            try await player.appendToQueue(entries.map(\.musicTrack))
+            // The player creates these entries, so they have to be correlated
+            // back rather than assumed: it can report them under the other
+            // Apple Music ID domain, or before their items hydrate.
+            activeQueueEntries.append(contentsOf: PlaybackQueueSnapshotCorrelator.realizedEntries(
+                expected: entries.map(PendingQueueCorrelation.init(entry:)),
+                snapshots: player.queueEntrySnapshots,
+                reservedEntryIDs: Set(activeQueueEntries.map(\.queueEntryID))
+            ))
         } catch {
             statusMessage = "Added tracks locally, but updating the live queue failed: \(error.localizedDescription)"
         }
