@@ -824,6 +824,7 @@ final class PlaybackController {
         // now, and it can only shuffle or loop what it actually holds.
         let materialization = PlaybackQueueMaterializer.materialize(queueEntries, startingAt: localTrackID)
         let expectedEntryIDs = Set(materialization.realizedEntries.map(\.queueEntryID))
+        var didRecoverReissuedStart = false
         let result = await performPlayerConfirmedTransition(
             outgoingEntryID: outgoing.entryID,
             expectedEntryIDs: expectedEntryIDs,
@@ -846,13 +847,30 @@ final class PlaybackController {
                     )
                 }
 
-                guard case .confirmed = confirmation else {
-                    clearQueueCorrelationAfterDivergedTransition()
+                switch confirmation {
+                case .confirmed:
+                    updateActiveQueue(realizedEntries: materialization.realizedEntries, startingAt: localTrackID)
+                case .diverged:
+                    // MusicKit can re-materialize a queue during the initial
+                    // handoff, before Overplay has committed its playlist
+                    // identity. Prove the live queue still belongs to the
+                    // requested playlist and rebuild correlation just as we
+                    // do for a later shuffle/repeat re-materialization.
+                    currentPlaylistID = playlistID
+                    currentPlaylistScope = scope
+                    updateActiveQueue(realizedEntries: materialization.realizedEntries, startingAt: localTrackID)
+                    recorrelateLiveQueueIfNeeded(currentEntry: player.currentEntry, context: context)
+                    guard let currentEntry = player.currentEntry,
+                          activeQueueEntries.contains(where: { $0.queueEntryID == currentEntry.id }) else {
+                        clearQueueCorrelationAfterDivergedTransition()
+                        return
+                    }
+                    didRecoverReissuedStart = true
+                case .waiting:
                     return
                 }
                 activeSession = nil
-                updateActiveQueue(realizedEntries: materialization.realizedEntries, startingAt: localTrackID)
-                        playbackIntended = true
+                playbackIntended = true
                 clearDeliveryFailure()
                 currentPlaylistID = playlistID
                 currentPlaylistScope = scope
@@ -873,6 +891,9 @@ final class PlaybackController {
 
         switch result {
         case .confirmed:
+            await refresh(context: context)
+            await ArtworkCacheService.shared.touchPlaylistUsage(playlistID)
+        case .diverged where didRecoverReissuedStart:
             await refresh(context: context)
             await ArtworkCacheService.shared.touchPlaylistUsage(playlistID)
         case .diverged:
