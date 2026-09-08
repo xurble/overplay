@@ -533,7 +533,7 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func buttonImage(systemImage: String) -> UIImage {
-        let configuration = UIImage.SymbolConfiguration(pointSize: 28, weight: .regular)
+        let configuration = UIImage.SymbolConfiguration(pointSize: 24, weight: .light)
         return (UIImage(systemName: systemImage, withConfiguration: configuration) ?? UIImage())
             .withRenderingMode(.alwaysTemplate)
     }
