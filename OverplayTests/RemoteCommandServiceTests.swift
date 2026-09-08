@@ -6,6 +6,39 @@ import Testing
 @MainActor
 @Suite("Remote command service", .serialized)
 struct RemoteCommandServiceTests {
+    @Test("a paused queue the player is holding keeps its remote commands")
+    func pausedHeldQueueKeepsItsRemoteCommands() {
+        // The exact case the availability guard used to drop: the player is
+        // holding a queue, Overplay has lost correlation so it has nothing
+        // restorable to describe, and nothing is playing. Next, Previous,
+        // shuffle and repeat were disabled on the Lock Screen, Control
+        // Center, CarPlay and AirPods for a queue that could still be
+        // resumed and skipped.
+        #expect(PlaybackRemoteCommandAvailability.make(
+            canSkipTracks: true,
+            hasRestorablePlayback: false,
+            isPlaying: false,
+            isTransitionInFlight: false,
+            isDeliveryStalled: false
+        ) == PlaybackRemoteCommandAvailability(
+            canPlay: true,
+            canPause: false,
+            canTogglePlayPause: true,
+            canSkipToNext: true,
+            canSkipToPrevious: true,
+            canShuffle: true
+        ))
+
+        // A held queue does not override transition suppression.
+        #expect(PlaybackRemoteCommandAvailability.make(
+            canSkipTracks: true,
+            hasRestorablePlayback: false,
+            isPlaying: false,
+            isTransitionInFlight: true,
+            isDeliveryStalled: false
+        ) == .unavailable)
+    }
+
     @Test("availability follows queue, playback, transition, restore, and delivery state")
     func availabilityFollowsAuthoritativePlaybackState() {
         #expect(PlaybackRemoteCommandAvailability.make(

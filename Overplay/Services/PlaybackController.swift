@@ -591,6 +591,19 @@ final class PlaybackController {
         activeQueueCurrentEntry?.localTrackID
     }
 
+    /// The entries the player is holding right now, or nil when it holds
+    /// none.
+    ///
+    /// Transition validation asks the player rather than Overplay's mapped
+    /// queue. A re-materialized queue hydrates piecemeal, so the mapped
+    /// queue can legitimately be a subset of it, and landing on an entry the
+    /// player is demonstrably holding is not divergence — it is correlation
+    /// that has not caught up yet.
+    private var liveQueueEntryIDs: Set<String>? {
+        let ids = Set(player.queueEntrySnapshots.map(\.id))
+        return ids.isEmpty ? nil : ids
+    }
+
     private var activeQueueCurrentEntry: RealizedPlaybackQueueEntry? {
         guard let activeQueueIndex,
               activeQueueEntries.indices.contains(activeQueueIndex) else {
@@ -911,7 +924,11 @@ final class PlaybackController {
     }
 
     func playCurrentOrDefault(settings: OverplaySettings, context: ModelContext) async {
-        if canControlPlayback {
+        // A queue the player is holding is resumed, not replaced — including
+        // when Overplay has lost correlation and cannot describe it. Falling
+        // through to the default playlist here would restart it from its
+        // first track under a play button that meant "resume".
+        if canControlPlayback || canSkipTracks {
             await play(context: context)
             return
         }
@@ -972,9 +989,7 @@ final class PlaybackController {
         let outgoing = captureOutgoingPlaybackTransition()
         let result = await performPlayerConfirmedTransition(
             outgoingEntryID: outgoing.entryID,
-            expectedEntryIDs: activeQueueEntries.isEmpty
-                ? nil
-                : Set(activeQueueEntries.map(\.queueEntryID)),
+            expectedEntryIDs: liveQueueEntryIDs,
             command: {
                 try await player.skipToNextEntry()
             },
@@ -1024,9 +1039,7 @@ final class PlaybackController {
         let outgoing = captureOutgoingPlaybackTransition()
         let result = await performPlayerConfirmedTransition(
             outgoingEntryID: outgoing.entryID,
-            expectedEntryIDs: activeQueueEntries.isEmpty
-                ? nil
-                : Set(activeQueueEntries.map(\.queueEntryID)),
+            expectedEntryIDs: liveQueueEntryIDs,
             command: {
                 try await player.skipToPreviousEntry()
             },
@@ -1484,13 +1497,13 @@ final class PlaybackController {
             // unable to describe or pause playback that is still running.
             clearQueueCorrelationPreservingPlayback()
         } else if currentTrack != nil || currentPlaylistID != nil {
-            if let activeSession {
-                self.activeSession = PlaybackSessionEvaluationService.updateObservedProgress(
-                    activeSession,
-                    elapsedSeconds: elapsedSeconds,
-                    durationSeconds: durationSeconds ?? currentTrack?.durationSeconds
-                )
-            }
+            // Deliberately leaves the session's observed progress alone. The
+            // only way to reach here holding a live session is a concrete
+            // player entry Overplay cannot resolve, so `player.playbackTime`
+            // is that entry's position and not the session's. Folding it in
+            // rewound the outgoing track's evidence to the incoming track's
+            // 0s, so a play that completed was later credited as a skip at
+            // the start of the track.
             if let musicItemID = currentTrack?.id {
                 syncPlaybackMetadata(for: musicItemID, context: context)
             }
@@ -2172,6 +2185,17 @@ final class PlaybackController {
     /// recovers all of it. An entry that is not a member of the current
     /// playlist is left alone, so a genuine external takeover still reads as
     /// divergence.
+    ///
+    /// Deferred to the append machinery while that can still make progress,
+    /// which needs one previously realized entry to still be live. Once a
+    /// re-issue has taken them all, `correlateAppendedEntries` is stranded
+    /// and this is the only way back — the playlist members read below
+    /// include the appended rows, so the rebuild covers them too.
+    ///
+    /// The rebuild can only map the entries the player has hydrated, so the
+    /// mapped queue may be a subset of the live one. `liveQueueEntryIDs` and
+    /// `isAwaitingOwnQueueHydration` are what keep that subset safe, and a
+    /// later tick that finds the current entry unmapped rebuilds again.
     private func recorrelateLiveQueueIfNeeded(
         currentEntry: MusicPlayer.Queue.Entry?,
         context: ModelContext
@@ -2179,7 +2203,7 @@ final class PlaybackController {
         guard let currentPlaylistID,
               let currentEntry,
               player.currentEntryItem != nil,
-              appendedUncorrelatedEntries.isEmpty,
+              appendedUncorrelatedEntries.isEmpty || !playerStillHoldsOverplayQueue(),
               uncorrelatableEntryID != currentEntry.id,
               !activeQueueEntries.contains(where: { $0.queueEntryID == currentEntry.id }),
               let members = try? currentPlaylistQueueMembers(
@@ -2261,8 +2285,20 @@ final class PlaybackController {
     /// A current entry without an item is expected while MusicKit is still
     /// hydrating a queue member Overplay appended itself. It must not age into
     /// divergence while the rest of Overplay's queue is demonstrably live.
+    ///
+    /// A queue the player re-materialized hydrates the same way, entry by
+    /// entry, and correlation can only map the entries that have arrived. An
+    /// unresolvable current entry while any live entry is still without an
+    /// item is that hydration in progress, not divergence — ageing it into
+    /// divergence discards the active session before the outgoing track has
+    /// been credited.
     private var isAwaitingOwnQueueHydration: Bool {
-        !appendedUncorrelatedEntries.isEmpty && playerStillHoldsOverplayQueue()
+        guard playerStillHoldsOverplayQueue() else { return false }
+        guard appendedUncorrelatedEntries.isEmpty else { return true }
+        let mappedEntryIDs = Set(activeQueueEntries.map(\.queueEntryID))
+        return player.queueEntrySnapshots.contains { snapshot in
+            snapshot.musicItemID == nil && !mappedEntryIDs.contains(snapshot.id)
+        }
     }
 
     /// MusicKit owns shuffle and repeat, and `MusicPlayer.State` is not

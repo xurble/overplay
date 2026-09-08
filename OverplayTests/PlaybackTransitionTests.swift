@@ -862,6 +862,94 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
     }
 
+    @Test("a natural advance into an unhydrated re-materialized entry still credits the outgoing track")
+    func naturalAdvanceIntoUnhydratedRematerializedEntryStillCreditsOutgoingTrack() async throws {
+        // A rebuild can only map the entries the player has hydrated, so the
+        // mapped queue is legitimately a subset of the live one. Treating
+        // that subset as the whole queue aged the unmapped entry into
+        // divergence, which threw the active session away before the track
+        // that had just played out could be credited.
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+
+        let reissued = fixture.player.reissueEntryIDs(for: fixture.musicTracks, currentIndex: 0)
+        fixture.player.unhydratedEntryIDs = [reissued[1]]
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        fixture.player.playbackTime = 178
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        // Track 0 plays out and the player advances into the entry it has
+        // not hydrated. More ticks pass than the unresolved-entry policy
+        // tolerates.
+        fixture.player.advanceExternally()
+        for _ in 0..<8 {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+
+        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(fixture.controller.canSkipTracks)
+
+        // Hydration completes. Track 0 finished, so it is a playthrough —
+        // not a skip at 0s, and not nothing at all.
+        fixture.player.unhydratedEntryIDs = []
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        #expect(fixture.items[0].playthroughCount == 1)
+        #expect(fixture.items[0].skipCount == 0)
+        #expect(try fixture.history().contains { $0.eventType == .playthrough })
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[1].id.rawValue)
+        #expect(fixture.controller.currentPlaylistItem?.trackID == fixture.tracks[1].id)
+        #expect(fixture.controller.canControlPlayback)
+    }
+
+    @Test("a full re-issue during a pending append still recovers the playlist")
+    func fullReissueDuringPendingAppendStillRecoversPlaylist() async throws {
+        // `correlateAppendedEntries` needs one previously realized entry to
+        // still be live. Once a re-issue has taken them all it is stranded,
+        // and deferring to it left the destructive divergence teardown as the
+        // only outcome.
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let added = try fixture.addPlaylist(prefix: "appended", trackCount: 1)
+        fixture.context.insert(PlaylistItemRecord(
+            playlistID: fixture.playlist.id,
+            trackID: added.tracks[0].id,
+            createdAt: .now
+        ))
+        try fixture.context.save()
+
+        fixture.player.withholdsQueueItemIDs = true
+        await fixture.controller.appendLiveQueueEntries(
+            localTrackIDs: [added.tracks[0].id.uuidString],
+            playlistID: fixture.playlist.musicPlaylistID,
+            context: fixture.context
+        )
+        fixture.player.withholdsQueueItemIDs = false
+
+        fixture.player.reissueEntryIDs(
+            for: fixture.musicTracks + added.musicTracks,
+            currentIndex: 0
+        )
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
+        #expect(fixture.controller.canControlPlayback)
+
+        // The appended row is part of the rebuilt queue rather than stranded.
+        let didSkip = await fixture.controller.playTrackInCurrentQueue(
+            localTrackID: added.tracks[0].id.uuidString,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        #expect(didSkip)
+        #expect(fixture.controller.currentTrack?.id == added.musicTracks[0].id.rawValue)
+        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+    }
+
     @Test("an external takeover is still divergence, not something to re-correlate")
     func externalTakeoverIsStillDivergence() async throws {
         let fixture = try makeFixture()
@@ -983,6 +1071,36 @@ struct PlaybackTransitionTests {
         #expect(fixture.player.replaceQueueCallCount == replacementsBefore)
     }
 
+    @Test("the primary control resumes a held queue instead of restarting the playlist")
+    func thePrimaryControlResumesAHeldQueueWhenCorrelationIsLost() async throws {
+        // Remote play is now offered for a paused queue Overplay cannot
+        // describe, so it has to resume that queue. Falling through to the
+        // default playlist would restart it from its first track under a
+        // button that meant "resume".
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let external = try fixture.addPlaylist(prefix: "external", trackCount: 2)
+
+        fixture.player.replaceQueueExternally(with: external.musicTracks)
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        fixture.controller.pause()
+        let replacementsBefore = fixture.player.replaceQueueCallCount
+
+        #expect(!fixture.controller.canControlPlayback)
+        #expect(fixture.controller.canSkipTracks)
+        #expect(fixture.controller.remoteCommandAvailability.canPlay)
+
+        await fixture.controller.performPrimaryPlaybackAction(
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        #expect(fixture.player.playbackStatus == .playing)
+        #expect(fixture.player.replaceQueueCallCount == replacementsBefore)
+        #expect(fixture.controller.currentTrack?.id == external.musicTracks[0].id.rawValue)
+    }
+
     @Test("the primary control still starts playback when nothing is playing")
     func thePrimaryControlStillStartsPlaybackWhenNothingIsPlaying() async throws {
         let fixture = try await makeFixture()
@@ -1080,7 +1198,8 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     }
 
     var currentEntryItem: MusicPlayer.Queue.Entry.Item? {
-        withholdsCurrentEntryItem ? nil : currentEntryStorage?.item
+        guard !withholdsCurrentEntryItem, let currentEntryStorage else { return nil }
+        return unhydratedEntryIDs.contains(currentEntryStorage.id) ? nil : currentEntryStorage.item
     }
 
     func replaceQueue(with materialization: PlaybackQueueMaterialization) {
@@ -1188,6 +1307,9 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     var withholdsQueueItemIDs = false
     /// Simulates the same hydration delay on the already-current entry.
     var withholdsCurrentEntryItem = false
+    /// Entries Apple Music has made part of the queue but has not hydrated,
+    /// so a re-materialized queue can hydrate one entry at a time.
+    var unhydratedEntryIDs: Set<String> = []
     /// Runs while an append is in flight, so tests can reproduce the queue
     /// being replaced underneath a top-up.
     var onAppendToQueue: (() async -> Void)?
@@ -1196,10 +1318,11 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     var onPlay: (() async -> Void)?
 
     var queueEntrySnapshots: [PlayerQueueEntrySnapshot] {
-        entries.map {
-            PlayerQueueEntrySnapshot(
-                id: $0.id,
-                musicItemID: withholdsQueueItemIDs ? nil : $0.item?.id.rawValue
+        entries.map { entry in
+            let isUnhydrated = withholdsQueueItemIDs || unhydratedEntryIDs.contains(entry.id)
+            return PlayerQueueEntrySnapshot(
+                id: entry.id,
+                musicItemID: isUnhydrated ? nil : entry.item?.id.rawValue
             )
         }
     }
@@ -1224,10 +1347,12 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     /// Apple Music re-materializing the queue it already holds under fresh
     /// entry IDs, which is what a shuffle-mode change does to a loaded
     /// queue. Same tracks, same playlist, entry IDs Overplay never minted.
-    func reissueEntryIDs(for tracks: [Track], currentIndex: Int) {
+    @discardableResult
+    func reissueEntryIDs(for tracks: [Track], currentIndex: Int) -> [String] {
         entries = tracks.map { MusicPlayer.Queue.Entry($0) }
         pendingTransition = nil
         currentEntryStorage = entries.indices.contains(currentIndex) ? entries[currentIndex] : entries.first
+        return entries.map(\.id)
     }
 
     /// Another Now Playing origin replacing the queue Overplay handed over.

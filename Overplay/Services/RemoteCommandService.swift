@@ -37,7 +37,12 @@ struct PlaybackRemoteCommandAvailability: Equatable, Sendable {
         // Overplay has nothing restorable to describe. Gating this on
         // restorable playback once disabled pause on the Lock Screen, Control
         // Center, CarPlay and AirPods simultaneously.
-        guard !isTransitionInFlight, hasRestorablePlayback || isPlaying else {
+        //
+        // A queue the player is holding counts for the same reason, and it is
+        // not covered by either of the others: paused, with correlation lost,
+        // Overplay has nothing restorable to describe and nothing is playing,
+        // yet the player can still resume, skip, shuffle and repeat.
+        guard !isTransitionInFlight, hasRestorablePlayback || isPlaying || canSkipTracks else {
             return .unavailable
         }
 
