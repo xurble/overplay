@@ -3,7 +3,7 @@
 ## Specification Status
 
 This document is the canonical specification for behaviour implemented in the
-repository as of 2026-08-31. Requirements describe the current iPhone, iPad,
+repository as of 2026-09-08. Requirements describe the current iPhone, iPad,
 and CarPlay product unless a section is explicitly labelled **Planned**.
 Future work belongs in `TODO.md`; implementation details are requirements only
 when they create observable behaviour or protect a stated invariant.
@@ -506,12 +506,13 @@ interfering with each other's playback.
 
 ## Playback Order, Shuffle, and Repeat
 
-Overplay owns playback order. SwiftData tracks playlist membership, track
-metadata, play/skip history, and retirement state; it does not own playback order or playlist sort
-order. Playback order is local, disposable, and keyed by player, Apple Music
-playlist, and playlist scope. Each linked playlist has separate **Active** and
-**Retired** local orders. There is no separate unshuffled order to restore
-during playback.
+Overplay owns the local playlist order used for display and initial queue
+hand-off. SwiftData tracks playlist membership, track metadata, play/skip
+history, and retirement state; it does not store that local order or Apple
+Music's live shuffled sequence. Local order is disposable and keyed by player,
+Apple Music playlist, and playlist scope. Each linked playlist has separate
+**Active** and **Retired** local orders. There is no separate unshuffled order
+to restore during playback.
 
 > **Direction change (2026-09-07): shuffle and repeat belong to MusicKit.**
 >
@@ -604,9 +605,10 @@ Additions, retirements, and restores:
 - Restoring a track removes it from Retired order and appends it to the bottom
   of Active order.
 - For the currently playing playlist, deletion or retirement is recorded in
-  SwiftData and local order immediately, but the active MusicKit queue may be
-  left alone for the current playthrough. The track disappears on the next
-  shuffle, rebuild, or switch back to that playlist.
+  SwiftData and local order immediately. Current-track retirement advances
+  playback, but the existing MusicKit queue may retain the retired entry until
+  a later queue setup or player-managed queue change. The Active UI filters it
+  immediately.
 - When switching away from a playlist, reconcile its local order so already
   retired or otherwise unplayable tracks are removed from Active order before
   it is played again.
@@ -621,9 +623,8 @@ Active playlist projection updates:
 
 - Track changes update current-row state immediately.
 - Skip increments, playthrough counts, manual resets, retirements, restores,
-  promotions, queue rebuilds, and
-  shuffle/order changes refresh the projection after their shared controller or
-  use-case mutation succeeds.
+  promotions, queue changes, and local-order changes refresh the projection
+  after their shared controller or use-case mutation succeeds.
 - When playback switches to another playlist or clears, discard the old
   projection. The old playlist then renders from SwiftData again.
 - If projection refresh fails, keep playback and durable SwiftData state
@@ -1034,7 +1035,7 @@ window through the standard app settings command as well as in-app navigation.
 ### RemoteCommandService
 
 - Register remote command handlers.
-- Forward play, pause, next, previous, and supported shuffle actions to the
+- Forward play, pause, next, previous, shuffle, and repeat actions to the
   playback controller.
 - Avoid retain cycles and clean up handlers when appropriate.
 - Support lock-screen, Control Center, and headset transport commands.
@@ -1193,16 +1194,24 @@ The following are not requirements of the current product:
 
 ## Known Defects and Verification Gaps
 
-- CarPlay scene launch, template presentation, and in-car controls still need
-  simulator or physical-device verification.
-- Cross-surface convergence is a confirmed requirement, but the current
-  implementation is reported to be unreliable. Treat any case where SwiftUI,
-  CarPlay, Lock Screen, Control Center, or headset/media controls disagree
-  after an action as a suspected implementation defect until the acceptance
-  gate above passes.
-- Suspended-playback background refresh delivery, multi-device convergence,
-  and the playback/device checklist in `TODO.md` still require physical-device
-  verification with an Apple Music subscription.
+- The initial physical-device cross-surface acceptance pass was completed on
+  2026-09-08. Cross-surface convergence remains a standing release gate: rerun
+  the affected checks after every playback, queue, CarPlay, remote-command,
+  reconciliation, or Now Playing change.
+- CarPlay currently has two open playback-surface reports: custom Promote,
+  Retire, and Restore controls are absent on hardware
+  ([GitHub #22](https://github.com/xurble/overplay/issues/22)), and the shuffle
+  button visibly toggles several times after a track change
+  ([GitHub #28](https://github.com/xurble/overplay/issues/28)). Whether the latter
+  is presentation-only or reflects real MusicKit mode changes is unknown.
+- The distinction between CarPlay Back and the enabled Up Next button needs
+  hardware investigation
+  ([GitHub #27](https://github.com/xurble/overplay/issues/27)). Intended behaviour
+  is Back by one level and Up Next to the root playlist menu.
+- Suspended-playback reconciliation has known lifecycle, background re-arming,
+  history-deduplication, and baseline-coverage gaps tracked in
+  [GitHub #9](https://github.com/xurble/overplay/issues/9). Skips remain
+  deliberately unreconstructed for suspended intervals.
 - Keep/protection has been removed. It existed only to shield tracks from
   automatic eviction, which no longer exists: eviction is entirely manual.
 

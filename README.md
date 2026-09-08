@@ -22,9 +22,10 @@ listening time — a transition only counts as a skip if the app actually
 observed enough of the session, so playback that happens while Overplay is
 suspended never produces phantom skips. Playthroughs completed while
 suspended are recovered on the next wake (a scheduled background refresh or
-simply reopening the app) whenever they can be proven — either a snapshot
-catching the track past the playthrough threshold, or wall-clock accounting
-showing the span played continuously. Anything ambiguous counts nothing.
+simply reopening the app) whenever they can be proven — by a snapshot catching
+the track past the playthrough threshold, wall-clock accounting showing the
+span played continuously, or an Apple Music library play-count advance tied to
+the observed interval. Anything ambiguous counts nothing.
 
 Retirement is the user-facing state for tracks removed from Active playback:
 Overplay surfaces playthroughs versus skips for every linked
@@ -35,8 +36,9 @@ Playlist detail on iOS is split into **Active** and **Retired** views. Active
 contains the playable playlist; Retired contains locally retired tracks and can
 be played as its own playlist context in the app. Restoring a retired track
 makes it active again. Both Active and Retired lists follow device-local
-persisted playback order, seeded by the last randomization, rather than raw
-database order.
+persisted local order rather than raw database order. That order drives list
+presentation and the queue handed to MusicKit; MusicKit owns shuffle and repeat
+after the queue is loaded.
 
 When a track is retired, Overplay always records the event locally. If Apple
 Music allows the app to remove the track from the linked playlist, Overplay
@@ -49,8 +51,10 @@ Playback uses MusicKit's application music player with a shared playback
 controller behind every surface: the in-app Now Playing UI and mini player,
 CarPlay, Lock Screen, Control Center, and headset/remote commands. All
 surfaces route through the same controller, queue policies, and
-skip/playthrough evaluation, so a skip from CarPlay or the Lock Screen counts
-the same as a skip in the app.
+skip/playthrough evaluation while Overplay is able to observe them. If iOS
+suspends Overplay while the out-of-process MusicKit player continues, skips are
+never reconstructed from the unwitnessed interval; playthroughs are recovered
+only when persisted observations or MusicKit library evidence prove them.
 
 ## Sync and Data
 
@@ -64,8 +68,9 @@ from Active playback.
 
 Playback state stays local to each device. The currently playing track,
 queue, position, selected view, shuffle/repeat state, and window-specific
-navigation state do not sync across devices. This lets an iPhone, iPad, and
-Mac share Overplay data without controlling each other's playback.
+navigation state do not sync across devices. This lets current iPhone and iPad
+devices share Overplay data without controlling each other's playback, and the
+planned Mac target must preserve the same separation.
 
 ## Project Shape
 
@@ -92,13 +97,13 @@ Mac share Overplay data without controlling each other's playback.
 
 ## Local Configuration
 
-Shared build settings live in `Overplay/Config/Shared.xcconfig`. Local
-developer identifiers should live in `Overplay/Config/Local.xcconfig`, which
+Shared build settings live in `Config/Shared.xcconfig`. Local developer
+identifiers should live in `Config/Local.xcconfig`, which
 is ignored by git.
 
 To configure a local checkout:
 
-1. Copy `Overplay/Config/Local.example.xcconfig` to `Overplay/Config/Local.xcconfig`.
+1. Copy `Config/Local.example.xcconfig` to `Config/Local.xcconfig`.
 2. Set `DEVELOPMENT_TEAM`.
 3. Set `PRODUCT_BUNDLE_IDENTIFIER`.
 4. Set `ICLOUD_CONTAINER_IDENTIFIER`.
@@ -109,11 +114,10 @@ Developer portal and in the Xcode target for the identifiers you use.
 ## Current Status
 
 The core product loop is in place: linked playlist management, periodic sync
-with reconciliation, playback with per-playlist shuffle order, skip and
-playthrough tracking, manual retirement and promotion, unified history, search
-and manual add, CarPlay, and the adaptive iPhone/iPad shell. Remaining
-roadmap work is iPad experience refinement and the native Mac target
-alongside the open product, verification, performance, and release-hardening
-items tracked in `TODO.md`. The app is pre-release: the schema may still reset
-between builds (see the pre-release data policy in `AGENTS.md` and the release
-hardening section in `TODO.md`).
+with reconciliation, complete playlist queue hand-off with MusicKit-owned
+shuffle and repeat, skip and playthrough tracking, manual retirement and
+promotion, unified history, search and manual add, CarPlay, and the adaptive
+iPhone/iPad shell. The initial cross-surface device acceptance pass is complete,
+but it remains a standing regression gate as playback code changes. Remaining
+work is kept in impact order in `TODO.md`. The app is pre-release: the schema may
+still reset between builds under the pre-release data policy in `AGENTS.md`.

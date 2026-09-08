@@ -68,6 +68,15 @@ point of hearing it again. Its Up Next button returns to the root menu.
 The app target builds and unit tests cover CarPlay playlist summary ordering,
 playable counts, template refresh targeting, track navigation rules in
 `CarPlayNavigationPolicy`, Now Playing action policy, and the shared in-queue
-skip and playback-mode paths in `PlaybackController`. CarPlay simulator or
-device verification is still required for scene launch, template presentation,
-and in-car playback controls.
+skip and playback-mode paths in `PlaybackController`. The initial physical-device
+acceptance pass was completed on 2026-09-08. Repeat the affected hardware checks
+after every CarPlay, playback, queue-correlation, remote-command, or MusicKit-mode
+change.
+
+Current hardware follow-ups are tracked in GitHub: custom Promote, Retire, and
+Restore controls are reported missing from Now Playing
+([#22](https://github.com/xurble/overplay/issues/22)), the shuffle indicator is
+reported to toggle repeatedly after a track transition
+([#28](https://github.com/xurble/overplay/issues/28)), and the distinction between
+Back and Up Next needs confirmation
+([#27](https://github.com/xurble/overplay/issues/27)).

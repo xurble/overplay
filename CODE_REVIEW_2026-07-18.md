@@ -1,5 +1,10 @@
 # Overplay Full Code Review — 2026-07-18
 
+> Historical snapshot: this review describes the July 2026 implementation and
+> is not the current roadmap or specification. In particular, its app-owned
+> shuffle, repeat, queue-window, and end-of-playlist behaviour was withdrawn in
+> September. Use `OVERPLAY_DESIGN_SPEC.md` and `TODO.md` for current direction.
+
 Working document. Written incrementally so the review can be resumed if the
 session ends. Each chunk is marked TODO / IN PROGRESS / DONE. Findings carry
 IDs (BUG-n, PERF-n, SURF-n for cross-surface, DOC-n) with file:line refs and
@@ -47,8 +52,9 @@ Baseline: main @ 23236c1 plus uncommitted working-tree changes:
 
 ### Chunk 2 — README
 
-- DOC-1 (low, FIXED): README pointed at `Config/*.xcconfig`; actual location
-  is `Overplay/Config/*.xcconfig`. Corrected all three references.
+- DOC-1 (low, FIXED): at review time README pointed at `Config/*.xcconfig` and
+  the files lived in `Overplay/Config/*.xcconfig`. They have since moved back
+  to root `Config/`; the current README reflects their present location.
 
 ### Chunk 3 — PlaybackController
 
