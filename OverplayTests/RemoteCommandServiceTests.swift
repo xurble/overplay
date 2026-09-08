@@ -9,7 +9,7 @@ struct RemoteCommandServiceTests {
     @Test("availability follows queue, playback, transition, restore, and delivery state")
     func availabilityFollowsAuthoritativePlaybackState() {
         #expect(PlaybackRemoteCommandAvailability.make(
-            canControlPlayback: false,
+            canSkipTracks: false,
             hasRestorablePlayback: false,
             isPlaying: false,
             isTransitionInFlight: false,
@@ -17,7 +17,7 @@ struct RemoteCommandServiceTests {
         ) == .unavailable)
 
         #expect(PlaybackRemoteCommandAvailability.make(
-            canControlPlayback: true,
+            canSkipTracks: true,
             hasRestorablePlayback: true,
             isPlaying: true,
             isTransitionInFlight: false,
@@ -32,7 +32,7 @@ struct RemoteCommandServiceTests {
         ))
 
         #expect(PlaybackRemoteCommandAvailability.make(
-            canControlPlayback: true,
+            canSkipTracks: true,
             hasRestorablePlayback: true,
             isPlaying: false,
             isTransitionInFlight: false,
@@ -47,7 +47,7 @@ struct RemoteCommandServiceTests {
         ))
 
         let restoredDisplay = PlaybackRemoteCommandAvailability.make(
-            canControlPlayback: false,
+            canSkipTracks: false,
             hasRestorablePlayback: true,
             isPlaying: false,
             isTransitionInFlight: false,
@@ -61,7 +61,7 @@ struct RemoteCommandServiceTests {
         #expect(!restoredDisplay.canShuffle)
 
         #expect(PlaybackRemoteCommandAvailability.make(
-            canControlPlayback: true,
+            canSkipTracks: true,
             hasRestorablePlayback: true,
             isPlaying: true,
             isTransitionInFlight: true,
@@ -69,7 +69,7 @@ struct RemoteCommandServiceTests {
         ) == .unavailable)
 
         let deliveryFailure = PlaybackRemoteCommandAvailability.make(
-            canControlPlayback: true,
+            canSkipTracks: true,
             hasRestorablePlayback: true,
             isPlaying: true,
             isTransitionInFlight: false,
@@ -88,7 +88,7 @@ struct RemoteCommandServiceTests {
         // and disabled pause on the Lock Screen, Control Center, CarPlay and
         // AirPods at once while audio kept playing.
         let lostCorrelation = PlaybackRemoteCommandAvailability.make(
-            canControlPlayback: false,
+            canSkipTracks: false,
             hasRestorablePlayback: false,
             isPlaying: true,
             isTransitionInFlight: false,
@@ -108,7 +108,7 @@ struct RemoteCommandServiceTests {
     @Test("pause is available with correlation lost but restorable playback known")
     func pauseIsAvailableWithCorrelationLostButRestorablePlaybackKnown() {
         let availability = PlaybackRemoteCommandAvailability.make(
-            canControlPlayback: false,
+            canSkipTracks: false,
             hasRestorablePlayback: true,
             isPlaying: true,
             isTransitionInFlight: false,
@@ -121,7 +121,7 @@ struct RemoteCommandServiceTests {
     @Test("nothing is offered while nothing is playing and nothing is restorable")
     func nothingIsOfferedWhileNothingIsPlayingAndNothingIsRestorable() {
         #expect(PlaybackRemoteCommandAvailability.make(
-            canControlPlayback: false,
+            canSkipTracks: false,
             hasRestorablePlayback: false,
             isPlaying: false,
             isTransitionInFlight: false,
@@ -132,7 +132,7 @@ struct RemoteCommandServiceTests {
     @Test("a transition in flight still suppresses everything")
     func aTransitionInFlightStillSuppressesEverything() {
         #expect(PlaybackRemoteCommandAvailability.make(
-            canControlPlayback: false,
+            canSkipTracks: false,
             hasRestorablePlayback: false,
             isPlaying: true,
             isTransitionInFlight: true,

@@ -27,7 +27,7 @@ struct PlaybackRemoteCommandAvailability: Equatable, Sendable {
     )
 
     static func make(
-        canControlPlayback: Bool,
+        canSkipTracks: Bool,
         hasRestorablePlayback: Bool,
         isPlaying: Bool,
         isTransitionInFlight: Bool,
@@ -47,9 +47,12 @@ struct PlaybackRemoteCommandAvailability: Equatable, Sendable {
             // player never needs it.
             canPause: isPlaying && !isDeliveryStalled,
             canTogglePlayPause: true,
-            canSkipToNext: canControlPlayback,
-            canSkipToPrevious: canControlPlayback,
-            canShuffle: canControlPlayback
+            // Also deliberately not gated on queue correlation: the player
+            // skips inside, shuffles and repeats the queue it is holding,
+            // whatever Overplay believes about which entry is current.
+            canSkipToNext: canSkipTracks,
+            canSkipToPrevious: canSkipTracks,
+            canShuffle: canSkipTracks
         )
     }
 }

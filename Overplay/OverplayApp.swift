@@ -115,5 +115,15 @@ struct OverplayApp: App {
             playbackController: AppRuntime.shared.playbackController,
             context: context
         )
+
+        // Reconciliation above returns early when there is nothing to
+        // reconcile against, and the 1 Hz monitor suspends itself while
+        // playback is stopped. Coming back to the foreground therefore
+        // needs one unconditional observation, or the play state, current
+        // track and the shuffle/repeat modes another surface changed while
+        // Overplay was away stay stale on screen.
+        if phase == .active {
+            await AppRuntime.shared.playbackController.reconcilePlayerState(context: context)
+        }
     }
 }
