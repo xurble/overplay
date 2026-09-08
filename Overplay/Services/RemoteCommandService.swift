@@ -27,7 +27,7 @@ struct PlaybackRemoteCommandAvailability: Equatable, Sendable {
     )
 
     static func make(
-        canControlPlayback: Bool,
+        canSkipTracks: Bool,
         hasRestorablePlayback: Bool,
         isPlaying: Bool,
         isTransitionInFlight: Bool,
@@ -37,7 +37,12 @@ struct PlaybackRemoteCommandAvailability: Equatable, Sendable {
         // Overplay has nothing restorable to describe. Gating this on
         // restorable playback once disabled pause on the Lock Screen, Control
         // Center, CarPlay and AirPods simultaneously.
-        guard !isTransitionInFlight, hasRestorablePlayback || isPlaying else {
+        //
+        // A queue the player is holding counts for the same reason, and it is
+        // not covered by either of the others: paused, with correlation lost,
+        // Overplay has nothing restorable to describe and nothing is playing,
+        // yet the player can still resume, skip, shuffle and repeat.
+        guard !isTransitionInFlight, hasRestorablePlayback || isPlaying || canSkipTracks else {
             return .unavailable
         }
 
@@ -47,9 +52,12 @@ struct PlaybackRemoteCommandAvailability: Equatable, Sendable {
             // player never needs it.
             canPause: isPlaying && !isDeliveryStalled,
             canTogglePlayPause: true,
-            canSkipToNext: canControlPlayback,
-            canSkipToPrevious: canControlPlayback,
-            canShuffle: canControlPlayback
+            // Also deliberately not gated on queue correlation: the player
+            // skips inside, shuffles and repeats the queue it is holding,
+            // whatever Overplay believes about which entry is current.
+            canSkipToNext: canSkipTracks,
+            canSkipToPrevious: canSkipTracks,
+            canShuffle: canSkipTracks
         )
     }
 }

@@ -76,6 +76,61 @@ struct PlaybackQueueSnapshotCorrelatorTests {
         #expect(realized.map(\.queuedMusicItemID) == ["i.abc123"])
     }
 
+    @Test("a re-materialized queue is correlated in the order the player holds it")
+    func rematerializedQueueIsCorrelatedInPlayerOrder() {
+        // A mode change reorders the queue and hands back entry IDs Overplay
+        // never minted. The player's order is now the playback order, so the
+        // rebuilt correlation has to follow the snapshots, not the members.
+        let members = [
+            member("local-a", "music-a"),
+            member("local-b", "music-b"),
+            member("local-c", "music-c")
+        ]
+        let realized = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(
+            snapshots: [
+                PlayerQueueEntrySnapshot(id: "reissued-c", musicItemID: "music-c"),
+                PlayerQueueEntrySnapshot(id: "reissued-a", musicItemID: "music-a"),
+                PlayerQueueEntrySnapshot(id: "reissued-b", musicItemID: "music-b")
+            ],
+            members: members
+        )
+
+        #expect(realized.map(\.queueEntryID) == ["reissued-c", "reissued-a", "reissued-b"])
+        #expect(realized.map(\.localTrackID) == ["local-c", "local-a", "local-b"])
+        #expect(realized.map(\.playlistItemID) == [
+            members[2].playlistItemID,
+            members[0].playlistItemID,
+            members[1].playlistItemID
+        ])
+    }
+
+    @Test("a live entry belonging to no known member is left uncorrelated")
+    func liveEntryOutsideTheKnownMembersIsLeftUncorrelated() {
+        let realized = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(
+            snapshots: [
+                PlayerQueueEntrySnapshot(id: "reissued-a", musicItemID: "music-a"),
+                PlayerQueueEntrySnapshot(id: "foreign", musicItemID: "music-elsewhere"),
+                PlayerQueueEntrySnapshot(id: "unhydrated", musicItemID: nil)
+            ],
+            members: [member("local-a", "music-a")]
+        )
+
+        #expect(realized.map(\.queueEntryID) == ["reissued-a"])
+    }
+
+    @Test("one member cannot correlate two live entries")
+    func oneMemberCannotCorrelateTwoLiveEntries() {
+        let realized = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(
+            snapshots: [
+                PlayerQueueEntrySnapshot(id: "first", musicItemID: "music-a"),
+                PlayerQueueEntrySnapshot(id: "second", musicItemID: "music-a")
+            ],
+            members: [member("local-a", "music-a")]
+        )
+
+        #expect(realized.map(\.queueEntryID) == ["first"])
+    }
+
     @Test("a member with no alternate IDs still matches only its queued ID")
     func memberWithoutAlternateIDsMatchesOnlyItsQueuedID() {
         let realized = PlaybackQueueSnapshotCorrelator.realizedEntries(

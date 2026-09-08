@@ -78,6 +78,41 @@ enum PlaybackQueueSnapshotCorrelator {
             )
         }
     }
+
+    /// Rebuilds correlation from the queue the player is actually holding,
+    /// in the player's own order.
+    ///
+    /// `realizedEntries(expected:snapshots:)` above answers "did the player
+    /// accept what Overplay handed it", so it walks the expected members.
+    /// This answers the opposite question — "what is the player holding" —
+    /// which is what matters once the player has re-issued entry IDs of its
+    /// own accord: a mode change that reorders the queue, or a queue Apple
+    /// Music re-materialized. Correlating from the live snapshot recovers
+    /// the playlist context instead of reading as a diverged transition.
+    ///
+    /// Each member is claimed at most once, because Overplay forbids
+    /// duplicate songs within a playlist.
+    static func realizedEntriesInPlayerOrder(
+        snapshots: [PlayerQueueEntrySnapshot],
+        members: [PendingQueueCorrelation]
+    ) -> [RealizedPlaybackQueueEntry] {
+        var availableMembers = members
+
+        return snapshots.compactMap { snapshot in
+            guard let musicItemID = snapshot.musicItemID,
+                  let index = availableMembers.firstIndex(where: { $0.matches(musicItemID) }) else {
+                return nil
+            }
+
+            let member = availableMembers.remove(at: index)
+            return RealizedPlaybackQueueEntry(
+                queueEntryID: snapshot.id,
+                playlistItemID: member.playlistItemID,
+                localTrackID: member.localTrackID,
+                queuedMusicItemID: musicItemID
+            )
+        }
+    }
 }
 
 extension PendingQueueCorrelation {
