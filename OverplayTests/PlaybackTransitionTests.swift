@@ -842,6 +842,48 @@ struct PlaybackTransitionTests {
         #expect(try fixture.history().contains { $0.eventType == .skipCounted })
     }
 
+    @Test("a queue re-materialized during initial playback still records a five-second skip")
+    func requeuedDuringInitialPlaybackStillRecordsSkip() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        fixture.settings.minimumSkipListeningSeconds = 5
+        fixture.player.reissuedTracksOnReplace = fixture.musicTracks
+
+        try await fixture.start(at: 0)
+        for second in 1...6 {
+            fixture.player.playbackTime = Double(second)
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+
+        await fixture.controller.next(settings: fixture.settings, context: fixture.context)
+        await fixture.controller.previous(context: fixture.context)
+
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
+        #expect(fixture.items[0].skipCount == 1)
+        #expect(fixture.controller.displayedSkipCount(context: fixture.context) == 1)
+        #expect(fixture.controller.displayedPlaythroughCount(context: fixture.context) == 0)
+        #expect(try fixture.history().filter { $0.eventType == .skipCounted }.count == 1)
+    }
+
+    @Test("a foreign queue during initial playback is not adopted as the requested playlist")
+    func foreignQueueDuringInitialPlaybackRemainsDivergence() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        let external = try fixture.addPlaylist(prefix: "external", trackCount: 1)
+        fixture.player.reissuedTracksOnReplace = external.musicTracks
+
+        await fixture.controller.playPlaylist(
+            fixture.playlist,
+            startingAt: fixture.tracks[0],
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        #expect(fixture.controller.currentPlaylistID == nil)
+        #expect(fixture.items.allSatisfy { $0.skipCount == 0 && $0.playthroughCount == 0 })
+        #expect(try fixture.history().isEmpty)
+    }
+
     @Test("correlation is rebuilt in the order the player is holding the queue")
     func correlationIsRebuiltInPlayerOrder() async throws {
         let fixture = try makeFixture()
@@ -1272,6 +1314,7 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     private(set) var nextCallCount = 0
     private(set) var skipToEntryCallCount = 0
     private(set) var replaceQueueCallCount = 0
+    var reissuedTracksOnReplace: [Track]?
 
     private var entries: [MusicPlayer.Queue.Entry] = []
     private var currentEntryStorage: MusicPlayer.Queue.Entry?
@@ -1298,8 +1341,18 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
 
     func replaceQueue(with materialization: PlaybackQueueMaterialization) {
         replaceQueueCallCount += 1
-        entries = materialization.queueEntries
-        let target = materialization.startingEntry ?? materialization.queueEntries.first
+        if let reissuedTracksOnReplace {
+            entries = reissuedTracksOnReplace.map { MusicPlayer.Queue.Entry($0) }
+        } else {
+            entries = materialization.queueEntries
+        }
+        let requestedTarget = materialization.startingEntry ?? materialization.queueEntries.first
+        let target = if reissuedTracksOnReplace != nil,
+                        let musicItemID = requestedTarget?.item?.id.rawValue {
+            entries.first { $0.item?.id.rawValue == musicItemID }
+        } else {
+            requestedTarget
+        }
         let delay = replacementConfirmationDelays.isEmpty ? 0 : replacementConfirmationDelays.removeFirst()
         if delay > 0, clearCurrentEntryWhileReplacementPending {
             currentEntryStorage = nil
