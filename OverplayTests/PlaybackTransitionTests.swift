@@ -903,6 +903,100 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.canControlPlayback)
     }
 
+    @Test("a full re-issue whose current entry stays unhydrated still credits the outgoing track")
+    func fullReissueWithUnhydratedCurrentEntryStillCreditsOutgoingTrack() async throws {
+        // Ownership used to need a previously mapped entry ID to still be
+        // live, which a full re-materialization makes impossible. The
+        // hold-off therefore never engaged, the unresolved policy diverged
+        // after five ticks, and the session went with it — so the track that
+        // had just played out could never be credited once the current entry
+        // finally hydrated.
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 178
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        let reissued = fixture.player.reissueEntryIDs(for: fixture.musicTracks, currentIndex: 1)
+        fixture.player.unhydratedEntryIDs = [reissued[1]]
+
+        // More ticks than the unresolved-entry policy tolerates. The entries
+        // that did hydrate are the only evidence the player is still holding
+        // Overplay's queue, and they have to be enough.
+        for _ in 0..<8 {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+
+        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(fixture.controller.canSkipTracks)
+
+        fixture.player.unhydratedEntryIDs = []
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        #expect(fixture.items[0].playthroughCount == 1)
+        #expect(fixture.items[0].skipCount == 0)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[1].id.rawValue)
+        #expect(fixture.controller.currentPlaylistItem?.trackID == fixture.tracks[1].id)
+        #expect(fixture.controller.canControlPlayback)
+    }
+
+    @Test("a skip failure against a partially mapped queue is a delivery failure, not queue end")
+    func skipFailureAgainstPartiallyMappedQueueIsADeliveryFailure() async throws {
+        // The queue-end inference reads a position out of the mapped queue.
+        // With only the playing entry mapped, that position looks final even
+        // though the live queue proves two entries follow — persisting a skip
+        // that never happened and swallowing the delivery failure that did.
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 15
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(!fixture.controller.shuffleEnabled)
+
+        let reissued = fixture.player.reissueEntryIDs(for: fixture.musicTracks, currentIndex: 0)
+        fixture.player.unhydratedEntryIDs = [reissued[1], reissued[2]]
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        fixture.player.nextFailuresRemaining = 1
+        await fixture.controller.next(settings: fixture.settings, context: fixture.context)
+
+        #expect(fixture.controller.isDeliveryStalled)
+        #expect(fixture.items[0].skipCount == 0)
+        #expect(try fixture.history().isEmpty)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
+    }
+
+    @Test("a row omitted while unhydrated can still be jumped to in the live queue")
+    func rowOmittedWhileUnhydratedCanStillBeJumpedToInTheLiveQueue() async throws {
+        // Once the current entry was mapped, nothing rebuilt again, so an
+        // entry omitted while unhydrated stayed absent until it became
+        // current. CarPlay's in-queue jump then fell back to replacing the
+        // queue, losing the player's ordering.
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+
+        let reissued = fixture.player.reissueEntryIDs(for: fixture.musicTracks, currentIndex: 0)
+        fixture.player.unhydratedEntryIDs = [reissued[2]]
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        let replacementsBefore = fixture.player.replaceQueueCallCount
+
+        // Track 2's entry hydrates while track 0 is still playing, so it is
+        // never the current entry.
+        fixture.player.unhydratedEntryIDs = []
+        let didSkip = await fixture.controller.playTrackInCurrentQueue(
+            localTrackID: fixture.tracks[2].id.uuidString,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        #expect(didSkip)
+        #expect(fixture.player.replaceQueueCallCount == replacementsBefore)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[2].id.rawValue)
+        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(fixture.controller.canControlPlayback)
+    }
+
     @Test("a full re-issue during a pending append still recovers the playlist")
     func fullReissueDuringPendingAppendStillRecoversPlaylist() async throws {
         // `correlateAppendedEntries` needs one previously realized entry to

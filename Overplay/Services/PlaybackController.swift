@@ -91,11 +91,12 @@ final class PlaybackController {
     /// entry change the player has not hydrated yet is indistinguishable
     /// from the same entry momentarily losing its item.
     @ObservationIgnored private var musicKitNowPlayingEntryID: String?
-    /// The player entry a correlation rebuild last failed on. Rebuilding
-    /// reads the whole playlist, and the 1 Hz tick would otherwise retry a
-    /// queue that genuinely cannot be correlated every second. Cleared by
-    /// any metadata change, which is what could heal the membership.
-    @ObservationIgnored private var uncorrelatableEntryID: String?
+    /// Live player-queue entries that had an item and still matched no row
+    /// of the current playlist. Rebuilding reads the whole playlist, and the
+    /// 1 Hz tick would otherwise retry a queue holding foreign entries every
+    /// second. Cleared by any metadata change, which is what could heal the
+    /// membership.
+    @ObservationIgnored private var unmappableLiveEntryIDs: Set<String> = []
     @ObservationIgnored private var isPerformingTransition = false
     @ObservationIgnored private var lastLocalPlaybackStateFlushAt: Date?
     @ObservationIgnored private var lastLocalPlaybackStateIdentity: LocalPlaybackStateIdentity?
@@ -1007,12 +1008,18 @@ final class PlaybackController {
         case .confirmed, .diverged:
             await refresh(context: context)
         case .failed(let error):
-            if PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
-                activeQueueIndex: activeQueueIndex,
-                activeQueueCount: activeQueueEntries.count,
-                hasCurrentEntry: player.currentEntry != nil,
-                isShuffling: shuffleEnabled
-            ), outgoing.musicItemID != nil {
+            // The position below is read out of the mapped queue, so a
+            // partially mapped one could make the current entry look like the
+            // last entry while the live queue proves otherwise. Getting that
+            // wrong persists a skip that never happened and swallows the
+            // delivery failure that did.
+            if isQueueCorrelationComplete || player.currentEntry == nil,
+               PlaybackQueueEndPolicy.skipFailureIndicatesQueueEnd(
+                   activeQueueIndex: activeQueueIndex,
+                   activeQueueCount: activeQueueEntries.count,
+                   hasCurrentEntry: player.currentEntry != nil,
+                   isShuffling: shuffleEnabled
+               ), outgoing.musicItemID != nil {
                 // The queue really is exhausted. MusicKit owns repeat, so
                 // whether anything plays next is its decision, not Overplay's.
                 evaluateOutgoingTransition(
@@ -1491,6 +1498,23 @@ final class PlaybackController {
 
             evaluatePlaythroughIfNeeded(context: context)
         } else if hasDivergedUnresolvedPlayerEntry {
+            // Correlation is gone for good, so this is the last moment
+            // anything can say what the outgoing track played. Credit it
+            // before its session goes with the rest: the alternative is that
+            // a track which played out in full is never counted at all.
+            // `hasEvaluated` makes this a no-op when it was already judged.
+            if let settings = monitoredSettings(context: context) {
+                evaluateActiveSession(
+                    settings: settings,
+                    context: context,
+                    naturalCompletion: false,
+                    elapsedSeconds: activeSession?.lastObservedPlaybackTime,
+                    durationSeconds: activeSession?.durationSeconds,
+                    fallbackLocalTrackID: oldLocalTrackID
+                        ?? oldCurrentItemLocalTrackID
+                        ?? oldActiveQueueLocalTrackID
+                )
+            }
             // Entry-level correlation is genuinely gone, but Overplay still
             // knows which playlist and track it started. Keep that and the
             // durable restore state: clearing them leaves every surface
@@ -2170,8 +2194,7 @@ final class PlaybackController {
         }
     }
 
-    /// Rebuilds entry-level correlation when the player has re-issued the
-    /// entry IDs of the queue Overplay handed it.
+    /// Rebuilds entry-level correlation from the queue the player is holding.
     ///
     /// MusicKit owns shuffle and repeat now, and a mode change reorders — and
     /// can re-materialize — the queue it is holding. Overplay minted the
@@ -2181,31 +2204,39 @@ final class PlaybackController {
     /// stops every play and skip being counted, for a queue still playing
     /// exactly the playlist Overplay asked for.
     ///
-    /// Correlating the live queue back onto the playlist's own tracks
-    /// recovers all of it. An entry that is not a member of the current
-    /// playlist is left alone, so a genuine external takeover still reads as
-    /// divergence.
+    /// Runs whenever the live queue holds an entry that has an item and is
+    /// not mapped yet, which covers three separate situations with one
+    /// mechanism:
     ///
-    /// Deferred to the append machinery while that can still make progress,
-    /// which needs one previously realized entry to still be live. Once a
-    /// re-issue has taken them all, `correlateAppendedEntries` is stranded
-    /// and this is the only way back — the playlist members read below
-    /// include the appended rows, so the rebuild covers them too.
+    /// - the player re-issued every entry ID;
+    /// - a re-materialized queue hydrated one entry at a time, so entries
+    ///   omitted by an earlier rebuild can be merged in as they arrive
+    ///   rather than staying absent until they become current;
+    /// - the current entry has not hydrated at all, in which case the
+    ///   entries that have are still enough to prove the player is holding
+    ///   Overplay's queue. That proof is what keeps
+    ///   `isAwaitingOwnQueueHydration` true, and so keeps the outgoing
+    ///   session alive to be credited once the current entry resolves.
     ///
-    /// The rebuild can only map the entries the player has hydrated, so the
-    /// mapped queue may be a subset of the live one. `liveQueueEntryIDs` and
-    /// `isAwaitingOwnQueueHydration` are what keep that subset safe, and a
-    /// later tick that finds the current entry unmapped rebuilds again.
+    /// A hydrated current entry that is not a member of the current playlist
+    /// is refused, so a genuine external takeover still reads as divergence.
     private func recorrelateLiveQueueIfNeeded(
         currentEntry: MusicPlayer.Queue.Entry?,
         context: ModelContext
     ) {
         guard let currentPlaylistID,
-              let currentEntry,
-              player.currentEntryItem != nil,
-              appendedUncorrelatedEntries.isEmpty || !playerStillHoldsOverplayQueue(),
-              uncorrelatableEntryID != currentEntry.id,
-              !activeQueueEntries.contains(where: { $0.queueEntryID == currentEntry.id }),
+              appendedUncorrelatedEntries.isEmpty || !playerStillHoldsOverplayQueue() else {
+            return
+        }
+
+        let snapshots = player.queueEntrySnapshots
+        let mappedEntryIDs = Set(activeQueueEntries.map(\.queueEntryID))
+        let mappableEntryIDs = snapshots.filter { snapshot in
+            snapshot.musicItemID != nil
+                && !mappedEntryIDs.contains(snapshot.id)
+                && !unmappableLiveEntryIDs.contains(snapshot.id)
+        }
+        guard !mappableEntryIDs.isEmpty,
               let members = try? currentPlaylistQueueMembers(
                   playlistID: currentPlaylistID,
                   context: context
@@ -2214,26 +2245,73 @@ final class PlaybackController {
         }
 
         let realizedEntries = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(
-            snapshots: player.queueEntrySnapshots,
+            snapshots: snapshots,
             members: members
         )
-        guard let index = realizedEntries.firstIndex(where: { $0.queueEntryID == currentEntry.id }) else {
-            uncorrelatableEntryID = currentEntry.id
+        let realizedEntryIDs = Set(realizedEntries.map(\.queueEntryID))
+        // Remember what could be read and still did not belong, so a queue
+        // holding foreign entries does not re-read the whole playlist on
+        // every tick. Anything that has not hydrated is left out: it has not
+        // been judged yet.
+        unmappableLiveEntryIDs = Set(
+            snapshots
+                .filter { $0.musicItemID != nil && !realizedEntryIDs.contains($0.id) }
+                .map(\.id)
+        )
+
+        // Nothing in the player's queue belongs to this playlist, or the
+        // entry it is actually playing does not. Either way this is not
+        // Overplay's queue to adopt.
+        guard !realizedEntries.isEmpty else { return }
+        if let currentEntry,
+           player.currentEntryItem != nil,
+           !realizedEntryIDs.contains(currentEntry.id) {
             return
         }
+        guard realizedEntryIDs != mappedEntryIDs else { return }
 
+        // Keep the cursor on the outgoing track when the current entry has
+        // not hydraded far enough to place it. It is a correlation cursor,
+        // and the outgoing track is still Overplay's best belief until the
+        // player says otherwise.
+        let outgoingLocalTrackID = activeQueueCurrentLocalTrackID
+            ?? currentPlaylistItem?.trackID.uuidString
+            ?? activeSession?.localTrackID
+        let index = realizedEntries.firstIndex { $0.queueEntryID == currentEntry?.id }
+            ?? outgoingLocalTrackID.flatMap { localTrackID in
+                realizedEntries.firstIndex { $0.localTrackID == localTrackID }
+            }
+
+        // Facts rather than an interpretation: `retained` is how many of the
+        // entry IDs Overplay had mapped are still in the player's queue, so
+        // zero against a non-empty previous map is a full re-issue, and a
+        // non-zero one is piecemeal hydration being merged.
+        let retainedMappedEntryCount = mappedEntryIDs
+            .intersection(snapshots.map(\.id))
+            .count
         MusicKitActivityLog.shared.record(
             .queueCorrelationRebuilt,
             magnitude: Double(realizedEntries.count),
-            detail: "player re-issued entry IDs"
+            detail: "live=\(snapshots.count) mapped=\(realizedEntries.count) wasMapped=\(mappedEntryIDs.count) retained=\(retainedMappedEntryCount)"
         )
         TrackMetadataDiagnostics.log(
-            "queue correlation rebuilt from the live player queue entries=\(realizedEntries.count) index=\(index) localTrackID=\(realizedEntries[index].localTrackID)"
+            "queue correlation rebuilt from the live player queue entries=\(realizedEntries.count) live=\(snapshots.count) index=\(index.map(String.init) ?? "nil") unmappable=\(unmappableLiveEntryIDs.count)"
         )
         resetAppendedQueueCorrelations()
         activeQueueEntries = realizedEntries
         activeQueueIndex = index
-        uncorrelatableEntryID = nil
+    }
+
+    /// True while the mapped queue covers every entry the player is holding.
+    ///
+    /// A rebuild can only map the entries the player has hydrated, so the
+    /// mapped queue is legitimately a subset of the live one. Anything that
+    /// reads a *position* out of it has to know that.
+    private var isQueueCorrelationComplete: Bool {
+        let mappedEntryIDs = Set(activeQueueEntries.map(\.queueEntryID))
+        let snapshots = player.queueEntrySnapshots
+        guard !snapshots.isEmpty else { return false }
+        return snapshots.allSatisfy { mappedEntryIDs.contains($0.id) }
     }
 
     /// Every track of the current playlist, as something the live player
@@ -2399,7 +2477,7 @@ final class PlaybackController {
     private func bumpPlaybackItemMetadataVersion() {
         knownMusicItemIDsCache = nil
         unresolvableMusicItemIDs.removeAll()
-        uncorrelatableEntryID = nil
+        unmappableLiveEntryIDs.removeAll()
         playbackItemMetadataVersion += 1
     }
 
