@@ -404,6 +404,7 @@ final class RemoteCommandService {
         withObservationTracking {
             _ = playbackController.remoteCommandAvailability
             _ = playbackController.shuffleEnabled
+            _ = playbackController.repeatMode
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, generation == self.playbackStateObservationGeneration else { return }

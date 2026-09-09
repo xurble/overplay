@@ -37,7 +37,8 @@ Relevant regression checks:
 - Pause mid-track, force-quit, relaunch, then play another playlist: no phantom
   event for the restored track.
 - Manual-add a searched track, then sync: one row, counts intact.
-- Promote a triage track, then sync both playlists: one One True Playlist row.
+- Promote a bucket track, then sync the contributing playlist and the One True
+  Playlist: one One True Playlist row.
 - Rapid Next presses: app UI, Lock Screen, and CarPlay agree; no bogus history
   events.
 - At the final track, repeat off stops after crediting the playthrough; repeat
@@ -109,7 +110,29 @@ root playlist menu. Reproduce the reported identical behaviour on hardware. If
 the two controls are effectively redundant, remove Up Next; otherwise make and
 verify the distinction without adding another navigation level.
 
-## 7. Complete Beta Settings and Data Hardening
+## 7. Finish the Triage Bucket Restructure
+
+Track [GitHub issue #34](https://github.com/xurble/overplay/issues/34) and
+[GitHub issue #36](https://github.com/xurble/overplay/issues/36).
+
+Issue #34 replaces the separate triage playlists with one shared bucket fed by
+contributing Apple Music playlists. Issue #36 then makes track membership
+globally exclusive: one row per track app-wide, with skip and playthrough
+counts travelling with the track as it moves, and retired tracks living in the
+bucket. #36 depends on #34.
+
+Both reshape persistence, so they must land before the data-preservation
+decision below, while a schema reset is still cheap. The device holding the
+only existing dataset means migration is best effort on stats and strict on
+consistency — merge counts where it is straightforward, and never introduce a
+versioned schema for it.
+
+Per section 1, treat these as cross-surface playback changes: the bucket is a
+playback context with a reserved identifier rather than an Apple Music
+playlist, so CarPlay browsing, Now Playing actions, restore state and the
+active-playlist projection all need re-verification.
+
+## 8. Complete Beta Settings and Data Hardening
 
 - Add an explicit reset-local-playback-state control.
 - Clarify the distinction between resetting statistics, resetting device-local
@@ -127,7 +150,7 @@ verify the distinction without adding another navigation level.
 The app remains pre-release, so development schema resets are acceptable until
 that decision is made.
 
-## 8. Refine the iPad Experience
+## 9. Refine the iPad Experience
 
 - Improve playlist management, playlist detail, history, and Now Playing in
   split layouts.
@@ -143,20 +166,20 @@ Verification:
 - Keyboard shortcuts do not break touch workflows.
 - The app target and relevant tests pass.
 
-## 9. Publish Now Playing Artwork
+## 10. Publish Now Playing Artwork
 
 Publish artwork through `MPNowPlayingInfoCenter` in addition to title, artist,
 album, duration, elapsed time, and playback rate. Reuse the existing artwork
 cache and avoid blocking playback-state publication on image loading.
 
-## 10. Expand the Dashboard Summary
+## 11. Expand the Dashboard Summary
 
 - Add recently promoted counts.
 - Surface useful triage queues such as unreviewed or high-skip items.
 - Add direct play, sync, search, and history actions where they shorten an
   existing workflow.
 
-## 11. Move Sync Persistence off the Main Actor Only if Profiling Requires It
+## 12. Move Sync Persistence off the Main Actor Only if Profiling Requires It
 
 Playlist sync currently runs on the MainActor against the main `ModelContext`,
 with yield chunking, once-per-cycle identity merge, a shared library-playlist
@@ -172,7 +195,7 @@ If on-device catch-up sync still hitches:
 
 Do not undertake this refactor without profiling evidence.
 
-## 12. Add the Native Mac Target
+## 13. Add the Native Mac Target
 
 - Add a native SwiftUI macOS target sharing models, repositories, services, and
   reusable views.
@@ -186,14 +209,14 @@ Verification:
 - Shared unit tests still pass.
 - No iOS-only APIs leak into shared code.
 
-## 13. Add Mac Interaction Polish
+## 14. Add Mac Interaction Polish
 
 - Add menu commands, keyboard shortcuts, and context menus.
 - Use table-style history and playlist lists where useful.
 - Add media-key and Now Playing support where available.
 - Support a compact mini-player window if practical.
 
-## 14. Consider CarPlay Skip-History Browsing
+## 15. Consider CarPlay Skip-History Browsing
 
 Add skip-history browsing only if it fits safely within CarPlay templates and
 does not make the primary playlists → tracks → Now Playing flow harder to use.

@@ -483,7 +483,7 @@ struct PlaylistManagementViewModelTests {
     func promoteTriageItemReportsSuccessAndClearsProgressState() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let playlist = PlaylistRecord(musicPlaylistID: "triage", name: "Triage", role: .triage)
+        let playlist = PlaylistRecord(musicPlaylistID: "triage", name: "Triage", role: .triageBucket)
         let track = TrackRecord(catalogID: "track", title: "Track", artistName: "Artist")
         let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id)
         let viewModel = PlaylistManagementViewModel()
@@ -539,7 +539,7 @@ struct PlaylistManagementViewModelTests {
     func evictPlayableItemReportsSuccessAndClearsProgressState() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let playlist = PlaylistRecord(musicPlaylistID: "triage", name: "Triage", role: .triage)
+        let playlist = PlaylistRecord(musicPlaylistID: "triage", name: "Triage", role: .triageBucket)
         let track = TrackRecord(catalogID: "track", title: "Track", artistName: "Artist")
         let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id)
         let viewModel = PlaylistManagementViewModel()

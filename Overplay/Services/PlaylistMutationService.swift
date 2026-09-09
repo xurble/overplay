@@ -17,7 +17,7 @@ enum PlaylistMutationError: LocalizedError {
         case .sourcePlaylistMissing:
             "The source playlist is no longer linked."
         case .sourcePlaylistNotTriage:
-            "Only tracks from triage playlists can be promoted."
+            "Only tracks in the triage bucket can be promoted."
         case .trackMissing:
             "The track is no longer available locally."
         case .musicItemMissing:
@@ -38,7 +38,7 @@ struct PlaylistMutationService {
         guard let sourcePlaylist = try PlaylistRepository.playlist(id: sourceItem.playlistID, in: context) else {
             throw PlaylistMutationError.sourcePlaylistMissing
         }
-        guard sourcePlaylist.role == .triage else {
+        guard sourcePlaylist.role == .triageBucket else {
             throw PlaylistMutationError.sourcePlaylistNotTriage
         }
         guard let track = try TrackRecordRepository.track(id: sourceItem.trackID, in: context) else {
@@ -84,7 +84,7 @@ struct PlaylistMutationService {
         promotedAt: Date = .now,
         in context: ModelContext
     ) throws -> PlaylistItemRecord {
-        guard sourcePlaylist.role == .triage else {
+        guard sourcePlaylist.role == .triageBucket else {
             throw PlaylistMutationError.sourcePlaylistNotTriage
         }
 

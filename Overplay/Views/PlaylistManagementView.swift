@@ -104,7 +104,7 @@ struct PlaylistManagementView: View {
                                 }
                                 .disabled(viewModel.evictingItemIDs.contains(row.id))
 
-                                if playlist.role == .triage {
+                                if playlist.role == .triageBucket {
                                     Button {
                                         Task { await promote(row) }
                                     } label: {
@@ -255,8 +255,10 @@ struct PlaylistManagementView: View {
         switch playlist.role {
         case .oneTruePlaylist:
             return .pink
-        case .triage:
+        case .triageBucket:
             return .teal
+        case .triageSource:
+            return .gray
         }
     }
 

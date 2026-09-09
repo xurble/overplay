@@ -345,11 +345,11 @@ struct PlaybackTrackResolverTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let main = PlaylistRecord(musicPlaylistID: "main", name: "Main", role: .oneTruePlaylist)
-        let triage = PlaylistRecord(musicPlaylistID: "triage", name: "Triage", role: .triage)
+        let triage = PlaylistRecord(musicPlaylistID: "triage", name: "Triage", role: .triageBucket)
         let inactiveSelected = PlaylistRecord(
             musicPlaylistID: "inactive",
             name: "Inactive",
-            role: .triage,
+            role: .triageBucket,
             isActive: false
         )
         context.insert(main)

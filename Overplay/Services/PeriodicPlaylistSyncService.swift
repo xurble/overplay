@@ -82,7 +82,10 @@ final class PeriodicPlaylistSyncService {
         let playlists: [PlaylistRecord]
 
         do {
+            // The bucket has no Apple Music playlist to fetch; its
+            // contributing sources are what get synced.
             playlists = try PlaylistRepository.activePlaylists(in: context)
+                .filter(\.hasRemoteSource)
         } catch {
             return
         }

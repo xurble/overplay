@@ -1,25 +1,19 @@
-import Foundation
-@preconcurrency import MusicKit
 import SwiftData
 
+/// Values that require replacing CarPlay's Now Playing button array.
+/// Shuffle and repeat state are published separately through the remote
+/// command center and do not change the array's composition.
 struct CarPlayNowPlayingButtonSignature: Equatable {
-    var trackID: String?
+    var hasCurrentTrack: Bool
     var playlistRole: PlaylistRole? = nil
-    var skipCount: Int
     var isEvicted: Bool
-    /// Rendered by the shuffle and repeat buttons, so a change here has to
-    /// invalidate the signature or CarPlay never redraws them.
-    var isShuffling: Bool = false
-    var repeatMode: MusicPlayer.RepeatMode = MusicPlayer.RepeatMode.none
 
     static func make(
         playbackController: PlaybackController,
-        settings: OverplaySettings,
         context: ModelContext
     ) -> Self {
         NowPlayingPresentationFactory.carPlayButtonSignature(
             playbackController: playbackController,
-            settings: settings,
             context: context
         )
     }

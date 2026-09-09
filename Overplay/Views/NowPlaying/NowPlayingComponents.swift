@@ -309,7 +309,7 @@ struct TrackActionControlsView: View {
                     fallbackStyle: .bordered
                 )
             } else {
-                if currentPlaylistRole == .triage {
+                if currentPlaylistRole == .triageBucket {
                     Button {
                         Task { await playbackController.promoteCurrent(settings: settings, context: modelContext) }
                     } label: {

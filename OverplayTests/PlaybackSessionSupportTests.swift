@@ -74,7 +74,7 @@ struct PlaybackSessionSupportTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let playlist = PlaylistRecord(musicPlaylistID: "playlist-1", name: "Main", role: .oneTruePlaylist)
-        let otherPlaylist = PlaylistRecord(musicPlaylistID: "playlist-2", name: "Other", role: .triage)
+        let otherPlaylist = PlaylistRecord(musicPlaylistID: "playlist-2", name: "Other", role: .triageBucket)
         let track = TrackRecord(
             catalogID: "catalog-elsewhere",
             libraryID: "library-elsewhere",

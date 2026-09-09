@@ -224,7 +224,7 @@ struct EvictionEngineTests {
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-2",
             name: "Triage",
-            role: .triage
+            role: .triageBucket
         )
         let item = PlaylistItemRecord(
             playlistID: playlist.id,
@@ -267,7 +267,7 @@ struct EvictionEngineTests {
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-2",
             name: "Triage",
-            role: .triage
+            role: .triageBucket
         )
         let item = PlaylistItemRecord(
             playlistID: playlist.id,

@@ -321,7 +321,7 @@ final class PlaylistManagementViewModel {
         context: ModelContext,
         dependencies: Dependencies
     ) async {
-        guard playlist.role == .triage else { return }
+        guard playlist.role == .triageBucket else { return }
         promotingItemIDs.insert(item.id)
         defer { promotingItemIDs.remove(item.id) }
 

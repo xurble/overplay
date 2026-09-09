@@ -3,11 +3,18 @@ import SwiftData
 
 @Model
 final class PlaylistRecord {
+    /// Reserved `musicPlaylistID` for the triage bucket. The bucket has no
+    /// Apple Music playlist, but the playback stack keys identity, mode and
+    /// order state on this string, so it needs a stable value that can never
+    /// collide with a real Apple Music playlist identifier.
+    nonisolated static let triageBucketMusicPlaylistID = "overplay.triage-bucket"
+    nonisolated static let triageBucketName = "Triage"
+
     var id: UUID = UUID()
     var musicPlaylistID: String = ""
     var name: String = ""
     var sourceRawValue: String = PlaylistSource.appleMusic.rawValue
-    var roleRawValue: String = PlaylistRole.triage.rawValue
+    var roleRawValue: String = PlaylistRole.triageSource.rawValue
     var writePolicyRawValue: String = PlaylistWritePolicy.managed.rawValue
     var isActive: Bool = true
     var lastSyncedAt: Date?
@@ -25,8 +32,26 @@ final class PlaylistRecord {
     }
 
     var role: PlaylistRole {
-        get { PlaylistRole(rawValue: roleRawValue) ?? .triage }
+        get { PlaylistRole(rawValue: roleRawValue) ?? .triageSource }
         set { roleRawValue = newValue.rawValue }
+    }
+
+    /// True while this record still carries the pre-bucket `"triage"` raw
+    /// value, so the migration can find it by stored state rather than by a
+    /// local flag a reinstall could lose.
+    var needsTriageBucketMigration: Bool {
+        roleRawValue == PlaylistRole.legacyTriageRawValue
+    }
+
+    var isTriageBucket: Bool {
+        role == .triageBucket
+    }
+
+    /// The bucket has no Apple Music playlist behind it, so it is never
+    /// fetched or synced directly — its contents arrive from contributing
+    /// sources instead.
+    var hasRemoteSource: Bool {
+        role != .triageBucket
     }
 
     var writePolicy: PlaylistWritePolicy {
@@ -43,7 +68,7 @@ final class PlaylistRecord {
         musicPlaylistID: String,
         name: String,
         source: PlaylistSource = .appleMusic,
-        role: PlaylistRole = .triage,
+        role: PlaylistRole = .triageSource,
         writePolicy: PlaylistWritePolicy = .managed,
         isActive: Bool = true,
         lastSyncedAt: Date? = nil,

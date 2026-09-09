@@ -86,8 +86,10 @@ struct SplitAppShell: View {
         switch playlist.role {
         case .oneTruePlaylist:
             return "star.fill"
-        case .triage:
+        case .triageBucket:
             return "tray.fill"
+        case .triageSource:
+            return "music.note.list"
         }
     }
 

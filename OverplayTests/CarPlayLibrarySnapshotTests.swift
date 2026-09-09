@@ -11,8 +11,8 @@ struct CarPlayLibrarySnapshotTests {
         let context = ModelContext(container)
 
         let oneTrue = PlaylistRecord(musicPlaylistID: "one", name: "Keepers", role: .oneTruePlaylist)
-        let triage = PlaylistRecord(musicPlaylistID: "triage", name: "Inbox", role: .triage)
-        let inactive = PlaylistRecord(musicPlaylistID: "inactive", name: "Old", role: .triage, isActive: false)
+        let triage = PlaylistRecord(musicPlaylistID: "triage", name: "Inbox", role: .triageBucket)
+        let inactive = PlaylistRecord(musicPlaylistID: "inactive", name: "Old", role: .triageBucket, isActive: false)
         context.insert(oneTrue)
         context.insert(triage)
         context.insert(inactive)
@@ -57,7 +57,7 @@ struct CarPlayLibrarySnapshotTests {
         #expect(try CarPlayLibrarySnapshot.playlistSummaries(in: carPlayContext).map(\.title) == ["Keepers"])
 
         // Linking a playlist on the phone must reach the CarPlay root.
-        let linked = PlaylistRecord(musicPlaylistID: "triage", name: "Inbox", role: .triage)
+        let linked = PlaylistRecord(musicPlaylistID: "triage", name: "Inbox", role: .triageBucket)
         phoneContext.insert(linked)
         try phoneContext.save()
 
@@ -65,7 +65,7 @@ struct CarPlayLibrarySnapshotTests {
 
         // So must a One True Playlist role change, or the Overplay row would
         // start the former One True Playlist.
-        original.role = .triage
+        original.role = .triageBucket
         linked.role = .oneTruePlaylist
         try phoneContext.save()
 

@@ -68,6 +68,50 @@ enum PlaylistRepository {
         return try context.fetch(descriptor).first
     }
 
+    /// The single triage bucket, created on demand. Every triage item is
+    /// parented here, so callers that are about to write items must be able
+    /// to rely on it existing.
+    @discardableResult
+    static func triageBucket(in context: ModelContext) throws -> PlaylistRecord {
+        if let existingBucket = try existingTriageBucket(in: context) {
+            return existingBucket
+        }
+
+        let bucket = PlaylistRecord(
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket,
+            writePolicy: .incomingOnly,
+            sortOrder: 1
+        )
+        context.insert(bucket)
+        return bucket
+    }
+
+    /// Looks the bucket up without creating it, for read-only callers that
+    /// must not write to the store just to render an empty state.
+    static func existingTriageBucket(in context: ModelContext) throws -> PlaylistRecord? {
+        let triageBucketRole = PlaylistRole.triageBucket.rawValue
+        var descriptor = FetchDescriptor<PlaylistRecord>(
+            predicate: #Predicate { $0.roleRawValue == triageBucketRole },
+            sortBy: [SortDescriptor(\.createdAt)]
+        )
+        descriptor.fetchLimit = 1
+        descriptor.includePendingChanges = true
+        return try context.fetch(descriptor).first
+    }
+
+    /// The contributing Apple Music playlists that feed the bucket.
+    static func triageSources(in context: ModelContext) throws -> [PlaylistRecord] {
+        let triageSourceRole = PlaylistRole.triageSource.rawValue
+        var descriptor = FetchDescriptor<PlaylistRecord>(
+            predicate: #Predicate { $0.isActive && $0.roleRawValue == triageSourceRole },
+            sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.name)]
+        )
+        descriptor.includePendingChanges = true
+        return try context.fetch(descriptor)
+    }
+
     @discardableResult
     static func upsert(
         remotePlaylist: RemotePlaylistLink,
@@ -139,7 +183,7 @@ enum PlaylistRepository {
         for existingPlaylist in try activePlaylists(in: context)
             where existingPlaylist.role == .oneTruePlaylist
             && existingPlaylist.musicPlaylistID != appleMusicPlaylist.id {
-            existingPlaylist.role = .triage
+            existingPlaylist.role = .triageSource
             existingPlaylist.updatedAt = .now
         }
 
@@ -151,18 +195,22 @@ enum PlaylistRepository {
         )
     }
 
+    /// Links an Apple Music playlist as a contributor to the triage bucket.
+    /// The One True Playlist is never converted into a contributor — it is
+    /// already tracked, and demoting it here would silently move the user's
+    /// main playlist.
     @discardableResult
-    static func addTriagePlaylist(_ remotePlaylist: RemotePlaylistLink, in context: ModelContext) throws -> PlaylistRecord {
-        if remotePlaylist.source != .appleMusic,
-           let existingPlaylist = try playlist(remotePlaylistID: remotePlaylist.id, source: remotePlaylist.source, in: context) {
-            existingPlaylist.name = remotePlaylist.name
-            existingPlaylist.isActive = true
-            existingPlaylist.updatedAt = .now
-            return existingPlaylist
-        }
+    static func addTriageSource(_ remotePlaylist: RemotePlaylistLink, in context: ModelContext) throws -> PlaylistRecord {
+        try triageBucket(in: context)
 
-        if let existingPlaylist = try playlist(musicPlaylistID: remotePlaylist.id, in: context),
-           existingPlaylist.role == .oneTruePlaylist {
+        if let existingPlaylist = try playlist(
+            remotePlaylistID: remotePlaylist.id,
+            source: remotePlaylist.source,
+            in: context
+        ) {
+            if existingPlaylist.role != .oneTruePlaylist {
+                existingPlaylist.role = .triageSource
+            }
             existingPlaylist.name = remotePlaylist.name
             existingPlaylist.isActive = true
             existingPlaylist.updatedAt = .now
@@ -171,21 +219,35 @@ enum PlaylistRepository {
 
         return try upsert(
             remotePlaylist: remotePlaylist,
-            role: .triage,
+            role: .triageSource,
             writePolicy: .managed,
             in: context
         )
     }
 
     @discardableResult
-    static func addTriagePlaylist(_ appleMusicPlaylist: AppleMusicPlaylist, in context: ModelContext) throws -> PlaylistRecord {
-        try addTriagePlaylist(RemotePlaylistLink(appleMusicPlaylist), in: context)
+    static func addTriageSource(_ appleMusicPlaylist: AppleMusicPlaylist, in context: ModelContext) throws -> PlaylistRecord {
+        try addTriageSource(RemotePlaylistLink(appleMusicPlaylist), in: context)
     }
 
-    static func deactivateTriagePlaylist(_ playlist: PlaylistRecord, in context: ModelContext) throws {
-        guard playlist.role == .triage else { return }
+    /// Unlinks a contributing playlist. Its tracks stay in the bucket and
+    /// keep their stats — they are simply left unattributed, because the row
+    /// is the track's only row and deleting it would destroy history the
+    /// user never asked to lose.
+    static func removeTriageSource(_ playlist: PlaylistRecord, in context: ModelContext) throws {
+        guard playlist.role == .triageSource else { return }
+
+        let musicPlaylistID = playlist.musicPlaylistID
         playlist.isActive = false
         playlist.updatedAt = .now
+
+        if let bucket = try existingTriageBucket(in: context) {
+            for item in try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
+            where item.removeSourceMusicPlaylistID(musicPlaylistID) {
+                item.updatedAt = .now
+            }
+        }
+
         try context.save()
     }
 }

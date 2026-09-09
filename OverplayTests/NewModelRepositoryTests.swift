@@ -14,7 +14,7 @@ struct NewModelRepositoryTests {
         let inserted = try PlaylistRepository.upsert(
             musicPlaylistID: "playlist-1",
             name: "Original",
-            role: .triage,
+            role: .triageBucket,
             in: context
         )
         let updated = try PlaylistRepository.upsert(
@@ -70,7 +70,7 @@ struct NewModelRepositoryTests {
         #expect(playlists.count == 2)
         #expect(playlists.filter { $0.role == .oneTruePlaylist }.count == 1)
         let firstPlaylist = try PlaylistRepository.playlist(musicPlaylistID: "playlist-1", in: context)
-        #expect(firstPlaylist?.role == .triage)
+        #expect(firstPlaylist?.role == .triageSource)
     }
 
     @Test("adding triage playlist does not change existing one true playlist")
@@ -82,7 +82,7 @@ struct NewModelRepositoryTests {
             AppleMusicPlaylist(id: "playlist-1", name: "Main", trackCount: 10),
             in: context
         )
-        try PlaylistRepository.addTriagePlaylist(
+        try PlaylistRepository.addTriageSource(
             AppleMusicPlaylist(id: "playlist-2", name: "Triage", trackCount: 12),
             in: context
         )
@@ -93,7 +93,7 @@ struct NewModelRepositoryTests {
         #expect(settings.selectedPlaylistID == "playlist-1")
         #expect(oneTruePlaylist.musicPlaylistID == "playlist-1")
         let triagePlaylist = try PlaylistRepository.playlist(musicPlaylistID: "playlist-2", in: context)
-        #expect(triagePlaylist?.role == .triage)
+        #expect(triagePlaylist?.role == .triageSource)
     }
 
     @Test("deactivating triage playlist hides it from active playlists")
@@ -101,15 +101,17 @@ struct NewModelRepositoryTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
 
-        let playlist = try PlaylistRepository.addTriagePlaylist(
+        let playlist = try PlaylistRepository.addTriageSource(
             AppleMusicPlaylist(id: "playlist-2", name: "Triage", trackCount: 12),
             in: context
         )
-        try PlaylistRepository.deactivateTriagePlaylist(playlist, in: context)
+        try PlaylistRepository.removeTriageSource(playlist, in: context)
         let activePlaylists = try PlaylistRepository.activePlaylists(in: context)
         let fetchedPlaylist = try PlaylistRepository.playlist(musicPlaylistID: "playlist-2", in: context)
 
-        #expect(activePlaylists.isEmpty)
+        // The bucket stays: unlinking a contributor never removes the tracks
+        // it put there.
+        #expect(activePlaylists.map(\.role) == [.triageBucket])
         #expect(fetchedPlaylist?.isActive == false)
     }
 
@@ -131,14 +133,14 @@ struct NewModelRepositoryTests {
             id: triagePlaylistID,
             musicPlaylistID: "playlist-2",
             name: "Triage",
-            role: .triage,
+            role: .triageBucket,
             sortOrder: 0
         )
         let inactivePlaylist = PlaylistRecord(
             id: inactivePlaylistID,
             musicPlaylistID: "playlist-3",
             name: "Hidden",
-            role: .triage,
+            role: .triageBucket,
             isActive: false
         )
         context.insert(oneTruePlaylist)
@@ -634,7 +636,7 @@ struct NewModelRepositoryTests {
         let triagePlaylist = PlaylistRecord(
             musicPlaylistID: "playlist-2",
             name: "Triage",
-            role: .triage
+            role: .triageBucket
         )
         context.insert(settings)
         context.insert(triagePlaylist)

@@ -36,22 +36,21 @@ struct DashboardView: View {
                 }
             }
 
-            Section("Triage Playlists") {
-                ForEach(triagePlaylists) { playlist in
+            Section("Triage") {
+                if let triageBucket {
                     NavigationLink {
-                        PlaylistManagementView(settings: settings, playlist: playlist)
+                        PlaylistManagementView(settings: settings, playlist: triageBucket)
                     } label: {
-                        playlistHomeRow(for: playlist)
+                        playlistHomeRow(for: triageBucket)
                     }
                 }
-                .onDelete(perform: deleteTriagePlaylists)
 
                 NavigationLink {
-                    PlaylistSelectionView()
+                    TriageSourcesView()
                 } label: {
                     Label(
-                        triagePlaylists.isEmpty ? "Link Triage Playlist" : "Link Another Triage Playlist",
-                        systemImage: "plus.circle"
+                        triageSourceCount == 0 ? "Add Triage Playlists" : triageSourcesLabel,
+                        systemImage: triageSourceCount == 0 ? "plus.circle" : "slider.horizontal.3"
                     )
                 }
             }
@@ -91,6 +90,7 @@ struct DashboardView: View {
         }
 
         return role == .oneTruePlaylist ? .pink : .teal
+
     }
 
     private var dashboardDataKey: String {
@@ -106,8 +106,19 @@ struct DashboardView: View {
         return playlists.first { $0.role == .oneTruePlaylist && $0.isActive }
     }
 
-    private var triagePlaylists: [PlaylistRecord] {
-        playlists.filter { $0.role == .triage && $0.isActive }
+    /// The bucket only appears once something feeds it, so a fresh install
+    /// shows the add action rather than an empty playlist row.
+    private var triageBucket: PlaylistRecord? {
+        guard triageSourceCount > 0 else { return nil }
+        return playlists.first { $0.isTriageBucket }
+    }
+
+    private var triageSourceCount: Int {
+        playlists.filter { $0.role == .triageSource && $0.isActive }.count
+    }
+
+    private var triageSourcesLabel: String {
+        triageSourceCount == 1 ? "1 Contributing Playlist" : "\(triageSourceCount) Contributing Playlists"
     }
 
     private func presentation(for playlist: PlaylistRecord) -> PlaylistSummaryPresentation {
@@ -129,12 +140,6 @@ struct DashboardView: View {
         tracks = (try? TrackRecordRepository.tracks(ids: playlistItems.map(\.trackID), in: modelContext)) ?? []
     }
 
-    private func deleteTriagePlaylists(at offsets: IndexSet) {
-        for index in offsets {
-            let playlist = triagePlaylists[index]
-            try? PlaylistRepository.deactivateTriagePlaylist(playlist, in: modelContext)
-        }
-    }
 }
 
 #Preview {

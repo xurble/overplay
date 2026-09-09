@@ -4,7 +4,19 @@ enum PlaylistSource: String, CaseIterable, Codable, Hashable, Sendable {
 
 enum PlaylistRole: String, CaseIterable, Codable, Hashable, Sendable {
     case oneTruePlaylist
-    case triage
+    /// The single shared triage bucket. It owns every triage item and has no
+    /// Apple Music playlist of its own.
+    case triageBucket
+    /// An Apple Music playlist that contributes tracks to the bucket. Never
+    /// played, and never presented as a top-level playlist.
+    case triageSource
+
+    /// The raw value stored before the bucket existed. `PlaylistRecord.role`
+    /// resolves it to `.triageSource`, which is inert until the migration
+    /// re-parents the playlist's items onto the bucket. Resolving it to
+    /// `.triageBucket` instead would conjure a second bucket, so the
+    /// recoverable direction is the deliberate one.
+    nonisolated static let legacyTriageRawValue = "triage"
 }
 
 enum PlaylistWritePolicy: String, CaseIterable, Codable, Hashable, Sendable {

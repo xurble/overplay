@@ -69,6 +69,19 @@ final class PlaylistSelectionViewModel {
         return playlists.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
     }
 
+    func trackCount(
+        for playlist: PlaylistRecord,
+        playlistItems: [PlaylistItemRecord]
+    ) -> Int {
+        if let remoteTrackCount = playlists.first(where: { $0.id == playlist.musicPlaylistID })?.trackCount {
+            return remoteTrackCount
+        }
+
+        return playlistItems.count {
+            $0.sourceMusicPlaylistIDs.contains(playlist.musicPlaylistID)
+        }
+    }
+
     func loadPlaylists(dependencies: Dependencies) async {
         isLoading = true
         defer { isLoading = false }
@@ -111,11 +124,22 @@ final class PlaylistSelectionViewModel {
         }
     }
 
-    func addTriage(_ playlist: AppleMusicPlaylist, context: ModelContext) {
+    func addTriageSource(_ playlist: AppleMusicPlaylist, context: ModelContext) {
         do {
-            try PlaylistRepository.addTriagePlaylist(playlist, in: context)
+            try PlaylistRepository.addTriageSource(playlist, in: context)
             try context.save()
-            message = "Added \(playlist.name) as a triage playlist."
+            message = "\(playlist.name) now feeds the triage bucket."
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    /// Unlinking leaves the contributed tracks in the bucket with their stats
+    /// intact, just unattributed.
+    func removeTriageSource(_ playlist: PlaylistRecord, context: ModelContext) {
+        do {
+            try PlaylistRepository.removeTriageSource(playlist, in: context)
+            message = "\(playlist.name) no longer feeds the triage bucket."
         } catch {
             message = error.localizedDescription
         }
@@ -196,9 +220,11 @@ final class PlaylistSelectionViewModel {
         isSyncingAll = true
         defer { isSyncingAll = false }
 
+        let syncablePlaylists = linkedPlaylists.filter(\.hasRemoteSource)
+
         do {
-            let count = try await dependencies.syncAllLinkedPlaylists(linkedPlaylists, context)
-            for playlist in linkedPlaylists {
+            let count = try await dependencies.syncAllLinkedPlaylists(syncablePlaylists, context)
+            for playlist in syncablePlaylists {
                 dependencies.reconcileStoredOrder(playlist, context)
             }
             message = "Synced \(count) tracks across linked playlists."

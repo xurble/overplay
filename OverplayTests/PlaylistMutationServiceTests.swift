@@ -13,7 +13,7 @@ struct PlaylistMutationServiceTests {
         let sourcePlaylist = PlaylistRecord(
             musicPlaylistID: "triage-playlist",
             name: "Triage",
-            role: .triage
+            role: .triageBucket
         )
         let oneTruePlaylist = PlaylistRecord(
             musicPlaylistID: "main-playlist",
@@ -82,7 +82,7 @@ struct PlaylistMutationServiceTests {
         let sourcePlaylist = PlaylistRecord(
             musicPlaylistID: "triage-playlist",
             name: "Triage",
-            role: .triage
+            role: .triageBucket
         )
         let oneTruePlaylist = PlaylistRecord(
             musicPlaylistID: "main-playlist",
@@ -139,7 +139,7 @@ struct PlaylistMutationServiceTests {
         let sourcePlaylist = PlaylistRecord(
             musicPlaylistID: "triage-playlist",
             name: "Triage",
-            role: .triage
+            role: .triageBucket
         )
         let track = TrackRecord(
             catalogID: "catalog-1",
@@ -180,7 +180,7 @@ struct PlaylistMutationServiceTests {
         let sourcePlaylist = PlaylistRecord(
             musicPlaylistID: "triage-playlist",
             name: "Triage",
-            role: .triage
+            role: .triageBucket
         )
         let oneTruePlaylist = PlaylistRecord(
             musicPlaylistID: "source-playlist",
@@ -264,7 +264,7 @@ struct PlaylistMutationServiceTests {
         let sourcePlaylist = PlaylistRecord(
             musicPlaylistID: "triage-playlist",
             name: "Triage",
-            role: .triage
+            role: .triageBucket
         )
         let oneTruePlaylist = PlaylistRecord(
             musicPlaylistID: "main-playlist",
@@ -356,7 +356,7 @@ struct PlaylistMutationServiceTests {
         let playlist = PlaylistRecord(
             musicPlaylistID: "triage-playlist",
             name: "Triage",
-            role: .triage
+            role: .triageBucket
         )
         let track = TrackRecord(
             catalogID: "catalog-1",
@@ -405,7 +405,7 @@ struct PlaylistMutationServiceTests {
         let playlist = PlaylistRecord(
             musicPlaylistID: "triage-playlist",
             name: "Triage",
-            role: .triage
+            role: .triageBucket
         )
         let result = SearchSongResult(
             id: "catalog-1",

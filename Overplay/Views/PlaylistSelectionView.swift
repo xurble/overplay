@@ -98,7 +98,7 @@ struct PlaylistSelectionView: View {
     }
 
     private var sortedLinkedPlaylists: [PlaylistRecord] {
-        presentationBuilder.displayOrderedPlaylists(linkedPlaylists)
+        presentationBuilder.displayOrderedPlaylists(linkedPlaylists.filter(\.hasRemoteSource))
     }
 
     private var playlistDataKey: String {
@@ -214,9 +214,9 @@ struct PlaylistSelectionView: View {
                 }
 
                 Button {
-                    viewModel.addTriage(playlist, context: modelContext)
+                    viewModel.addTriageSource(playlist, context: modelContext)
                 } label: {
-                    Label("Add Triage", systemImage: "tray.and.arrow.down.fill")
+                    Label("Add to Triage", systemImage: "tray.and.arrow.down.fill")
                 }
                 .buttonStyle(.bordered)
             }

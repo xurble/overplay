@@ -307,7 +307,7 @@ struct PlaybackControllerDisplayRestoreTests {
         let targetPlaylist = PlaylistRecord(
             musicPlaylistID: "playlist-2",
             name: "Target",
-            role: .triage
+            role: .triageBucket
         )
         let currentTrack = TrackRecord(
             catalogID: "current-catalog",

@@ -120,6 +120,19 @@ struct PlaylistSyncService {
         runIdentityMerge: Bool = true,
         skipWhenRemoteUnchanged: Bool = false
     ) async throws -> PlaylistSyncSummary {
+        // The bucket has no Apple Music playlist of its own, so syncing it
+        // means syncing everything that feeds it. Handled here rather than in
+        // each caller so the dashboard, the sources screen and CarPlay all
+        // behave the same way.
+        if playlistRecord.role == .triageBucket {
+            return try await syncTriageSources(
+                into: playlistRecord,
+                in: context,
+                runIdentityMerge: runIdentityMerge,
+                skipWhenRemoteUnchanged: skipWhenRemoteUnchanged
+            )
+        }
+
         let adapter = sourceRegistry.adapter(for: playlistRecord)
         let fetchResult = try await adapter.fetchTrackSnapshots(
             playlistID: playlistRecord.musicPlaylistID,
@@ -162,8 +175,74 @@ struct PlaylistSyncService {
         return summary
     }
 
+    /// Syncs every contributing playlist and reports the combined result, so
+    /// a bucket sync reads as one action.
+    private func syncTriageSources(
+        into bucket: PlaylistRecord,
+        in context: ModelContext,
+        runIdentityMerge: Bool,
+        skipWhenRemoteUnchanged: Bool
+    ) async throws -> PlaylistSyncSummary {
+        let sources = try PlaylistRepository.triageSources(in: context)
+
+        guard !sources.isEmpty else {
+            var summary = PlaylistSyncSummary()
+            summary.skippedCount = 1
+            summary.skippedReason = "noTriageSources"
+            bucket.lastSyncedAt = .now
+            bucket.lastSyncError = nil
+            bucket.updatedAt = .now
+            try context.save()
+            return summary
+        }
+
+        var combinedSummary = PlaylistSyncSummary()
+        var firstError: Error?
+
+        for source in sources {
+            do {
+                // Each source reconciles into the bucket, so the identity
+                // merge waits until every one has landed.
+                let summary = try await syncPlaylist(
+                    source,
+                    in: context,
+                    runIdentityMerge: false,
+                    skipWhenRemoteUnchanged: skipWhenRemoteUnchanged
+                )
+                combinedSummary.fetchedCount += summary.fetchedCount
+                combinedSummary.insertedCount += summary.insertedCount
+                combinedSummary.updatedCount += summary.updatedCount
+                combinedSummary.unchangedCount += summary.unchangedCount
+                combinedSummary.skippedCount += summary.skippedCount
+                combinedSummary.insertedLocalTrackIDs.append(contentsOf: summary.insertedLocalTrackIDs)
+                combinedSummary.artworkWarmupSnapshots.append(contentsOf: summary.artworkWarmupSnapshots)
+            } catch {
+                // One unreachable contributor must not hide the tracks the
+                // others delivered, so record it and carry on.
+                source.lastSyncError = error.localizedDescription
+                source.updatedAt = .now
+                firstError = firstError ?? error
+            }
+        }
+
+        try context.save()
+
+        if runIdentityMerge, combinedSummary.didMutateRecords {
+            try await TrackIdentityMergeService.mergeDuplicates(in: context)
+        }
+
+        if let firstError, combinedSummary.fetchedCount == 0 {
+            throw firstError
+        }
+
+        return combinedSummary
+    }
+
     func syncAllLinkedPlaylists(in context: ModelContext) async throws -> Int {
+        // The triage bucket is active and linked but has no Apple Music
+        // playlist to fetch — it is fed by its contributing sources.
         let playlists = try PlaylistRepository.activePlaylists(in: context)
+            .filter(\.hasRemoteSource)
         var syncedCount = 0
         var didMutateRecords = false
 
@@ -264,6 +343,13 @@ struct PlaylistSyncService {
     ) async throws -> PlaylistSyncSummary {
         var summary = PlaylistSyncSummary(fetchedCount: snapshots.count)
         var seenRemoteTrackKeys = Set<String>()
+        // A contributing playlist keeps its own sync bookkeeping but does not
+        // own items: everything it contributes lands in the shared bucket, so
+        // the same track arriving from two playlists is one row.
+        let itemOwner = try itemOwner(for: playlistRecord, in: context)
+        let contributedSourceMusicPlaylistID = itemOwner === playlistRecord
+            ? nil
+            : playlistRecord.musicPlaylistID
 
         for (sortOrder, snapshot) in snapshots.enumerated() {
             if sortOrder > 0, sortOrder.isMultiple(of: Self.syncYieldStride) {
@@ -287,7 +373,7 @@ struct PlaylistSyncService {
                 )
                 let existingItem = try existingTrack.flatMap {
                     try PlaylistItemRepository.item(
-                        playlistID: playlistRecord.id,
+                        playlistID: itemOwner.id,
                         trackID: $0.id,
                         in: context
                     )
@@ -304,11 +390,16 @@ struct PlaylistSyncService {
             do {
                 let trackResult = try TrackRecordRepository.upsertWithResult(snapshot, in: context)
                 let itemResult = try PlaylistItemRepository.upsertWithResult(
-                    playlistID: playlistRecord.id,
+                    playlistID: itemOwner.id,
                     trackID: trackResult.record.id,
                     musicPlaylistEntryID: snapshot.playlistEntryID,
                     in: context
                 )
+
+                if let contributedSourceMusicPlaylistID,
+                   itemResult.record.addSourceMusicPlaylistID(contributedSourceMusicPlaylistID) {
+                    itemResult.record.updatedAt = syncedAt
+                }
 
                 if Self.shouldRefreshLastSeen(
                     current: itemResult.record.lastSeenInPlaylistAt,
@@ -350,14 +441,32 @@ struct PlaylistSyncService {
         playlistRecord.lastSyncedAt = syncedAt
         playlistRecord.lastSyncError = nil
         playlistRecord.updatedAt = syncedAt
-        let items = try PlaylistItemRepository.items(forPlaylistID: playlistRecord.id, in: context)
+        if itemOwner !== playlistRecord {
+            itemOwner.lastSyncedAt = syncedAt
+            itemOwner.updatedAt = syncedAt
+        }
+        let items = try PlaylistItemRepository.items(forPlaylistID: itemOwner.id, in: context)
         PlaybackOrderCoordinator.appendTrackIDs(
             summary.insertedLocalTrackIDs,
             playerID: "main",
-            playlistID: playlistRecord.musicPlaylistID,
+            playlistID: itemOwner.musicPlaylistID,
             orderTracks: PlaybackQueueBuilder.playbackOrderTracks(items: items)
         )
         return summary
+    }
+
+    /// Which playlist record owns the items a sync produces. Contributing
+    /// triage playlists hand theirs to the shared bucket; everything else
+    /// owns its own.
+    private func itemOwner(
+        for playlistRecord: PlaylistRecord,
+        in context: ModelContext
+    ) throws -> PlaylistRecord {
+        guard playlistRecord.role == .triageSource else {
+            return playlistRecord
+        }
+
+        return try PlaylistRepository.triageBucket(in: context)
     }
 
     private func logFoundRemoteTrack(

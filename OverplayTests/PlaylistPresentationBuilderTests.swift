@@ -8,8 +8,8 @@ struct PlaylistPresentationBuilderTests {
     @Test("orders active playlist summaries by role and case-insensitive title")
     func ordersActivePlaylistSummaries() {
         let inactive = PlaylistRecord(musicPlaylistID: "inactive", name: "Hidden", role: .oneTruePlaylist, isActive: false)
-        let triageB = PlaylistRecord(musicPlaylistID: "triage-b", name: "zeta", role: .triage)
-        let triageA = PlaylistRecord(musicPlaylistID: "triage-a", name: "Alpha", role: .triage)
+        let triageB = PlaylistRecord(musicPlaylistID: "triage-b", name: "zeta", role: .triageSource)
+        let triageA = PlaylistRecord(musicPlaylistID: "triage-a", name: "Alpha", role: .triageSource)
         let oneTrue = PlaylistRecord(musicPlaylistID: "one", name: "Main", role: .oneTruePlaylist)
 
         let summaries = builder(playlists: [inactive, triageB, triageA, oneTrue]).activePlaylistSummaries()
@@ -20,9 +20,9 @@ struct PlaylistPresentationBuilderTests {
 
     @Test("display ordering keeps every candidate and sorts by role then case-insensitive title")
     func displayOrderedPlaylistsKeepsAllCandidates() {
-        let inactive = PlaylistRecord(musicPlaylistID: "inactive", name: "Hidden", role: .triage, isActive: false)
-        let triageB = PlaylistRecord(musicPlaylistID: "triage-b", name: "zeta", role: .triage)
-        let triageA = PlaylistRecord(musicPlaylistID: "triage-a", name: "Alpha", role: .triage)
+        let inactive = PlaylistRecord(musicPlaylistID: "inactive", name: "Hidden", role: .triageSource, isActive: false)
+        let triageB = PlaylistRecord(musicPlaylistID: "triage-b", name: "zeta", role: .triageSource)
+        let triageA = PlaylistRecord(musicPlaylistID: "triage-a", name: "Alpha", role: .triageSource)
         let oneTrue = PlaylistRecord(musicPlaylistID: "one", name: "Main", role: .oneTruePlaylist)
         let candidates = [inactive, triageB, triageA, oneTrue]
 
@@ -33,7 +33,7 @@ struct PlaylistPresentationBuilderTests {
 
     @Test("playlist summaries include counts role grouping and current playback intent")
     func playlistSummariesIncludeCountsAndCurrentIntent() {
-        let playlist = PlaylistRecord(musicPlaylistID: "triage", name: "Inbox", role: .triage)
+        let playlist = PlaylistRecord(musicPlaylistID: "triage", name: "Inbox", role: .triageBucket)
         let playableTrack = TrackRecord(title: "Ready", artistName: "Artist")
         let evictedTrack = TrackRecord(title: "Gone", artistName: "Artist")
         let items = [
