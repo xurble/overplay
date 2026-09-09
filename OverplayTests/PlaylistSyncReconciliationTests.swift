@@ -527,8 +527,115 @@ struct PlaylistSyncReconciliationTests {
         ).orderedTrackIDs) == Set(bucketItems.map { $0.trackID.uuidString }))
     }
 
-    @Test("healing a source playlist ID also heals provenance used by unlink")
-    func healingSourcePlaylistIDAlsoHealsProvenanceUsedByUnlink() async throws {
+    @Test("a main source main round trip between chunks still replays the moved prefix")
+    func mainSourceMainRoundTripBetweenChunksStillReplaysMovedPrefix() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let originalPlaylistID = "original-\(UUID().uuidString)"
+        let replacementPlaylistID = "replacement-\(UUID().uuidString)"
+        let original = try PlaylistRepository.setOneTruePlaylist(
+            AppleMusicPlaylist(id: originalPlaylistID, name: "Original", trackCount: nil),
+            in: context
+        )
+        let snapshots = (0...PlaylistSyncService.syncYieldStride).map { index in
+            snapshot(id: "track-\(index)-\(UUID().uuidString)", title: "Track \(index)")
+        }
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        for musicPlaylistID in [originalPlaylistID, bucket.musicPlaylistID] {
+            PlaybackOrderStore.clear(
+                playerID: "main",
+                musicPlaylistID: musicPlaylistID,
+                flushImmediately: true
+            )
+        }
+        defer {
+            for musicPlaylistID in [originalPlaylistID, bucket.musicPlaylistID] {
+                PlaybackOrderStore.clear(
+                    playerID: "main",
+                    musicPlaylistID: musicPlaylistID,
+                    flushImmediately: true
+                )
+            }
+        }
+
+        var didRoundTrip = false
+        let service = PlaylistSyncService(yieldDuringReconciliation: {
+            guard !didRoundTrip else { return }
+            didRoundTrip = true
+            _ = try PlaylistRepository.setOneTruePlaylist(
+                AppleMusicPlaylist(id: replacementPlaylistID, name: "Replacement", trackCount: nil),
+                in: context
+            )
+            _ = try PlaylistRepository.setOneTruePlaylist(
+                AppleMusicPlaylist(id: originalPlaylistID, name: "Original", trackCount: nil),
+                in: context
+            )
+        })
+
+        _ = try await service.reconcile(
+            snapshots: snapshots,
+            playlistRecord: original,
+            syncedAt: Date(timeIntervalSince1970: 100),
+            in: context
+        )
+
+        let mainItems = try PlaylistItemRepository.items(forPlaylistID: original.id, in: context)
+        let bucketItems = try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
+        #expect(didRoundTrip)
+        #expect(original.role == .oneTruePlaylist)
+        #expect(mainItems.count == snapshots.count)
+        #expect(bucketItems.count == PlaylistSyncService.syncYieldStride)
+        #expect(Set(PlaybackOrderStore.state(
+            playerID: "main",
+            musicPlaylistID: originalPlaylistID
+        ).orderedTrackIDs) == Set(mainItems.map { $0.trackID.uuidString }))
+    }
+
+    @Test("healing a source ID between chunks refreshes cached bucket provenance")
+    func healingSourceIDBetweenChunksRefreshesCachedBucketProvenance() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let oldSourceID = "source-old-\(UUID().uuidString)"
+        let newSourceID = "source-new-\(UUID().uuidString)"
+        let source = try PlaylistRepository.addTriageSource(
+            AppleMusicPlaylist(id: oldSourceID, name: "Source", trackCount: nil),
+            in: context
+        )
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let snapshots = (0...PlaylistSyncService.syncYieldStride).map { index in
+            snapshot(id: "track-\(index)-\(UUID().uuidString)", title: "Track \(index)")
+        }
+
+        var didHeal = false
+        let service = PlaylistSyncService(yieldDuringReconciliation: {
+            guard !didHeal else { return }
+            didHeal = true
+            try AppleMusicPlaylistSourceSync().applyHealedMusicPlaylistID(
+                from: oldSourceID,
+                to: newSourceID,
+                playlistRecord: source,
+                in: context
+            )
+        })
+
+        _ = try await service.reconcile(
+            snapshots: snapshots,
+            playlistRecord: source,
+            syncedAt: Date(timeIntervalSince1970: 100),
+            in: context
+        )
+
+        let bucketItems = try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
+        #expect(didHeal)
+        #expect(source.musicPlaylistID == newSourceID)
+        #expect(bucketItems.count == snapshots.count)
+        #expect(bucketItems.allSatisfy {
+            $0.sourceMusicPlaylistIDs == [newSourceID]
+        })
+    }
+
+    @Test("healing a promoted source playlist ID also heals retained bucket provenance")
+    func healingPromotedSourcePlaylistIDAlsoHealsRetainedBucketProvenance() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let source = try PlaylistRepository.addTriageSource(
@@ -544,6 +651,11 @@ struct PlaylistSyncReconciliationTests {
         )
         let item = try #require(PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context).first)
 
+        _ = try PlaylistRepository.setOneTruePlaylist(
+            AppleMusicPlaylist(id: "source.old", name: "Source", trackCount: 1),
+            in: context
+        )
+
         try AppleMusicPlaylistSourceSync().applyHealedMusicPlaylistID(
             from: "source.old",
             to: "source.new",
@@ -552,8 +664,13 @@ struct PlaylistSyncReconciliationTests {
         )
 
         #expect(source.musicPlaylistID == "source.new")
+        #expect(source.role == .oneTruePlaylist)
         #expect(item.sourceMusicPlaylistIDs == ["source.new"])
 
+        _ = try PlaylistRepository.setOneTruePlaylist(
+            AppleMusicPlaylist(id: "replacement", name: "Replacement", trackCount: 1),
+            in: context
+        )
         try PlaylistRepository.removeTriageSource(source, in: context)
         #expect(item.sourceMusicPlaylistIDs.isEmpty)
     }

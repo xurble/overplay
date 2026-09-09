@@ -372,6 +372,7 @@ struct PlaylistSyncService {
             : playlistRecord.musicPlaylistID
         var itemOwnersByID = [currentItemOwner.id: currentItemOwner]
         var processedSnapshots: [TrackSnapshot] = []
+        var processedTrackIDs = Set<UUID>()
         var insertedOrderTrackIDs = Set<String>()
 
         for (sortOrder, snapshot) in snapshots.enumerated() {
@@ -389,11 +390,21 @@ struct PlaylistSyncService {
                 // never leaves its snapshots split across the old and new
                 // destinations.
                 let resolvedItemOwner = try itemOwner(for: playlistRecord, in: context)
-                if resolvedItemOwner.id != currentItemOwner.id {
-                    currentItemOwner = resolvedItemOwner
-                    contributedSourceMusicPlaylistID = currentItemOwner === playlistRecord
-                        ? nil
-                        : playlistRecord.musicPlaylistID
+                let resolvedSourceMusicPlaylistID = resolvedItemOwner === playlistRecord
+                    ? nil
+                    : playlistRecord.musicPlaylistID
+                let resolvedOwnerTrackIDs = Set(
+                    try PlaylistItemRepository.items(
+                        forPlaylistID: resolvedItemOwner.id,
+                        in: context
+                    ).map(\.trackID)
+                )
+                let prefixNeedsReplay = resolvedItemOwner.id != currentItemOwner.id
+                    || resolvedSourceMusicPlaylistID != contributedSourceMusicPlaylistID
+                    || !processedTrackIDs.isSubset(of: resolvedOwnerTrackIDs)
+                currentItemOwner = resolvedItemOwner
+                contributedSourceMusicPlaylistID = resolvedSourceMusicPlaylistID
+                if prefixNeedsReplay {
                     itemOwnersByID[currentItemOwner.id] = currentItemOwner
                     let replayedTrackIDs = try replayProcessedSnapshots(
                         processedSnapshots,
@@ -484,6 +495,7 @@ struct PlaylistSyncService {
                     mutation: mutation
                 )
                 processedSnapshots.append(snapshot)
+                processedTrackIDs.insert(trackResult.record.id)
             } catch {
                 logLocalAddFailed(
                     snapshot,

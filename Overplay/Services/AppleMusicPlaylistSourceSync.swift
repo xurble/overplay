@@ -131,8 +131,10 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
         playlistRecord: PlaylistRecord,
         in context: ModelContext
     ) throws {
-        if playlistRecord.role == .triageSource,
-           let bucket = try PlaylistRepository.existingTriageBucket(in: context) {
+        // A former contributor can retain rows in the bucket after becoming
+        // the One True Playlist. Heal every matching provenance reference,
+        // not only those whose playlist is currently a triage source.
+        if let bucket = try PlaylistRepository.existingTriageBucket(in: context) {
             for item in try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
             where item.replaceSourceMusicPlaylistID(from: oldID, to: newID) {
                 item.updatedAt = .now
