@@ -393,15 +393,20 @@ struct PlaylistSyncService {
                 let resolvedSourceMusicPlaylistID = resolvedItemOwner === playlistRecord
                     ? nil
                     : playlistRecord.musicPlaylistID
-                let resolvedOwnerTrackIDs = Set(
-                    try PlaylistItemRepository.items(
-                        forPlaylistID: resolvedItemOwner.id,
-                        in: context
-                    ).map(\.trackID)
+                let resolvedOwnerItems = try PlaylistItemRepository.items(
+                    forPlaylistID: resolvedItemOwner.id,
+                    in: context
                 )
+                let resolvedOwnerItemsByTrackID = resolvedOwnerItems.firstValueDictionary(keyedBy: \.trackID)
+                let processedPrefixIsCurrent = processedTrackIDs.allSatisfy { trackID in
+                    guard let item = resolvedOwnerItemsByTrackID[trackID] else { return false }
+                    return resolvedSourceMusicPlaylistID.map {
+                        item.sourceMusicPlaylistIDs.contains($0)
+                    } ?? true
+                }
                 let prefixNeedsReplay = resolvedItemOwner.id != currentItemOwner.id
                     || resolvedSourceMusicPlaylistID != contributedSourceMusicPlaylistID
-                    || !processedTrackIDs.isSubset(of: resolvedOwnerTrackIDs)
+                    || !processedPrefixIsCurrent
                 currentItemOwner = resolvedItemOwner
                 contributedSourceMusicPlaylistID = resolvedSourceMusicPlaylistID
                 if prefixNeedsReplay {

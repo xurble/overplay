@@ -634,6 +634,46 @@ struct PlaylistSyncReconciliationTests {
         })
     }
 
+    @Test("relinking a source between chunks restores provenance on the processed prefix")
+    func relinkingSourceBetweenChunksRestoresProvenanceOnProcessedPrefix() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let sourcePlaylistID = "source-\(UUID().uuidString)"
+        let remotePlaylist = AppleMusicPlaylist(
+            id: sourcePlaylistID,
+            name: "Source",
+            trackCount: nil
+        )
+        let source = try PlaylistRepository.addTriageSource(remotePlaylist, in: context)
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let snapshots = (0...PlaylistSyncService.syncYieldStride).map { index in
+            snapshot(id: "track-\(index)-\(UUID().uuidString)", title: "Track \(index)")
+        }
+
+        var didRelink = false
+        let service = PlaylistSyncService(yieldDuringReconciliation: {
+            guard !didRelink else { return }
+            didRelink = true
+            try PlaylistRepository.removeTriageSource(source, in: context)
+            _ = try PlaylistRepository.addTriageSource(remotePlaylist, in: context)
+        })
+
+        _ = try await service.reconcile(
+            snapshots: snapshots,
+            playlistRecord: source,
+            syncedAt: Date(timeIntervalSince1970: 100),
+            in: context
+        )
+
+        let bucketItems = try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
+        #expect(didRelink)
+        #expect(source.isActive)
+        #expect(bucketItems.count == snapshots.count)
+        #expect(bucketItems.allSatisfy {
+            $0.sourceMusicPlaylistIDs == [sourcePlaylistID]
+        })
+    }
+
     @Test("healing a promoted source playlist ID also heals retained bucket provenance")
     func healingPromotedSourcePlaylistIDAlsoHealsRetainedBucketProvenance() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
