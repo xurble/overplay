@@ -2981,12 +2981,32 @@ final class PlaybackController {
             // stored order. Compare against the live and pending queue instead
             // so that equality with the store cannot hide a required append.
             if isCurrentActivePlaylist {
+                let previouslyPublishedTrackIDs = activePlaylistSnapshot.flatMap { snapshot in
+                    snapshot.musicPlaylistID == playlist.musicPlaylistID
+                        && snapshot.playbackScope == .active
+                        ? Set(snapshot.rows.map(\.localTrackID))
+                        : nil
+                }
                 let knownLiveTrackIDs = Set(
                     activeQueueEntries.map(\.localTrackID)
                         + appendedUncorrelatedEntries.map(\.localTrackID)
                         + reconciliationPendingAppendTrackIDs
                 )
-                let appendedIDs = reconciledOrder.filter { !knownLiveTrackIDs.contains($0) }
+                // A re-materialized MusicKit queue can be only partially
+                // hydrated, so `activeQueueEntries` may temporarily omit
+                // tracks that are already live. In that window, only rows
+                // absent from the last published playlist snapshot are
+                // proven additions. Once hydration completes, the live queue
+                // is authoritative again and can recover any failed append.
+                let appendedIDs = if isAwaitingOwnQueueHydration {
+                    previouslyPublishedTrackIDs.map { publishedTrackIDs in
+                        reconciledOrder.filter {
+                            !publishedTrackIDs.contains($0) && !knownLiveTrackIDs.contains($0)
+                        }
+                    } ?? []
+                } else {
+                    reconciledOrder.filter { !knownLiveTrackIDs.contains($0) }
+                }
                 if !appendedIDs.isEmpty {
                     reconciliationPendingAppendTrackIDs.formUnion(appendedIDs)
                     Task { @MainActor [weak self] in
