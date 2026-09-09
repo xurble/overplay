@@ -17,17 +17,20 @@ import SwiftData
 enum TriageBucketMigrationService {
     struct Outcome: Equatable {
         var createdBucket = false
-        /// Duplicate buckets folded into the deterministic keeper after sync.
-        var consolidatedBucketCount = 0
+        /// Bucket records activated or hidden while choosing one keeper.
+        var normalizedBucketCount = 0
         var migratedSourceCount = 0
         /// Items re-parented onto the bucket keeping their own row.
         var movedItemCount = 0
         /// Items folded into an existing bucket row for the same track.
         var mergedItemCount = 0
+        /// History events retargeted so playlist context and Restore survive.
+        var reparentedHistoryEventCount = 0
 
         var didChangeAnything: Bool {
-            createdBucket || consolidatedBucketCount > 0 || migratedSourceCount > 0
+            createdBucket || normalizedBucketCount > 0 || migratedSourceCount > 0
                 || movedItemCount > 0 || mergedItemCount > 0
+                || reparentedHistoryEventCount > 0
         }
     }
 
@@ -40,12 +43,15 @@ enum TriageBucketMigrationService {
         let playlists = try PlaylistRepository.allPlaylists(in: context)
         let legacyPlaylists = playlists
             .filter(\.needsTriageBucketMigration)
-        let bucketCount = playlists.count(where: \.isTriageBucket)
+        let convergence = try PlaylistRepository.convergeTriageBuckets(in: context)
         var outcome = Outcome(
-            createdBucket: bucketCount == 0,
-            consolidatedBucketCount: max(bucketCount - 1, 0)
+            createdBucket: convergence.createdBucket,
+            normalizedBucketCount: convergence.normalizedBucketCount,
+            movedItemCount: convergence.movedItemCount,
+            mergedItemCount: convergence.mergedItemCount,
+            reparentedHistoryEventCount: convergence.reparentedHistoryEventCount
         )
-        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let bucket = convergence.bucket
 
         guard !legacyPlaylists.isEmpty else {
             if outcome.didChangeAnything {

@@ -72,6 +72,28 @@ enum EventRepository {
         }
     }
 
+    /// Retargets history when two local playlist containers converge. Events
+    /// identify their playlist by Overplay's UUID, so moving only the items
+    /// would make their playlist context and Restore action disappear.
+    @discardableResult
+    static func reparentEvents(
+        from sourcePlaylistID: UUID,
+        to destinationPlaylistID: UUID,
+        in context: ModelContext
+    ) throws -> Int {
+        guard sourcePlaylistID != destinationPlaylistID else { return 0 }
+
+        var descriptor = FetchDescriptor<HistoryEvent>(
+            predicate: #Predicate { $0.playlistID == sourcePlaylistID }
+        )
+        descriptor.includePendingChanges = true
+        let events = try context.fetch(descriptor)
+        for event in events {
+            event.playlistID = destinationPlaylistID
+        }
+        return events.count
+    }
+
     @discardableResult
     static func logHistory(
         playlistID: UUID? = nil,

@@ -436,14 +436,30 @@ struct TriageBucketTests {
             trackID: movedTrack.id,
             sourceMusicPlaylistIDs: ["source-3"]
         ))
+        let historyEvent = EventRepository.logHistory(
+            playlistID: duplicate.id,
+            trackID: sharedTrack.id,
+            eventType: .evicted,
+            source: .overplay,
+            in: context
+        )
 
         let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: makeDefaults())
 
         #expect(outcome.createdBucket == false)
-        #expect(outcome.consolidatedBucketCount == 1)
+        #expect(outcome.normalizedBucketCount == 1)
+        #expect(outcome.reparentedHistoryEventCount == 1)
         #expect(outcome.didChangeAnything)
         let buckets = try PlaylistRepository.allPlaylists(in: context).filter(\.isTriageBucket)
-        #expect(buckets.map(\.id) == [keeper.id])
+        #expect(buckets.count == 2)
+        #expect(buckets.filter(\.isActive).map(\.id) == [keeper.id])
+        #expect(duplicate.isActive == false)
+        #expect(
+            try PlaylistRepository.playlist(
+                musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+                in: context
+            )?.id == keeper.id
+        )
 
         let items = try PlaylistItemRepository.items(forPlaylistID: keeper.id, in: context)
         #expect(items.count == 2)
@@ -456,6 +472,71 @@ struct TriageBucketTests {
         let movedItem = try #require(items.first { $0.trackID == movedTrack.id })
         #expect(movedItem.sourceMusicPlaylistIDs == ["source-3"])
         #expect(!movedItem.sourceMusicPlaylistIDs.contains(PlaylistRecord.triageBucketMusicPlaylistID))
+        #expect(historyEvent.playlistID == keeper.id)
+        let historyRow = try #require(HistoryTimeline.rows(
+            events: [historyEvent],
+            playlists: buckets,
+            tracks: [sharedTrack]
+        ).first)
+        let restorableItem = try #require(
+            HistoryViewModel().restorableItem(for: historyRow, playlistItems: items)
+        )
+        #expect(restorableItem.id == mergedItem.id)
+    }
+
+    @Test("convergence absorbs items and history that arrive after an alias is hidden")
+    func convergenceAbsorbsLateCloudKitRows() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let keeper = PlaylistRecord(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket,
+            writePolicy: .incomingOnly,
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        let alias = PlaylistRecord(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket,
+            writePolicy: .incomingOnly,
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        context.insert(keeper)
+        context.insert(alias)
+        try TriageBucketMigrationService.migrate(in: context, defaults: makeDefaults())
+        #expect(alias.isActive == false)
+
+        let lateTrack = TrackRecord(catalogID: "late", title: "Late", artistName: "Artist")
+        context.insert(lateTrack)
+        context.insert(PlaylistItemRecord(
+            playlistID: alias.id,
+            trackID: lateTrack.id,
+            sourceMusicPlaylistIDs: ["late-source"]
+        ))
+        let lateEvent = EventRepository.logHistory(
+            playlistID: alias.id,
+            trackID: lateTrack.id,
+            eventType: .evicted,
+            source: .overplay,
+            in: context
+        )
+
+        let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: makeDefaults())
+
+        #expect(outcome.normalizedBucketCount == 0)
+        #expect(outcome.movedItemCount == 1)
+        #expect(outcome.reparentedHistoryEventCount == 1)
+        #expect(outcome.didChangeAnything)
+        #expect(try PlaylistItemRepository.items(forPlaylistID: alias.id, in: context).isEmpty)
+        let movedItem = try #require(
+            try PlaylistItemRepository.items(forPlaylistID: keeper.id, in: context).first
+        )
+        #expect(movedItem.trackID == lateTrack.id)
+        #expect(movedItem.sourceMusicPlaylistIDs == ["late-source"])
+        #expect(lateEvent.playlistID == keeper.id)
     }
 
     // MARK: - Helpers

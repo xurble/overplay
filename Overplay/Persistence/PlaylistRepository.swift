@@ -2,6 +2,20 @@ import Foundation
 import SwiftData
 
 enum PlaylistRepository {
+    struct TriageBucketConvergenceResult {
+        var bucket: PlaylistRecord
+        var createdBucket = false
+        var normalizedBucketCount = 0
+        var movedItemCount = 0
+        var mergedItemCount = 0
+        var reparentedHistoryEventCount = 0
+
+        var didChangeAnything: Bool {
+            createdBucket || normalizedBucketCount > 0 || movedItemCount > 0
+                || mergedItemCount > 0 || reparentedHistoryEventCount > 0
+        }
+    }
+
     static func allPlaylists(in context: ModelContext) throws -> [PlaylistRecord] {
         let descriptor = FetchDescriptor<PlaylistRecord>(
             sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.name)]
@@ -33,9 +47,9 @@ enum PlaylistRepository {
             predicate: #Predicate { $0.musicPlaylistID == musicPlaylistID },
             sortBy: [SortDescriptor(\.sortOrder), SortDescriptor(\.name)]
         )
-        descriptor.fetchLimit = 1
         descriptor.includePendingChanges = true
-        return try context.fetch(descriptor).first
+        let playlists = try context.fetch(descriptor)
+        return playlists.first(where: \.isActive) ?? playlists.first
     }
 
     static func playlist(
@@ -74,17 +88,44 @@ enum PlaylistRepository {
     /// this converges them onto the same deterministic keeper before writing.
     @discardableResult
     static func triageBucket(in context: ModelContext) throws -> PlaylistRecord {
+        try convergeTriageBuckets(in: context).bucket
+    }
+
+    /// Duplicate bucket records are retained as inactive aliases. CloudKit
+    /// can deliver a record's rows after its parent, so keeping the UUID
+    /// mapping lets every later pass absorb late items and history safely.
+    static func convergeTriageBuckets(
+        in context: ModelContext
+    ) throws -> TriageBucketConvergenceResult {
         let buckets = try triageBuckets(in: context)
         if let keeper = buckets.first {
+            var result = TriageBucketConvergenceResult(bucket: keeper)
+            if !keeper.isActive {
+                keeper.isActive = true
+                keeper.updatedAt = .now
+                result.normalizedBucketCount += 1
+            }
+
             for duplicate in buckets.dropFirst() {
-                try PlaylistItemRepository.reparentItems(
+                let itemSummary = try PlaylistItemRepository.reparentItems(
                     from: duplicate.id,
                     to: keeper.id,
                     in: context
                 )
-                context.delete(duplicate)
+                result.movedItemCount += itemSummary.movedCount
+                result.mergedItemCount += itemSummary.mergedCount
+                result.reparentedHistoryEventCount += try EventRepository.reparentEvents(
+                    from: duplicate.id,
+                    to: keeper.id,
+                    in: context
+                )
+                if duplicate.isActive {
+                    duplicate.isActive = false
+                    duplicate.updatedAt = .now
+                    result.normalizedBucketCount += 1
+                }
             }
-            return keeper
+            return result
         }
 
         let bucket = PlaylistRecord(
@@ -95,13 +136,14 @@ enum PlaylistRepository {
             sortOrder: 1
         )
         context.insert(bucket)
-        return bucket
+        return TriageBucketConvergenceResult(bucket: bucket, createdBucket: true)
     }
 
     /// Looks the bucket up without creating it, for read-only callers that
     /// must not write to the store just to render an empty state.
     static func existingTriageBucket(in context: ModelContext) throws -> PlaylistRecord? {
-        try triageBuckets(in: context).first
+        let buckets = try triageBuckets(in: context)
+        return buckets.first(where: \.isActive) ?? buckets.first
     }
 
     /// Sorts in memory for the UUID tie-break because CloudKit can preserve
