@@ -493,9 +493,41 @@ final class CarPlayCoordinator: NSObject {
         )
         guard force || signature != lastNowPlayingButtonSignature else { return false }
 
+        let previousSignature = lastNowPlayingButtonSignature
+        let reason = nowPlayingButtonUpdateReason(
+            force: force,
+            previous: previousSignature,
+            current: signature
+        )
         lastNowPlayingButtonSignature = signature
-        CPNowPlayingTemplate.shared.updateNowPlayingButtons(nowPlayingActionButtons(for: signature))
+        let buttons = nowPlayingActionButtons(for: signature)
+        CPNowPlayingTemplate.shared.updateNowPlayingButtons(buttons)
+        MusicKitActivityLog.shared.record(
+            .carPlayNowPlayingButtonsUpdate,
+            detail: "reason=\(reason) buttons=\(buttons.count) "
+                + "role=\(signature.playlistRole?.rawValue ?? "nil") "
+                + "retired=\(signature.isEvicted) "
+                + playbackController.playbackModeDiagnosticDescription
+        )
         return true
+    }
+
+    private func nowPlayingButtonUpdateReason(
+        force: Bool,
+        previous: CarPlayNowPlayingButtonSignature?,
+        current: CarPlayNowPlayingButtonSignature
+    ) -> String {
+        guard let previous else { return force ? "initial-forced" : "initial" }
+
+        var changes: [String] = []
+        if force { changes.append("forced") }
+        if previous.trackID != current.trackID { changes.append("track") }
+        if previous.playlistRole != current.playlistRole { changes.append("role") }
+        if previous.skipCount != current.skipCount { changes.append("skipCount") }
+        if previous.isEvicted != current.isEvicted { changes.append("retired") }
+        if previous.isShuffling != current.isShuffling { changes.append("shuffle") }
+        if previous.repeatMode != current.repeatMode { changes.append("repeat") }
+        return changes.isEmpty ? "forced-no-signature-change" : changes.joined(separator: ",")
     }
 
     private func nowPlayingActionButtons(for signature: CarPlayNowPlayingButtonSignature) -> [CPNowPlayingButton] {

@@ -16,6 +16,11 @@ protocol PlaybackPlayer: AnyObject {
     /// asked for, rather than holding them off.
     var shuffleMode: MusicPlayer.ShuffleMode { get set }
     var repeatMode: MusicPlayer.RepeatMode { get set }
+    /// Raw optional values reported by MusicKit. These remain separate from
+    /// the effective modes so diagnostics can distinguish an explicit off
+    /// state from MusicKit temporarily reporting no state at all.
+    var reportedShuffleMode: MusicPlayer.ShuffleMode? { get }
+    var reportedRepeatMode: MusicPlayer.RepeatMode? { get }
 
     func replaceQueue(with materialization: PlaybackQueueMaterialization)
     func prepareToPlay() async throws
@@ -25,6 +30,11 @@ protocol PlaybackPlayer: AnyObject {
     func skipToPreviousEntry() async throws
     func skipToEntry(withID entryID: String) async throws
     func appendToQueue(_ tracks: [Track]) async throws
+}
+
+extension PlaybackPlayer {
+    var reportedShuffleMode: MusicPlayer.ShuffleMode? { shuffleMode }
+    var reportedRepeatMode: MusicPlayer.RepeatMode? { repeatMode }
 }
 
 @MainActor
@@ -126,7 +136,7 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
     /// has not reported one yet, which reads as off rather than unknown
     /// because a surface has to show something.
     var shuffleMode: MusicPlayer.ShuffleMode {
-        get { player.state.shuffleMode ?? .off }
+        get { reportedShuffleMode ?? .off }
         set {
             guard player.state.shuffleMode != newValue else { return }
             MusicKitActivityLog.shared.measure(.playerModeReset, detail: "shuffle=\(newValue)") {
@@ -138,13 +148,21 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
     var repeatMode: MusicPlayer.RepeatMode {
         // Spelled out: a bare `.none` against an optional binds to
         // `Optional.none`, which is a different case entirely.
-        get { player.state.repeatMode ?? MusicPlayer.RepeatMode.none }
+        get { reportedRepeatMode ?? MusicPlayer.RepeatMode.none }
         set {
             guard player.state.repeatMode != newValue else { return }
             MusicKitActivityLog.shared.measure(.playerModeReset, detail: "repeat=\(newValue)") {
                 player.state.repeatMode = newValue
             }
         }
+    }
+
+    var reportedShuffleMode: MusicPlayer.ShuffleMode? {
+        player.state.shuffleMode
+    }
+
+    var reportedRepeatMode: MusicPlayer.RepeatMode? {
+        player.state.repeatMode
     }
 }
 
