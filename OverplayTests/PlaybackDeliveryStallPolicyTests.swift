@@ -5,12 +5,14 @@ import Testing
 
 @Suite("Playback delivery stall policy")
 struct PlaybackDeliveryStallPolicyTests {
-    @Test("consecutive interrupted ticks trip the stall threshold")
-    func consecutiveInterruptedTicksTripTheStallThreshold() {
+    @Test("consecutive interrupted ticks never become a delivery stall")
+    func consecutiveInterruptedTicksNeverBecomeADeliveryStall() {
         var state = PlaybackDeliveryStallPolicy.State()
-        for tickCount in 1...PlaybackDeliveryStallPolicy.interruptedTickThreshold {
+        for _ in 0..<20 {
             state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.interrupted, playbackTime: 42))
-            #expect(state.isStalled == (tickCount >= PlaybackDeliveryStallPolicy.interruptedTickThreshold))
+            #expect(!state.isStalled)
+            #expect(!state.isProgressing)
+            #expect(state.frozenTicks == 0)
         }
     }
 
@@ -37,7 +39,6 @@ struct PlaybackDeliveryStallPolicyTests {
 
         #expect(!state.isStalled)
         #expect(state.isProgressing)
-        #expect(state.interruptedTicks == 0)
         #expect(state.frozenTicks == 0)
     }
 
@@ -61,18 +62,6 @@ struct PlaybackDeliveryStallPolicyTests {
 
         #expect(!state.isStalled)
         #expect(!state.isProgressing)
-    }
-
-    @Test("a pause between interruptions restarts the count")
-    func aPauseBetweenInterruptionsRestartsTheCount() {
-        var state = PlaybackDeliveryStallPolicy.State()
-        for _ in 0..<(PlaybackDeliveryStallPolicy.interruptedTickThreshold - 1) {
-            state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.interrupted, playbackTime: 42))
-        }
-        state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.paused, playbackTime: 42))
-        state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.interrupted, playbackTime: 42))
-
-        #expect(!state.isStalled)
     }
 
     @Test("playing without a current entry is not a frozen-position stall")
@@ -125,8 +114,9 @@ struct PlaybackDeliveryStallPolicyTests {
 
     private func stalledState() -> PlaybackDeliveryStallPolicy.State {
         var state = PlaybackDeliveryStallPolicy.State()
-        for _ in 0..<PlaybackDeliveryStallPolicy.interruptedTickThreshold {
-            state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.interrupted, playbackTime: 42))
+        state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.playing, playbackTime: 42))
+        for _ in 0..<PlaybackDeliveryStallPolicy.frozenPlaybackTickThreshold {
+            state = PlaybackDeliveryStallPolicy.assess(state, tick: tick(.playing, playbackTime: 42))
         }
         return state
     }

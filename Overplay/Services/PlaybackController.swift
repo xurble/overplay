@@ -55,11 +55,11 @@ final class PlaybackController {
     var currentPlaylistScope: PlaylistPlaybackScope = .active
     var activePlaylistSnapshot: ActivePlaylistSnapshot?
     var statusMessage: String?
-    /// True while streaming delivery is failing (mid-track stall, player
-    /// interruption, or a restart the player refused). Cleared by witnessed
-    /// playback progress or a successful user-initiated play. CarPlay
-    /// watches this to surface an alert — statusMessage renders only in the
-    /// iPhone/iPad Now Playing views.
+    /// True while streaming delivery is failing (a frozen mid-track stream
+    /// or a restart the player refused). Cleared by witnessed playback
+    /// progress, an active system interruption, or a successful user-initiated
+    /// play. CarPlay watches this to surface an alert — statusMessage renders
+    /// only in the iPhone/iPad Now Playing views.
     private(set) var isDeliveryStalled = false
     private(set) var isPlaybackTransitionInFlight = false
     /// Whether the shared player is holding a queue entry.
@@ -124,6 +124,7 @@ final class PlaybackController {
     /// entries from the queue it started against.
     @ObservationIgnored private var appendCorrelationGeneration = 0
     @ObservationIgnored private var deliveryStallState = PlaybackDeliveryStallPolicy.State()
+    @ObservationIgnored private var deliveryInterruptionGeneration = 0
     @ObservationIgnored private var unresolvedEntryState = PlaybackUnresolvedEntryPolicy.State()
     @ObservationIgnored private var deliveryRecoveryAttempts = 0
     @ObservationIgnored private var isAttemptingDeliveryRecovery = false
@@ -415,6 +416,7 @@ final class PlaybackController {
         unresolvableMusicItemIDs.removeAll()
         monitorIdleSince = nil
         deliveryStallState = PlaybackDeliveryStallPolicy.State()
+        deliveryInterruptionGeneration = 0
         unresolvedEntryState = PlaybackUnresolvedEntryPolicy.State()
         deliveryRecoveryAttempts = 0
         isDeliveryStalled = false
@@ -2696,6 +2698,16 @@ final class PlaybackController {
         hasCurrentEntry: Bool,
         playbackTime: Double
     ) async {
+        if status == .interrupted {
+            // MusicKit and the system own both the interruption and whether
+            // playback resumes afterward. Never expose it as a delivery
+            // failure or let it inherit a prior stall's automatic recovery.
+            deliveryInterruptionGeneration += 1
+            deliveryStallState = PlaybackDeliveryStallPolicy.State()
+            clearDeliveryFailure(refillRecoveryBudget: false)
+            return
+        }
+
         guard currentPlaylistID != nil, !activeQueueEntries.isEmpty else {
             deliveryStallState = PlaybackDeliveryStallPolicy.State()
             return
@@ -2723,7 +2735,7 @@ final class PlaybackController {
         if !isDeliveryStalled {
             reportDeliveryFailure(message: Self.deliveryStallMessage)
             TrackMetadataDiagnostics.log(
-                "playback delivery stalled status=\(status) time=\(String(format: "%.1f", playbackTime)) interrupted=\(deliveryStallState.interruptedTicks) frozen=\(deliveryStallState.frozenTicks)"
+                "playback delivery stalled status=\(status) time=\(String(format: "%.1f", playbackTime)) frozen=\(deliveryStallState.frozenTicks)"
             )
         }
 
@@ -2734,6 +2746,7 @@ final class PlaybackController {
 
     private func attemptDeliveryRecoveryIfNeeded() async {
         guard !isAttemptingDeliveryRecovery,
+              player.playbackStatus == .playing,
               PlaybackDeliveryStallPolicy.shouldAttemptRecovery(
                   state: deliveryStallState,
                   playbackIntended: playbackIntended,
@@ -2743,6 +2756,7 @@ final class PlaybackController {
             return
         }
 
+        let interruptionGeneration = deliveryInterruptionGeneration
         isAttemptingDeliveryRecovery = true
         defer { isAttemptingDeliveryRecovery = false }
         deliveryRecoveryAttempts += 1
@@ -2750,11 +2764,17 @@ final class PlaybackController {
         MusicKitActivityLog.shared.record(
             .playbackRecoveryAttempt,
             magnitude: Double(attempt),
-            detail: "attempt \(attempt) interrupted=\(deliveryStallState.interruptedTicks) frozen=\(deliveryStallState.frozenTicks)",
+            detail: "attempt \(attempt) frozen=\(deliveryStallState.frozenTicks)",
             notes: [.automaticRetry]
         )
         do {
             try await player.prepareToPlay()
+            guard player.playbackStatus == .playing,
+                  deliveryInterruptionGeneration == interruptionGeneration else {
+                deliveryStallState = PlaybackDeliveryStallPolicy.State()
+                clearDeliveryFailure(refillRecoveryBudget: false)
+                return
+            }
             try await player.play()
             // The next progressing tick confirms recovery and clears the
             // surfaced failure; reset the detector so its stale counters

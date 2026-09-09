@@ -77,6 +77,123 @@ struct PlaybackTransitionTests {
         #expect(nilTransition.detail?.contains("effectiveShuffle=songs->off") == true)
     }
 
+    @Test("an active interruption never becomes a delivery stall or issues playback commands")
+    func activeInterruptionNeverBecomesAStallOrIssuesPlaybackCommands() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let prepareCallsBeforeInterruption = fixture.player.prepareToPlayCallCount
+        let playCallsBeforeInterruption = fixture.player.playCallCount
+
+        fixture.player.playbackStatus = .interrupted
+        for _ in 0..<20 {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+
+        #expect(fixture.player.prepareToPlayCallCount == prepareCallsBeforeInterruption)
+        #expect(fixture.player.playCallCount == playCallsBeforeInterruption)
+        #expect(!fixture.controller.isPlaying)
+        #expect(!fixture.controller.isDeliveryStalled)
+        #expect(fixture.controller.statusMessage == nil)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
+        #expect(fixture.items[0].skipCount == 0)
+        #expect(fixture.items[0].playthroughCount == 0)
+        #expect(try fixture.history().isEmpty)
+    }
+
+    @Test("an interruption beginning during recovery preparation prevents play")
+    func interruptionDuringRecoveryPreparationPreventsPlay() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.controller.isNetworkReachable = { true }
+        fixture.player.playbackTime = 10
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        let prepareCallsBeforeStall = fixture.player.prepareToPlayCallCount
+        let playCallsBeforeStall = fixture.player.playCallCount
+        fixture.player.onPrepareToPlay = {
+            fixture.player.playbackStatus = .interrupted
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+            fixture.player.playbackStatus = .playing
+        }
+
+        for _ in 0..<PlaybackDeliveryStallPolicy.frozenPlaybackTickThreshold {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+
+        #expect(fixture.player.prepareToPlayCallCount == prepareCallsBeforeStall + 1)
+        #expect(fixture.player.playCallCount == playCallsBeforeStall)
+        #expect(fixture.player.playbackStatus == .playing)
+        #expect(!fixture.controller.isDeliveryStalled)
+        #expect(fixture.items[0].skipCount == 0)
+        #expect(fixture.items[0].playthroughCount == 0)
+        #expect(try fixture.history().isEmpty)
+
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(fixture.controller.isPlaying)
+        #expect(fixture.player.playCallCount == playCallsBeforeStall)
+    }
+
+    @Test("post-interruption state follows MusicKit until an explicit play command")
+    func postInterruptionStateFollowsMusicKitUntilExplicitPlay() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+
+        fixture.player.playbackStatus = .interrupted
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        let playCallsDuringInterruption = fixture.player.playCallCount
+
+        fixture.player.playbackStatus = .playing
+        fixture.player.playbackTime = 1
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        #expect(fixture.controller.isPlaying)
+        #expect(fixture.player.playCallCount == playCallsDuringInterruption)
+
+        fixture.player.playbackStatus = .interrupted
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        fixture.player.playbackStatus = .paused
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        #expect(!fixture.controller.isPlaying)
+        #expect(fixture.player.playCallCount == playCallsDuringInterruption)
+
+        await fixture.controller.play(context: fixture.context)
+
+        #expect(fixture.controller.isPlaying)
+        #expect(fixture.player.playCallCount == playCallsDuringInterruption + 1)
+        #expect(fixture.items[0].skipCount == 0)
+        #expect(fixture.items[0].playthroughCount == 0)
+        #expect(try fixture.history().isEmpty)
+    }
+
+    @Test("frozen playing delivery still uses the bounded recovery budget")
+    func frozenPlayingDeliveryStillUsesBoundedRecovery() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.controller.isNetworkReachable = { true }
+        fixture.player.playbackTime = 10
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        let prepareCallsBeforeStall = fixture.player.prepareToPlayCallCount
+        let playCallsBeforeStall = fixture.player.playCallCount
+
+        for _ in 0..<30 {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+
+        #expect(fixture.controller.isDeliveryStalled)
+        #expect(
+            fixture.player.prepareToPlayCallCount
+                == prepareCallsBeforeStall + PlaybackDeliveryStallPolicy.maximumRecoveryAttempts
+        )
+        #expect(
+            fixture.player.playCallCount
+                == playCallsBeforeStall + PlaybackDeliveryStallPolicy.maximumRecoveryAttempts
+        )
+    }
+
     @Test("a queue end is handled once, not once per tick")
     func queueEndIsHandledOncePerEnd() async throws {
         let fixture = try makeFixture()
@@ -1309,6 +1426,8 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
 
     var playbackStatus: MusicPlayer.PlaybackStatus = .stopped
     var playbackTime: TimeInterval = 0
+    private(set) var prepareToPlayCallCount = 0
+    private(set) var playCallCount = 0
     var playFailuresRemaining = 0
     var nextFailuresRemaining = 0
     var previousFailuresRemaining = 0
@@ -1373,9 +1492,16 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
         scheduleTransition(to: target, afterReads: delay)
     }
 
-    func prepareToPlay() async throws {}
+    func prepareToPlay() async throws {
+        prepareToPlayCallCount += 1
+        if let onPrepareToPlay {
+            self.onPrepareToPlay = nil
+            await onPrepareToPlay()
+        }
+    }
 
     func play() async throws {
+        playCallCount += 1
         if let onPlay {
             self.onPlay = nil
             await onPlay()
@@ -1473,6 +1599,9 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     /// Runs while an append is in flight, so tests can reproduce the queue
     /// being replaced underneath a top-up.
     var onAppendToQueue: (() async -> Void)?
+    /// Runs inside `prepareToPlay()`, so tests can reproduce an interruption
+    /// arriving while automatic recovery is suspended in MusicKit.
+    var onPrepareToPlay: (() async -> Void)?
     /// Runs inside `play()`, which the controller awaits while a transition is
     /// still in flight, so tests can act on a concurrent surface mid-transition.
     var onPlay: (() async -> Void)?
