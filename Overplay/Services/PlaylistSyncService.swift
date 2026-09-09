@@ -370,6 +370,9 @@ struct PlaylistSyncService {
         var contributedSourceMusicPlaylistID = currentItemOwner === playlistRecord
             ? nil
             : playlistRecord.musicPlaylistID
+        var itemOwnersByID = [currentItemOwner.id: currentItemOwner]
+        var processedSnapshots: [TrackSnapshot] = []
+        var insertedOrderTrackIDs = Set<String>()
 
         for (sortOrder, snapshot) in snapshots.enumerated() {
             if sortOrder > 0, sortOrder.isMultiple(of: Self.syncYieldStride) {
@@ -380,14 +383,30 @@ struct PlaylistSyncService {
                     summary.skippedReason = "inactivePlaylist"
                     return summary
                 }
-                // Selection can demote the playlist while this main-actor
-                // sync yields. Re-resolve ownership before writing the next
-                // chunk so every remaining row follows the playlist into the
-                // shared bucket rather than becoming stranded on the source.
-                currentItemOwner = try itemOwner(for: playlistRecord, in: context)
-                contributedSourceMusicPlaylistID = currentItemOwner === playlistRecord
-                    ? nil
-                    : playlistRecord.musicPlaylistID
+                // Selection can promote or demote the playlist while this
+                // main-actor sync yields. Re-resolve ownership and replay the
+                // completed prefix into the new owner so one successful sync
+                // never leaves its snapshots split across the old and new
+                // destinations.
+                let resolvedItemOwner = try itemOwner(for: playlistRecord, in: context)
+                if resolvedItemOwner.id != currentItemOwner.id {
+                    currentItemOwner = resolvedItemOwner
+                    contributedSourceMusicPlaylistID = currentItemOwner === playlistRecord
+                        ? nil
+                        : playlistRecord.musicPlaylistID
+                    itemOwnersByID[currentItemOwner.id] = currentItemOwner
+                    let replayedTrackIDs = try replayProcessedSnapshots(
+                        processedSnapshots,
+                        itemOwner: currentItemOwner,
+                        contributedSourceMusicPlaylistID: contributedSourceMusicPlaylistID,
+                        syncedAt: syncedAt,
+                        in: context
+                    )
+                    for localTrackID in replayedTrackIDs
+                    where insertedOrderTrackIDs.insert(localTrackID).inserted {
+                        summary.insertedLocalTrackIDs.append(localTrackID)
+                    }
+                }
             }
             let remoteTrackKey = snapshot.catalogID ?? snapshot.libraryID ?? snapshot.id
             guard seenRemoteTrackKeys.insert(remoteTrackKey).inserted else {
@@ -448,8 +467,10 @@ struct PlaylistSyncService {
                     itemMutation: itemResult.mutation
                 )
                 record(mutation, in: &summary)
-                if mutation == .inserted {
-                    summary.insertedLocalTrackIDs.append(trackResult.record.id.uuidString)
+                let localTrackID = trackResult.record.id.uuidString
+                if mutation == .inserted,
+                   insertedOrderTrackIDs.insert(localTrackID).inserted {
+                    summary.insertedLocalTrackIDs.append(localTrackID)
                 }
                 if mutation == .inserted || trackResult.shouldWarmUpArtworkTheme {
                     summary.artworkWarmupSnapshots.append(snapshot)
@@ -462,6 +483,7 @@ struct PlaylistSyncService {
                     item: itemResult.record,
                     mutation: mutation
                 )
+                processedSnapshots.append(snapshot)
             } catch {
                 logLocalAddFailed(
                     snapshot,
@@ -475,18 +497,54 @@ struct PlaylistSyncService {
         playlistRecord.lastSyncedAt = syncedAt
         playlistRecord.lastSyncError = nil
         playlistRecord.updatedAt = syncedAt
-        if currentItemOwner !== playlistRecord {
-            currentItemOwner.lastSyncedAt = syncedAt
-            currentItemOwner.updatedAt = syncedAt
+        for owner in itemOwnersByID.values {
+            if owner !== playlistRecord {
+                owner.lastSyncedAt = syncedAt
+                owner.updatedAt = syncedAt
+            }
+            let items = try PlaylistItemRepository.items(forPlaylistID: owner.id, in: context)
+            PlaybackOrderCoordinator.appendTrackIDs(
+                summary.insertedLocalTrackIDs,
+                playerID: "main",
+                playlistID: owner.musicPlaylistID,
+                orderTracks: PlaybackQueueBuilder.playbackOrderTracks(items: items)
+            )
         }
-        let items = try PlaylistItemRepository.items(forPlaylistID: currentItemOwner.id, in: context)
-        PlaybackOrderCoordinator.appendTrackIDs(
-            summary.insertedLocalTrackIDs,
-            playerID: "main",
-            playlistID: currentItemOwner.musicPlaylistID,
-            orderTracks: PlaybackQueueBuilder.playbackOrderTracks(items: items)
-        )
         return summary
+    }
+
+    /// Replays the already completed chunk into a newly selected owner after
+    /// a role transition. Track upserts are idempotent; item upserts ensure a
+    /// promoted playlist receives the whole remote snapshot while a demoted
+    /// playlist confirms the rows that selection already moved to the bucket.
+    private func replayProcessedSnapshots(
+        _ snapshots: [TrackSnapshot],
+        itemOwner: PlaylistRecord,
+        contributedSourceMusicPlaylistID: String?,
+        syncedAt: Date,
+        in context: ModelContext
+    ) throws -> [String] {
+        try snapshots.map { snapshot in
+            let trackResult = try TrackRecordRepository.upsertWithResult(snapshot, in: context)
+            let itemResult = try PlaylistItemRepository.upsertWithResult(
+                playlistID: itemOwner.id,
+                trackID: trackResult.record.id,
+                musicPlaylistEntryID: snapshot.playlistEntryID,
+                in: context
+            )
+            if let contributedSourceMusicPlaylistID,
+               itemResult.record.addSourceMusicPlaylistID(contributedSourceMusicPlaylistID) {
+                itemResult.record.updatedAt = syncedAt
+            }
+            if Self.shouldRefreshLastSeen(
+                current: itemResult.record.lastSeenInPlaylistAt,
+                syncedAt: syncedAt,
+                didChange: itemResult.mutation.didChange
+            ) {
+                itemResult.record.lastSeenInPlaylistAt = syncedAt
+            }
+            return trackResult.record.id.uuidString
+        }
     }
 
     private func inactivePlaylistSummary(skippedCount: Int = 1) -> PlaylistSyncSummary {

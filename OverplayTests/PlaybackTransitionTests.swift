@@ -344,6 +344,48 @@ struct PlaybackTransitionTests {
         } == true)
     }
 
+    @Test("a promoted source sync callback still refreshes the playing triage bucket")
+    func promotedSourceSyncCallbackStillRefreshesPlayingTriageBucket() async throws {
+        let fixture = try makeFixture(trackCount: 2)
+        fixture.playlist.musicPlaylistID = PlaylistRecord.triageBucketMusicPlaylistID
+        fixture.playlist.name = PlaylistRecord.triageBucketName
+        fixture.playlist.role = .triageBucket
+        fixture.playlist.writePolicy = .incomingOnly
+        defer { fixture.cleanUp() }
+        try fixture.context.save()
+        try await fixture.start(at: 0)
+
+        let source = try fixture.addPlaylist(prefix: "source", trackCount: 1)
+        let contributedItem = source.items[0]
+        contributedItem.playlistID = fixture.playlist.id
+        contributedItem.addSourceMusicPlaylistID(source.playlist.musicPlaylistID)
+        source.playlist.role = .oneTruePlaylist
+        try fixture.context.save()
+
+        let contributedLocalTrackID = source.tracks[0].id.uuidString
+        let storedOrder = PlaybackOrderStore.state(
+            playerID: fixture.playerID,
+            musicPlaylistID: fixture.playlist.musicPlaylistID
+        ).orderedTrackIDs + [contributedLocalTrackID]
+        PlaybackOrderStore.save(
+            PlaybackOrderState(
+                playerID: fixture.playerID,
+                musicPlaylistID: fixture.playlist.musicPlaylistID,
+                orderedTrackIDs: storedOrder
+            ),
+            flushImmediately: true
+        )
+
+        fixture.controller.reconcileStoredOrder(for: source.playlist, context: fixture.context)
+        await Task.yield()
+
+        #expect(fixture.player.appendedTrackBatchSizes == [1])
+        #expect(fixture.player.queuedEntryCount == 3)
+        #expect(fixture.controller.activePlaylistSnapshot?.rows.contains {
+            $0.localTrackID == contributedLocalTrackID
+        } == true)
+    }
+
     @Test("syncing a source after partial queue hydration appends only its new track")
     func syncingSourceAfterPartialQueueHydrationAppendsOnlyItsNewTrack() async throws {
         let fixture = try makeFixture(trackCount: 2)

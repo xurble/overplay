@@ -3029,6 +3029,17 @@ final class PlaybackController {
             if isCurrentPlaylist {
                 rebuildActivePlaylistSnapshot(context: context)
             }
+
+            // A source can become the One True Playlist while its sync is
+            // suspended between chunks. That sync may already have changed
+            // the bucket before its completion callback receives the now-main
+            // record. If the bucket is playing, reconcile it as well so its
+            // live queue and every playback surface publish those additions.
+            if currentPlaylistID == PlaylistRecord.triageBucketMusicPlaylistID,
+               playlist.musicPlaylistID != PlaylistRecord.triageBucketMusicPlaylistID,
+               let bucket = try PlaylistRepository.existingTriageBucket(in: context) {
+                reconcileStoredOrder(for: bucket, context: context)
+            }
         } catch {
             statusMessage = error.localizedDescription
         }
