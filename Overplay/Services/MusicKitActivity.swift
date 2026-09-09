@@ -61,6 +61,10 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     case nowPlayingInfoWriteWhilePaused
     case nowPlayingInfoClear
     case remoteCommandReceived
+    /// CarPlay replaced the Now Playing action array. Recorded separately
+    /// from mode publication so a visual reset can be correlated with a track
+    /// transition even when MusicKit's shuffle mode never changed.
+    case carPlayNowPlayingButtonsUpdate
 
     // Artwork asset downloads from Apple's image CDN.
     case artworkDownload
@@ -98,7 +102,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
              .playerModeResetSkipped, .playbackRecoveryAttempt:
             .player
         case .nowPlayingInfoWrite, .nowPlayingInfoWriteWhilePaused, .nowPlayingInfoClear,
-             .remoteCommandReceived:
+             .remoteCommandReceived, .carPlayNowPlayingButtonsUpdate:
             .systemMediaSurface
         case .artworkDownload:
             .asset
@@ -141,6 +145,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case .nowPlayingInfoWriteWhilePaused: "Now Playing write (not playing)"
         case .nowPlayingInfoClear: "Now Playing clear"
         case .remoteCommandReceived: "Remote command received"
+        case .carPlayNowPlayingButtonsUpdate: "CarPlay Now Playing buttons update"
         case .artworkDownload: "Artwork download"
         }
     }

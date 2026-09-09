@@ -182,10 +182,11 @@ final class RemoteCommandService {
             return .success
         })
         targetTokens.append(commandCenter.changeShuffleModeCommand.addTarget { [weak self] event in
-            Self.recordRemoteCommand("changeShuffleMode")
             guard let event = event as? MPChangeShuffleModeCommandEvent else {
+                Self.recordRemoteCommand("changeShuffleMode requested=invalid")
                 return .commandFailed
             }
+            Self.recordRemoteCommand("changeShuffleMode requested=\(String(describing: event.shuffleType))")
             guard let self, let playbackController = self.playbackController, let context = self.context else {
                 return .commandFailed
             }

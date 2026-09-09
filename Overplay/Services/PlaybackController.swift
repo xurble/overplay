@@ -109,6 +109,12 @@ final class PlaybackController {
     /// only way another surface's change reaches Overplay is by comparing.
     @ObservationIgnored private var lastObservedShuffleMode: MusicPlayer.ShuffleMode?
     @ObservationIgnored private var lastObservedRepeatMode: MusicPlayer.RepeatMode?
+    /// Raw optionals are tracked separately because MusicKit can report nil.
+    /// Treating nil as off is existing playback behavior, but diagnostics must
+    /// preserve the distinction while investigating transient mode changes.
+    @ObservationIgnored private var lastReportedShuffleMode: MusicPlayer.ShuffleMode?
+    @ObservationIgnored private var lastReportedRepeatMode: MusicPlayer.RepeatMode?
+    @ObservationIgnored private var hasObservedPlaybackModes = false
     /// Entries the player accepted from an append but has not reported an item
     /// ID for yet. Correlation is retried until it succeeds, because reaching
     /// an uncorrelated entry reads as divergence and tears playback down.
@@ -270,6 +276,13 @@ final class PlaybackController {
     var repeatAllEnabled: Bool {
         _ = playbackModeVersion
         return player.repeatMode == .all
+    }
+
+    var playbackModeDiagnosticDescription: String {
+        "rawShuffle=\(Self.modeDescription(player.reportedShuffleMode)) "
+            + "effectiveShuffle=\(player.shuffleMode) "
+            + "rawRepeat=\(Self.modeDescription(player.reportedRepeatMode)) "
+            + "effectiveRepeat=\(player.repeatMode)"
     }
 
     func playbackOrderState(
@@ -2405,22 +2418,43 @@ final class PlaybackController {
     /// Siri or the Music app reaches Overplay only by being noticed here.
     /// Without this, `PLAY-004` holds only for changes Overplay made itself.
     private func observePlaybackModeChanges() {
+        let reportedShuffle = player.reportedShuffleMode
+        let reportedRepeat = player.reportedRepeatMode
         let shuffle = player.shuffleMode
         let repeatMode = player.repeatMode
-        guard shuffle != lastObservedShuffleMode || repeatMode != lastObservedRepeatMode else {
+        let effectiveModeChanged = shuffle != lastObservedShuffleMode || repeatMode != lastObservedRepeatMode
+        let reportedModeChanged = reportedShuffle != lastReportedShuffleMode
+            || reportedRepeat != lastReportedRepeatMode
+        guard !hasObservedPlaybackModes || effectiveModeChanged || reportedModeChanged else {
             return
         }
 
-        let isFirstObservation = lastObservedShuffleMode == nil && lastObservedRepeatMode == nil
+        let isFirstObservation = !hasObservedPlaybackModes
+        let previousReportedShuffle = lastReportedShuffleMode
+        let previousReportedRepeat = lastReportedRepeatMode
+        let previousShuffle = lastObservedShuffleMode
+        let previousRepeat = lastObservedRepeatMode
+        hasObservedPlaybackModes = true
+        lastReportedShuffleMode = reportedShuffle
+        lastReportedRepeatMode = reportedRepeat
         lastObservedShuffleMode = shuffle
         lastObservedRepeatMode = repeatMode
         guard !isFirstObservation else { return }
 
         MusicKitActivityLog.shared.record(
             .playerModeObserved,
-            detail: "shuffle=\(shuffle) repeat=\(repeatMode)"
+            detail: "rawShuffle=\(Self.modeDescription(previousReportedShuffle))->\(Self.modeDescription(reportedShuffle)) "
+                + "effectiveShuffle=\(previousShuffle.map(String.init(describing:)) ?? "nil")->\(shuffle) "
+                + "rawRepeat=\(Self.modeDescription(previousReportedRepeat))->\(Self.modeDescription(reportedRepeat)) "
+                + "effectiveRepeat=\(previousRepeat.map(String.init(describing:)) ?? "nil")->\(repeatMode)"
         )
-        playbackModeVersion += 1
+        if effectiveModeChanged {
+            playbackModeVersion += 1
+        }
+    }
+
+    private static func modeDescription<T>(_ mode: T?) -> String {
+        mode.map(String.init(describing:)) ?? "nil"
     }
 
     private func updateMusicKitNowPlayingTrack(currentEntry: MusicPlayer.Queue.Entry?) {

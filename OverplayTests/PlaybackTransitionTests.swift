@@ -62,6 +62,19 @@ struct PlaybackTransitionTests {
         let versionAfterNotice = fixture.controller.playbackModeVersion
         await fixture.controller.reconcilePlayerState(context: fixture.context)
         #expect(fixture.controller.playbackModeVersion == versionAfterNotice)
+
+        fixture.player.reportedShuffleMode = nil
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        #expect(!fixture.controller.shuffleEnabled)
+        #expect(fixture.controller.playbackModeDiagnosticDescription.contains("rawShuffle=nil"))
+        let nilTransition = try #require(
+            MusicKitActivityLog.shared.snapshot().events.last {
+                $0.operation == .playerModeObserved
+                    && $0.detail?.contains("rawShuffle=songs->nil") == true
+            }
+        )
+        #expect(nilTransition.detail?.contains("effectiveShuffle=songs->off") == true)
     }
 
     @Test("a queue end is handled once, not once per tick")
@@ -1474,8 +1487,18 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
         }
     }
 
-    var shuffleMode: MusicPlayer.ShuffleMode = .off
-    var repeatMode: MusicPlayer.RepeatMode = MusicPlayer.RepeatMode.none
+    var reportedShuffleMode: MusicPlayer.ShuffleMode? = .off
+    var reportedRepeatMode: MusicPlayer.RepeatMode? = MusicPlayer.RepeatMode.none
+
+    var shuffleMode: MusicPlayer.ShuffleMode {
+        get { reportedShuffleMode ?? .off }
+        set { reportedShuffleMode = newValue }
+    }
+
+    var repeatMode: MusicPlayer.RepeatMode {
+        get { reportedRepeatMode ?? MusicPlayer.RepeatMode.none }
+        set { reportedRepeatMode = newValue }
+    }
 
     func releaseBlockedNextCommand() {
         blockedNextContinuation?.resume()

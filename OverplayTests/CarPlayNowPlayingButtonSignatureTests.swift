@@ -103,4 +103,39 @@ struct CarPlayNowPlayingButtonSignatureTests {
 
         #expect(signature.playlistRole == .triage)
     }
+
+    @Test("changes when the current playlist role changes")
+    func changesWithCurrentPlaylistRole() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let settings = try SettingsRepository.settings(in: context)
+        let controller = PlaybackController()
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "playlist-role-change",
+            name: "Current",
+            role: .triage
+        )
+        context.insert(playlist)
+        controller.currentPlaylistID = playlist.musicPlaylistID
+        controller.currentTrack = CurrentPlaybackTrack(id: "music-1", title: "Track", artistName: "Artist")
+
+        let triage = CarPlayNowPlayingButtonSignature.make(
+            playbackController: controller,
+            settings: settings,
+            context: context
+        )
+
+        playlist.role = .oneTruePlaylist
+        try context.save()
+
+        let oneTruePlaylist = CarPlayNowPlayingButtonSignature.make(
+            playbackController: controller,
+            settings: settings,
+            context: context
+        )
+
+        #expect(triage.playlistRole == .triage)
+        #expect(oneTruePlaylist.playlistRole == .oneTruePlaylist)
+        #expect(oneTruePlaylist != triage)
+    }
 }

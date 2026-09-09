@@ -194,8 +194,10 @@ struct MusicKitActivityOriginTests {
             == "Overplay playback decisions")
         #expect(MusicKitActivityOperation.deliveryStallDetected.category == .playbackDecision)
         #expect(MusicKitActivityOperation.queueEndObserved.category == .playbackDecision)
+        #expect(MusicKitActivityOperation.carPlayNowPlayingButtonsUpdate.category == .systemMediaSurface)
         // These must be listed individually, never collapsed into a tally.
         #expect(!MusicKitActivityOperation.queueCorrelationCleared.isHighFrequency)
+        #expect(!MusicKitActivityOperation.carPlayNowPlayingButtonsUpdate.isHighFrequency)
     }
 
     @Test("a skipped mode reset is counted apart from one that wrote")
