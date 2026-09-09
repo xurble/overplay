@@ -199,3 +199,98 @@ Add skip-history browsing only if it fits safely within CarPlay templates and
 does not make the primary playlists → tracks → Now Playing flow harder to use.
 CarPlay browsing remains focused on Active playlists; Retired content appears
 only when it is the current playback context started elsewhere.
+
+## Unscheduled Music Platform Enhancements
+
+The highest-value MusicKit infrastructure opportunities are tracked separately:
+
+- [GitHub issue #39](https://github.com/xurble/overplay/issues/39) — adopt
+  `Playlist.Entry` for playlist sync and reconciliation.
+- [GitHub issue #40](https://github.com/xurble/overplay/issues/40) — resolve
+  library, catalog, and storefront identities through documented equivalence
+  APIs.
+- [GitHub issue #41](https://github.com/xurble/overplay/issues/41) — observe
+  MusicKit queue and player state for prompt shared reconciliation.
+
+The ideas below are candidates, not committed roadmap priorities. Promote one to
+a scoped issue only when its product benefit justifies its interaction with the
+shared playback, persistence, and cross-surface invariants above.
+
+### Discovery and Intake
+
+- Read the user's synced Shazam discoveries from `SHLibrary` and feed them
+  directly into the triage bucket, retaining Apple Music ID, ISRC, artwork, and
+  discovery date where available. Consider in-app Shazam recognition only if it
+  adds value beyond the system Music Recognition control.
+- Build a discovery inbox from MusicKit personal recommendations, recently
+  played content, or Apple Music Replay summaries. Treat these as suggestions
+  only: recently played results do not prove completion or identify the source
+  playlist and must never directly change Overplay statistics.
+- Explore song stations, artist relationships, catalog charts, genres, and
+  record-label relationships as optional ways to find candidates related to a
+  track the user kept or promoted.
+- Consider syncing Apple Music favorites or positive/negative ratings only as
+  an explicit opt-in. Promotion and retirement are Overplay concepts and should
+  not silently change the user's Apple Music taste profile.
+
+### Search and Library Browsing
+
+- Combine `MusicLibrarySearchRequest` with the current catalog search so
+  purchases, imports, uploads, and library-only tracks can be found without
+  losing catalog results.
+- Add `MusicCatalogSearchSuggestionsRequest` for autocomplete and top results.
+- Offer an offline-focused view or playback filter based on MusicKit's
+  `includeOnlyDownloadedContent` support if device testing shows that it maps
+  cleanly to Overplay's linked playlists.
+- Consider MusicKit's system music picker after it leaves beta and demonstrates
+  a clear advantage over Overplay's purpose-built selection flows.
+
+### Siri and System Surfaces
+
+- Add App Intents backed by the existing shared services for playing the One
+  True Playlist or triage bucket and for promoting, retiring, or restoring the
+  current track. Adopt the system audio schemas where they accurately represent
+  the action so Siri, Shortcuts, Spotlight, the Action button, and Apple
+  Intelligence receive consistent semantics.
+- Support Music Haptics by persisting ISRC, publishing
+  `MPNowPlayingInfoPropertyInternationalStandardRecordingCode`, and declaring
+  `MusicHapticsSupported`. Keep this aligned with issue #40's identity work.
+- Consider `changePlaybackPositionCommand` for Lock Screen and Control Center
+  scrubbing only after defining seek-aware session accounting; jumping forward
+  must not manufacture a playthrough or hide a witnessed skip.
+- Experiment with `likeCommand`, `dislikeCommand`, or `bookmarkCommand` as
+  standard Promote, Retire, or Save-for-later controls. Verify their actual
+  presentation on iPhone and CarPlay before relying on them.
+- Extend Now Playing publication, after the scheduled artwork work, with useful
+  queue index/count and stable external, collection, or service identifiers
+  where those values improve system behavior.
+
+### Playback Experience
+
+- Offer MusicKit crossfade as an opt-in playback setting after testing its
+  effect on current-entry transitions, elapsed-time accounting, queue-end
+  behavior, and cross-surface state.
+- Consider a rapid audition mode using queue-entry `startTime` and `endTime`
+  windows for triage. It needs distinct statistics semantics because a planned
+  short window is neither a normal skip nor a full playthrough.
+- If the minimum OS rises to iOS 26.4 or later, consider setting
+  `queue.affectsListeningHistory` to false for clearly labeled audition or
+  retired-review sessions. Do not disable it for normal playback without
+  replacing the Apple Music play-count evidence used by suspended-playback
+  reconciliation.
+- Surface the active `MusicPlayer.State.audioVariant` or catalog audio variants
+  as restrained Lossless, Hi-Res Lossless, or Dolby Atmos badges, following
+  Apple's badge guidance and showing the actual active format where possible.
+
+### Reactive Library and Subscription State
+
+- Use `MPMediaLibraryDidChangeNotification` as a debounced invalidation hint for
+  MusicKit playlist caches and linked-playlist sync. Retain periodic sync because
+  the notification does not describe the changed resources or guarantee remote
+  delivery timing.
+- Observe `MusicSubscription.subscriptionUpdates` so subscription and Sync
+  Library changes update readiness without requiring a relaunch or manual
+  refresh.
+- If non-subscribers become part of the intended audience, present MusicKit's
+  native subscription offer rather than only reporting that catalog playback is
+  unavailable.
