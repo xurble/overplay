@@ -69,7 +69,7 @@ struct SplitAppShell: View {
 
     private var activePlaylists: [PlaylistRecord] {
         playlists
-            .filter(\.isActive)
+            .filter { $0.isActive && $0.role.isPlaybackContext }
             .sorted { left, right in
                 if left.role != right.role {
                     return left.role == .oneTruePlaylist

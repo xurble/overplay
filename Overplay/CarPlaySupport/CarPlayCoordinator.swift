@@ -304,7 +304,14 @@ final class CarPlayCoordinator: NSObject {
            activePlaylistSnapshot.playlistID == playlist.id,
            activePlaylistSnapshot.musicPlaylistID == playlist.musicPlaylistID,
            activePlaylistSnapshot.playbackScope == scope {
-            tracks = CarPlayLibrarySnapshot.trackSummaries(from: activePlaylistSnapshot)
+            tracks = CarPlayLibrarySnapshot.trackSummaries(
+                from: activePlaylistSnapshot,
+                playlistItems: try PlaylistItemRepository.items(
+                    forPlaylistID: playlist.id,
+                    in: modelContext
+                ),
+                sourcePlaylists: try PlaylistRepository.allPlaylists(in: modelContext)
+            )
         } else {
             tracks = try CarPlayLibrarySnapshot.trackSummaries(
                 forPlaylistID: playlist.id,

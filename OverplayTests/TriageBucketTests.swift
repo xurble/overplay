@@ -249,8 +249,11 @@ struct TriageBucketTests {
         let context = container.mainContext
         let track = TrackRecord(catalogID: "shared", title: "Shared", artistName: "Artist")
         context.insert(track)
-        let firstPlaylist = insertLegacyTriagePlaylist(musicPlaylistID: "legacy-1", name: "Weekly", in: context)
-        let secondPlaylist = insertLegacyTriagePlaylist(musicPlaylistID: "legacy-2", name: "Discovery", in: context)
+        // The older active row is processed first. This catches migrations
+        // that replace its decision timestamp with the migration time before
+        // considering the newer evicted duplicate.
+        let firstPlaylist = insertLegacyTriagePlaylist(musicPlaylistID: "legacy-1", name: "A First", in: context)
+        let secondPlaylist = insertLegacyTriagePlaylist(musicPlaylistID: "legacy-2", name: "Z Second", in: context)
         let activeItem = PlaylistItemRecord(
             playlistID: firstPlaylist.id,
             trackID: track.id,
@@ -323,8 +326,8 @@ struct TriageBucketTests {
         #expect(LocalPlaybackStateStore.load(from: defaults)?.playlistID == "main")
     }
 
-    @Test("migration does nothing when there is no legacy triage data")
-    func migrationDoesNothingWithoutLegacyTriageData() throws {
+    @Test("migration creates the initial bucket when there is no legacy triage data")
+    func migrationCreatesInitialBucketWithoutLegacyTriageData() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let oneTruePlaylist = PlaylistRecord(
@@ -336,9 +339,11 @@ struct TriageBucketTests {
 
         let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: makeDefaults())
 
-        #expect(outcome.didChangeAnything == false)
-        // A fresh install gets no bucket until something feeds it.
-        #expect(try PlaylistRepository.existingTriageBucket(in: context) == nil)
+        #expect(outcome.createdBucket)
+        #expect(outcome.didChangeAnything)
+        let bucket = try #require(try PlaylistRepository.existingTriageBucket(in: context))
+        #expect(bucket.isActive)
+        #expect(bucket.role == .triageBucket)
     }
 
     // MARK: - Helpers

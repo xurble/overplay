@@ -37,7 +37,7 @@ Music's global play count or skip count.
 | `PLAT-001` | The current app supports iPhone and iPad on iOS/iPadOS 26+, with CarPlay supplied by the iPhone app. A native Mac target is planned, not implemented. | `Overplay.xcodeproj/project.pbxproj`, `Overplay/App/Shell/PlatformShell.swift` |
 | `AUTH-001` | Normal use requires Apple Music authorization, catalogue playback capability, and Sync Library. The simulator supplies a ready state for development. | `Overplay/Services/MusicAuthorizationService.swift`, `Overplay/App/StartupAuthorizationGate.swift` |
 | `PLAYLIST-001` | Exactly one active One True Playlist is selected. Selecting another demotes the previous main playlist to a triage source. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/NewModelRepositoryTests.swift` |
-| `PLAYLIST-003` | There is at most one triage bucket. It owns every triage item, is created on demand, and has a reserved `musicPlaylistID` rather than an Apple Music playlist, so it is never fetched or synced directly. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/TriageBucketTests.swift` |
+| `PLAYLIST-003` | There is at most one triage bucket. It owns every triage item, is ensured during startup, and has a reserved `musicPlaylistID` rather than an Apple Music playlist, so it is never fetched or synced directly. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/TriageBucketTests.swift` |
 | `PLAYLIST-004` | Contributing playlists feed the bucket and keep their own sync bookkeeping, but own no items and are never a playback context. A track contributed by several playlists is one bucket row, so retiring it excludes it from the whole bucket and it stays excluded when a later playlist contributes it. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/TriageBucketTests.swift` |
 | `PLAYLIST-005` | Unlinking a contributing playlist leaves its tracks in the bucket with their stats, merely unattributed. Row provenance is nullable, and no source is a normal state. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/TriageBucketTests.swift` |
 | `PLAYLIST-006` | Pre-bucket triage data migrates onto the bucket at startup, merging counts for tracks that appeared in several triage playlists. The migration is idempotent and keyed on the stored legacy role value, not a local flag. | `Overplay/Persistence/TriageBucketMigrationService.swift`, `OverplayTests/TriageBucketTests.swift` |
@@ -831,7 +831,8 @@ The top level contains those two things and nothing else.
 Show:
 
 - One True Playlist row, or a link to configure it when absent.
-- Triage bucket row, once at least one contributing playlist feeds it.
+- Triage bucket row, including on a fresh install and after its last
+  contributing playlist is removed.
 - For each row: representative artwork, role/current-playback icon, total
   tracked count, source, last-sync status, and write policy.
 - Link to the triage sources screen, labelled with the contributing count.

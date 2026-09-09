@@ -10,6 +10,7 @@ struct TrackSummaryPresentation: Equatable, Identifiable, Sendable {
     var artworkURLString: String?
     let skipCount: Int
     var playthroughCount: Int = 0
+    var provenanceText: String? = nil
     var isPlayable: Bool = true
     var isRetired: Bool = false
 
@@ -31,11 +32,28 @@ struct TrackSummaryPresentation: Equatable, Identifiable, Sendable {
     }
 
     var detailText: String {
-        if isRetired {
-            "\(artistName) - Retired - \(playSkipMetricLabel)"
-        } else {
-            "\(artistName) - \(playSkipMetricLabel)"
+        var details = [artistName]
+        if isRetired { details.append("Retired") }
+        if let provenanceText { details.append(provenanceText) }
+        details.append(playSkipMetricLabel)
+        return details.joined(separator: " - ")
+    }
+
+    static func provenanceText(
+        sourceMusicPlaylistIDs: [String],
+        playlistRole: PlaylistRole?,
+        sourcePlaylists: [PlaylistRecord]
+    ) -> String? {
+        guard playlistRole == .triageBucket else { return nil }
+        guard !sourceMusicPlaylistIDs.isEmpty else { return "Unattributed" }
+
+        let namesByMusicPlaylistID = sourcePlaylists.reduce(into: [String: String]()) { result, playlist in
+            result[playlist.musicPlaylistID] = playlist.name
         }
+        let names = sourceMusicPlaylistIDs.map {
+            namesByMusicPlaylistID[$0] ?? "Unknown Playlist"
+        }
+        return "From \(names.joined(separator: ", "))"
     }
 
     private static func pluralized(_ count: Int, singular: String) -> String {

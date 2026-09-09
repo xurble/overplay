@@ -2,6 +2,11 @@ import Foundation
 import SwiftData
 
 enum PlaylistItemRepository {
+    struct ReparentSummary: Equatable {
+        var movedCount = 0
+        var mergedCount = 0
+    }
+
     static func allItems(in context: ModelContext) throws -> [PlaylistItemRecord] {
         let descriptor = FetchDescriptor<PlaylistItemRecord>(
             sortBy: [SortDescriptor(\.createdAt)]
@@ -80,6 +85,43 @@ enum PlaylistItemRepository {
 
     static func activeItems(forPlaylistID playlistID: UUID, in context: ModelContext) throws -> [PlaylistItemRecord] {
         try playableItems(forPlaylistID: playlistID, in: context)
+    }
+
+    /// Moves every item from one playlist into another, merging duplicate
+    /// tracks and retaining the most recently updated eviction decision.
+    /// Item timestamps are deliberately left untouched: they encode the
+    /// recency of the user's eviction or restoration intent, not migration
+    /// bookkeeping.
+    @discardableResult
+    static func reparentItems(
+        from sourcePlaylistID: UUID,
+        to destinationPlaylistID: UUID,
+        sourceMusicPlaylistID: String,
+        in context: ModelContext
+    ) throws -> ReparentSummary {
+        guard sourcePlaylistID != destinationPlaylistID else { return ReparentSummary() }
+
+        var summary = ReparentSummary()
+        var destinationItemsByTrackID = try items(
+            forPlaylistID: destinationPlaylistID,
+            in: context
+        ).firstValueDictionary(keyedBy: \.trackID)
+
+        for item in try items(forPlaylistID: sourcePlaylistID, in: context) {
+            if let keeper = destinationItemsByTrackID[item.trackID] {
+                mergeStats(from: item, into: keeper, adoptEvictionStateIfNewer: true)
+                keeper.addSourceMusicPlaylistID(sourceMusicPlaylistID)
+                context.delete(item)
+                summary.mergedCount += 1
+            } else {
+                item.playlistID = destinationPlaylistID
+                item.addSourceMusicPlaylistID(sourceMusicPlaylistID)
+                destinationItemsByTrackID[item.trackID] = item
+                summary.movedCount += 1
+            }
+        }
+
+        return summary
     }
 
     @discardableResult

@@ -13,6 +13,7 @@ struct ActivePlaylistSnapshot: Equatable, Sendable {
         var artworkURLString: String?
         var skipCount: Int
         var playthroughCount: Int
+        var sourceMusicPlaylistIDs: [String]
         var isEvicted: Bool
         var isCurrent: Bool
 
@@ -64,6 +65,7 @@ struct ActivePlaylistSnapshot: Equatable, Sendable {
                 artworkURLString: track.artworkURLTemplate,
                 skipCount: item.skipCount,
                 playthroughCount: item.playthroughCount,
+                sourceMusicPlaylistIDs: item.sourceMusicPlaylistIDs,
                 isEvicted: item.evictedAt != nil,
                 isCurrent: Self.rowIsCurrent(
                     item: item,

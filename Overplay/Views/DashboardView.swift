@@ -106,10 +106,7 @@ struct DashboardView: View {
         return playlists.first { $0.role == .oneTruePlaylist && $0.isActive }
     }
 
-    /// The bucket only appears once something feeds it, so a fresh install
-    /// shows the add action rather than an empty playlist row.
     private var triageBucket: PlaylistRecord? {
-        guard triageSourceCount > 0 else { return nil }
         return playlists.first { $0.isTriageBucket }
     }
 

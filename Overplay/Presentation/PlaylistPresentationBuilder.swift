@@ -20,7 +20,7 @@ struct PlaylistPresentationBuilder {
 
     func activePlaylistSummaries() -> [PlaylistSummaryPresentation] {
         let summaries = playlists
-            .filter(\.isActive)
+            .filter { $0.isActive && $0.role.isPlaybackContext }
             .map { summary($0) }
         return summaries.sorted { left, right in
             PlaylistSummaryPresentation.areInDisplayOrder(left, right)
@@ -47,6 +47,7 @@ struct PlaylistPresentationBuilder {
         playbackOrderState: PlaybackOrderState? = nil,
         scope: PlaylistPlaybackScope = .active
     ) -> [TrackSummaryPresentation] {
+        let playlistRole = playlists.first { $0.id == playlistID }?.role
         let scopedItems = itemsForPlaylist(playlistID).filter { scope.includes($0) }
         let orderedItems = playbackOrderState.map {
             PlaylistDisplayOrder.orderedItems(scopedItems, state: $0, scope: scope)
@@ -65,6 +66,11 @@ struct PlaylistPresentationBuilder {
                 artworkURLString: track.artworkURLTemplate,
                 skipCount: item.skipCount,
                 playthroughCount: item.playthroughCount,
+                provenanceText: TrackSummaryPresentation.provenanceText(
+                    sourceMusicPlaylistIDs: item.sourceMusicPlaylistIDs,
+                    playlistRole: playlistRole,
+                    sourcePlaylists: playlists
+                ),
                 isPlayable: scope == .retired || item.isPlayable,
                 isRetired: item.evictedAt != nil
             )

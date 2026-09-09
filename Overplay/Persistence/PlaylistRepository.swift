@@ -68,9 +68,8 @@ enum PlaylistRepository {
         return try context.fetch(descriptor).first
     }
 
-    /// The single triage bucket, created on demand. Every triage item is
-    /// parented here, so callers that are about to write items must be able
-    /// to rely on it existing.
+    /// The single triage bucket. Startup ensures it exists, and this accessor
+    /// also creates it on demand so item-writing callers can rely on it.
     @discardableResult
     static func triageBucket(in context: ModelContext) throws -> PlaylistRecord {
         if let existingBucket = try existingTriageBucket(in: context) {
@@ -180,9 +179,25 @@ enum PlaylistRepository {
         writePolicy: PlaylistWritePolicy = .managed,
         in context: ModelContext
     ) throws -> PlaylistRecord {
-        for existingPlaylist in try activePlaylists(in: context)
-            where existingPlaylist.role == .oneTruePlaylist
-            && existingPlaylist.musicPlaylistID != appleMusicPlaylist.id {
+        let demotedPlaylists = try activePlaylists(in: context)
+            .filter {
+                $0.role == .oneTruePlaylist
+                    && $0.musicPlaylistID != appleMusicPlaylist.id
+            }
+
+        if !demotedPlaylists.isEmpty {
+            let bucket = try triageBucket(in: context)
+            for existingPlaylist in demotedPlaylists {
+                try PlaylistItemRepository.reparentItems(
+                    from: existingPlaylist.id,
+                    to: bucket.id,
+                    sourceMusicPlaylistID: existingPlaylist.musicPlaylistID,
+                    in: context
+                )
+            }
+        }
+
+        for existingPlaylist in demotedPlaylists {
             existingPlaylist.role = .triageSource
             existingPlaylist.updatedAt = .now
         }

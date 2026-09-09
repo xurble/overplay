@@ -5,17 +5,22 @@ import Testing
 @MainActor
 @Suite("Playlist presentation builder")
 struct PlaylistPresentationBuilderTests {
-    @Test("orders active playlist summaries by role and case-insensitive title")
+    @Test("active playlist summaries exclude sources and order playback contexts")
     func ordersActivePlaylistSummaries() {
         let inactive = PlaylistRecord(musicPlaylistID: "inactive", name: "Hidden", role: .oneTruePlaylist, isActive: false)
         let triageB = PlaylistRecord(musicPlaylistID: "triage-b", name: "zeta", role: .triageSource)
         let triageA = PlaylistRecord(musicPlaylistID: "triage-a", name: "Alpha", role: .triageSource)
+        let bucket = PlaylistRecord(
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket
+        )
         let oneTrue = PlaylistRecord(musicPlaylistID: "one", name: "Main", role: .oneTruePlaylist)
 
-        let summaries = builder(playlists: [inactive, triageB, triageA, oneTrue]).activePlaylistSummaries()
+        let summaries = builder(playlists: [inactive, triageB, bucket, triageA, oneTrue]).activePlaylistSummaries()
 
-        #expect(summaries.map(\.title) == ["Main", "Alpha", "zeta"])
-        #expect(summaries.map(\.musicPlaylistID) == ["one", "triage-a", "triage-b"])
+        #expect(summaries.map(\.title) == ["Main", "Triage"])
+        #expect(summaries.map(\.musicPlaylistID) == ["one", PlaylistRecord.triageBucketMusicPlaylistID])
     }
 
     @Test("display ordering keeps every candidate and sorts by role then case-insensitive title")

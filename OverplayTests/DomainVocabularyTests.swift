@@ -18,6 +18,9 @@ struct DomainVocabularyTests {
         #expect(PlaylistRole.oneTruePlaylist.rawValue == "oneTruePlaylist")
         #expect(PlaylistRole.triageBucket.rawValue == "triageBucket")
         #expect(PlaylistRole.triageSource.rawValue == "triageSource")
+        #expect(PlaylistRole.oneTruePlaylist.isPlaybackContext)
+        #expect(PlaylistRole.triageBucket.isPlaybackContext)
+        #expect(!PlaylistRole.triageSource.isPlaybackContext)
         // Stored by every pre-bucket install, so the migration keys on it.
         #expect(PlaylistRole.legacyTriageRawValue == "triage")
         #expect(PlaylistRole(rawValue: PlaylistRole.legacyTriageRawValue) == nil)

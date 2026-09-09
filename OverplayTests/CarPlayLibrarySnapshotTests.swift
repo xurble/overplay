@@ -12,9 +12,11 @@ struct CarPlayLibrarySnapshotTests {
 
         let oneTrue = PlaylistRecord(musicPlaylistID: "one", name: "Keepers", role: .oneTruePlaylist)
         let triage = PlaylistRecord(musicPlaylistID: "triage", name: "Inbox", role: .triageBucket)
+        let source = PlaylistRecord(musicPlaylistID: "source", name: "Source", role: .triageSource)
         let inactive = PlaylistRecord(musicPlaylistID: "inactive", name: "Old", role: .triageBucket, isActive: false)
         context.insert(oneTrue)
         context.insert(triage)
+        context.insert(source)
         context.insert(inactive)
 
         let playableTrack = TrackRecord(title: "A", artistName: "Artist")
@@ -123,6 +125,36 @@ struct CarPlayLibrarySnapshotTests {
         #expect(tracks == sharedTracks)
         #expect(tracks.first?.detailText == "The Killers - 0 plays / 0 skips")
         #expect(tracks.last?.detailText == "The Killers - 0 plays / 2 skips")
+    }
+
+    @Test("bucket track summaries include contributor provenance")
+    func bucketTrackSummariesIncludeContributorProvenance() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = ModelContext(container)
+        let bucket = PlaylistRecord(
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket
+        )
+        let source = PlaylistRecord(musicPlaylistID: "source", name: "Weekly", role: .triageSource)
+        let track = TrackRecord(title: "New Song", artistName: "Artist")
+        context.insert(bucket)
+        context.insert(source)
+        context.insert(track)
+        context.insert(PlaylistItemRecord(
+            playlistID: bucket.id,
+            trackID: track.id,
+            sourceMusicPlaylistIDs: [source.musicPlaylistID]
+        ))
+        try context.save()
+
+        let summaries = try CarPlayLibrarySnapshot.trackSummaries(
+            forPlaylistID: bucket.id,
+            in: context
+        )
+
+        #expect(summaries.first?.provenanceText == "From Weekly")
+        #expect(summaries.first?.detailText == "Artist - From Weekly - 0 plays / 0 skips")
     }
 
     @Test func trackSummariesFollowStoredShuffleOrder() throws {

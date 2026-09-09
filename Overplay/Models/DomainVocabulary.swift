@@ -17,6 +17,12 @@ enum PlaylistRole: String, CaseIterable, Codable, Hashable, Sendable {
     /// `.triageBucket` instead would conjure a second bucket, so the
     /// recoverable direction is the deliberate one.
     nonisolated static let legacyTriageRawValue = "triage"
+
+    /// Only these roles own tracks and can be browsed or played directly.
+    /// Triage sources are sync inputs, never playback destinations.
+    var isPlaybackContext: Bool {
+        self == .oneTruePlaylist || self == .triageBucket
+    }
 }
 
 enum PlaylistWritePolicy: String, CaseIterable, Codable, Hashable, Sendable {

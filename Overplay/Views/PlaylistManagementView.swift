@@ -6,6 +6,7 @@ struct PlaylistManagementView: View {
     @Environment(PlaybackController.self) private var playbackController
 
     @Query private var playlistItems: [PlaylistItemRecord]
+    @Query(sort: \PlaylistRecord.name) private var linkedPlaylists: [PlaylistRecord]
 
     var settings: OverplaySettings
     var playlist: PlaylistRecord
@@ -214,13 +215,16 @@ struct PlaylistManagementView: View {
             currentTrack: playbackController.nowPlayingDisplayTrack,
             playbackItemMetadataVersion: playbackController.playbackItemMetadataVersion,
             activePlaylistSnapshot: playbackController.activePlaylistSnapshot,
+            sourcePlaylists: linkedPlaylists,
             scope: selectedScope
         )
     }
 
     private var playlistTrackIDsKey: String {
         playlistItems
-            .map(\.trackID.uuidString)
+            .map {
+                "\($0.trackID.uuidString):\($0.sourceMusicPlaylistIDs.joined(separator: ","))"
+            }
             .sorted()
             .joined(separator: "|")
     }
@@ -234,6 +238,7 @@ struct PlaylistManagementView: View {
             selectedScope.rawValue,
             String(playlistItems.count),
             playlistTrackIDsKey,
+            linkedPlaylists.map { "\($0.musicPlaylistID):\($0.name)" }.joined(separator: "|"),
             String(tracks.count),
             String(playbackController.playbackItemMetadataVersion),
             String(playbackController.playbackModeVersion),

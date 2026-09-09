@@ -34,6 +34,11 @@ struct PlaylistTrackRowView: View {
                 Text(summary.subtitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let provenanceText = summary.provenanceText {
+                    Text(provenanceText)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
 
             Spacer()

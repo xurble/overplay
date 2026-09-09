@@ -1809,6 +1809,7 @@ private func makeFixture(
     let container = try OverplayTestSupport.makeModelContainer()
     let context = container.mainContext
     let added = try PlaybackTransitionFixture.insertPlaylist(prefix: "main", trackCount: trackCount, context: context)
+    added.playlist.role = .oneTruePlaylist
     let settings = OverplaySettings(
         selectedPlaylistID: added.playlist.musicPlaylistID,
         selectedPlaylistName: added.playlist.name,

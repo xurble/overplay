@@ -81,6 +81,7 @@ final class PlaylistManagementViewModel {
         currentTrack: CurrentPlaybackTrack?,
         playbackItemMetadataVersion: Int = 0,
         activePlaylistSnapshot: ActivePlaylistSnapshot? = nil,
+        sourcePlaylists: [PlaylistRecord] = [],
         scope: PlaylistPlaybackScope = .active
     ) -> DetailPresentation {
         _ = playbackItemMetadataVersion
@@ -91,6 +92,8 @@ final class PlaylistManagementViewModel {
             return activeDetailPresentation(
                 for: playlist,
                 snapshot: activePlaylistSnapshot,
+                playlistItems: playlistItems,
+                sourcePlaylists: sourcePlaylists,
                 scope: scope
             )
         }
@@ -118,6 +121,11 @@ final class PlaylistManagementViewModel {
                     artworkURLString: track.artworkURLTemplate,
                     skipCount: item.skipCount,
                     playthroughCount: item.playthroughCount,
+                    provenanceText: TrackSummaryPresentation.provenanceText(
+                        sourceMusicPlaylistIDs: item.sourceMusicPlaylistIDs,
+                        playlistRole: playlist.role,
+                        sourcePlaylists: sourcePlaylists
+                    ),
                     isPlayable: isPlayableInScope,
                     isRetired: item.evictedAt != nil
                 ),
@@ -151,8 +159,11 @@ final class PlaylistManagementViewModel {
     private func activeDetailPresentation(
         for playlist: PlaylistRecord,
         snapshot: ActivePlaylistSnapshot,
+        playlistItems: [PlaylistItemRecord],
+        sourcePlaylists: [PlaylistRecord],
         scope: PlaylistPlaybackScope
     ) -> DetailPresentation {
+        let persistedItemsByID = playlistItems.firstValueDictionary(keyedBy: \.id)
         let visibleRows = snapshot.rows.filter { row in
             scope == .active ? !row.isEvicted : row.isEvicted
         }
@@ -173,6 +184,12 @@ final class PlaylistManagementViewModel {
                     artworkURLString: row.artworkURLString,
                     skipCount: row.skipCount,
                     playthroughCount: row.playthroughCount,
+                    provenanceText: TrackSummaryPresentation.provenanceText(
+                        sourceMusicPlaylistIDs: persistedItemsByID[row.id]?.sourceMusicPlaylistIDs
+                            ?? row.sourceMusicPlaylistIDs,
+                        playlistRole: playlist.role,
+                        sourcePlaylists: sourcePlaylists
+                    ),
                     isPlayable: scope == .retired || row.isPlayable,
                     isRetired: row.isEvicted
                 ),

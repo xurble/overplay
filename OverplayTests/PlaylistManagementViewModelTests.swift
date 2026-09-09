@@ -114,6 +114,70 @@ struct PlaylistManagementViewModelTests {
         #expect(retiredDetail.rows.first?.summary.isRetired == true)
     }
 
+    @Test("bucket rows present contributor names and the unattributed state")
+    func bucketRowsPresentContributorNamesAndUnattributedState() {
+        let viewModel = PlaylistManagementViewModel()
+        let bucket = PlaylistRecord(
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket
+        )
+        let weekly = PlaylistRecord(musicPlaylistID: "weekly", name: "Weekly", role: .triageSource)
+        let discovery = PlaylistRecord(musicPlaylistID: "discovery", name: "Discovery", role: .triageSource)
+        let attributedTrack = TrackRecord(catalogID: "attributed", title: "Attributed", artistName: "Artist")
+        let unattributedTrack = TrackRecord(catalogID: "unattributed", title: "Unattributed", artistName: "Artist")
+        let attributedItem = PlaylistItemRecord(
+            playlistID: bucket.id,
+            trackID: attributedTrack.id,
+            sourceMusicPlaylistIDs: ["weekly", "discovery"],
+            createdAt: Date(timeIntervalSince1970: 1)
+        )
+        let unattributedItem = PlaylistItemRecord(
+            playlistID: bucket.id,
+            trackID: unattributedTrack.id,
+            createdAt: Date(timeIntervalSince1970: 2)
+        )
+        let order = PlaybackOrderState(
+            playerID: "player",
+            musicPlaylistID: bucket.musicPlaylistID
+        )
+        let sourcePlaylists = [weekly, discovery]
+
+        let persistedDetail = viewModel.detailPresentation(
+            for: bucket,
+            playlistItems: [attributedItem, unattributedItem],
+            tracks: [attributedTrack, unattributedTrack],
+            playbackOrderState: order,
+            currentPlaylistID: nil,
+            currentPlaylistItem: nil,
+            currentTrack: nil,
+            sourcePlaylists: sourcePlaylists
+        )
+        let snapshot = ActivePlaylistSnapshot(
+            playlist: bucket,
+            items: [attributedItem, unattributedItem],
+            tracks: [attributedTrack, unattributedTrack],
+            playbackOrderState: order
+        )
+        attributedItem.sourceMusicPlaylistIDs = []
+        let activeDetail = viewModel.detailPresentation(
+            for: bucket,
+            playlistItems: [attributedItem, unattributedItem],
+            tracks: [attributedTrack, unattributedTrack],
+            playbackOrderState: order,
+            currentPlaylistID: bucket.musicPlaylistID,
+            currentPlaylistItem: attributedItem,
+            currentTrack: CurrentPlaybackTrack(id: "attributed", title: "Attributed", artistName: "Artist"),
+            activePlaylistSnapshot: snapshot,
+            sourcePlaylists: sourcePlaylists
+        )
+
+        #expect(persistedDetail.rows.first { $0.id == attributedItem.id }?.summary.provenanceText == "From Weekly, Discovery")
+        #expect(persistedDetail.rows.first { $0.id == unattributedItem.id }?.summary.provenanceText == "Unattributed")
+        #expect(activeDetail.rows.first { $0.id == attributedItem.id }?.summary.provenanceText == "Unattributed")
+        #expect(activeDetail.rows.first { $0.id == unattributedItem.id }?.summary.provenanceText == "Unattributed")
+    }
+
     @Test("row summary changes when skip count changes")
     func rowSummaryChangesWhenSkipCountChanges() {
         let viewModel = PlaylistManagementViewModel()

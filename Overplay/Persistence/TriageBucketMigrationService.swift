@@ -16,6 +16,7 @@ import SwiftData
 /// must not silently leave items parented to a playlist nothing reads.
 enum TriageBucketMigrationService {
     struct Outcome: Equatable {
+        var createdBucket = false
         var migratedSourceCount = 0
         /// Items re-parented onto the bucket keeping their own row.
         var movedItemCount = 0
@@ -23,7 +24,7 @@ enum TriageBucketMigrationService {
         var mergedItemCount = 0
 
         var didChangeAnything: Bool {
-            migratedSourceCount > 0 || movedItemCount > 0 || mergedItemCount > 0
+            createdBucket || migratedSourceCount > 0 || movedItemCount > 0 || mergedItemCount > 0
         }
     }
 
@@ -33,46 +34,33 @@ enum TriageBucketMigrationService {
         in context: ModelContext,
         defaults: UserDefaults = .standard
     ) throws -> Outcome {
-        let legacyPlaylists = try PlaylistRepository.allPlaylists(in: context)
+        let playlists = try PlaylistRepository.allPlaylists(in: context)
+        let legacyPlaylists = playlists
             .filter(\.needsTriageBucketMigration)
+        var outcome = Outcome(
+            createdBucket: !playlists.contains(where: \.isTriageBucket)
+        )
+        let bucket = try PlaylistRepository.triageBucket(in: context)
 
         guard !legacyPlaylists.isEmpty else {
-            return Outcome()
+            if outcome.createdBucket {
+                try context.save()
+            }
+            return outcome
         }
 
-        var outcome = Outcome()
-        let bucket = try PlaylistRepository.triageBucket(in: context)
         let migratedAt = Date.now
-
-        // Bucket rows are keyed by track, so this map is what collapses the
-        // same song contributed by several playlists into one row.
-        var bucketItemsByTrackID = try PlaylistItemRepository
-            .items(forPlaylistID: bucket.id, in: context)
-            .firstValueDictionary(keyedBy: \.trackID)
 
         for legacyPlaylist in legacyPlaylists {
             let sourceMusicPlaylistID = legacyPlaylist.musicPlaylistID
-
-            for item in try PlaylistItemRepository.items(forPlaylistID: legacyPlaylist.id, in: context) {
-                if let keeper = bucketItemsByTrackID[item.trackID], keeper !== item {
-                    PlaylistItemRepository.mergeStats(
-                        from: item,
-                        into: keeper,
-                        adoptEvictionStateIfNewer: true
-                    )
-                    keeper.addSourceMusicPlaylistID(sourceMusicPlaylistID)
-                    keeper.updatedAt = migratedAt
-                    context.delete(item)
-                    outcome.mergedItemCount += 1
-                    continue
-                }
-
-                item.playlistID = bucket.id
-                item.addSourceMusicPlaylistID(sourceMusicPlaylistID)
-                item.updatedAt = migratedAt
-                bucketItemsByTrackID[item.trackID] = item
-                outcome.movedItemCount += 1
-            }
+            let reparentSummary = try PlaylistItemRepository.reparentItems(
+                from: legacyPlaylist.id,
+                to: bucket.id,
+                sourceMusicPlaylistID: sourceMusicPlaylistID,
+                in: context
+            )
+            outcome.movedItemCount += reparentSummary.movedCount
+            outcome.mergedItemCount += reparentSummary.mergedCount
 
             legacyPlaylist.role = .triageSource
             legacyPlaylist.updatedAt = migratedAt

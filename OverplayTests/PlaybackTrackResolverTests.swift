@@ -368,4 +368,29 @@ struct PlaybackTrackResolverTests {
         #expect(selected?.id == triage.id)
         #expect(fallback?.id == main.id)
     }
+
+    @Test("default playback never selects a triage source")
+    func defaultPlaybackNeverSelectsTriageSource() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let source = PlaylistRecord(
+            musicPlaylistID: "source",
+            name: "A Source",
+            role: .triageSource
+        )
+        let bucket = PlaylistRecord(
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket
+        )
+        context.insert(source)
+        context.insert(bucket)
+
+        let resolved = try PlaybackTrackResolver.defaultPlaybackPlaylist(
+            settings: OverplaySettings(selectedPlaylistID: source.musicPlaylistID),
+            in: context
+        )
+
+        #expect(resolved?.id == bucket.id)
+    }
 }
