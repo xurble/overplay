@@ -71,7 +71,6 @@ enum CarPlayNowPlayingButtonImageFactory {
 final class CarPlayCoordinator: NSObject {
     private weak var interfaceController: CPInterfaceController?
     private var playbackController: PlaybackController?
-    private var remoteCommandService: RemoteCommandService?
     private weak var runtime: AppRuntime?
     private var modelContext: ModelContext?
     private var refreshTask: Task<Void, Never>?
@@ -84,12 +83,27 @@ final class CarPlayCoordinator: NSObject {
     private weak var visiblePlaylistTemplate: CPListTemplate?
     private var didPresentDeliveryStallAlert = false
     private var libraryChangeObserver: NSObjectProtocol?
+    private lazy var shuffleButton = CPNowPlayingShuffleButton { [weak self] _ in
+        Task { @MainActor in
+            guard let self, let modelContext = self.modelContext else { return }
+            await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+                await self.playbackController?.toggleShuffle(context: modelContext)
+            }
+        }
+    }
+    private lazy var repeatButton = CPNowPlayingRepeatButton { [weak self] _ in
+        Task { @MainActor in
+            guard let self, let modelContext = self.modelContext else { return }
+            await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+                await self.playbackController?.toggleRepeatAll(context: modelContext)
+            }
+        }
+    }
 
     func connect(interfaceController: CPInterfaceController, runtime: AppRuntime) {
         self.interfaceController = interfaceController
         self.runtime = runtime
         playbackController = runtime.playbackController
-        remoteCommandService = runtime.remoteCommandService
         modelContext = runtime.makeModelContext()
 
         if let modelContext {
@@ -130,7 +144,6 @@ final class CarPlayCoordinator: NSObject {
         runtime = nil
         modelContext = nil
         playbackController = nil
-        remoteCommandService = nil
         visiblePlaylistID = nil
         rootListTemplate = nil
         visiblePlaylistTemplate = nil
@@ -386,7 +399,7 @@ final class CarPlayCoordinator: NSObject {
         nowPlayingTemplate.add(self)
         nowPlayingTemplate.isUpNextButtonEnabled = true
         nowPlayingTemplate.isAlbumArtistButtonEnabled = false
-        updateNowPlayingButtons(force: true)
+        updateNowPlayingButtons()
     }
 
     /// Playlist linking, One True Playlist role changes, and sync only touch
@@ -401,7 +414,7 @@ final class CarPlayCoordinator: NSObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                _ = self?.updateNowPlayingButtons(force: false)
+                self?.updateNowPlayingButtons()
                 self?.refreshLibraryLists()
             }
         }
@@ -440,12 +453,10 @@ final class CarPlayCoordinator: NSObject {
             _ = playbackController.displayedIsEvicted
             _ = playbackController.activePlaylistSnapshot?.updatedAt
             _ = playbackController.isDeliveryStalled
-            _ = playbackController.shuffleEnabled
-            _ = playbackController.repeatMode
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, generation == self.playbackObservationGeneration else { return }
-                _ = self.updateNowPlayingButtons(force: false)
+                self.updateNowPlayingButtons()
                 self.refreshLibraryLists()
                 self.presentDeliveryStallAlertIfNeeded()
                 self.observePlaybackController(generation: generation)
@@ -482,20 +493,16 @@ final class CarPlayCoordinator: NSObject {
         interfaceController.presentTemplate(template, animated: true, completion: nil)
     }
 
-    @discardableResult
-    private func updateNowPlayingButtons(force: Bool) -> Bool {
-        guard let playbackController, let modelContext, let settings = currentSettings() else { return false }
-        syncPlaybackModes()
+    private func updateNowPlayingButtons() {
+        guard let playbackController, let modelContext else { return }
         let signature = CarPlayNowPlayingButtonSignature.make(
             playbackController: playbackController,
-            settings: settings,
             context: modelContext
         )
-        guard force || signature != lastNowPlayingButtonSignature else { return false }
+        guard signature != lastNowPlayingButtonSignature else { return }
 
         let previousSignature = lastNowPlayingButtonSignature
         let reason = nowPlayingButtonUpdateReason(
-            force: force,
             previous: previousSignature,
             current: signature
         )
@@ -509,73 +516,37 @@ final class CarPlayCoordinator: NSObject {
                 + "retired=\(signature.isEvicted) "
                 + playbackController.playbackModeDiagnosticDescription
         )
-        return true
     }
 
     private func nowPlayingButtonUpdateReason(
-        force: Bool,
         previous: CarPlayNowPlayingButtonSignature?,
         current: CarPlayNowPlayingButtonSignature
     ) -> String {
-        guard let previous else { return force ? "initial-forced" : "initial" }
+        guard let previous else { return "initial" }
 
         var changes: [String] = []
-        if force { changes.append("forced") }
-        if previous.trackID != current.trackID { changes.append("track") }
+        if previous.hasCurrentTrack != current.hasCurrentTrack { changes.append("trackAvailability") }
         if previous.playlistRole != current.playlistRole { changes.append("role") }
-        if previous.skipCount != current.skipCount { changes.append("skipCount") }
         if previous.isEvicted != current.isEvicted { changes.append("retired") }
-        if previous.isShuffling != current.isShuffling { changes.append("shuffle") }
-        if previous.repeatMode != current.repeatMode { changes.append("repeat") }
-        return changes.isEmpty ? "forced-no-signature-change" : changes.joined(separator: ",")
+        return changes.joined(separator: ",")
     }
 
     private func nowPlayingActionButtons(for signature: CarPlayNowPlayingButtonSignature) -> [CPNowPlayingButton] {
-        CarPlayNowPlayingActionPolicy.actions(
+        shuffleButton.isEnabled = signature.hasCurrentTrack
+        repeatButton.isEnabled = signature.hasCurrentTrack
+
+        return CarPlayNowPlayingActionPolicy.actions(
             playlistRole: signature.playlistRole,
             isRetired: signature.isEvicted
         ).map { action in
             switch action {
-            case .shuffle: makeShuffleButton()
-            case .repeatMode: makeRepeatButton()
+            case .shuffle: shuffleButton
+            case .repeatMode: repeatButton
             case .promote: makePromoteButton()
             case .retire: makeEvictButton()
             case .restore: makeRestoreButton()
             }
         }
-    }
-
-    /// CarPlay's own shuffle control, so it looks and behaves like every other
-    /// audio app in the car. `isSelected` reflects MusicKit's mode rather than
-    /// anything Overplay keeps.
-    private func makeShuffleButton() -> CPNowPlayingShuffleButton {
-        let button = CPNowPlayingShuffleButton { [weak self] _ in
-            Task { @MainActor in
-                guard let self, let modelContext = self.modelContext else { return }
-                await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-                    await self.playbackController?.toggleShuffle(context: modelContext)
-                }
-                _ = self.updateNowPlayingButtons(force: true)
-            }
-        }
-        button.isEnabled = playbackController?.currentTrack != nil
-        button.isSelected = playbackController?.shuffleEnabled ?? false
-        return button
-    }
-
-    private func makeRepeatButton() -> CPNowPlayingRepeatButton {
-        let button = CPNowPlayingRepeatButton { [weak self] _ in
-            Task { @MainActor in
-                guard let self, let modelContext = self.modelContext else { return }
-                await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-                    await self.playbackController?.toggleRepeatAll(context: modelContext)
-                }
-                _ = self.updateNowPlayingButtons(force: true)
-            }
-        }
-        button.isEnabled = playbackController?.currentTrack != nil
-        button.isSelected = playbackController?.repeatAllEnabled ?? false
-        return button
     }
 
     private func makeEvictButton() -> CPNowPlayingImageButton {
@@ -617,11 +588,6 @@ final class CarPlayCoordinator: NSObject {
         ) ?? UIImage()
     }
 
-    private func currentSettings() -> OverplaySettings? {
-        guard let modelContext else { return nil }
-        return try? SettingsRepository.settings(in: modelContext)
-    }
-
     private func evictCurrentTrack() async {
         guard let playbackController, let modelContext else { return }
 
@@ -655,7 +621,7 @@ final class CarPlayCoordinator: NSObject {
 
     private func refreshAfterTrackAction() {
         refreshLibraryLists()
-        updateNowPlayingButtons(force: true)
+        updateNowPlayingButtons()
     }
 
     private func refreshLibraryLists() {
@@ -694,11 +660,6 @@ final class CarPlayCoordinator: NSObject {
                 self?.refreshLibraryLists()
             }
         }
-    }
-
-    private func syncPlaybackModes() {
-        guard let playbackController else { return }
-        remoteCommandService?.syncPlaybackModes(from: playbackController)
     }
 
     private func showError(title: String, message: String) {

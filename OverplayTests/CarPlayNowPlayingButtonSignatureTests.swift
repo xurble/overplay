@@ -33,7 +33,6 @@ struct CarPlayNowPlayingButtonSignatureTests {
 
         let active = CarPlayNowPlayingButtonSignature.make(
             playbackController: controller,
-            settings: settings,
             context: context
         )
         let activeBadge = NowPlayingPresentationFactory.trackStateBadgePresentation(
@@ -49,7 +48,6 @@ struct CarPlayNowPlayingButtonSignatureTests {
 
         let evicted = CarPlayNowPlayingButtonSignature.make(
             playbackController: controller,
-            settings: settings,
             context: context
         )
         let evictedBadge = NowPlayingPresentationFactory.trackStateBadgePresentation(
@@ -66,7 +64,6 @@ struct CarPlayNowPlayingButtonSignatureTests {
     func factoryReflectsTriagePlaylistRoleForDirectCarPlayActions() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let settings = try SettingsRepository.settings(in: context)
         let controller = PlaybackController()
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-2",
@@ -97,7 +94,6 @@ struct CarPlayNowPlayingButtonSignatureTests {
 
         let signature = CarPlayNowPlayingButtonSignature.make(
             playbackController: controller,
-            settings: settings,
             context: context
         )
 
@@ -108,7 +104,6 @@ struct CarPlayNowPlayingButtonSignatureTests {
     func changesWithCurrentPlaylistRole() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let settings = try SettingsRepository.settings(in: context)
         let controller = PlaybackController()
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-role-change",
@@ -121,7 +116,6 @@ struct CarPlayNowPlayingButtonSignatureTests {
 
         let triage = CarPlayNowPlayingButtonSignature.make(
             playbackController: controller,
-            settings: settings,
             context: context
         )
 
@@ -130,12 +124,81 @@ struct CarPlayNowPlayingButtonSignatureTests {
 
         let oneTruePlaylist = CarPlayNowPlayingButtonSignature.make(
             playbackController: controller,
-            settings: settings,
             context: context
         )
 
         #expect(triage.playlistRole == .triage)
         #expect(oneTruePlaylist.playlistRole == .oneTruePlaylist)
         #expect(oneTruePlaylist != triage)
+    }
+
+    @Test("does not change when only track identity and skip count change")
+    func ignoresTrackIdentityAndSkipCount() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let controller = PlaybackController()
+        let playlist = PlaylistRecord(
+            musicPlaylistID: "playlist-stable-layout",
+            name: "Main",
+            role: .oneTruePlaylist
+        )
+        let firstTrack = TrackRecord(
+            catalogID: "music-1",
+            libraryID: "music-1",
+            title: "First",
+            artistName: "Artist"
+        )
+        let secondTrack = TrackRecord(
+            catalogID: "music-2",
+            libraryID: "music-2",
+            title: "Second",
+            artistName: "Artist"
+        )
+        let firstItem = PlaylistItemRecord(playlistID: playlist.id, trackID: firstTrack.id, skipCount: 1)
+        let secondItem = PlaylistItemRecord(playlistID: playlist.id, trackID: secondTrack.id, skipCount: 8)
+        context.insert(playlist)
+        context.insert(firstTrack)
+        context.insert(secondTrack)
+        context.insert(firstItem)
+        context.insert(secondItem)
+
+        controller.currentPlaylistID = playlist.musicPlaylistID
+        controller.currentTrack = CurrentPlaybackTrack(id: "music-1", title: "First", artistName: "Artist")
+        controller.currentPlaylistItem = firstItem
+        let first = CarPlayNowPlayingButtonSignature.make(
+            playbackController: controller,
+            context: context
+        )
+
+        controller.currentTrack = CurrentPlaybackTrack(id: "music-2", title: "Second", artistName: "Artist")
+        controller.currentPlaylistItem = secondItem
+        let second = CarPlayNowPlayingButtonSignature.make(
+            playbackController: controller,
+            context: context
+        )
+
+        #expect(second == first)
+    }
+
+    @Test("changes when track availability changes")
+    func changesWithTrackAvailability() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let controller = PlaybackController()
+
+        let empty = CarPlayNowPlayingButtonSignature.make(
+            playbackController: controller,
+            context: context
+        )
+
+        controller.currentTrack = CurrentPlaybackTrack(id: "music-1", title: "Track", artistName: "Artist")
+        let playing = CarPlayNowPlayingButtonSignature.make(
+            playbackController: controller,
+            context: context
+        )
+
+        #expect(!empty.hasCurrentTrack)
+        #expect(playing.hasCurrentTrack)
+        #expect(playing != empty)
     }
 }

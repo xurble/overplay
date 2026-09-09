@@ -111,17 +111,12 @@ enum NowPlayingPresentationFactory {
 
     static func carPlayButtonSignature(
         playbackController: PlaybackController,
-        settings: OverplaySettings,
         context: ModelContext
     ) -> CarPlayNowPlayingButtonSignature {
-        let nowPlaying = presentation(playbackController: playbackController, settings: settings, context: context)
         return CarPlayNowPlayingButtonSignature(
-            trackID: nowPlaying.trackID,
+            hasCurrentTrack: playbackController.currentTrack != nil,
             playlistRole: playbackController.currentPlaylistRole(context: context),
-            skipCount: nowPlaying.skipCount,
-            isEvicted: nowPlaying.isEvicted,
-            isShuffling: playbackController.shuffleEnabled,
-            repeatMode: playbackController.repeatMode
+            isEvicted: playbackController.displayedIsEvicted(context: context)
         )
     }
 
