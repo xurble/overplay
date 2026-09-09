@@ -25,6 +25,49 @@ enum CarPlayListTemplateUpdater {
 }
 
 @MainActor
+enum CarPlayNowPlayingButtonImageFactory {
+    private static let preferredPointSize: CGFloat = 24
+
+    static func image(
+        systemName: String,
+        traitCollection: UITraitCollection,
+        maximumSize: CGSize = CPNowPlayingButtonMaximumImageSize
+    ) -> UIImage? {
+        let symbolConfiguration = UIImage.SymbolConfiguration(
+            pointSize: preferredPointSize,
+            weight: .light
+        )
+        guard let symbol = UIImage(systemName: systemName, compatibleWith: traitCollection)?
+            .applyingSymbolConfiguration(symbolConfiguration) else {
+            return nil
+        }
+
+        let fittedSize = fittedSize(for: symbol.size, maximumSize: maximumSize)
+        guard fittedSize.width > 0, fittedSize.height > 0 else { return nil }
+
+        let format = UIGraphicsImageRendererFormat(for: traitCollection)
+        format.scale = max(traitCollection.displayScale, 1)
+        format.opaque = false
+        let renderer = UIGraphicsImageRenderer(size: fittedSize, format: format)
+        let monochromeSymbol = symbol.withTintColor(.black, renderingMode: .alwaysOriginal)
+        return renderer.image { _ in
+            monochromeSymbol.draw(in: CGRect(origin: .zero, size: fittedSize))
+        }
+        .withRenderingMode(.alwaysTemplate)
+    }
+
+    private static func fittedSize(for size: CGSize, maximumSize: CGSize) -> CGSize {
+        guard size.width > 0, size.height > 0,
+              maximumSize.width > 0, maximumSize.height > 0 else {
+            return .zero
+        }
+
+        let scale = min(1, maximumSize.width / size.width, maximumSize.height / size.height)
+        return CGSize(width: size.width * scale, height: size.height * scale)
+    }
+}
+
+@MainActor
 final class CarPlayCoordinator: NSObject {
     private weak var interfaceController: CPInterfaceController?
     private var playbackController: PlaybackController?
@@ -358,6 +401,7 @@ final class CarPlayCoordinator: NSObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
+                _ = self?.updateNowPlayingButtons(force: false)
                 self?.refreshLibraryLists()
             }
         }
@@ -533,9 +577,12 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func buttonImage(systemImage: String) -> UIImage {
-        let configuration = UIImage.SymbolConfiguration(pointSize: 24, weight: .light)
-        return (UIImage(systemName: systemImage, withConfiguration: configuration) ?? UIImage())
-            .withRenderingMode(.alwaysTemplate)
+        let traitCollection = interfaceController?.carTraitCollection
+            ?? UITraitCollection(displayScale: 1)
+        return CarPlayNowPlayingButtonImageFactory.image(
+            systemName: systemImage,
+            traitCollection: traitCollection
+        ) ?? UIImage()
     }
 
     private func currentSettings() -> OverplaySettings? {
