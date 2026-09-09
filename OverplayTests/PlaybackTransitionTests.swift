@@ -344,8 +344,8 @@ struct PlaybackTransitionTests {
         } == true)
     }
 
-    @Test("syncing a source during partial queue hydration appends only its new track")
-    func syncingSourceDuringPartialQueueHydrationAppendsOnlyItsNewTrack() async throws {
+    @Test("syncing a source after partial queue hydration appends only its new track")
+    func syncingSourceAfterPartialQueueHydrationAppendsOnlyItsNewTrack() async throws {
         let fixture = try makeFixture(trackCount: 2)
         fixture.playlist.musicPlaylistID = PlaylistRecord.triageBucketMusicPlaylistID
         fixture.playlist.name = PlaylistRecord.triageBucketName
@@ -362,6 +362,11 @@ struct PlaybackTransitionTests {
         let reissued = fixture.player.reissueEntryIDs(for: fixture.musicTracks, currentIndex: 0)
         fixture.player.unhydratedEntryIDs = [reissued[1]]
         await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        // Hydration finishes before the source-sync callback, but there is no
+        // intervening playback tick to merge that entry into the controller's
+        // mapped queue.
+        fixture.player.unhydratedEntryIDs = []
 
         let source = try fixture.addPlaylist(prefix: "source", trackCount: 1)
         let contributedItem = source.items[0]
@@ -390,7 +395,6 @@ struct PlaybackTransitionTests {
         #expect(fixture.player.appendedTrackBatchSizes == [1])
         #expect(fixture.player.queuedEntryCount == 3)
 
-        fixture.player.unhydratedEntryIDs = []
         await fixture.controller.reconcilePlayerState(context: fixture.context)
 
         #expect(fixture.player.appendedTrackBatchSizes == [1])

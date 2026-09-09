@@ -2993,12 +2993,14 @@ final class PlaybackController {
                         + reconciliationPendingAppendTrackIDs
                 )
                 // A re-materialized MusicKit queue can be only partially
-                // hydrated, so `activeQueueEntries` may temporarily omit
-                // tracks that are already live. In that window, only rows
-                // absent from the last published playlist snapshot are
-                // proven additions. Once hydration completes, the live queue
-                // is authoritative again and can recover any failed append.
-                let appendedIDs = if isAwaitingOwnQueueHydration {
+                // correlated, so `activeQueueEntries` may temporarily omit
+                // tracks that are already live. That remains true after the
+                // last item hydrates but before the next playback refresh.
+                // Until correlation covers the live queue, only rows absent
+                // from the last published playlist snapshot are proven
+                // additions. A complete live map can recover any failed
+                // append normally.
+                let appendedIDs = if !isQueueCorrelationComplete {
                     previouslyPublishedTrackIDs.map { publishedTrackIDs in
                         reconciledOrder.filter {
                             !publishedTrackIDs.contains($0) && !knownLiveTrackIDs.contains($0)
