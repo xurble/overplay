@@ -200,6 +200,11 @@ final class PlaylistSelectionViewModel {
     }
 
     func sync(_ playlist: PlaylistRecord, context: ModelContext, dependencies: Dependencies) async {
+        guard playlist.isActive, playlist.hasRemoteSource else {
+            message = "\(playlist.name) is no longer linked."
+            return
+        }
+
         syncingPlaylistIDs.insert(playlist.id)
         defer { syncingPlaylistIDs.remove(playlist.id) }
 
@@ -220,7 +225,9 @@ final class PlaylistSelectionViewModel {
         isSyncingAll = true
         defer { isSyncingAll = false }
 
-        let syncablePlaylists = linkedPlaylists.filter(\.hasRemoteSource)
+        let syncablePlaylists = linkedPlaylists.filter {
+            $0.isActive && $0.hasRemoteSource
+        }
 
         do {
             let count = try await dependencies.syncAllLinkedPlaylists(syncablePlaylists, context)
@@ -238,6 +245,8 @@ final class PlaylistSelectionViewModel {
         context: ModelContext,
         dependencies: Dependencies
     ) {
+        guard playlist.isActive, playlist.hasRemoteSource else { return }
+
         Task(priority: .background) {
             do {
                 _ = try await dependencies.syncPlaylist(playlist, context)

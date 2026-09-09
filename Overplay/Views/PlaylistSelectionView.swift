@@ -55,7 +55,7 @@ struct PlaylistSelectionView: View {
                 Button {
                     Task {
                         await viewModel.syncAllLinkedPlaylists(
-                            linkedPlaylists,
+                            sortedLinkedPlaylists,
                             context: modelContext,
                             dependencies: dependencies
                         )
@@ -98,7 +98,9 @@ struct PlaylistSelectionView: View {
     }
 
     private var sortedLinkedPlaylists: [PlaylistRecord] {
-        presentationBuilder.displayOrderedPlaylists(linkedPlaylists.filter(\.hasRemoteSource))
+        presentationBuilder.displayOrderedPlaylists(
+            linkedPlaylists.filter { $0.isActive && $0.hasRemoteSource }
+        )
     }
 
     private var playlistDataKey: String {

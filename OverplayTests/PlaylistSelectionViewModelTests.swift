@@ -126,9 +126,47 @@ struct PlaylistSelectionViewModelTests {
         #expect(reconciledIDs == ["source"])
     }
 
+    @Test("unlinking a source excludes it from every manual sync path")
+    func unlinkingSourceExcludesItFromManualSyncPaths() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let viewModel = PlaylistSelectionViewModel()
+        let source = try PlaylistRepository.addTriageSource(
+            AppleMusicPlaylist(id: "source", name: "Source", trackCount: 1),
+            in: context
+        )
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let main = PlaylistRecord(musicPlaylistID: "main", name: "Main", role: .oneTruePlaylist)
+        context.insert(main)
+        try PlaylistRepository.removeTriageSource(source, in: context)
+        var individuallySyncedIDs: [String] = []
+        var bulkSyncedIDs: [String] = []
+        let dependencies = makeDependencies(
+            syncPlaylist: { playlist, _ in
+                individuallySyncedIDs.append(playlist.musicPlaylistID)
+                return 0
+            },
+            syncAllLinkedPlaylists: { playlists, _ in
+                bulkSyncedIDs = playlists.map(\.musicPlaylistID)
+                return 0
+            }
+        )
+
+        await viewModel.sync(source, context: context, dependencies: dependencies)
+        await viewModel.syncAllLinkedPlaylists(
+            [source, bucket, main],
+            context: context,
+            dependencies: dependencies
+        )
+
+        #expect(individuallySyncedIDs.isEmpty)
+        #expect(bulkSyncedIDs == ["main"])
+    }
+
     private func makeDependencies(
         fetchedPlaylists: [AppleMusicPlaylist] = [],
         syncAllCount: Int = 0,
+        syncPlaylist: ((_ playlist: PlaylistRecord, _ context: ModelContext) async throws -> Int)? = nil,
         syncAllLinkedPlaylists: ((_ playlists: [PlaylistRecord], _ context: ModelContext) async throws -> Int)? = nil,
         reconcileStoredOrder: @escaping (PlaylistRecord, ModelContext) -> Void = { _, _ in }
     ) -> PlaylistSelectionViewModel.Dependencies {
@@ -136,8 +174,11 @@ struct PlaylistSelectionViewModelTests {
             fetchedPlaylists
         } createManagedOneTruePlaylist: { name, _, _ in
             PlaylistRecord(musicPlaylistID: "created", name: name, role: .oneTruePlaylist)
-        } syncPlaylist: { _, _ in
-            0
+        } syncPlaylist: { playlist, context in
+            if let syncPlaylist {
+                return try await syncPlaylist(playlist, context)
+            }
+            return 0
         } syncPlaylistID: { _, _ in
             0
         } syncAllLinkedPlaylists: { playlists, context in
