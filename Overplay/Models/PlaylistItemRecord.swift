@@ -94,4 +94,22 @@ final class PlaylistItemRecord {
         sourceMusicPlaylistIDs.removeAll { $0 == musicPlaylistID }
         return true
     }
+
+    /// Carries provenance forward when MusicKit replaces a library playlist
+    /// identifier, collapsing duplicates if the new identifier was already
+    /// recorded by a previous sync.
+    @discardableResult
+    func replaceSourceMusicPlaylistID(from oldID: String, to newID: String) -> Bool {
+        guard oldID != newID, sourceMusicPlaylistIDs.contains(oldID) else { return false }
+
+        var replacedIDs: [String] = []
+        for sourceID in sourceMusicPlaylistIDs {
+            let replacement = sourceID == oldID ? newID : sourceID
+            if !replacedIDs.contains(replacement) {
+                replacedIDs.append(replacement)
+            }
+        }
+        sourceMusicPlaylistIDs = replacedIDs
+        return true
+    }
 }

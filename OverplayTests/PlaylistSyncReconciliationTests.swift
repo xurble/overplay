@@ -401,6 +401,37 @@ struct PlaylistSyncReconciliationTests {
         #expect(item.sourceMusicPlaylistIDs.isEmpty)
     }
 
+    @Test("healing a source playlist ID also heals provenance used by unlink")
+    func healingSourcePlaylistIDAlsoHealsProvenanceUsedByUnlink() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let source = try PlaylistRepository.addTriageSource(
+            AppleMusicPlaylist(id: "source.old", name: "Source", trackCount: 1),
+            in: context
+        )
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        try await PlaylistSyncService().reconcile(
+            snapshots: [snapshot(id: "track-1", title: "First")],
+            playlistRecord: source,
+            syncedAt: Date(timeIntervalSince1970: 100),
+            in: context
+        )
+        let item = try #require(PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context).first)
+
+        try AppleMusicPlaylistSourceSync().applyHealedMusicPlaylistID(
+            from: "source.old",
+            to: "source.new",
+            playlistRecord: source,
+            in: context
+        )
+
+        #expect(source.musicPlaylistID == "source.new")
+        #expect(item.sourceMusicPlaylistIDs == ["source.new"])
+
+        try PlaylistRepository.removeTriageSource(source, in: context)
+        #expect(item.sourceMusicPlaylistIDs.isEmpty)
+    }
+
     private func snapshot(id: String, title: String) -> TrackSnapshot {
         TrackSnapshot(
             id: id,

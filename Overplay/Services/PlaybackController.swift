@@ -2984,6 +2984,75 @@ final class PlaybackController {
         }
     }
 
+    /// Keeps a live queue attached when selecting a new One True Playlist
+    /// demotes the playlist currently playing and reparents its rows into the
+    /// triage bucket. The MusicKit queue itself is unchanged; only Overplay's
+    /// playlist and item correlation needs to follow the moved records.
+    func reconcilePlaylistSelection(context: ModelContext) {
+        guard let previousMusicPlaylistID = currentPlaylistID,
+              let previousPlaylist = try? PlaylistRepository.playlist(
+                musicPlaylistID: previousMusicPlaylistID,
+                in: context
+              ),
+              previousPlaylist.role == .triageSource,
+              let bucket = try? PlaylistRepository.existingTriageBucket(in: context) else {
+            return
+        }
+
+        let bucketItems: [PlaylistItemRecord]
+        do {
+            bucketItems = try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
+        } catch {
+            statusMessage = error.localizedDescription
+            return
+        }
+        let itemsByTrackID = bucketItems.firstValueDictionary(keyedBy: \.trackID)
+
+        LocalPlaybackStateStore.rekeyMusicPlaylistID(
+            from: previousMusicPlaylistID,
+            to: bucket.musicPlaylistID,
+            flushImmediately: true
+        )
+        PlaybackIdentityStore.rekeyMusicPlaylistID(
+            from: previousMusicPlaylistID,
+            to: bucket.musicPlaylistID,
+            flushImmediately: true
+        )
+        PlaybackOrderStore.rekeyMusicPlaylistID(
+            from: currentPlaylistScope.playbackOrderPlaylistID(for: previousMusicPlaylistID),
+            to: currentPlaylistScope.playbackOrderPlaylistID(for: bucket.musicPlaylistID),
+            flushImmediately: true
+        )
+
+        let currentTrackID = currentPlaylistItem?.trackID
+            ?? activeQueueCurrentLocalTrackID.flatMap(UUID.init(uuidString:))
+        currentPlaylistID = bucket.musicPlaylistID
+        currentPlaylistItem = currentTrackID.flatMap { itemsByTrackID[$0] }
+        for index in activeQueueEntries.indices {
+            guard let trackID = UUID(uuidString: activeQueueEntries[index].localTrackID),
+                  let item = itemsByTrackID[trackID] else {
+                continue
+            }
+            activeQueueEntries[index].playlistItemID = item.id
+        }
+        for index in appendedUncorrelatedEntries.indices {
+            guard let trackID = UUID(uuidString: appendedUncorrelatedEntries[index].localTrackID),
+                  let item = itemsByTrackID[trackID] else {
+                continue
+            }
+            appendedUncorrelatedEntries[index].playlistItemID = item.id
+        }
+
+        lastLocalPlaybackStateIdentity = nil
+        if let musicItemID = currentTrack?.id {
+            persistLocalPlaybackState(musicItemID: musicItemID, forceFlush: true)
+        }
+        reconcileStoredOrder(for: bucket, context: context)
+        rebuildActivePlaylistSnapshot(context: context)
+        bumpPlaybackItemMetadataVersion()
+        publishNowPlayingMetadata(isPlaying: isPlaying)
+    }
+
     func appendLiveQueueEntries(
         localTrackIDs: [String],
         playlistID: String,

@@ -48,6 +48,7 @@ final class PlaylistSelectionViewModel {
                 }
                 return syncedCount
             } reconcileStoredOrder: { playlist, context in
+                playbackController.reconcilePlaylistSelection(context: context)
                 playbackController.reconcileStoredOrder(for: playlist, context: context)
             } dismiss: {
                 dismiss()
@@ -107,6 +108,7 @@ final class PlaylistSelectionViewModel {
 
         do {
             try SettingsRepository.selectPlaylist(playlist, in: context)
+            try reconcileSelectedPlaylist(playlist.id, context: context, dependencies: dependencies)
             refreshPlaylistInBackground(id: playlist.id, context: context, dependencies: dependencies)
             dependencies.dismiss()
         } catch {
@@ -117,6 +119,7 @@ final class PlaylistSelectionViewModel {
     func useIncomingOnly(_ playlist: AppleMusicPlaylist, context: ModelContext, dependencies: Dependencies) {
         do {
             try SettingsRepository.selectPlaylist(playlist, writePolicy: .incomingOnly, in: context)
+            try reconcileSelectedPlaylist(playlist.id, context: context, dependencies: dependencies)
             refreshPlaylistInBackground(id: playlist.id, context: context, dependencies: dependencies)
             dependencies.dismiss()
         } catch {
@@ -152,6 +155,7 @@ final class PlaylistSelectionViewModel {
                 writePolicy: playlist.writePolicy,
                 in: context
             )
+            try reconcileSelectedPlaylist(playlist.musicPlaylistID, context: context, dependencies: dependencies)
             refreshPlaylistInBackground(playlist, context: context, dependencies: dependencies)
             dependencies.dismiss()
         } catch {
@@ -170,6 +174,7 @@ final class PlaylistSelectionViewModel {
                 writePolicy: .managed,
                 in: context
             )
+            try reconcileSelectedPlaylist(playlist.musicPlaylistID, context: context, dependencies: dependencies)
             message = "Created \(playlist.name) in Apple Music."
             dependencies.dismiss()
         } catch {
@@ -192,6 +197,7 @@ final class PlaylistSelectionViewModel {
                 writePolicy: .managed,
                 in: context
             )
+            try reconcileSelectedPlaylist(playlist.musicPlaylistID, context: context, dependencies: dependencies)
             message = "Copied \(sourcePlaylist.name) to \(playlist.name)."
             dependencies.dismiss()
         } catch {
@@ -267,5 +273,19 @@ final class PlaylistSelectionViewModel {
                 message = error.localizedDescription
             }
         }
+    }
+
+    private func reconcileSelectedPlaylist(
+        _ musicPlaylistID: String,
+        context: ModelContext,
+        dependencies: Dependencies
+    ) throws {
+        guard let playlist = try PlaylistRepository.playlist(
+            musicPlaylistID: musicPlaylistID,
+            in: context
+        ) else {
+            return
+        }
+        dependencies.reconcileStoredOrder(playlist, context)
     }
 }

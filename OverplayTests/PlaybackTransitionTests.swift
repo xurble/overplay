@@ -297,6 +297,33 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.activePlaylistSnapshot == nil)
     }
 
+    @Test("demoting the playing main playlist keeps its queue attached to the bucket")
+    func demotingPlayingMainPlaylistKeepsItsQueueAttachedToBucket() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 15
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        try SettingsRepository.selectPlaylist(
+            AppleMusicPlaylist(id: "replacement", name: "Replacement", trackCount: 0),
+            in: fixture.context
+        )
+        let bucket = try PlaylistRepository.triageBucket(in: fixture.context)
+        fixture.controller.reconcilePlaylistSelection(context: fixture.context)
+
+        #expect(fixture.controller.currentPlaylistID == bucket.musicPlaylistID)
+        #expect(fixture.controller.currentPlaylistItem?.playlistID == bucket.id)
+        #expect(fixture.controller.activePlaylistSnapshot?.playlistID == bucket.id)
+
+        await fixture.controller.next(settings: fixture.settings, context: fixture.context)
+
+        let movedItems = try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: fixture.context)
+        let outgoingItem = try #require(movedItems.first { $0.trackID == fixture.tracks[0].id })
+        #expect(outgoingItem.skipCount == 1)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[1].id.rawValue)
+    }
+
     @Test("a queue replacement clears an earlier pending append correlation")
     func queueReplacementClearsEarlierPendingAppendCorrelation() async throws {
         let fixture = try makeFixture()
