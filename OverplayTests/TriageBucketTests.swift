@@ -383,6 +383,81 @@ struct TriageBucketTests {
         #expect(bucket.role == .triageBucket)
     }
 
+    @Test("migration consolidates independently created buckets without losing history")
+    func migrationConsolidatesDuplicateBuckets() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let sharedTrack = TrackRecord(catalogID: "shared", title: "Shared", artistName: "Artist")
+        let movedTrack = TrackRecord(catalogID: "moved", title: "Moved", artistName: "Artist")
+        context.insert(sharedTrack)
+        context.insert(movedTrack)
+
+        let sharedCreationDate = Date(timeIntervalSince1970: 100)
+        let keeper = PlaylistRecord(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket,
+            writePolicy: .incomingOnly,
+            createdAt: sharedCreationDate
+        )
+        let duplicate = PlaylistRecord(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket,
+            writePolicy: .incomingOnly,
+            createdAt: sharedCreationDate
+        )
+        context.insert(duplicate)
+        context.insert(keeper)
+
+        context.insert(PlaylistItemRecord(
+            playlistID: keeper.id,
+            trackID: sharedTrack.id,
+            sourceMusicPlaylistIDs: ["source-1"],
+            skipCount: 2,
+            playthroughCount: 1,
+            updatedAt: Date(timeIntervalSince1970: 100)
+        ))
+        context.insert(PlaylistItemRecord(
+            playlistID: duplicate.id,
+            trackID: sharedTrack.id,
+            sourceMusicPlaylistIDs: ["source-2"],
+            skipCount: 3,
+            playthroughCount: 4,
+            evictedAt: Date(timeIntervalSince1970: 200),
+            evictionReason: .manual,
+            evictionSource: .user,
+            updatedAt: Date(timeIntervalSince1970: 200)
+        ))
+        context.insert(PlaylistItemRecord(
+            playlistID: duplicate.id,
+            trackID: movedTrack.id,
+            sourceMusicPlaylistIDs: ["source-3"]
+        ))
+
+        let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: makeDefaults())
+
+        #expect(outcome.createdBucket == false)
+        #expect(outcome.consolidatedBucketCount == 1)
+        #expect(outcome.didChangeAnything)
+        let buckets = try PlaylistRepository.allPlaylists(in: context).filter(\.isTriageBucket)
+        #expect(buckets.map(\.id) == [keeper.id])
+
+        let items = try PlaylistItemRepository.items(forPlaylistID: keeper.id, in: context)
+        #expect(items.count == 2)
+        let mergedItem = try #require(items.first { $0.trackID == sharedTrack.id })
+        #expect(mergedItem.skipCount == 5)
+        #expect(mergedItem.playthroughCount == 5)
+        #expect(mergedItem.evictedAt == Date(timeIntervalSince1970: 200))
+        #expect(mergedItem.sourceMusicPlaylistIDs.sorted() == ["source-1", "source-2"])
+
+        let movedItem = try #require(items.first { $0.trackID == movedTrack.id })
+        #expect(movedItem.sourceMusicPlaylistIDs == ["source-3"])
+        #expect(!movedItem.sourceMusicPlaylistIDs.contains(PlaylistRecord.triageBucketMusicPlaylistID))
+    }
+
     // MARK: - Helpers
 
     /// Two pre-bucket triage playlists that share one track, so migration has

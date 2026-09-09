@@ -17,6 +17,8 @@ import SwiftData
 enum TriageBucketMigrationService {
     struct Outcome: Equatable {
         var createdBucket = false
+        /// Duplicate buckets folded into the deterministic keeper after sync.
+        var consolidatedBucketCount = 0
         var migratedSourceCount = 0
         /// Items re-parented onto the bucket keeping their own row.
         var movedItemCount = 0
@@ -24,7 +26,8 @@ enum TriageBucketMigrationService {
         var mergedItemCount = 0
 
         var didChangeAnything: Bool {
-            createdBucket || migratedSourceCount > 0 || movedItemCount > 0 || mergedItemCount > 0
+            createdBucket || consolidatedBucketCount > 0 || migratedSourceCount > 0
+                || movedItemCount > 0 || mergedItemCount > 0
         }
     }
 
@@ -37,13 +40,15 @@ enum TriageBucketMigrationService {
         let playlists = try PlaylistRepository.allPlaylists(in: context)
         let legacyPlaylists = playlists
             .filter(\.needsTriageBucketMigration)
+        let bucketCount = playlists.count(where: \.isTriageBucket)
         var outcome = Outcome(
-            createdBucket: !playlists.contains(where: \.isTriageBucket)
+            createdBucket: bucketCount == 0,
+            consolidatedBucketCount: max(bucketCount - 1, 0)
         )
         let bucket = try PlaylistRepository.triageBucket(in: context)
 
         guard !legacyPlaylists.isEmpty else {
-            if outcome.createdBucket {
+            if outcome.didChangeAnything {
                 try context.save()
             }
             return outcome

@@ -99,6 +99,37 @@ enum PlaylistItemRepository {
         sourceMusicPlaylistID: String,
         in context: ModelContext
     ) throws -> ReparentSummary {
+        try reparentItems(
+            from: sourcePlaylistID,
+            to: destinationPlaylistID,
+            additionalSourceMusicPlaylistID: sourceMusicPlaylistID,
+            in: context
+        )
+    }
+
+    /// Moves items between two local containers without inventing source
+    /// provenance. This is used when duplicate triage buckets converge after
+    /// CloudKit sync: the rows already carry their contributing playlist IDs.
+    @discardableResult
+    static func reparentItems(
+        from sourcePlaylistID: UUID,
+        to destinationPlaylistID: UUID,
+        in context: ModelContext
+    ) throws -> ReparentSummary {
+        try reparentItems(
+            from: sourcePlaylistID,
+            to: destinationPlaylistID,
+            additionalSourceMusicPlaylistID: nil,
+            in: context
+        )
+    }
+
+    private static func reparentItems(
+        from sourcePlaylistID: UUID,
+        to destinationPlaylistID: UUID,
+        additionalSourceMusicPlaylistID: String?,
+        in context: ModelContext
+    ) throws -> ReparentSummary {
         guard sourcePlaylistID != destinationPlaylistID else { return ReparentSummary() }
 
         var summary = ReparentSummary()
@@ -110,12 +141,16 @@ enum PlaylistItemRepository {
         for item in try items(forPlaylistID: sourcePlaylistID, in: context) {
             if let keeper = destinationItemsByTrackID[item.trackID] {
                 mergeStats(from: item, into: keeper, adoptEvictionStateIfNewer: true)
-                keeper.addSourceMusicPlaylistID(sourceMusicPlaylistID)
+                if let additionalSourceMusicPlaylistID {
+                    keeper.addSourceMusicPlaylistID(additionalSourceMusicPlaylistID)
+                }
                 context.delete(item)
                 summary.mergedCount += 1
             } else {
                 item.playlistID = destinationPlaylistID
-                item.addSourceMusicPlaylistID(sourceMusicPlaylistID)
+                if let additionalSourceMusicPlaylistID {
+                    item.addSourceMusicPlaylistID(additionalSourceMusicPlaylistID)
+                }
                 destinationItemsByTrackID[item.trackID] = item
                 summary.movedCount += 1
             }

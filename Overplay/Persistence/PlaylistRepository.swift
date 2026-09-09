@@ -69,11 +69,22 @@ enum PlaylistRepository {
     }
 
     /// The single triage bucket. Startup ensures it exists, and this accessor
-    /// also creates it on demand so item-writing callers can rely on it.
+    /// also creates it on demand so item-writing callers can rely on it. If
+    /// CloudKit delivers buckets created independently by multiple devices,
+    /// this converges them onto the same deterministic keeper before writing.
     @discardableResult
     static func triageBucket(in context: ModelContext) throws -> PlaylistRecord {
-        if let existingBucket = try existingTriageBucket(in: context) {
-            return existingBucket
+        let buckets = try triageBuckets(in: context)
+        if let keeper = buckets.first {
+            for duplicate in buckets.dropFirst() {
+                try PlaylistItemRepository.reparentItems(
+                    from: duplicate.id,
+                    to: keeper.id,
+                    in: context
+                )
+                context.delete(duplicate)
+            }
+            return keeper
         }
 
         let bucket = PlaylistRecord(
@@ -90,14 +101,25 @@ enum PlaylistRepository {
     /// Looks the bucket up without creating it, for read-only callers that
     /// must not write to the store just to render an empty state.
     static func existingTriageBucket(in context: ModelContext) throws -> PlaylistRecord? {
+        try triageBuckets(in: context).first
+    }
+
+    /// Sorts in memory for the UUID tie-break because CloudKit can preserve
+    /// equal creation dates from independently created records. Every device
+    /// must choose the same keeper once it sees the same set of buckets.
+    private static func triageBuckets(in context: ModelContext) throws -> [PlaylistRecord] {
         let triageBucketRole = PlaylistRole.triageBucket.rawValue
         var descriptor = FetchDescriptor<PlaylistRecord>(
             predicate: #Predicate { $0.roleRawValue == triageBucketRole },
             sortBy: [SortDescriptor(\.createdAt)]
         )
-        descriptor.fetchLimit = 1
         descriptor.includePendingChanges = true
-        return try context.fetch(descriptor).first
+        return try context.fetch(descriptor).sorted {
+            if $0.createdAt != $1.createdAt {
+                return $0.createdAt < $1.createdAt
+            }
+            return $0.id.uuidString < $1.id.uuidString
+        }
     }
 
     /// The contributing Apple Music playlists that feed the bucket.
