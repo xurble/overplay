@@ -3,17 +3,15 @@ import Foundation
 
 /// Detects streaming-delivery stalls from consecutive 1 Hz monitor ticks.
 ///
-/// MusicKit never reports delivery failure directly: mid-track the player
-/// either flips to `.interrupted`, or keeps claiming `.playing` while the
-/// playback position stops advancing. A user pause/stop is never a stall,
-/// and a single odd tick is never enough — the player legitimately freezes
+/// MusicKit does not report a frozen stream directly: mid-track the player
+/// can keep claiming `.playing` while the playback position stops advancing.
+/// An interruption belongs to the system, and a user pause/stop is never a
+/// stall. A single odd tick is never enough — the player legitimately freezes
 /// briefly while buffering or transitioning between tracks.
 enum PlaybackDeliveryStallPolicy {
-    /// Consecutive `.interrupted` ticks before delivery counts as stalled.
-    static let interruptedTickThreshold = 3
     /// Consecutive frozen-position `.playing` ticks before delivery counts
-    /// as stalled. Longer than the interrupted threshold because a healthy
-    /// player can sit at a fixed position while buffering.
+    /// as stalled. A healthy player can sit at a fixed position briefly
+    /// while buffering.
     static let frozenPlaybackTickThreshold = 5
     /// Minimum position movement between ticks that counts as progress.
     static let progressEpsilon = 0.1
@@ -33,7 +31,6 @@ enum PlaybackDeliveryStallPolicy {
     }
 
     struct State: Equatable {
-        var interruptedTicks = 0
         var frozenTicks = 0
         var lastPlaybackTime: Double?
         /// True only when the latest tick showed witnessed forward progress
@@ -44,8 +41,7 @@ enum PlaybackDeliveryStallPolicy {
         var progressingTicks = 0
 
         var isStalled: Bool {
-            interruptedTicks >= interruptedTickThreshold
-                || frozenTicks >= frozenPlaybackTickThreshold
+            frozenTicks >= frozenPlaybackTickThreshold
         }
 
         /// Whether delivery has progressed for long enough that the stall
@@ -61,11 +57,9 @@ enum PlaybackDeliveryStallPolicy {
 
         switch tick.playbackStatus {
         case .interrupted:
-            next.interruptedTicks += 1
             next.frozenTicks = 0
             next.progressingTicks = 0
         case .playing where tick.hasCurrentEntry:
-            next.interruptedTicks = 0
             if let lastPlaybackTime = state.lastPlaybackTime,
                abs(tick.playbackTime - lastPlaybackTime) < progressEpsilon {
                 next.frozenTicks += 1
@@ -79,7 +73,6 @@ enum PlaybackDeliveryStallPolicy {
             // Paused, stopped, seeking, or playing without an entry: not a
             // stall signal (queue-end policy owns the nil-entry states),
             // but not proof of healthy delivery either.
-            next.interruptedTicks = 0
             next.frozenTicks = 0
             next.progressingTicks = 0
         }
@@ -90,8 +83,8 @@ enum PlaybackDeliveryStallPolicy {
 
     /// Automatic recovery must never surprise the user: it only runs while
     /// the detector says delivery is stalled (unambiguous — the player still
-    /// claims to be playing or interrupted, so this can never auto-play
-    /// after a user-intended stop), only when Overplay itself started the
+    /// claims to be playing, so this can never auto-play after a user-intended
+    /// stop), only when Overplay itself started the
     /// playback, only when a network path is available, and only a bounded
     /// number of times per stall episode.
     static func shouldAttemptRecovery(
