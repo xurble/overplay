@@ -297,6 +297,53 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.activePlaylistSnapshot == nil)
     }
 
+    @Test("syncing a source refreshes and extends the playing triage bucket")
+    func syncingSourceRefreshesAndExtendsPlayingTriageBucket() async throws {
+        let fixture = try makeFixture(trackCount: 2)
+        fixture.playlist.musicPlaylistID = PlaylistRecord.triageBucketMusicPlaylistID
+        fixture.playlist.name = PlaylistRecord.triageBucketName
+        fixture.playlist.role = .triageBucket
+        fixture.playlist.writePolicy = .incomingOnly
+        defer { fixture.cleanUp() }
+        try fixture.context.save()
+        try await fixture.start(at: 0)
+
+        let source = try fixture.addPlaylist(prefix: "source", trackCount: 1)
+        let contributedItem = source.items[0]
+        contributedItem.playlistID = fixture.playlist.id
+        contributedItem.addSourceMusicPlaylistID(source.playlist.musicPlaylistID)
+        try fixture.context.save()
+
+        // Source sync already updated the durable order before notifying the
+        // controller. The controller must still compare against the live queue
+        // and publish the newly persisted bucket row.
+        let contributedLocalTrackID = source.tracks[0].id.uuidString
+        let storedOrder = PlaybackOrderStore.state(
+            playerID: fixture.playerID,
+            musicPlaylistID: fixture.playlist.musicPlaylistID
+        ).orderedTrackIDs + [contributedLocalTrackID]
+        PlaybackOrderStore.save(
+            PlaybackOrderState(
+                playerID: fixture.playerID,
+                musicPlaylistID: fixture.playlist.musicPlaylistID,
+                orderedTrackIDs: storedOrder
+            ),
+            flushImmediately: true
+        )
+
+        fixture.controller.reconcileStoredOrder(for: source.playlist, context: fixture.context)
+        fixture.controller.reconcileStoredOrder(for: source.playlist, context: fixture.context)
+        await Task.yield()
+
+        #expect(fixture.player.appendedTrackBatchSizes == [1])
+        #expect(fixture.player.queuedEntryCount == 3)
+        #expect(fixture.controller.activePlaylistSnapshot?.musicPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(fixture.controller.activePlaylistSnapshot?.rows.contains {
+            $0.localTrackID == contributedLocalTrackID
+                && $0.sourceMusicPlaylistIDs == [source.playlist.musicPlaylistID]
+        } == true)
+    }
+
     @Test("demoting the playing main playlist keeps its queue attached to the bucket")
     func demotingPlayingMainPlaylistKeepsItsQueueAttachedToBucket() async throws {
         let fixture = try makeFixture()
