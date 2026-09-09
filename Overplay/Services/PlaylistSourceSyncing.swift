@@ -46,6 +46,10 @@ struct PlaylistSourceSyncRegistry {
         ]
     }
 
+    init(adapters: [PlaylistSource: any PlaylistSourceSyncing]) {
+        self.adapters = adapters
+    }
+
     func adapter(for source: PlaylistSource) -> any PlaylistSourceSyncing {
         guard let adapter = adapters[source] else {
             preconditionFailure("Missing playlist source adapter for \(source.rawValue)")

@@ -357,6 +357,50 @@ struct PlaylistSyncReconciliationTests {
         #expect(item.evictionSource == .user)
     }
 
+    @Test("unlinking during a remote fetch cannot restore source provenance")
+    func unlinkingDuringRemoteFetchCannotRestoreSourceProvenance() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let source = try PlaylistRepository.addTriageSource(
+            AppleMusicPlaylist(id: "source", name: "Source", trackCount: 1),
+            in: context
+        )
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let service = PlaylistSyncService()
+        try await service.reconcile(
+            snapshots: [snapshot(id: "track-1", title: "First")],
+            playlistRecord: source,
+            syncedAt: Date(timeIntervalSince1970: 100),
+            in: context
+        )
+        let item = try #require(PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context).first)
+        #expect(item.sourceMusicPlaylistIDs == [source.musicPlaylistID])
+
+        let deferredSource = DeferredPlaylistSourceSync()
+        let deferredService = PlaylistSyncService(
+            sourceRegistry: PlaylistSourceSyncRegistry(adapters: [.appleMusic: deferredSource])
+        )
+        let syncTask = Task {
+            try await deferredService.syncPlaylist(source, in: context)
+        }
+        await deferredSource.waitUntilFetchStarts()
+
+        try PlaylistRepository.removeTriageSource(source, in: context)
+        deferredSource.completeFetch(
+            with: PlaylistSourceFetchResult(
+                snapshots: [snapshot(id: "track-1", title: "First")],
+                skippedCount: 0,
+                skippedReason: nil,
+                remoteLastModifiedAt: nil
+            )
+        )
+        let summary = try await syncTask.value
+
+        #expect(summary.skippedReason == "inactivePlaylist")
+        #expect(!source.isActive)
+        #expect(item.sourceMusicPlaylistIDs.isEmpty)
+    }
+
     private func snapshot(id: String, title: String) -> TrackSnapshot {
         TrackSnapshot(
             id: id,
@@ -370,5 +414,46 @@ struct PlaylistSyncReconciliationTests {
             artworkURLTemplate: nil,
             durationSeconds: 180
         )
+    }
+}
+
+@MainActor
+private final class DeferredPlaylistSourceSync: PlaylistSourceSyncing {
+    let source: PlaylistSource = .appleMusic
+
+    private var fetchContinuation: CheckedContinuation<PlaylistSourceFetchResult, Never>?
+    private var fetchStartWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func fetchLibraryPlaylists() async throws -> [RemotePlaylistLink] {
+        []
+    }
+
+    func fetchTrackSnapshots(
+        playlistID: String,
+        playlistName: String?,
+        playlistRecord: PlaylistRecord?,
+        skipWhenRemoteUnchanged: Bool,
+        in context: ModelContext
+    ) async throws -> PlaylistSourceFetchResult {
+        for waiter in fetchStartWaiters {
+            waiter.resume()
+        }
+        fetchStartWaiters.removeAll()
+
+        return await withCheckedContinuation { continuation in
+            fetchContinuation = continuation
+        }
+    }
+
+    func waitUntilFetchStarts() async {
+        guard fetchContinuation == nil else { return }
+        await withCheckedContinuation { continuation in
+            fetchStartWaiters.append(continuation)
+        }
+    }
+
+    func completeFetch(with result: PlaylistSourceFetchResult) {
+        fetchContinuation?.resume(returning: result)
+        fetchContinuation = nil
     }
 }

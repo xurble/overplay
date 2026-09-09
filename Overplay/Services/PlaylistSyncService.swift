@@ -120,6 +120,10 @@ struct PlaylistSyncService {
         runIdentityMerge: Bool = true,
         skipWhenRemoteUnchanged: Bool = false
     ) async throws -> PlaylistSyncSummary {
+        guard playlistRecord.isActive else {
+            return inactivePlaylistSummary()
+        }
+
         // The bucket has no Apple Music playlist of its own, so syncing it
         // means syncing everything that feeds it. Handled here rather than in
         // each caller so the dashboard, the sources screen and CarPlay all
@@ -141,6 +145,13 @@ struct PlaylistSyncService {
             skipWhenRemoteUnchanged: skipWhenRemoteUnchanged,
             in: context
         )
+
+        // The user can unlink a source while its remote fetch is suspended.
+        // Re-check the durable record before applying any fetched tracks so
+        // that an in-flight sync cannot restore the provenance unlink removed.
+        guard playlistRecord.isActive else {
+            return inactivePlaylistSummary(skippedCount: fetchResult.snapshots.count)
+        }
 
         guard fetchResult.didFetchTracks else {
             // Nothing was fetched because nothing changed. Record the visit
@@ -341,6 +352,10 @@ struct PlaylistSyncService {
         syncedAt: Date,
         in context: ModelContext
     ) async throws -> PlaylistSyncSummary {
+        guard playlistRecord.isActive else {
+            return inactivePlaylistSummary(skippedCount: snapshots.count)
+        }
+
         var summary = PlaylistSyncSummary(fetchedCount: snapshots.count)
         var seenRemoteTrackKeys = Set<String>()
         // A contributing playlist keeps its own sync bookkeeping but does not
@@ -354,6 +369,12 @@ struct PlaylistSyncService {
         for (sortOrder, snapshot) in snapshots.enumerated() {
             if sortOrder > 0, sortOrder.isMultiple(of: Self.syncYieldStride) {
                 await Task.yield()
+                guard playlistRecord.isActive else {
+                    summary.fetchedCount = sortOrder
+                    summary.skippedCount += snapshots.count - sortOrder
+                    summary.skippedReason = "inactivePlaylist"
+                    return summary
+                }
             }
             let remoteTrackKey = snapshot.catalogID ?? snapshot.libraryID ?? snapshot.id
             guard seenRemoteTrackKeys.insert(remoteTrackKey).inserted else {
@@ -452,6 +473,13 @@ struct PlaylistSyncService {
             playlistID: itemOwner.musicPlaylistID,
             orderTracks: PlaybackQueueBuilder.playbackOrderTracks(items: items)
         )
+        return summary
+    }
+
+    private func inactivePlaylistSummary(skippedCount: Int = 1) -> PlaylistSyncSummary {
+        var summary = PlaylistSyncSummary()
+        summary.skippedCount = max(skippedCount, 1)
+        summary.skippedReason = "inactivePlaylist"
         return summary
     }
 
