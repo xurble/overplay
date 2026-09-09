@@ -70,13 +70,18 @@ struct PlaylistSyncService {
 
     private let sourceRegistry: PlaylistSourceSyncRegistry
     private let appleMusicSource: AppleMusicPlaylistSourceSync
+    private let yieldDuringReconciliation: @MainActor () async throws -> Void
 
     init(
         sourceRegistry: PlaylistSourceSyncRegistry = PlaylistSourceSyncRegistry(),
-        appleMusicSource: AppleMusicPlaylistSourceSync = AppleMusicPlaylistSourceSync()
+        appleMusicSource: AppleMusicPlaylistSourceSync = AppleMusicPlaylistSourceSync(),
+        yieldDuringReconciliation: @escaping @MainActor () async throws -> Void = {
+            await Task.yield()
+        }
     ) {
         self.sourceRegistry = sourceRegistry
         self.appleMusicSource = appleMusicSource
+        self.yieldDuringReconciliation = yieldDuringReconciliation
     }
 
     func fetchLibraryPlaylists(source: PlaylistSource) async throws -> [RemotePlaylistLink] {
@@ -361,20 +366,28 @@ struct PlaylistSyncService {
         // A contributing playlist keeps its own sync bookkeeping but does not
         // own items: everything it contributes lands in the shared bucket, so
         // the same track arriving from two playlists is one row.
-        let itemOwner = try itemOwner(for: playlistRecord, in: context)
-        let contributedSourceMusicPlaylistID = itemOwner === playlistRecord
+        var currentItemOwner = try itemOwner(for: playlistRecord, in: context)
+        var contributedSourceMusicPlaylistID = currentItemOwner === playlistRecord
             ? nil
             : playlistRecord.musicPlaylistID
 
         for (sortOrder, snapshot) in snapshots.enumerated() {
             if sortOrder > 0, sortOrder.isMultiple(of: Self.syncYieldStride) {
-                await Task.yield()
+                try await yieldDuringReconciliation()
                 guard playlistRecord.isActive else {
                     summary.fetchedCount = sortOrder
                     summary.skippedCount += snapshots.count - sortOrder
                     summary.skippedReason = "inactivePlaylist"
                     return summary
                 }
+                // Selection can demote the playlist while this main-actor
+                // sync yields. Re-resolve ownership before writing the next
+                // chunk so every remaining row follows the playlist into the
+                // shared bucket rather than becoming stranded on the source.
+                currentItemOwner = try itemOwner(for: playlistRecord, in: context)
+                contributedSourceMusicPlaylistID = currentItemOwner === playlistRecord
+                    ? nil
+                    : playlistRecord.musicPlaylistID
             }
             let remoteTrackKey = snapshot.catalogID ?? snapshot.libraryID ?? snapshot.id
             guard seenRemoteTrackKeys.insert(remoteTrackKey).inserted else {
@@ -394,7 +407,7 @@ struct PlaylistSyncService {
                 )
                 let existingItem = try existingTrack.flatMap {
                     try PlaylistItemRepository.item(
-                        playlistID: itemOwner.id,
+                        playlistID: currentItemOwner.id,
                         trackID: $0.id,
                         in: context
                     )
@@ -411,7 +424,7 @@ struct PlaylistSyncService {
             do {
                 let trackResult = try TrackRecordRepository.upsertWithResult(snapshot, in: context)
                 let itemResult = try PlaylistItemRepository.upsertWithResult(
-                    playlistID: itemOwner.id,
+                    playlistID: currentItemOwner.id,
                     trackID: trackResult.record.id,
                     musicPlaylistEntryID: snapshot.playlistEntryID,
                     in: context
@@ -462,15 +475,15 @@ struct PlaylistSyncService {
         playlistRecord.lastSyncedAt = syncedAt
         playlistRecord.lastSyncError = nil
         playlistRecord.updatedAt = syncedAt
-        if itemOwner !== playlistRecord {
-            itemOwner.lastSyncedAt = syncedAt
-            itemOwner.updatedAt = syncedAt
+        if currentItemOwner !== playlistRecord {
+            currentItemOwner.lastSyncedAt = syncedAt
+            currentItemOwner.updatedAt = syncedAt
         }
-        let items = try PlaylistItemRepository.items(forPlaylistID: itemOwner.id, in: context)
+        let items = try PlaylistItemRepository.items(forPlaylistID: currentItemOwner.id, in: context)
         PlaybackOrderCoordinator.appendTrackIDs(
             summary.insertedLocalTrackIDs,
             playerID: "main",
-            playlistID: itemOwner.musicPlaylistID,
+            playlistID: currentItemOwner.musicPlaylistID,
             orderTracks: PlaybackQueueBuilder.playbackOrderTracks(items: items)
         )
         return summary
