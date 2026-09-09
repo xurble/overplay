@@ -223,11 +223,21 @@ enum PlaylistRepository {
             source: remotePlaylist.source,
             in: context
         ) {
+            let isRelinking = !existingPlaylist.isActive
             if existingPlaylist.role != .oneTruePlaylist {
                 existingPlaylist.role = .triageSource
             }
             existingPlaylist.name = remotePlaylist.name
             existingPlaylist.isActive = true
+            if isRelinking {
+                // Unlinking deliberately removes this source's provenance
+                // from retained bucket rows. Force the first sync after a
+                // relink to fetch tracks even when Apple reports the remote
+                // playlist unchanged, so attribution can be restored.
+                existingPlaylist.lastSyncedAt = nil
+                existingPlaylist.remoteLastModifiedAt = nil
+                existingPlaylist.lastSyncError = nil
+            }
             existingPlaylist.updatedAt = .now
             return existingPlaylist
         }

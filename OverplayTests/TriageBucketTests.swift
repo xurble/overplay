@@ -140,6 +140,43 @@ struct TriageBucketTests {
         #expect(source.isActive == false)
     }
 
+    @Test("relinking a source clears its sync fingerprint so provenance can return")
+    func relinkingSourceClearsSyncFingerprintSoProvenanceCanReturn() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let remotePlaylist = AppleMusicPlaylist(
+            id: "source-relink",
+            name: "Weekly",
+            trackCount: 1
+        )
+        let source = try PlaylistRepository.addTriageSource(remotePlaylist, in: context)
+        _ = try await PlaylistSyncService().reconcile(
+            snapshots: [snapshot(id: "kept")],
+            playlistRecord: source,
+            syncedAt: Date(timeIntervalSince1970: 100),
+            in: context
+        )
+        source.remoteLastModifiedAt = Date(timeIntervalSince1970: 50)
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let item = try #require(
+            try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context).first
+        )
+
+        try PlaylistRepository.removeTriageSource(source, in: context)
+        #expect(item.sourceMusicPlaylistIDs.isEmpty)
+
+        let relinked = try PlaylistRepository.addTriageSource(remotePlaylist, in: context)
+
+        #expect(relinked.id == source.id)
+        #expect(relinked.isActive)
+        #expect(relinked.lastSyncedAt == nil)
+        #expect(relinked.remoteLastModifiedAt == nil)
+        #expect(PeriodicPlaylistSyncService().shouldSync(
+            relinked,
+            now: Date(timeIntervalSince1970: 101)
+        ))
+    }
+
     // MARK: - Promotion
 
     @Test("promotion works from the bucket and is refused from a contributing playlist")
