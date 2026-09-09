@@ -3013,15 +3013,15 @@ final class PlaybackController {
             to: bucket.musicPlaylistID,
             flushImmediately: true
         )
-        PlaybackIdentityStore.rekeyMusicPlaylistID(
+        PlaybackIdentityStore.mergeMusicPlaylistID(
             from: previousMusicPlaylistID,
-            to: bucket.musicPlaylistID,
+            into: bucket.musicPlaylistID,
+            playerID: playerID,
             flushImmediately: true
         )
-        PlaybackOrderStore.rekeyMusicPlaylistID(
-            from: currentPlaylistScope.playbackOrderPlaylistID(for: previousMusicPlaylistID),
-            to: currentPlaylistScope.playbackOrderPlaylistID(for: bucket.musicPlaylistID),
-            flushImmediately: true
+        mergePlaybackOrdersAfterDemotion(
+            from: previousMusicPlaylistID,
+            into: bucket.musicPlaylistID
         )
 
         let currentTrackID = currentPlaylistItem?.trackID
@@ -3051,6 +3051,49 @@ final class PlaybackController {
         rebuildActivePlaylistSnapshot(context: context)
         bumpPlaybackItemMetadataVersion()
         publishNowPlayingMetadata(isPlaying: isPlaying)
+    }
+
+    private func mergePlaybackOrdersAfterDemotion(
+        from oldMusicPlaylistID: String,
+        into bucketMusicPlaylistID: String
+    ) {
+        let liveQueueTrackIDs = activeQueueEntries.map(\.localTrackID)
+
+        for scope in PlaylistPlaybackScope.allCases {
+            let oldID = scope.playbackOrderPlaylistID(for: oldMusicPlaylistID)
+            let bucketID = scope.playbackOrderPlaylistID(for: bucketMusicPlaylistID)
+            let sourceOrder = PlaybackOrderStore.state(
+                playerID: playerID,
+                musicPlaylistID: oldID
+            ).orderedTrackIDs
+            let bucketOrder = PlaybackOrderStore.state(
+                playerID: playerID,
+                musicPlaylistID: bucketID
+            ).orderedTrackIDs
+            let orderGroups = scope == currentPlaylistScope
+                ? [liveQueueTrackIDs, sourceOrder, bucketOrder]
+                : [bucketOrder, sourceOrder]
+            var seenTrackIDs = Set<String>()
+            let mergedOrder = orderGroups
+                .flatMap { $0 }
+                .filter { seenTrackIDs.insert($0).inserted }
+
+            if !mergedOrder.isEmpty {
+                PlaybackOrderStore.save(
+                    PlaybackOrderState(
+                        playerID: playerID,
+                        musicPlaylistID: bucketID,
+                        orderedTrackIDs: mergedOrder
+                    ),
+                    flushImmediately: true
+                )
+            }
+            PlaybackOrderStore.clear(
+                playerID: playerID,
+                musicPlaylistID: oldID,
+                flushImmediately: true
+            )
+        }
     }
 
     func appendLiveQueueEntries(

@@ -305,16 +305,99 @@ struct PlaybackTransitionTests {
         fixture.player.playbackTime = 15
         await fixture.controller.reconcilePlayerState(context: fixture.context)
 
+        let bucket = try PlaylistRepository.triageBucket(in: fixture.context)
+        let activeBucketOnlyTrackID = "bucket-active"
+        let retiredBucketTrackID = "bucket-retired"
+        let retiredSourceTrackID = "source-retired"
+        defer {
+            for scope in PlaylistPlaybackScope.allCases {
+                PlaybackOrderStore.clear(
+                    playerID: fixture.playerID,
+                    musicPlaylistID: scope.playbackOrderPlaylistID(for: fixture.playlist.musicPlaylistID),
+                    flushImmediately: true
+                )
+                PlaybackOrderStore.clear(
+                    playerID: fixture.playerID,
+                    musicPlaylistID: scope.playbackOrderPlaylistID(for: bucket.musicPlaylistID),
+                    flushImmediately: true
+                )
+            }
+            PlaybackIdentityStore.clear(
+                playerID: fixture.playerID,
+                musicPlaylistID: fixture.playlist.musicPlaylistID,
+                flushImmediately: true
+            )
+            PlaybackIdentityStore.clear(
+                playerID: fixture.playerID,
+                musicPlaylistID: bucket.musicPlaylistID,
+                flushImmediately: true
+            )
+        }
+        PlaybackOrderStore.save(PlaybackOrderState(
+            playerID: fixture.playerID,
+            musicPlaylistID: bucket.musicPlaylistID,
+            orderedTrackIDs: [activeBucketOnlyTrackID]
+        ))
+        PlaybackOrderStore.save(PlaybackOrderState(
+            playerID: fixture.playerID,
+            musicPlaylistID: PlaylistPlaybackScope.retired.playbackOrderPlaylistID(
+                for: fixture.playlist.musicPlaylistID
+            ),
+            orderedTrackIDs: [retiredSourceTrackID]
+        ))
+        PlaybackOrderStore.save(PlaybackOrderState(
+            playerID: fixture.playerID,
+            musicPlaylistID: PlaylistPlaybackScope.retired.playbackOrderPlaylistID(
+                for: bucket.musicPlaylistID
+            ),
+            orderedTrackIDs: [retiredBucketTrackID]
+        ))
+        let currentLocalTrackID = fixture.tracks[0].id.uuidString
+        PlaybackIdentityStore.recordAlias(
+            "source-alias",
+            playerID: fixture.playerID,
+            musicPlaylistID: fixture.playlist.musicPlaylistID,
+            localTrackID: currentLocalTrackID
+        )
+        PlaybackIdentityStore.recordAlias(
+            "bucket-alias",
+            playerID: fixture.playerID,
+            musicPlaylistID: bucket.musicPlaylistID,
+            localTrackID: currentLocalTrackID
+        )
+
         try SettingsRepository.selectPlaylist(
             AppleMusicPlaylist(id: "replacement", name: "Replacement", trackCount: 0),
             in: fixture.context
         )
-        let bucket = try PlaylistRepository.triageBucket(in: fixture.context)
         fixture.controller.reconcilePlaylistSelection(context: fixture.context)
 
         #expect(fixture.controller.currentPlaylistID == bucket.musicPlaylistID)
         #expect(fixture.controller.currentPlaylistItem?.playlistID == bucket.id)
         #expect(fixture.controller.activePlaylistSnapshot?.playlistID == bucket.id)
+        let liveQueueOrder = fixture.tracks.map { $0.id.uuidString }
+        let mergedActiveOrder = PlaybackOrderStore.state(
+            playerID: fixture.playerID,
+            musicPlaylistID: bucket.musicPlaylistID
+        ).orderedTrackIDs
+        #expect(Array(mergedActiveOrder.prefix(liveQueueOrder.count)) == liveQueueOrder)
+        #expect(mergedActiveOrder.contains(activeBucketOnlyTrackID))
+        #expect(PlaybackOrderStore.state(
+            playerID: fixture.playerID,
+            musicPlaylistID: PlaylistPlaybackScope.retired.playbackOrderPlaylistID(
+                for: bucket.musicPlaylistID
+            )
+        ).orderedTrackIDs == [retiredBucketTrackID, retiredSourceTrackID])
+        #expect(Set(PlaybackIdentityStore.aliases(
+            playerID: fixture.playerID,
+            musicPlaylistID: bucket.musicPlaylistID,
+            localTrackID: currentLocalTrackID
+        )) == ["source-alias", "bucket-alias"])
+        #expect(PlaybackIdentityStore.aliases(
+            playerID: fixture.playerID,
+            musicPlaylistID: fixture.playlist.musicPlaylistID,
+            localTrackID: currentLocalTrackID
+        ).isEmpty)
 
         await fixture.controller.next(settings: fixture.settings, context: fixture.context)
 

@@ -148,6 +148,42 @@ enum PlaybackIdentityStore {
         save(updatedStates, to: defaults, flushImmediately: flushImmediately)
     }
 
+    /// Moves one player's aliases into an existing destination without
+    /// discarding either side. Used when a playlist's items join the shared
+    /// triage bucket, whose identity cache may already describe other rows.
+    static func mergeMusicPlaylistID(
+        from oldID: String,
+        into newID: String,
+        playerID: String,
+        from defaults: UserDefaults = .standard,
+        flushImmediately: Bool = false
+    ) {
+        guard oldID != newID else { return }
+
+        var storedStates = states(from: defaults)
+        let oldKey = storageKey(playerID: playerID, musicPlaylistID: oldID)
+        guard let sourceState = storedStates.removeValue(forKey: oldKey) else { return }
+
+        let newKey = storageKey(playerID: playerID, musicPlaylistID: newID)
+        var destinationState = storedStates[newKey] ?? PlaybackIdentityState(
+            playerID: playerID,
+            musicPlaylistID: newID
+        )
+        for (localTrackID, sourceAliases) in sourceState.aliasesByLocalTrackID {
+            var aliases = destinationState.aliasesByLocalTrackID[localTrackID] ?? []
+            for alias in sourceAliases where !aliases.contains(alias) {
+                aliases.append(alias)
+            }
+            if aliases.count > maximumAliasesPerTrack {
+                aliases.removeFirst(aliases.count - maximumAliasesPerTrack)
+            }
+            destinationState.aliasesByLocalTrackID[localTrackID] = aliases
+        }
+        destinationState.updatedAt = .now
+        storedStates[newKey] = destinationState
+        save(storedStates, to: defaults, flushImmediately: flushImmediately)
+    }
+
     /// Rewrites alias keys after a track identity merge, combining alias
     /// lists when duplicates collapse onto the same canonical track.
     static func rekeyLocalTrackIDs(
