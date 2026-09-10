@@ -91,7 +91,8 @@ struct ActivePlaylistSnapshot: Equatable, Sendable {
         }
 
         var row = rows[index]
-        guard row.isEvicted == (item.evictedAt != nil) else {
+        guard row.playlistID == item.playlistID,
+              row.isEvicted == (item.evictedAt != nil) else {
             return nil
         }
 

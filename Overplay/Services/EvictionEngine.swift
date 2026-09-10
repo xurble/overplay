@@ -57,18 +57,6 @@ enum EvictionEngine {
         context: ModelContext
     ) {
         guard !session.hasEvaluated else { return }
-        guard item.evictedAt == nil else {
-            logHistory(
-                item: item,
-                playlist: playlist,
-                eventType: .skipIgnored,
-                source: .playback,
-                session: session,
-                message: "Already evicted",
-                context: context
-            )
-            return
-        }
         if transitionWasNaturalCompletion {
             countPlaythrough(item, playlist: playlist, session: session, settings: settings, context: context)
             return
@@ -100,6 +88,7 @@ enum EvictionEngine {
         if listenedLongEnough && leftBeforeThreshold {
             let previousSkipCount = item.skipCount
             item.skipCount += 1
+            item.hasRecordedActivity = true
             item.lastSkippedAt = .now
             item.updatedAt = .now
             TrackMetadataDiagnostics.log(
@@ -143,6 +132,7 @@ enum EvictionEngine {
         let previousSkipCount = item.skipCount
         let previousPlaythroughCount = item.playthroughCount
         item.playthroughCount += 1
+        item.hasRecordedActivity = true
         item.lastPlayedAt = .now
         item.updatedAt = .now
         TrackMetadataDiagnostics.log(

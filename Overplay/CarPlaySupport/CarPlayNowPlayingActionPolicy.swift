@@ -41,7 +41,7 @@ enum CarPlayNowPlayingActionPolicy {
         case (.oneTruePlaylist, false):
             return [.shuffle, .repeatMode, .retire]
         case (.oneTruePlaylist, true):
-            return [.shuffle, .repeatMode, .restore]
+            return [.shuffle, .repeatMode, .promote, .restore]
         case (.triageSource, _):
             // Contributing playlists feed the bucket and are never a playback
             // context, so there is no track here to promote or retire. The

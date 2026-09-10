@@ -2,13 +2,16 @@ import Foundation
 import SwiftData
 
 enum TrackActionService {
+    @discardableResult
     static func resetSkipCount(
         _ item: PlaylistItemRecord,
         playlist: PlaylistRecord,
         message: String,
+        protectingItemID: UUID? = nil,
         in context: ModelContext
-    ) throws {
+    ) throws -> Bool {
         let previousSkipCount = item.skipCount
+        item.hasRecordedActivity = item.hasListeningHistory
         item.skipCount = 0
         item.updatedAt = .now
         EventRepository.logHistory(
@@ -20,12 +23,18 @@ enum TrackActionService {
             message: message,
             in: context
         )
-        try context.save()
+        if item.evictedAt != nil {
+            try TrackRetentionPolicy.deleteIfUnowned(item, protectingItemID: protectingItemID, in: context)
+        }
         TrackMetadataDiagnostics.log(
             "manual reset skip count saved playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) previousSkips=\(previousSkipCount)"
         )
+        let retained = !item.isDeleted
+        try context.save()
+        return retained
     }
 
+    @discardableResult
     static func evictTrack(
         _ item: PlaylistItemRecord,
         playlist: PlaylistRecord,
@@ -33,19 +42,21 @@ enum TrackActionService {
         source: EvictionSource = .user,
         message: String,
         in context: ModelContext
-    ) throws {
-        EvictionEngine.evict(
+    ) throws -> Bool {
+        try TrackLocationService.retire(
             item,
             playlist: playlist,
             reason: reason,
             source: source,
             message: message,
-            context: context
+            in: context
         )
-        try context.save()
+        let retained = !item.isDeleted
         TrackMetadataDiagnostics.log(
             "manual eviction saved playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) reason=\(reason.rawValue) source=\(source.rawValue)"
         )
+        try context.save()
+        return retained
     }
 
     static func restoreTrack(
@@ -53,7 +64,7 @@ enum TrackActionService {
         playlist: PlaylistRecord?,
         in context: ModelContext
     ) throws {
-        EvictionEngine.restore(item, playlist: playlist, context: context)
+        try TrackLocationService.moveToTriage(item, explicitKeep: true, in: context)
         try context.save()
         TrackMetadataDiagnostics.log(
             "manual restore saved playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item))"

@@ -30,8 +30,15 @@ enum PlaylistMutationError: LocalizedError {
 
 @MainActor
 struct PlaylistMutationService {
+    // Inject only the remote boundary; durable movement remains shared.
+    var addRemotely: (@MainActor (TrackRecord, PlaylistRecord, ModelContext) async throws -> Void)?
+
     @discardableResult
-    func promote(item sourceItem: PlaylistItemRecord, in context: ModelContext) async throws -> PlaylistItemRecord {
+    func promote(
+        item sourceItem: PlaylistItemRecord,
+        beforeMove: () -> Void = {},
+        in context: ModelContext
+    ) async throws -> PlaylistItemRecord {
         guard let oneTruePlaylist = try PlaylistRepository.oneTruePlaylist(in: context) else {
             throw PlaylistMutationError.oneTruePlaylistMissing
         }
@@ -48,8 +55,30 @@ struct PlaylistMutationService {
             throw PlaylistMutationError.playlistIncomingOnly
         }
 
+        let sourceItemID = sourceItem.id
+        let previousRetiredAt = sourceItem.evictedAt
+        let previousLocationChange = sourceItem.locationChangedAt
+        let sourceTrackID = sourceItem.trackID
+        let previousSkipCount = sourceItem.skipCount
+        // Protect this identity while the remote request is in flight. If a
+        // later retirement wins, remote completion must not recreate it.
+        if !sourceItem.suppressedOTPMusicPlaylistIDs.contains(oneTruePlaylist.musicPlaylistID) {
+            sourceItem.suppressedOTPMusicPlaylistIDs.append(oneTruePlaylist.musicPlaylistID)
+        }
+        try context.save()
         do {
-            try await add(track: track, to: oneTruePlaylist, in: context)
+            if let addRemotely {
+                try await addRemotely(track, oneTruePlaylist, context)
+            } else {
+                try await add(track: track, to: oneTruePlaylist, in: context)
+            }
+            guard let liveItem = try PlaylistItemRepository.item(id: sourceItemID, in: context),
+                  liveItem.playlistID == sourcePlaylist.id,
+                  liveItem.evictedAt == previousRetiredAt,
+                  liveItem.locationChangedAt == previousLocationChange else {
+                throw PlaylistMutationError.trackMissing
+            }
+            beforeMove()
             let promotedItem = try recordSuccessfulPromotion(
                 sourceItem: sourceItem,
                 sourcePlaylist: sourcePlaylist,
@@ -62,10 +91,10 @@ struct PlaylistMutationService {
         } catch {
             EventRepository.logHistory(
                 playlistID: sourcePlaylist.id,
-                trackID: sourceItem.trackID,
+                trackID: sourceTrackID,
                 eventType: .remoteMutation,
                 source: .user,
-                skipCountAtEvent: sourceItem.skipCount,
+                skipCountAtEvent: previousSkipCount,
                 remoteMutationStatus: .failed,
                 message: "Promotion failed: \(error.localizedDescription)",
                 in: context
@@ -88,39 +117,16 @@ struct PlaylistMutationService {
             throw PlaylistMutationError.sourcePlaylistNotTriage
         }
 
-        let promotedItem = try PlaylistItemRepository.upsert(
-            playlistID: oneTruePlaylist.id,
-            trackID: track.id,
-            in: context
-        )
-        promotedItem.evictedAt = nil
-        promotedItem.evictionReason = nil
-        promotedItem.evictionSource = nil
+        guard !sourceItem.isDeleted,
+              try PlaylistItemRepository.item(id: sourceItem.id, in: context) != nil else {
+            throw PlaylistMutationError.trackMissing
+        }
+        let promotedItem = sourceItem
+        try PlaylistItemRepository.mergeOtherItems(into: promotedItem, in: context)
+        TrackLocationService.moveToOTP(promotedItem, playlist: oneTruePlaylist, source: .user, at: promotedAt, in: context)
         promotedItem.lastSeenInPlaylistAt = promotedAt
         promotedItem.updatedAt = promotedAt
         try appendToLocalOrder(item: promotedItem, playlist: oneTruePlaylist, in: context)
-
-        EventRepository.logHistory(
-            playlistID: sourcePlaylist.id,
-            trackID: track.id,
-            eventType: .promoted,
-            source: .user,
-            skipCountAtEvent: sourceItem.skipCount,
-            remoteMutationStatus: .succeeded,
-            message: "Promoted to \(oneTruePlaylist.name)",
-            in: context
-        )
-
-        if sourceItem.evictedAt == nil {
-            EvictionEngine.evict(
-                sourceItem,
-                playlist: sourcePlaylist,
-                reason: .manual,
-                source: .user,
-                message: "Promoted to \(oneTruePlaylist.name)",
-                context: context
-            )
-        }
 
         return promotedItem
     }
@@ -148,12 +154,18 @@ struct PlaylistMutationService {
             trackID: track.id,
             in: context
         )
-        item.evictedAt = nil
-        item.evictionReason = nil
-        item.evictionSource = nil
+        item.isExplicitlyKept = true
+        try PlaylistItemRepository.mergeOtherItems(into: item, in: context)
+        if playlist.role == .oneTruePlaylist {
+            TrackLocationService.moveToOTP(item, playlist: playlist, source: .user, logEvent: false, at: addedAt, in: context)
+        } else if item.playlistID == playlist.id {
+            try TrackLocationService.moveToTriage(item, explicitKeep: true, logEvent: false, at: addedAt, in: context)
+        }
         item.lastSeenInPlaylistAt = addedAt
         item.updatedAt = addedAt
-        try appendToLocalOrder(item: item, playlist: playlist, in: context)
+        if item.playlistID == playlist.id {
+            try appendToLocalOrder(item: item, playlist: playlist, in: context)
+        }
 
         EventRepository.logHistory(
             playlistID: playlist.id,

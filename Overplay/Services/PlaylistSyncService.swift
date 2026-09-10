@@ -8,6 +8,7 @@ enum PlaylistSyncError: LocalizedError {
     case playlistHasNoTracks
     case trackNotFoundInPlaylist
     case unsupportedSourceForOneTruePlaylist
+    case incompletePlaylist
 
     var errorDescription: String? {
         switch self {
@@ -19,6 +20,8 @@ enum PlaylistSyncError: LocalizedError {
             "The evicted track was not found in the selected Apple Music playlist."
         case .unsupportedSourceForOneTruePlaylist:
             "Only Apple Music playlists can be used as the One True Playlist."
+        case .incompletePlaylist:
+            "Apple Music returned an incomplete playlist. Local track state was preserved; try syncing again."
         }
     }
 }
@@ -42,6 +45,21 @@ struct PlaylistSyncSummary: Equatable {
 
 @MainActor
 struct PlaylistSyncService {
+    private static var activeSourceReads: [UUID: Int] = [:]
+
+    static func hasActiveSourceRead(_ playlistID: UUID) -> Bool {
+        activeSourceReads[playlistID, default: 0] > 0
+    }
+
+    private static func beginSourceRead(_ playlistID: UUID) {
+        activeSourceReads[playlistID, default: 0] += 1
+    }
+
+    private static func endSourceRead(_ playlistID: UUID) {
+        let remaining = activeSourceReads[playlistID, default: 0] - 1
+        activeSourceReads[playlistID] = remaining > 0 ? remaining : nil
+    }
+
     private static let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "Overplay",
         category: "PlaylistSync"
@@ -143,6 +161,10 @@ struct PlaylistSyncService {
         }
 
         let adapter = sourceRegistry.adapter(for: playlistRecord)
+        let sourceReadID = playlistRecord.id
+        Self.beginSourceRead(sourceReadID)
+        defer { Self.endSourceRead(sourceReadID) }
+        let requestedLinkDate = playlistRecord.triageLinkedAt
         let fetchResult = try await adapter.fetchTrackSnapshots(
             playlistID: playlistRecord.musicPlaylistID,
             playlistName: playlistRecord.name,
@@ -154,7 +176,7 @@ struct PlaylistSyncService {
         // The user can unlink a source while its remote fetch is suspended.
         // Re-check the durable record before applying any fetched tracks so
         // that an in-flight sync cannot restore the provenance unlink removed.
-        guard playlistRecord.isActive else {
+        guard playlistRecord.isActive, playlistRecord.triageLinkedAt == requestedLinkDate else {
             return inactivePlaylistSummary(skippedCount: fetchResult.snapshots.count)
         }
 
@@ -179,6 +201,9 @@ struct PlaylistSyncService {
             syncedAt: .now,
             in: context
         )
+        guard playlistRecord.isActive, playlistRecord.triageLinkedAt == requestedLinkDate else {
+            return summary
+        }
         summary.skippedCount += fetchResult.skippedCount
         summary.skippedReason = fetchResult.skippedReason
         playlistRecord.remoteLastModifiedAt = fetchResult.remoteLastModifiedAt
@@ -365,7 +390,11 @@ struct PlaylistSyncService {
             return inactivePlaylistSummary(skippedCount: snapshots.count)
         }
 
+        let sourceReadID = playlistRecord.id
+        Self.beginSourceRead(sourceReadID)
+        defer { Self.endSourceRead(sourceReadID) }
         var summary = PlaylistSyncSummary(fetchedCount: snapshots.count)
+        let reconciliationLinkDate = playlistRecord.triageLinkedAt
         var seenRemoteTrackKeys = Set<String>()
         // A contributing playlist keeps its own sync bookkeeping but does not
         // own items: everything it contributes lands in the shared bucket, so
@@ -382,7 +411,7 @@ struct PlaylistSyncService {
         for (sortOrder, snapshot) in snapshots.enumerated() {
             if sortOrder > 0, sortOrder.isMultiple(of: Self.syncYieldStride) {
                 try await yieldDuringReconciliation()
-                guard playlistRecord.isActive else {
+                guard playlistRecord.isActive, playlistRecord.triageLinkedAt == reconciliationLinkDate else {
                     summary.fetchedCount = sortOrder
                     summary.skippedCount += snapshots.count - sortOrder
                     summary.skippedReason = "inactivePlaylist"
@@ -418,6 +447,7 @@ struct PlaylistSyncService {
                     let replayedTrackIDs = try replayProcessedSnapshots(
                         processedSnapshots,
                         itemOwner: currentItemOwner,
+                        sourcePlaylist: playlistRecord,
                         contributedSourceMusicPlaylistID: contributedSourceMusicPlaylistID,
                         syncedAt: syncedAt,
                         in: context
@@ -462,6 +492,10 @@ struct PlaylistSyncService {
 
             do {
                 let trackResult = try TrackRecordRepository.upsertWithResult(snapshot, in: context)
+                if try sourceExcludesDeletedTrack(trackResult.record.id, source: playlistRecord, in: context) {
+                    summary.skippedCount += 1
+                    continue
+                }
                 let itemResult = try PlaylistItemRepository.upsertWithResult(
                     playlistID: currentItemOwner.id,
                     trackID: trackResult.record.id,
@@ -469,26 +503,37 @@ struct PlaylistSyncService {
                     in: context
                 )
 
-                if let contributedSourceMusicPlaylistID,
-                   itemResult.record.addSourceMusicPlaylistID(contributedSourceMusicPlaylistID) {
+                let previousLocation = itemResult.record.playlistID
+                let previousRetiredAt = itemResult.record.evictedAt
+                let previousSources = itemResult.record.sourceMusicPlaylistIDs
+                try TrackLocationService.reconcileIntake(
+                    itemResult.record, owner: currentItemOwner, sourcePlaylist: playlistRecord,
+                    entryID: snapshot.playlistEntryID, at: syncedAt, in: context
+                )
+                let moved = previousLocation != itemResult.record.playlistID
+                    || previousRetiredAt != itemResult.record.evictedAt
+
+                let attachedSource = previousSources != itemResult.record.sourceMusicPlaylistIDs
+                if attachedSource {
                     itemResult.record.updatedAt = syncedAt
                 }
 
                 if Self.shouldRefreshLastSeen(
                     current: itemResult.record.lastSeenInPlaylistAt,
                     syncedAt: syncedAt,
-                    didChange: itemResult.mutation.didChange
+                    didChange: itemResult.mutation.didChange || moved || attachedSource
                 ) {
                     itemResult.record.lastSeenInPlaylistAt = syncedAt
                 }
 
                 let mutation = combinedMutation(
                     trackMutation: trackResult.mutation,
-                    itemMutation: itemResult.mutation
+                    itemMutation: itemResult.mutation == .inserted ? .inserted
+                        : (moved || attachedSource ? .updated : itemResult.mutation)
                 )
                 record(mutation, in: &summary)
                 let localTrackID = trackResult.record.id.uuidString
-                if mutation == .inserted,
+                if mutation == .inserted || moved,
                    insertedOrderTrackIDs.insert(localTrackID).inserted {
                     summary.insertedLocalTrackIDs.append(localTrackID)
                 }
@@ -515,6 +560,18 @@ struct PlaylistSyncService {
             }
         }
 
+        // Only a complete snapshot can release stale remote-membership
+        // protection. A failed/partial fetch must never resurrect a retirement.
+        if playlistRecord.role == .oneTruePlaylist {
+            for item in try PlaylistItemRepository.allItems(in: context)
+            where item.suppressedOTPMusicPlaylistIDs.contains(playlistRecord.musicPlaylistID)
+                && !processedTrackIDs.contains(item.trackID) {
+                item.suppressedOTPMusicPlaylistIDs.removeAll { $0 == playlistRecord.musicPlaylistID }
+                if item.evictedAt != nil {
+                    try TrackRetentionPolicy.deleteIfUnowned(item, in: context)
+                }
+            }
+        }
         playlistRecord.lastSyncedAt = syncedAt
         playlistRecord.lastSyncError = nil
         playlistRecord.updatedAt = syncedAt
@@ -541,17 +598,25 @@ struct PlaylistSyncService {
     private func replayProcessedSnapshots(
         _ snapshots: [TrackSnapshot],
         itemOwner: PlaylistRecord,
+        sourcePlaylist: PlaylistRecord,
         contributedSourceMusicPlaylistID: String?,
         syncedAt: Date,
         in context: ModelContext
     ) throws -> [String] {
-        try snapshots.map { snapshot in
+        try snapshots.compactMap { snapshot in
             let trackResult = try TrackRecordRepository.upsertWithResult(snapshot, in: context)
+            if try sourceExcludesDeletedTrack(trackResult.record.id, source: sourcePlaylist, in: context) {
+                return nil
+            }
             let itemResult = try PlaylistItemRepository.upsertWithResult(
                 playlistID: itemOwner.id,
                 trackID: trackResult.record.id,
                 musicPlaylistEntryID: snapshot.playlistEntryID,
                 in: context
+            )
+            try TrackLocationService.reconcileIntake(
+                itemResult.record, owner: itemOwner, sourcePlaylist: sourcePlaylist,
+                entryID: snapshot.playlistEntryID, at: syncedAt, in: context
             )
             if let contributedSourceMusicPlaylistID,
                itemResult.record.addSourceMusicPlaylistID(contributedSourceMusicPlaylistID) {
@@ -566,6 +631,16 @@ struct PlaylistSyncService {
             }
             return trackResult.record.id.uuidString
         }
+    }
+
+    private func sourceExcludesDeletedTrack(
+        _ trackID: UUID, source: PlaylistRecord, in context: ModelContext
+    ) throws -> Bool {
+        guard source.role == .triageSource,
+              source.triageExcludedTrackIDs.contains(trackID.uuidString) else { return false }
+        // A newer manual add or OTP intake is explicit live ownership and
+        // can acquire this source attachment normally.
+        return try PlaylistItemRepository.item(trackID: trackID, in: context) == nil
     }
 
     private func inactivePlaylistSummary(skippedCount: Int = 1) -> PlaylistSyncSummary {

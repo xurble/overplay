@@ -299,7 +299,7 @@ struct TrackActionControlsView: View {
                 Button {
                     Task { playbackController.restoreCurrent(context: modelContext) }
                 } label: {
-                    Label("Restore", systemImage: "arrow.uturn.backward.circle.fill")
+                    Label("Move to Triage", systemImage: "tray.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .disabled(playbackController.currentTrack == nil)
@@ -307,6 +307,16 @@ struct TrackActionControlsView: View {
                     palette: controlPalette,
                     prominence: .secondary,
                     fallbackStyle: .bordered
+                )
+                Button {
+                    Task { await playbackController.promoteCurrent(settings: settings, context: modelContext) }
+                } label: {
+                    Label("Move to One True Playlist", systemImage: "star.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .disabled(playbackController.currentTrack == nil)
+                .fullScreenPlayerControlStyle(
+                    palette: controlPalette, prominence: .secondary, fallbackStyle: .bordered
                 )
             } else {
                 if currentPlaylistRole == .triageBucket {

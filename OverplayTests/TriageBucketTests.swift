@@ -50,8 +50,8 @@ struct TriageBucketTests {
         #expect(sharedItem.sourceMusicPlaylistIDs == ["source-1", "source-2"])
     }
 
-    @Test("an evicted bucket track stays evicted when a later playlist contributes it")
-    func evictedBucketTrackStaysEvictedWhenLaterPlaylistContributesIt() async throws {
+    @Test("an evicted bucket track revives when a later playlist is explicitly linked")
+    func evictedBucketTrackRevivesWhenLaterPlaylistContributesIt() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let syncService = PlaylistSyncService()
@@ -72,8 +72,7 @@ struct TriageBucketTests {
         EvictionEngine.evict(item, playlist: bucket, context: context)
         try context.save()
 
-        // The user adds another playlist that happens to contain the same
-        // track. Their "no" must survive it.
+        // A later explicit link is a fresh request to audition its songs.
         let secondSource = try PlaylistRepository.addTriageSource(
             AppleMusicPlaylist(id: "source-2", name: "Discovery", trackCount: 1),
             in: context
@@ -87,8 +86,8 @@ struct TriageBucketTests {
 
         let bucketItems = try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
         #expect(bucketItems.count == 1)
-        #expect(bucketItems.first?.evictedAt != nil)
-        #expect(bucketItems.first?.isPlayable == false)
+        #expect(bucketItems.first?.evictedAt == nil)
+        #expect(bucketItems.first?.isPlayable == true)
     }
 
     @Test("syncing the bucket with no contributing playlists reports a skip, not an error")
@@ -245,7 +244,8 @@ struct TriageBucketTests {
         )
 
         #expect(promoted.playlistID == oneTruePlaylist.id)
-        #expect(bucketItem.evictedAt != nil)
+        #expect(bucketItem.id == promoted.id)
+        #expect(bucketItem.evictedAt == nil)
 
         #expect(throws: PlaylistMutationError.self) {
             try service.recordSuccessfulPromotion(

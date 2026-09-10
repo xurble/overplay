@@ -25,9 +25,17 @@ enum PlaylistItemRepository {
         return result
     }
 
+    static func items(forTrackIDs trackIDs: [UUID], in context: ModelContext) throws -> [PlaylistItemRecord] {
+        guard !trackIDs.isEmpty else { return [] }
+        return try context.fetch(FetchDescriptor<PlaylistItemRecord>(predicate: #Predicate {
+            trackIDs.contains($0.trackID)
+        })).filter { !$0.isDeleted }
+    }
+
     static func resetAllStats(in context: ModelContext) throws {
         let items = try allItems(in: context)
         for item in items {
+            item.hasRecordedActivity = item.hasListeningHistory
             item.skipCount = 0
             item.playthroughCount = 0
             item.lastPlayedAt = nil
@@ -61,6 +69,15 @@ enum PlaylistItemRepository {
         descriptor.fetchLimit = 1
         descriptor.includePendingChanges = true
         return try context.fetch(descriptor).first
+    }
+
+    static func item(trackID: UUID, in context: ModelContext) throws -> PlaylistItemRecord? {
+        var descriptor = FetchDescriptor<PlaylistItemRecord>(
+            predicate: #Predicate { $0.trackID == trackID },
+            sortBy: [SortDescriptor(\.createdAt)]
+        )
+        descriptor.includePendingChanges = true
+        return try context.fetch(descriptor).first { !$0.isDeleted }
     }
 
     static func items(forPlaylistID playlistID: UUID, in context: ModelContext) throws -> [PlaylistItemRecord] {
@@ -148,6 +165,7 @@ enum PlaylistItemRepository {
                 summary.mergedCount += 1
             } else {
                 item.playlistID = destinationPlaylistID
+                item.musicPlaylistEntryID = nil
                 if let additionalSourceMusicPlaylistID {
                     item.addSourceMusicPlaylistID(additionalSourceMusicPlaylistID)
                 }
@@ -184,7 +202,7 @@ enum PlaylistItemRepository {
         sortOrder: Int? = nil,
         in context: ModelContext
     ) throws -> PlaylistItemUpsertResult {
-        guard let item = try item(playlistID: playlistID, trackID: trackID, in: context) else {
+        guard let item = try item(trackID: trackID, in: context) else {
             let insertedItem = PlaylistItemRecord(
                 playlistID: playlistID,
                 trackID: trackID,
@@ -196,7 +214,7 @@ enum PlaylistItemRepository {
         }
 
         var didChange = false
-        if item.musicPlaylistEntryID != musicPlaylistEntryID {
+        if item.playlistID == playlistID, item.musicPlaylistEntryID != musicPlaylistEntryID {
             item.musicPlaylistEntryID = musicPlaylistEntryID
             didChange = true
         }
@@ -211,19 +229,28 @@ enum PlaylistItemRepository {
         )
     }
 
-    /// Collapses items that share a `(playlistID, trackID)` pair into the
-    /// oldest item, merging stats instead of discarding them: skip and
-    /// playthrough counts are summed, and eviction/protection state follows
-    /// the most recently updated duplicate.
+    /// One row per track globally. Active OTP wins legacy location conflicts;
+    /// explicit local OTP suppression wins over stale remote membership.
     @discardableResult
     static func mergeDuplicateItems(in context: ModelContext, save: Bool = true) throws -> Int {
-        let groupedItems = Dictionary(grouping: try allItems(in: context)) { item in
-            "\(item.playlistID.uuidString)::\(item.trackID.uuidString)"
-        }
+        let playlists = try PlaylistRepository.allPlaylists(in: context)
+        let otpIDs = Set(playlists.filter { $0.role == .oneTruePlaylist && $0.isActive }.map(\.id))
+        let groupedItems = Dictionary(grouping: try allItems(in: context).filter { !$0.isDeleted }, by: \.trackID)
         var mergedCount = 0
 
         for items in groupedItems.values where items.count > 1 {
             let orderedItems = items.sorted {
+                if $0.locationChangedAt != $1.locationChangedAt {
+                    return ($0.locationChangedAt ?? .distantPast) > ($1.locationChangedAt ?? .distantPast)
+                }
+                let leftSuppressed = $0.ownershipVersion > 0 && !$0.suppressedOTPMusicPlaylistIDs.isEmpty
+                let rightSuppressed = $1.ownershipVersion > 0 && !$1.suppressedOTPMusicPlaylistIDs.isEmpty
+                if leftSuppressed != rightSuppressed {
+                    return leftSuppressed
+                }
+                let leftOTP = otpIDs.contains($0.playlistID) && $0.evictedAt == nil
+                let rightOTP = otpIDs.contains($1.playlistID) && $1.evictedAt == nil
+                if leftOTP != rightOTP { return leftOTP }
                 if $0.createdAt != $1.createdAt {
                     return $0.createdAt < $1.createdAt
                 }
@@ -232,8 +259,9 @@ enum PlaylistItemRepository {
             let keeper = orderedItems[0]
             let duplicates = orderedItems.dropFirst()
 
-            let latestUpdatedItem = orderedItems.max { $0.updatedAt < $1.updatedAt }
-            if let latestUpdatedItem, latestUpdatedItem !== keeper {
+            let latestUpdatedItem = orderedItems.filter { $0.playlistID == keeper.playlistID }
+                .max { $0.updatedAt < $1.updatedAt }
+            if keeper.locationChangedAt == nil, let latestUpdatedItem, latestUpdatedItem !== keeper {
                 adoptEvictionState(from: latestUpdatedItem, into: keeper)
             }
 
@@ -242,12 +270,27 @@ enum PlaylistItemRepository {
                 context.delete(duplicate)
                 mergedCount += 1
             }
+            if keeper.evictedAt == nil,
+               let otp = playlists.first(where: { $0.id == keeper.playlistID && otpIDs.contains($0.id) }) {
+                keeper.suppressedOTPMusicPlaylistIDs.removeAll { $0 == otp.musicPlaylistID }
+            }
         }
 
         if mergedCount > 0, save {
             try context.save()
         }
         return mergedCount
+    }
+
+    /// Explicit movement keeps the supplied live identity and absorbs donors.
+    @discardableResult
+    static func mergeOtherItems(into keeper: PlaylistItemRecord, in context: ModelContext) throws -> Int {
+        let duplicates = try allItems(in: context).filter { !$0.isDeleted && $0.trackID == keeper.trackID && $0.id != keeper.id }
+        for duplicate in duplicates {
+            mergeStats(from: duplicate, into: keeper, adoptEvictionStateIfNewer: false)
+            context.delete(duplicate)
+        }
+        return duplicates.count
     }
 
     /// Folds one item's accumulated history into another. Counts are summed
@@ -266,16 +309,29 @@ enum PlaylistItemRepository {
         into keeper: PlaylistItemRecord,
         adoptEvictionStateIfNewer: Bool
     ) {
-        if adoptEvictionStateIfNewer, duplicate.updatedAt > keeper.updatedAt {
-            adoptEvictionState(from: duplicate, into: keeper)
+        if adoptEvictionStateIfNewer {
+            let donorWins = if keeper.locationChangedAt != nil || duplicate.locationChangedAt != nil {
+                (duplicate.locationChangedAt ?? .distantPast) > (keeper.locationChangedAt ?? .distantPast)
+            } else {
+                duplicate.updatedAt > keeper.updatedAt
+            }
+            if donorWins { adoptEvictionState(from: duplicate, into: keeper) }
         }
 
         keeper.skipCount += duplicate.skipCount
         keeper.playthroughCount += duplicate.playthroughCount
+        keeper.isExplicitlyKept = keeper.isExplicitlyKept || duplicate.isExplicitlyKept
+        keeper.hasRecordedActivity = keeper.hasListeningHistory || duplicate.hasListeningHistory
+        // A merge with a new row must never make that row eligible for legacy cleanup.
+        keeper.ownershipVersion = max(keeper.ownershipVersion, duplicate.ownershipVersion)
+        for playlistID in duplicate.suppressedOTPMusicPlaylistIDs
+        where !keeper.suppressedOTPMusicPlaylistIDs.contains(playlistID) {
+            keeper.suppressedOTPMusicPlaylistIDs.append(playlistID)
+        }
         keeper.lastPlayedAt = latestDate(keeper.lastPlayedAt, duplicate.lastPlayedAt)
         keeper.lastSkippedAt = latestDate(keeper.lastSkippedAt, duplicate.lastSkippedAt)
         keeper.lastSeenInPlaylistAt = latestDate(keeper.lastSeenInPlaylistAt, duplicate.lastSeenInPlaylistAt)
-        if keeper.musicPlaylistEntryID == nil {
+        if keeper.playlistID == duplicate.playlistID, keeper.musicPlaylistEntryID == nil {
             keeper.musicPlaylistEntryID = duplicate.musicPlaylistEntryID
         }
         for sourceMusicPlaylistID in duplicate.sourceMusicPlaylistIDs {
@@ -289,6 +345,7 @@ enum PlaylistItemRepository {
         into keeper: PlaylistItemRecord
     ) {
         keeper.evictedAt = donor.evictedAt
+        keeper.locationChangedAt = donor.locationChangedAt
         keeper.evictionReason = donor.evictionReason
         keeper.evictionSource = donor.evictionSource
     }

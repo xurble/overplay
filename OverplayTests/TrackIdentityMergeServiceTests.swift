@@ -123,8 +123,8 @@ struct TrackIdentityMergeServiceTests {
         #expect(canonicalItem.lastPlayedAt == Date(timeIntervalSince1970: 300))
     }
 
-    @Test("items in different playlists stay separate after repointing")
-    func itemsInDifferentPlaylistsStaySeparateAfterRepointing() async throws {
+    @Test("items in different playlists merge globally after repointing")
+    func itemsInDifferentPlaylistsMergeAfterRepointing() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let firstPlaylistID = UUID()
@@ -160,10 +160,11 @@ struct TrackIdentityMergeServiceTests {
         let summary = try await TrackIdentityMergeService.mergeDuplicates(in: context)
 
         #expect(summary.mergedTrackCount == 1)
-        #expect(summary.mergedItemCount == 0)
-        #expect(firstItem.skipCount == 3)
-        #expect(secondItem.skipCount == 2)
-        #expect(secondItem.trackID == canonical.id)
+        #expect(summary.mergedItemCount == 1)
+        let items = try PlaylistItemRepository.allItems(in: context)
+        #expect(items.count == 1)
+        #expect(items.first?.skipCount == 5)
+        #expect(items.first?.trackID == canonical.id)
     }
 
     @Test("history events repoint to the canonical track")

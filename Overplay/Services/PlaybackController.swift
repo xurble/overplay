@@ -47,7 +47,9 @@ final class PlaybackController {
     var currentTrack: CurrentPlaybackTrack?
     var musicKitNowPlayingTrack: CurrentPlaybackTrack?
     var isMusicKitNowPlayingTrackPending = false
-    var currentPlaylistItem: PlaylistItemRecord?
+    var currentPlaylistItem: PlaylistItemRecord? {
+        didSet { updateRetentionLease() }
+    }
     var elapsedSeconds: Double = 0
     var durationSeconds: Double?
     var isPlaying = false
@@ -77,7 +79,10 @@ final class PlaybackController {
     @ObservationIgnored private let sleepForTransitionConfirmation: @MainActor (Duration) async -> Void
     @ObservationIgnored private var monitorTask: Task<Void, Never>?
     @ObservationIgnored private var warmUpTask: Task<Void, Never>?
-    @ObservationIgnored private var activeSession: TrackPlaySession?
+    @ObservationIgnored private let retentionLease = TrackRetentionPolicy.makePlaybackLease()
+    @ObservationIgnored private var activeSession: TrackPlaySession? {
+        didSet { updateRetentionLease() }
+    }
     @ObservationIgnored private var activePlaylistSnapshotNeedsRebuild = false
     @ObservationIgnored private var activeQueueEntries: [RealizedPlaybackQueueEntry] = []
     /// Where the current track sits in `activeQueueEntries`, which is
@@ -443,7 +448,7 @@ final class PlaybackController {
             }
 
             currentPlaylistID = restored.musicPlaylistID
-            currentPlaylistScope = .active
+            currentPlaylistScope = restored.playlistItem?.evictedAt == nil ? .active : .retired
             currentPlaylistItem = restored.playlistItem
             currentTrack = restored.track
             elapsedSeconds = restored.elapsedSeconds
@@ -1147,7 +1152,11 @@ final class PlaybackController {
     }
 
     func currentPlaylistRole(context: ModelContext) -> PlaylistRole? {
-        try? currentPlaylist(in: context)?.role
+        if let item = displayedPlaylistItem(context: context),
+           let owner = try? PlaylistRepository.playlist(id: item.playlistID, in: context) {
+            return owner.role
+        }
+        return try? currentPlaylist(in: context)?.role
     }
 
     func displayedPlaylistItem(context: ModelContext) -> PlaylistItemRecord? {
@@ -1177,7 +1186,7 @@ final class PlaybackController {
         if let currentPlaylistItem = liveCurrentPlaylistItem(in: playlist, context: context) {
             return CurrentPlaybackTarget(
                 musicItemID: musicItemID,
-                playlist: playlist,
+                playlist: (try? PlaylistRepository.playlist(id: currentPlaylistItem.playlistID, in: context)) ?? playlist,
                 item: currentPlaylistItem
             )
         }
@@ -1193,7 +1202,7 @@ final class PlaybackController {
 
         return CurrentPlaybackTarget(
             musicItemID: musicItemID,
-            playlist: playlist,
+            playlist: (try? PlaylistRepository.playlist(id: item.playlistID, in: context)) ?? playlist,
             item: item
         )
     }
@@ -1202,13 +1211,11 @@ final class PlaybackController {
         in playlist: PlaylistRecord,
         context: ModelContext
     ) -> PlaylistItemRecord? {
-        guard let currentPlaylistItem,
-              currentPlaylistItem.playlistID == playlist.id else {
+        guard let currentPlaylistItem, !currentPlaylistItem.isDeleted else {
             return nil
         }
 
-        if let liveItem = try? PlaylistItemRepository.item(id: currentPlaylistItem.id, in: context),
-           liveItem.playlistID == playlist.id {
+        if let liveItem = try? PlaylistItemRepository.item(id: currentPlaylistItem.id, in: context) {
             return liveItem
         }
 
@@ -1226,16 +1233,20 @@ final class PlaybackController {
             return
         }
 
+        let originalEntryID = player.currentEntry?.id
+        let originalSessionStart = activeSession?.sessionStartDate
+        let originalItemID = target.item.id
         do {
             try await promoteTrack(target.item, playlist: target.playlist, context: context)
         } catch {
             statusMessage = error.localizedDescription
             return
         }
-        currentPlaylistItem = target.item
-        syncPlaybackMetadata(for: target.musicItemID, trustedPlaylistItem: target.item, context: context)
-        rebuildActivePlaylistSnapshot(context: context)
-        statusMessage = "Promoted \(currentTrack?.title ?? "track") to the One True Playlist."
+        statusMessage = "Moved to the One True Playlist."
+        guard currentPlaylistItem?.id == originalItemID,
+              player.currentEntry?.id == originalEntryID,
+              activeSession?.sessionStartDate == originalSessionStart else { return }
+        markActiveSessionEvaluatedWithoutSkip(captureOutgoingPlaybackTransition())
         await next(settings: settings, context: context)
     }
 
@@ -1247,12 +1258,18 @@ final class PlaybackController {
         }
 
         do {
-            try TrackActionService.resetSkipCount(
+            let retained = try TrackActionService.resetSkipCount(
                 target.item,
                 playlist: target.playlist,
                 message: message,
+                protectingItemID: activeSession?.hasEvaluated == false ? target.item.id : nil,
                 in: context
             )
+            if !retained {
+                currentPlaylistItem = nil
+                reconcileTrackMembership(context: context)
+                return true
+            }
         } catch {
             statusMessage = error.localizedDescription
             return false
@@ -1274,12 +1291,12 @@ final class PlaybackController {
         playlist: PlaylistRecord?,
         context: ModelContext
     ) throws {
+        settleSessionBeforeMoving(item, context: context)
         try TrackActionService.restoreTrack(item, playlist: playlist, in: context)
-        if let playlist {
-            movePlaylistItemToBottom(item, playlist: playlist, scope: .active, context: context)
+        if let bucket = try PlaylistRepository.existingTriageBucket(in: context) {
+            movePlaylistItemToBottom(item, playlist: bucket, scope: .active, context: context)
         }
-        refreshCurrentPlaybackMetadata(context: context)
-        rebuildActivePlaylistSnapshot(context: context)
+        reconcileTrackMembership(context: context)
     }
 
     @discardableResult
@@ -1288,12 +1305,10 @@ final class PlaybackController {
         playlist: PlaylistRecord,
         context: ModelContext
     ) async throws -> PlaylistItemRecord {
-        let promotedItem = try await PlaylistMutationService().promote(item: item, in: context)
-        if item.evictedAt != nil {
-            movePlaylistItemToBottom(item, playlist: playlist, scope: .retired, context: context)
-        }
-        refreshCurrentPlaybackMetadata(context: context)
-        rebuildActivePlaylistSnapshot(context: context)
+        let promotedItem = try await PlaylistMutationService().promote(
+            item: item, beforeMove: { self.settleSessionBeforeMoving(item, context: context) }, in: context
+        )
+        reconcileTrackMembership(context: context)
         return promotedItem
     }
 
@@ -1303,10 +1318,28 @@ final class PlaybackController {
         message: String,
         context: ModelContext
     ) throws {
-        try TrackActionService.evictTrack(item, playlist: playlist, message: message, in: context)
-        movePlaylistItemToBottom(item, playlist: playlist, scope: .retired, context: context)
-        refreshCurrentPlaybackMetadata(context: context)
-        rebuildActivePlaylistSnapshot(context: context)
+        settleSessionBeforeMoving(item, context: context)
+        let itemID = item.id
+        let wasCurrentItem = currentPlaylistItem?.id == itemID
+        let retained = try TrackActionService.evictTrack(item, playlist: playlist, message: message, in: context)
+        if retained, let bucket = try PlaylistRepository.existingTriageBucket(in: context) {
+            movePlaylistItemToBottom(item, playlist: bucket, scope: .retired, context: context)
+        }
+        if !retained, wasCurrentItem { currentPlaylistItem = nil }
+        reconcileTrackMembership(context: context)
+        if playlist.role == .oneTruePlaylist {
+            let playlistID = playlist.id
+            let container = context.container
+            Task {
+                defer { withExtendedLifetime(container) {} }
+                // A row can move, disappear, or its originating context can
+                // be reset before this asynchronous remote side effect starts.
+                let remoteContext = ModelContext(container)
+                guard let liveItem = try? PlaylistItemRepository.item(id: itemID, in: remoteContext),
+                      let livePlaylist = try? PlaylistRepository.playlist(id: playlistID, in: remoteContext) else { return }
+                await removeEvictedItemFromPlaylist(liveItem, playlist: livePlaylist, context: remoteContext)
+            }
+        }
     }
 
     @discardableResult
@@ -1317,16 +1350,15 @@ final class PlaybackController {
         }
 
         do {
-            try TrackActionService.restoreTrack(target.item, playlist: target.playlist, in: context)
+            try restoreTrack(target.item, playlist: target.playlist, context: context)
         } catch {
             statusMessage = error.localizedDescription
             return false
         }
-        movePlaylistItemToBottom(target.item, playlist: target.playlist, scope: .active, context: context)
         currentPlaylistItem = target.item
         syncPlaybackMetadata(for: target.musicItemID, trustedPlaylistItem: target.item, context: context)
         rebuildActivePlaylistSnapshot(context: context)
-        statusMessage = "Restored \(currentTrack?.title ?? "track")."
+        statusMessage = "Moved to Triage."
         return true
     }
 
@@ -1336,6 +1368,8 @@ final class PlaybackController {
             return
         }
 
+        evaluatePlaythroughIfNeeded(context: context)
+        markActiveSessionEvaluatedWithoutSkip(captureOutgoingPlaybackTransition())
         do {
             try retireTrack(
                 target.item,
@@ -1347,9 +1381,6 @@ final class PlaybackController {
             statusMessage = error.localizedDescription
             return
         }
-        currentPlaylistItem = target.item
-        rebuildActivePlaylistSnapshot(context: context)
-        await removeEvictedItemFromPlaylist(target.item, playlist: target.playlist, context: context)
         await next(settings: settings, context: context)
     }
 
@@ -1828,6 +1859,17 @@ final class PlaybackController {
         if shouldRefreshActivePlaylist {
             patchActivePlaylistSnapshotRow(for: outcome.item, context: context)
         }
+        if let item = outcome.item, outcome.session.hasEvaluated, item.pendingRetentionCleanup {
+            item.pendingRetentionCleanup = false
+            let wasDisplayedItem = currentPlaylistItem?.id == item.id
+            do {
+                let deleted = try TrackRetentionPolicy.deleteIfUnowned(item, in: context)
+                if deleted, wasDisplayedItem { currentPlaylistItem = nil }
+                try context.save()
+                if deleted { reconcileTrackMembership(context: context) }
+            } catch { statusMessage = error.localizedDescription }
+        }
+        pruneRemovedQueueEntries(context: context)
     }
 
     /// An evaluation outcome mutates a single item's counters, and this
@@ -2526,6 +2568,80 @@ final class PlaybackController {
         syncPlaybackMetadata(for: musicItemID, context: context)
     }
 
+    private func settleSessionBeforeMoving(_ item: PlaylistItemRecord, context: ModelContext) {
+        guard currentPlaylistItem?.id == item.id else { return }
+        evaluatePlaythroughIfNeeded(context: context)
+        // Row movement does not stop playback: the same session follows the
+        // global item. Only a Now Playing command that advances transport
+        // explicitly suppresses the resulting non-listening skip.
+    }
+
+    private func updateRetentionLease() {
+        retentionLease.itemID = activeSession?.hasEvaluated == false
+            ? currentPlaylistItem?.id : nil
+        retentionLease.trackID = activeSession?.hasEvaluated == false
+            ? currentPlaylistItem?.trackID : nil
+    }
+
+    func removeTriageSource(_ playlist: PlaylistRecord, context: ModelContext) throws {
+        try PlaylistRepository.removeTriageSource(
+            playlist, in: context
+        )
+        reconcileTrackMembership(context: context)
+    }
+
+    /// Membership changes prune the native queue in place; MusicKit keeps
+    /// shuffle/repeat and the current position. The current entry is retained
+    /// until transport advances, so mutation itself never fabricates a skip.
+    func reconcileTrackMembership(context: ModelContext) {
+        do {
+            let playlists = try PlaylistRepository.activePlaylists(in: context)
+                .filter { $0.role.isPlaybackContext }
+            for playlist in playlists {
+                let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
+                for scope in PlaylistPlaybackScope.allCases {
+                    _ = playbackOrderState(for: playlist.musicPlaylistID, scope: scope, items: items)
+                }
+            }
+            pruneRemovedQueueEntries(context: context)
+            if let item = currentPlaylistItem, item.isDeleted { currentPlaylistItem = nil }
+            bumpPlaybackItemMetadataVersion()
+            refreshCurrentPlaybackMetadata(context: context)
+            if let playlist = try currentPlaylist(in: context) {
+                reconcileStoredOrder(for: playlist, context: context)
+            } else {
+                rebuildActivePlaylistSnapshot(context: context)
+            }
+        } catch { statusMessage = error.localizedDescription }
+    }
+
+    private func pruneRemovedQueueEntries(context: ModelContext) {
+        guard let playlist = try? currentPlaylist(in: context),
+              let items = try? PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context) else { return }
+        let retainedIDs = Set(items.filter { currentPlaylistScope.includes($0) }.map { $0.trackID.uuidString })
+        let currentEntryID = player.currentEntry?.id
+        let removedEntries = activeQueueEntries.filter {
+            !retainedIDs.contains($0.localTrackID) && $0.queueEntryID != currentEntryID
+        }
+        var removedIDs = Set(removedEntries.map(\.queueEntryID))
+        let correlatedIDs = Set(activeQueueEntries.map(\.queueEntryID))
+        // A rehydrating queue may not yet have local correlations. Only prune
+        // entries whose concrete MusicKit identity resolves to our local track.
+        for entry in player.queueEntrySnapshots
+        where entry.id != currentEntryID && !correlatedIDs.contains(entry.id) {
+            if let musicID = entry.musicItemID,
+               let track = try? TrackRecordRepository.track(musicItemID: musicID, in: context),
+               !retainedIDs.contains(track.id.uuidString) {
+                removedIDs.insert(entry.id)
+            }
+        }
+        guard !removedIDs.isEmpty else { return }
+        player.removeQueueEntries(withIDs: removedIDs)
+        activeQueueEntries.removeAll { removedIDs.contains($0.queueEntryID) }
+        appendedUncorrelatedEntries.removeAll { !retainedIDs.contains($0.localTrackID) }
+        activeQueueIndex = activeQueueEntries.firstIndex { $0.queueEntryID == currentEntryID }
+    }
+
     private func markActiveSessionEvaluatedWithoutSkip(_ outgoing: OutgoingPlaybackTransition) {
         activeSession = PlaybackSessionEvaluationService.markEvaluatedWithoutSkip(
             activeSession: activeSession,
@@ -2929,6 +3045,7 @@ final class PlaybackController {
     /// to track the current entry. Duplicate cleanup happens in the track
     /// identity merge pass at startup and after sync, not here.
     func reconcileStoredOrder(for requestedPlaylist: PlaylistRecord, context: ModelContext) {
+        pruneRemovedQueueEntries(context: context)
         // Membership changed (sync, link change, manual add): previously
         // unresolvable music item IDs may now have records.
         unresolvableMusicItemIDs.removeAll()
@@ -2943,35 +3060,27 @@ final class PlaybackController {
                 ? try PlaylistRepository.triageBucket(in: context)
                 : requestedPlaylist
             let isCurrentPlaylist = currentPlaylistID == playlist.musicPlaylistID
-            let isCurrentActivePlaylist = isCurrentPlaylist && currentPlaylistScope == .active
-            let currentLocalTrackID = isCurrentActivePlaylist
+            let scope = isCurrentPlaylist ? currentPlaylistScope : .active
+            let currentLocalTrackID = isCurrentPlaylist
                 ? currentPlaylistItem?.trackID.uuidString
                 : nil
             let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
-            let activeItems = items.filter { PlaylistPlaybackScope.active.includes($0) }
-            let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: activeItems)
+            let activeItems = items.filter { scope.includes($0) }
+            let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: activeItems, scope: scope)
             let previousState = PlaybackOrderStore.state(
                 playerID: playerID,
-                musicPlaylistID: PlaylistPlaybackScope.active.playbackOrderPlaylistID(for: playlist.musicPlaylistID)
+                musicPlaylistID: scope.playbackOrderPlaylistID(for: playlist.musicPlaylistID)
             )
-            let playableOrder = PlaybackOrderEngine.normalOrder(for: orderTracks, includeUnplayableTrackID: currentLocalTrackID)
-            let reconciledOrder: [String]
-            if isCurrentActivePlaylist,
-               !previousState.orderedTrackIDs.isEmpty {
-                let existingSet = Set(previousState.orderedTrackIDs)
-                reconciledOrder = previousState.orderedTrackIDs + playableOrder.filter { !existingSet.contains($0) }
-            } else {
-                reconciledOrder = PlaybackOrderEngine.reconciledOrder(
-                    storedOrder: previousState.orderedTrackIDs,
-                    tracks: orderTracks,
-                    includeUnplayableTrackID: currentLocalTrackID
-                )
-            }
+            let reconciledOrder = PlaybackOrderEngine.reconciledOrder(
+                storedOrder: previousState.orderedTrackIDs,
+                tracks: orderTracks,
+                includeUnplayableTrackID: currentLocalTrackID
+            )
             if previousState.orderedTrackIDs != reconciledOrder {
                 PlaybackOrderStore.save(
                     PlaybackOrderState(
                         playerID: playerID,
-                        musicPlaylistID: playlist.musicPlaylistID,
+                        musicPlaylistID: scope.playbackOrderPlaylistID(for: playlist.musicPlaylistID),
                         orderedTrackIDs: reconciledOrder
                     ),
                     flushImmediately: true
@@ -2982,10 +3091,10 @@ final class PlaybackController {
             // Sync reconciliation may already have appended new rows to the
             // stored order. Compare against the live and pending queue instead
             // so that equality with the store cannot hide a required append.
-            if isCurrentActivePlaylist {
+            if isCurrentPlaylist {
                 let previouslyPublishedTrackIDs = activePlaylistSnapshot.flatMap { snapshot in
                     snapshot.musicPlaylistID == playlist.musicPlaylistID
-                        && snapshot.playbackScope == .active
+                        && snapshot.playbackScope == scope
                         ? Set(snapshot.rows.map(\.localTrackID))
                         : nil
                 }
@@ -3173,7 +3282,7 @@ final class PlaybackController {
             let inputs = try PlaybackQueueOrchestrator.playlistInputs(for: playlistID, in: context)
             let entries = PlaybackQueueOrchestrator.cachedQueueEntries(
                 orderedTrackIDs: localTrackIDs,
-                itemsByTrackID: inputs.items.firstValueDictionary(keyedBy: \.trackID),
+                itemsByTrackID: inputs.items.filter { currentPlaylistScope.includes($0) }.firstValueDictionary(keyedBy: \.trackID),
                 tracksByID: inputs.tracksByID
             )
             guard !entries.isEmpty else { return }
@@ -3199,6 +3308,7 @@ final class PlaybackController {
     }
 
     private func rebuildActivePlaylistSnapshot(context: ModelContext) {
+        pruneRemovedQueueEntries(context: context)
         guard let currentPlaylistID,
               let playlist = try? currentPlaylist(in: context) else {
             activePlaylistSnapshot = nil

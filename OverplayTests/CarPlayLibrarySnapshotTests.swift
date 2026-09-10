@@ -67,8 +67,9 @@ struct CarPlayLibrarySnapshotTests {
         )
         .activePlaylistSummaries()
 
-        #expect(summaries.map(\.title) == ["Keepers", "Inbox"])
-        #expect(summaries == sharedSummaries)
+        #expect(summaries.map(\.title) == ["Keepers", "Inbox", "Retired"])
+        #expect(Array(summaries.prefix(2)) == sharedSummaries)
+        #expect(summaries.last?.playbackScope == .retired)
         #expect(summaries.first?.role == .oneTruePlaylist)
         #expect(summaries.first?.playableTrackCount == 1)
         #expect(summaries.last?.playableTrackCount == 0)
@@ -91,7 +92,7 @@ struct CarPlayLibrarySnapshotTests {
         phoneContext.insert(linked)
         try phoneContext.save()
 
-        #expect(try CarPlayLibrarySnapshot.playlistSummaries(in: carPlayContext).map(\.title) == ["Keepers", "Inbox"])
+        #expect(try CarPlayLibrarySnapshot.playlistSummaries(in: carPlayContext).map(\.title) == ["Keepers", "Inbox", "Retired"])
 
         // So must a One True Playlist role change, or the Overplay row would
         // start the former One True Playlist.

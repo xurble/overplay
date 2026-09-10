@@ -12,7 +12,11 @@ enum CarPlayLibrarySnapshot {
             tracks: tracks
         )
 
-        return builder.activePlaylistSummaries()
+        var summaries = builder.activePlaylistSummaries()
+        if let bucket = playlists.first(where: \.isTriageBucket) {
+            summaries.append(builder.summary(for: bucket, scope: .retired))
+        }
+        return summaries
     }
 
     static func trackSummaries(

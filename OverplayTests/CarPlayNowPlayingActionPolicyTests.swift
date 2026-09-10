@@ -18,18 +18,12 @@ struct CarPlayNowPlayingActionPolicyTests {
             == [.shuffle, .repeatMode, .promote, .restore])
     }
 
-    @Test("the One True Playlist never offers promote")
-    func oneTruePlaylistNeverOffersPromote() {
+    @Test("active OTP offers retirement and retired songs offer both destinations")
+    func retiredTracksOfferBothDestinations() {
         #expect(CarPlayNowPlayingActionPolicy.actions(playlistRole: .oneTruePlaylist, isRetired: false)
             == [.shuffle, .repeatMode, .retire])
         #expect(CarPlayNowPlayingActionPolicy.actions(playlistRole: .oneTruePlaylist, isRetired: true)
-            == [.shuffle, .repeatMode, .restore])
-        for isRetired in [true, false] {
-            #expect(!CarPlayNowPlayingActionPolicy.actions(
-                playlistRole: .oneTruePlaylist,
-                isRetired: isRetired
-            ).contains(.promote))
-        }
+            == [.shuffle, .repeatMode, .promote, .restore])
     }
 
     @Test("with no known playlist the playback modes are still offered")

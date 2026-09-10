@@ -38,15 +38,16 @@ Music's global play count or skip count.
 | `AUTH-001` | Normal use requires Apple Music authorization, catalogue playback capability, and Sync Library. The simulator supplies a ready state for development. | `Overplay/Services/MusicAuthorizationService.swift`, `Overplay/App/StartupAuthorizationGate.swift` |
 | `PLAYLIST-001` | Exactly one active One True Playlist is selected. Selecting another demotes the previous main playlist to a triage source. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/NewModelRepositoryTests.swift` |
 | `PLAYLIST-003` | There is at most one triage bucket. It owns every triage item, is ensured during startup, and has a reserved `musicPlaylistID` rather than an Apple Music playlist, so it is never fetched or synced directly. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/TriageBucketTests.swift` |
-| `PLAYLIST-004` | Contributing playlists feed the bucket and keep their own sync bookkeeping, but own no items and are never a playback context. A track contributed by several playlists is one bucket row, so retiring it excludes it from the whole bucket and it stays excluded when a later playlist contributes it. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/TriageBucketTests.swift` |
-| `PLAYLIST-005` | Unlinking a contributing playlist leaves its tracks in the bucket with their stats, merely unattributed. Row provenance is nullable, and no source is a normal state. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/TriageBucketTests.swift` |
+| `PLAYLIST-004` | Sources contribute attachments, not duplicate rows. A deliberate source link/re-link revives older retirements into Triage; ordinary sync never revives them. Active OTP takes precedence over source intake. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
+| `PLAYLIST-005` | Last-source unlink deletes untouched, non-explicit active Triage rows and unowned retired 0/0 rows. Active explicit keep or prior listening (even reset) survives. Nonzero counts and necessary OTP suppression always survive. | `Overplay/Persistence/TrackRetentionPolicy.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
+| `PLAYLIST-007` | One item per track app-wide owns its statistics. OTP, Triage and global Retired are three top-level collections; every retired item belongs to the bucket. | `Overplay/Persistence/PlaylistItemRepository.swift`, `Overplay/Services/TrackLocationService.swift` |
 | `PLAYLIST-006` | Pre-bucket triage data migrates onto the bucket at startup, merging counts for tracks that appeared in several triage playlists. The migration is idempotent and keyed on the stored legacy role value, not a local flag. | `Overplay/Persistence/TriageBucketMigrationService.swift`, `OverplayTests/TriageBucketTests.swift` |
 | `PLAYLIST-002` | Initial setup can create a managed playlist, copy an existing playlist into a managed playlist, or link an existing playlist as incoming-only. | `Overplay/ViewModels/PlaylistSelectionViewModel.swift`, `Overplay/Services/PlaylistSyncService.swift` |
 | `SYNC-001` | Automatic sync starts shortly after authorization, runs every 30 minutes, skips fresh successful playlists, retries failed playlists, and prioritizes the playing and selected playlists. | `Overplay/Services/PeriodicPlaylistSyncService.swift`, `OverplayTests/PeriodicPlaylistSyncServiceTests.swift` |
 | `SYNC-002` | Sync is idempotent, collapses duplicate identities, preserves history, and leaves remotely missing tracks locally playable unless retired. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/PlaylistSyncReconciliationTests.swift` |
-| `MUT-001` | Successful promotion adds or reactivates the destination item, records history, and locally retires the source bucket item. Only bucket items can be promoted; a contributing playlist is not a promotion source. | `Overplay/Services/PlaylistMutationService.swift`, `OverplayTests/PlaylistMutationServiceTests.swift` |
+| `MUT-001` | Successful promotion moves the existing item into OTP with its statistics and history; no source copy remains. Retired offers Move to Triage (explicit keep) and Move to One True Playlist. | `Overplay/Services/PlaylistMutationService.swift`, `OverplayTests/PlaylistMutationServiceTests.swift` |
 | `MUT-002` | Apple Music search can add songs only to active playlists that allow remote writes. | `Overplay/ViewModels/SearchMusicViewModel.swift`, `OverplayTests/SearchMusicViewModelTests.swift` |
-| `RETIRE-001` | Retirement is always authoritative locally. Current-track retirement attempts remote deletion only for a managed One True Playlist; playlist-row and triage retirement are local-only, and never remove the track from a contributing Apple Music playlist. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/PlaylistRemoteMutationPolicy.swift` |
+| `RETIRE-001` | Retirement is authoritative locally and globally equivalent from OTP/Triage. Managed OTP retirement attempts remote removal from rows and Now Playing; incoming-only OTP and Triage retirement stay local. Stale OTP membership cannot revive or silently re-promote the row. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/TrackLocationService.swift` |
 | `PLAY-001` | **WITHDRAWN.** Overplay owned queue order, shuffle and repeat. Replaced by `PLAY-004`; no longer implemented. | — |
 | `PLAY-002` | **WITHDRAWN.** The queue was handed over a window at a time. A window cannot be shuffled or repeated by MusicKit, so it could not coexist with `PLAY-004`; device evidence also showed hand-off size was not the cause of the Apple Music failures it was built for. | — |
 | `PLAY-004` | MusicKit owns shuffle and repeat. Overplay reads both modes, writes what a surface asked for, and never reorders or rebuilds the queue to emulate them. | `Overplay/Services/PlaybackController.swift`, `Overplay/Playback/PlaybackPlayer.swift` |
@@ -105,7 +106,7 @@ iPad is the review and management experience as well as a playback device.
 
 - Regular width uses `NavigationSplitView`; compact width falls back to the
   stacked dashboard flow.
-- The sidebar provides Dashboard, One True Playlist, the triage bucket,
+- The sidebar provides Dashboard, One True Playlist, Triage, Retired,
   Search, History, and Settings.
 - Sidebar selection is scene-local and the persistent mini-player remains
   available over detail content.
@@ -166,7 +167,11 @@ Overplay tracks multiple Apple Music playlists:
 
 - **Triage sources**: contributing Apple Music playlists that feed the bucket.
   Each keeps its own sync bookkeeping, but owns no items and is never played.
-  A track contributed by several sources is a single bucket row.
+  A track contributed by several sources is a single globally owned row.
+
+- **Retired**: the third top-level browsing/playback collection, shared by OTP
+  and Triage. Stored as bucket ownership plus `evictedAt`, never as another
+  Apple Music playlist. Listening here counts normally without restoring items.
 
 Each linked playlist stores:
 
@@ -184,12 +189,27 @@ one to a triage source. The current UI can add and remove contributing
 playlists from the triage sources screen; it does not rename linked playlists
 or delete their Apple Music source playlists.
 
-Unlinking a contributing playlist never removes the tracks it put in the
-bucket. A bucket row is the only row for that track in the bucket, so deleting
-it would discard skip and playthrough history the user did not ask to lose.
-The tracks stay and become unattributed: row provenance records which
-contributing playlists supplied a track, and is legitimately empty for an
-unlinked contributor.
+Source attachments record every playlist that contributed a song until that
+source is explicitly unlinked. Remote song removal does not detach it. Multiple
+sources protect a row until the last is removed. Source-free is a normal state.
+
+After last-source removal, active Triage retains explicit manual/restore intent
+or any recorded play/skip history, even if counters were reset. Untouched active
+rows without explicit intent are deleted. Retired source-free rows with current
+0 plays and 0 skips are deleted, regardless of manual intent or prior resets.
+This also runs immediately on retirement and ordinary counter reset. Nonzero
+counts and necessary stale-OTP suppression protect rows. Active OTP is never
+deleted by Triage cleanup. Deleted songs may return on later intake; independent
+history remains but offers no broken Restore action.
+
+Deliberate source link/re-link revives older retirements into Triage without
+resetting counts. Normal sync, including the Sync button, does not. The durable
+link timestamp survives failed initial imports; newer retirement wins on retry.
+Unlink/re-link invalidates older in-flight imports.
+If a newer retirement deletes a 0/0 row while a source's first import is
+pending or an ordinary fetch is already running, the source records a link-scoped exclusion. That import and its retries
+cannot recreate the row; unlink/re-link discards the exclusion. No permanent
+global retired-item tombstone is kept.
 
 Pre-bucket installs stored the role raw value `triage`. Because roles are
 stored as strings, retiring that role is a data change rather than a schema
@@ -199,12 +219,21 @@ same track appeared in more than one triage playlist, and is idempotent and
 derived from the stored value so re-running it cannot double-count. Merged
 rows take the most recent eviction decision.
 
+Issue #36 then converges track identities and merges item rows app-wide before
+legacy cleanup. Active legacy OTP wins conflicts; remaining retired rows move
+to the bucket. Counts are summed, source attachments/explicit intent preserved,
+and stale OTP membership suppressed. For the sole historical phone dataset,
+unowned legacy 0/0 bucket rows are deleted even with reset history; explicit
+keep, active OTP and necessary suppression remain protected. Stored
+`ownershipVersion` defaults to legacy zero; new initializers write one, so
+repeated startup and late CloudKit delivery cannot apply the historical reset
+exception to new rows. There is no versioned-schema migration framework.
+
 ### Track state
 
-Overplay tracks each song it sees in a linked playlist. Stats must be stored
-per playlist membership so the same song can have different context in the One
-True Playlist and in the triage bucket. Contributing playlists are not separate
-memberships: everything they supply is one row in the bucket.
+Overplay stores one item per song app-wide. Statistics travel with that row
+between OTP, Triage and Retired. Contributing playlists are attachments,
+independent of current location and explicit keep intent.
 
 For every tracked playlist item, store:
 
@@ -218,11 +247,13 @@ For every tracked playlist item, store:
 - Last skipped date.
 - Last seen in Apple Music sync date.
 - Retirement state.
+- Contributing source identifiers, explicit keep intent and prior-activity evidence.
+- Stale OTP membership suppression and location-change intent.
 - Created and updated dates.
 
-When a single catalogue song appears in multiple linked playlists, Overplay may
-share metadata, but playlist membership, skip count, playthrough count, and
-retirement state must remain playlist-specific.
+Multiple source appearances share the same item, counts and retirement state.
+Location-scoped remote playlist-entry identifiers are cleared or rewritten when
+the row moves.
 
 Within one linked playlist, a song identity may appear at most once. Duplicate
 remote entries, repeated manual adds, and promotion of an already-present song
@@ -364,11 +395,10 @@ Contributing playlists are not promotion sources — they own no items.
 Promotion should:
 
 - Attempt to add the track to the linked Apple Music One True Playlist.
-- Create or reactivate the local One True Playlist item on success.
-- Preserve source bucket stats and history.
+- Move the existing local item into OTP on success.
+- Preserve counts, timestamps, source attachments, explicit keep intent and history.
 - Record a promotion event linking source playlist and destination playlist.
-- Locally retire the source bucket item after the destination mutation
-  succeeds, moving it from Active to Retired without deleting it remotely.
+- Leave no second source or retired copy behind.
 
 If Apple Music add-to-playlist fails, show a clear non-fatal error and do not
 pretend the promotion succeeded.
@@ -387,12 +417,21 @@ Add behaviour:
   returned identifiers.
 - On failure, Overplay displays a clear error.
 
-Manual add supports the One True Playlist and the triage bucket when they
-allow remote writes.
+The shared local manual-add boundary also supports Triage without a remote
+write. It establishes explicit keep intent, reuses/revives the global item,
+and never demotes an active OTP item. A new Triage search experience is separate
+work. Moving from Retired to Triage uses the same explicit keep semantics.
+
+OTP sync can promote an active bucket item, logging `promoted` with source
+`sync`. It cannot revive retired rows or override stale-OTP suppression. An OTP
+retirement, including failed or incoming-only remote removal, keeps suppression
+until a complete successful OTP snapshot proves absence, or explicit promotion
+supersedes it. Missing MusicKit track relationships or promised next pages are
+errors, not complete empty snapshots. Reviving into Triage does not clear that protection.
 
 ## Play/Skip History
 
-Overplay records playlist-specific playthrough and skip counts. Promotion from
+Overplay records global per-track playthrough and skip counts. Promotion from
 triage and retirement from any playlist are manual user actions. Skip counts
 are displayed as history only; they do not imply an automatic status, and
 retirement remains an explicit user action.
@@ -410,7 +449,7 @@ playthroughThresholdPercentage = 90
 A skip is counted when all are true:
 
 - The current play session has not already been evaluated.
-- The playlist item is active and not locally retired.
+- The tracked item exists; Retired auditions count on the same path.
 - The user listened for at least `minimumSkipListeningSeconds`, measured as
   witnessed listening time accumulated from playback observation, not as raw
   playback position. Seeking or resuming mid-track contributes nothing.
@@ -488,17 +527,20 @@ item's `lastPlayedAt` recency.
 The user can manually retire a track from any linked playlist. Manual
 retirement:
 
-- Marks the local playlist item retired.
+- Moves the same item to the global Retired collection, or deletes it under
+  the unowned 0/0 rule above.
 - Records a manual retirement event. The current data model may store this as
   an eviction event while Retired remains the user-facing term.
-- If retirement is initiated for the current track in a managed One True
-  Playlist, attempts Apple Music removal and then advances playback.
+- If retiring from a managed One True Playlist, attempts Apple Music removal.
+  The current-track Retire command also advances playback.
 - Otherwise keeps the retirement local-only.
 - Falls back to local filtering if an attempted remote removal fails.
 
-The user can restore a retired track. Restore clears the local retirement
-state, moves the item to the bottom of the Active list for that playlist, and
-makes it eligible for Active playback again.
+Retired offers Move to Triage and Move to One True Playlist. Each moves the
+existing row to the bottom of the destination order without resetting counts.
+Move to Triage establishes explicit keep intent. The separate global Reset All
+Stats command retains its existing counter/retirement reset behavior; ordinary
+resets preserve prior-activity evidence for active retention.
 
 ## Shared vs Device-Local State
 
@@ -634,11 +676,11 @@ Additions, retirements, and restores:
   Retired order.
 - Restoring a track removes it from Retired order and appends it to the bottom
   of Active order.
-- For the currently playing playlist, deletion or retirement is recorded in
-  SwiftData and local order immediately. Current-track retirement advances
-  playback, but the existing MusicKit queue may retain the retired entry until
-  a later queue setup or player-managed queue change. The Active UI filters it
-  immediately.
+- Membership changes prune no-longer-eligible native queue entries in place,
+  preserving MusicKit shuffle/repeat and position. The current entry remains
+  until transport advances. Current-track movement settles its outgoing session
+  without fabricating a skip; source-unlink cleanup defers deletion while a
+  countable session is in flight, then reevaluates retention after accounting.
 - When switching away from a playlist, reconcile its local order so already
   retired or otherwise unplayable tracks are removed from Active order before
   it is played again.
@@ -825,14 +867,14 @@ Platform notes:
 
 ### Dashboard
 
-Purpose: provide entry points to the One True Playlist and the triage bucket.
-The top level contains those two things and nothing else.
+Purpose: provide three entry points: One True Playlist, Triage and Retired.
 
 Show:
 
 - One True Playlist row, or a link to configure it when absent.
 - Triage bucket row, including on a fresh install and after its last
   contributing playlist is removed.
+- Global Retired row, including when empty.
 - For each row: representative artwork, role/current-playback icon, total
   tracked count, source, last-sync status, and write policy.
 - Link to the triage sources screen, labelled with the contributing count.
@@ -852,7 +894,8 @@ Purpose: inspect any linked playlist.
 
 Show:
 
-- Segmented Active and Retired lists on iOS.
+- Separate top-level OTP, Triage and Retired destinations, with no per-playlist
+  Active/Retired picker.
 - Active tracks ordered by the device-local Active playback order.
 - Retired tracks ordered by the device-local Retired playback order and
   playable as a playlist context from iOS.
@@ -860,7 +903,7 @@ Show:
 - Retirement state.
 - Promote action for triage bucket tracks.
 - Manual retire/remove action for active tracks.
-- Restore action for retired tracks.
+- Move to Triage and Move to One True Playlist for retired tracks.
 - Search/add action scoped to that playlist.
 
 Platform notes:
@@ -882,7 +925,7 @@ Show:
 - Playthrough count versus skip count.
 - Playback controls.
 - Manual retire action for active tracks.
-- Restore action for retired tracks.
+- Move to Triage and Move to One True Playlist for retired tracks.
 - Promote action when playing from the triage bucket.
 
 The standard media controls should call into a shared playback controller.
@@ -908,13 +951,12 @@ Show:
 - The triage bucket in a separate section, opening the same track
   list.
 - Tracks in their current local order, and nothing else in the list.
-- The currently playing Retired playlist context if playback was started from
-  Retired on iOS.
+- Global Retired as its own root destination, playable directly from CarPlay.
 - Current track title, artist, album, and artwork where CarPlay templates
   support it.
 - Play, pause, next, previous, and Now Playing controls.
 - Direct Retire button in Now Playing for active tracks.
-- Direct Restore button in Now Playing for retired tracks.
+- Direct Move to Triage button in Now Playing for retired tracks.
 - Direct Promote button when the current track belongs to the triage bucket.
 - An Up Next button that returns to the root menu.
 
@@ -1049,7 +1091,7 @@ window through the standard app settings command as well as in-app navigation.
 
 - Add tracks to managed linked Apple Music playlists.
 - Promote tracks from the triage bucket to a managed One True Playlist and
-  retire the source bucket item after success.
+  move the same global item on success without retaining a source copy.
 - Return explicit success/failure results.
 
 ### SearchService
@@ -1197,7 +1239,7 @@ longer exists.
 - Remote playlist mutation fails after local retirement.
 - Retired tracks are restored while another surface is showing the same
   playlist.
-- Active and Retired tabs are switched repeatedly while playback is active.
+- OTP, Triage and Retired destinations are switched repeatedly while playback is active.
 - A Retired playlist is started on iOS while CarPlay is connected.
 - iCloud data arrives while a device is actively playing.
 - The same iCloud account uses Overplay on iPhone and iPad at the same time.
@@ -1261,26 +1303,25 @@ commands independent of SwiftUI views so CarPlay templates use the same shared
 services as the phone UI.
 
 Navigation is three levels and nothing more (`CAR-001`): the root lists the
-One True Playlist and the triage bucket, a playlist lists its
+One True Playlist, Triage and Retired, a collection lists its
 tracks, and a track opens Now Playing. There are no shuffle rows and no
 one-tap play row — a driver should not have to read a menu to tell two
 similar entries apart.
 
 CarPlay supports:
 
-- Browse the One True Playlist and the triage bucket.
+- Browse the One True Playlist, Triage and global Retired.
 - Browse playlist tracks with playthrough and skip totals in row detail.
 - Select a track to play it, skipping inside the live queue when the playlist
   is already playing so the order after it survives.
-- Show the current Retired playlist context when the user started Retired
-  playback from iOS.
+- Start Retired playback directly, or continue the same context from iOS.
 - Now Playing transport controls, provided by the system.
 - Shuffle and repeat, as the system's own Now Playing controls, reflecting and
   setting MusicKit's modes (`PLAY-004`).
 - Retire the current track.
 - Promote the current bucket track, whether or not it is retired — deciding to
   keep a track you had set aside is the point of hearing it again.
-- Restore the current track when it is retired.
+- Move the current retired track to Triage with explicit keep intent.
 - Return to the root menu from Now Playing.
 
 CarPlay does not provide a separate skip-history browser. The app publishes

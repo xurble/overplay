@@ -8,6 +8,77 @@ import Testing
 @MainActor
 @Suite("Player-confirmed playback transitions", .serialized)
 struct PlaybackTransitionTests {
+    @Test("Unlink preserves a playing session and prunes queued unowned songs without resetting modes")
+    func unlinkDuringPlaybackPreservesAccounting() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        let bucket = try PlaylistRepository.triageBucket(in: fixture.context)
+        let source = try PlaylistRepository.addTriageSource(
+            AppleMusicPlaylist(id: "source", name: "Source", trackCount: nil), in: fixture.context
+        )
+        for item in fixture.items {
+            item.playlistID = bucket.id
+            item.sourceMusicPlaylistIDs = ["source"]
+        }
+        fixture.items[2].isExplicitlyKept = true
+        try fixture.context.save()
+        await fixture.controller.playPlaylist(bucket, startingAt: fixture.tracks[0], settings: fixture.settings, context: fixture.context)
+        fixture.player.playbackTime = 20
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        fixture.player.shuffleMode = .songs
+        fixture.player.repeatMode = .all
+        let queuedID = fixture.items[1].id
+        let replacements = fixture.player.replaceQueueCallCount
+        try fixture.controller.removeTriageSource(source, context: fixture.context)
+        #expect(fixture.items[0].pendingRetentionCleanup)
+        #expect(try PlaylistItemRepository.item(id: queuedID, in: fixture.context) == nil)
+        #expect(fixture.player.queuedEntryCount == 2)
+        #expect(fixture.player.replaceQueueCallCount == replacements)
+        #expect(fixture.player.shuffleMode == .songs && fixture.player.repeatMode == .all)
+        await fixture.controller.next(settings: fixture.settings, context: fixture.context)
+        #expect(fixture.items[0].skipCount == 1)
+        #expect(!fixture.items[0].pendingRetentionCleanup)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[2].id.rawValue)
+    }
+
+    @Test("Retiring an untouched current Triage song deletes it without inventing a skip")
+    func retireUntouchedCurrentSong() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        let bucket = try PlaylistRepository.triageBucket(in: fixture.context)
+        for item in fixture.items { item.playlistID = bucket.id; item.isExplicitlyKept = true }
+        try fixture.context.save()
+        await fixture.controller.playPlaylist(bucket, startingAt: fixture.tracks[0], settings: fixture.settings, context: fixture.context)
+        let itemID = fixture.items[0].id
+        await fixture.controller.evictCurrent(settings: fixture.settings, context: fixture.context)
+        #expect(try PlaylistItemRepository.item(id: itemID, in: fixture.context) == nil)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[1].id.rawValue)
+        #expect(try fixture.history().filter { $0.eventType == .skipCounted }.isEmpty)
+    }
+
+    @Test("Moving a playing retired row to Triage preserves its unfinished playthrough")
+    func rowMovementPreservesOngoingPlaythrough() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        let bucket = try PlaylistRepository.triageBucket(in: fixture.context)
+        for item in fixture.items {
+            item.playlistID = bucket.id
+            item.evictedAt = .now
+            item.skipCount = 1
+        }
+        try fixture.context.save()
+        await fixture.controller.playPlaylist(bucket, startingAt: fixture.tracks[0], scope: .retired, settings: fixture.settings, context: fixture.context)
+        fixture.player.playbackTime = 20
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        try fixture.controller.restoreTrack(fixture.items[0], playlist: bucket, context: fixture.context)
+        #expect(fixture.items[0].playthroughCount == 0)
+        fixture.player.playbackTime = 179
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        await fixture.controller.next(settings: fixture.settings, context: fixture.context)
+        #expect(fixture.items[0].playthroughCount == 1)
+        #expect(fixture.items[0].evictedAt == nil && fixture.items[0].isExplicitlyKept)
+    }
+
     @Test("confirmation policy never advances an unchanged or missing entry")
     func confirmationPolicyNeverAdvancesAnUnchangedOrMissingEntry() {
         let policy = PlaybackTransitionConfirmationPolicy(
@@ -494,7 +565,10 @@ struct PlaybackTransitionTests {
         await fixture.controller.reconcilePlayerState(context: fixture.context)
 
         let bucket = try PlaylistRepository.triageBucket(in: fixture.context)
-        let activeBucketOnlyTrackID = "bucket-active"
+        let bucketTrack = TrackRecord(title: "Bucket", artistName: "Artist")
+        fixture.context.insert(bucketTrack)
+        fixture.context.insert(PlaylistItemRecord(playlistID: bucket.id, trackID: bucketTrack.id))
+        let activeBucketOnlyTrackID = bucketTrack.id.uuidString
         let retiredBucketTrackID = "bucket-retired"
         let retiredSourceTrackID = "source-retired"
         defer {
@@ -1717,6 +1791,9 @@ private final class TransitionSleepProbe {
 
 @MainActor
 private final class ControllablePlaybackPlayer: PlaybackPlayer {
+    func removeQueueEntries(withIDs entryIDs: Set<String>) {
+        entries.removeAll { entryIDs.contains($0.id) }
+    }
     enum Failure: Error {
         case commandFailed
         case queueEnded

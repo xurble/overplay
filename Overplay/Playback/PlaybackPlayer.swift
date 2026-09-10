@@ -30,6 +30,7 @@ protocol PlaybackPlayer: AnyObject {
     func skipToPreviousEntry() async throws
     func skipToEntry(withID entryID: String) async throws
     func appendToQueue(_ tracks: [Track]) async throws
+    func removeQueueEntries(withIDs entryIDs: Set<String>)
 }
 
 extension PlaybackPlayer {
@@ -130,6 +131,10 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
         ) {
             try await player.queue.insert(tracks, position: .tail)
         }
+    }
+
+    func removeQueueEntries(withIDs entryIDs: Set<String>) {
+        player.queue.entries.removeAll { entryIDs.contains($0.id) }
     }
 
     /// Both accessors are optional on `MusicPlayer.State`; nil means MusicKit

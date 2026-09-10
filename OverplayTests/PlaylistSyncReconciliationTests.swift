@@ -6,6 +6,53 @@ import Testing
 @MainActor
 @Suite("Playlist sync reconciliation")
 struct PlaylistSyncReconciliationTests {
+    @Test("A retirement during an initial or ordinary source fetch stays deleted through retries, but re-link imports it anew", arguments: [false, true])
+    func deletedRetirementWinsEarlierSourceImport(completedInitialSync: Bool) async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let track = TrackRecord(catalogID: "retire-during-fetch", title: "Song", artistName: "Artist")
+        let item = PlaylistItemRecord(playlistID: bucket.id, trackID: track.id, isExplicitlyKept: true)
+        context.insert(track)
+        context.insert(item)
+        let remote = AppleMusicPlaylist(id: "delayed-source", name: "Source", trackCount: 1)
+        let source = try PlaylistRepository.addTriageSource(remote, in: context)
+        if completedInitialSync {
+            source.lastSyncedAt = .now
+            try context.save()
+        }
+        let adapter = DeferredPlaylistSourceSync()
+        let service = PlaylistSyncService(sourceRegistry: PlaylistSourceSyncRegistry(adapters: [.appleMusic: adapter]))
+        let task = Task { try await service.syncPlaylist(source, in: context) }
+        await adapter.waitUntilFetchStarts()
+        let itemID = item.id
+        try TrackActionService.evictTrack(item, playlist: bucket, message: "Done", in: context)
+        #expect(try PlaylistItemRepository.item(id: itemID, in: context) == nil)
+        let snapshots = [snapshot(id: "retire-during-fetch", title: "Song")]
+        adapter.completeFetch(with: PlaylistSourceFetchResult(snapshots: snapshots, skippedCount: 0, skippedReason: nil, remoteLastModifiedAt: nil))
+        _ = try await task.value
+        #expect(try PlaylistItemRepository.item(trackID: track.id, in: context) == nil)
+        _ = try await PlaylistSyncService().reconcile(snapshots: snapshots, playlistRecord: source, syncedAt: .now, in: context)
+        #expect(try PlaylistItemRepository.item(trackID: track.id, in: context) == nil)
+        try PlaylistRepository.removeTriageSource(source, in: context)
+        _ = try PlaylistRepository.addTriageSource(remote, in: context)
+        _ = try await PlaylistSyncService().reconcile(snapshots: snapshots, playlistRecord: source, syncedAt: .now, in: context)
+        #expect(try PlaylistItemRepository.item(trackID: track.id, in: context)?.evictedAt == nil)
+        #expect(try PlaylistItemRepository.item(trackID: track.id, in: context) != nil)
+    }
+
+    @Test("Missing MusicKit pages or relationships throw instead of proving OTP absence")
+    func incompleteSnapshotsCannotReleaseSuppression() async throws {
+        await #expect(throws: PlaylistSyncError.self) {
+            _ = try await AppleMusicPlaylistTrackLoader.collectCompleteTracks(firstBatch: nil, hasNextBatch: false) { nil }
+        }
+        await #expect(throws: PlaylistSyncError.self) {
+            _ = try await AppleMusicPlaylistTrackLoader.collectCompleteTracks(firstBatch: [], hasNextBatch: true) { nil }
+        }
+        let completeEmpty = try await AppleMusicPlaylistTrackLoader.collectCompleteTracks(firstBatch: [], hasNextBatch: false) { nil }
+        #expect(completeEmpty.isEmpty)
+    }
+
     @Test("reconcile inserts tracks and playlist items")
     func reconcileInsertsTracksAndPlaylistItems() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
@@ -512,7 +559,7 @@ struct PlaylistSyncReconciliationTests {
         #expect(didPromote)
         #expect(source.role == .oneTruePlaylist)
         #expect(mainItems.count == snapshots.count)
-        #expect(bucketItems.count == PlaylistSyncService.syncYieldStride)
+        #expect(bucketItems.isEmpty)
         #expect(bucketItems.allSatisfy {
             $0.sourceMusicPlaylistIDs == [sourcePlaylistID]
         })
@@ -584,7 +631,7 @@ struct PlaylistSyncReconciliationTests {
         #expect(didRoundTrip)
         #expect(original.role == .oneTruePlaylist)
         #expect(mainItems.count == snapshots.count)
-        #expect(bucketItems.count == PlaylistSyncService.syncYieldStride)
+        #expect(bucketItems.isEmpty)
         #expect(Set(PlaybackOrderStore.state(
             playerID: "main",
             musicPlaylistID: originalPlaylistID
@@ -634,7 +681,7 @@ struct PlaylistSyncReconciliationTests {
         })
     }
 
-    @Test("relinking a source between chunks restores provenance on the processed prefix")
+    @Test("relinking a source between chunks cancels the old import and allows a fresh import")
     func relinkingSourceBetweenChunksRestoresProvenanceOnProcessedPrefix() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
@@ -665,9 +712,13 @@ struct PlaylistSyncReconciliationTests {
             in: context
         )
 
-        let bucketItems = try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
         #expect(didRelink)
         #expect(source.isActive)
+        #expect(try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context).isEmpty)
+        _ = try await service.reconcile(
+            snapshots: snapshots, playlistRecord: source, syncedAt: .now, in: context
+        )
+        let bucketItems = try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
         #expect(bucketItems.count == snapshots.count)
         #expect(bucketItems.allSatisfy {
             $0.sourceMusicPlaylistIDs == [sourcePlaylistID]

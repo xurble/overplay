@@ -185,10 +185,13 @@ final class CarPlayCoordinator: NSObject {
             // Contributing playlists are intake sources, not playback
             // contexts — the driver browses the bucket they feed.
             let triageItems = summaries
-                .filter { $0.role == .triageBucket }
+                .filter { $0.role == .triageBucket && $0.playbackScope == .active }
                 .map(playlistItem(for:))
             if !triageItems.isEmpty {
                 sections.append(CPListSection(items: triageItems, header: "Triage", sectionIndexTitle: nil))
+            }
+            if let retired = summaries.first(where: { $0.playbackScope == .retired }) {
+                sections.append(CPListSection(items: [playlistItem(for: retired)], header: "Retired", sectionIndexTitle: nil))
             }
             return sections
         } catch {
@@ -244,6 +247,7 @@ final class CarPlayCoordinator: NSObject {
         }
 
         return playbackController.currentPlaylistID == musicPlaylistID
+            && playbackController.currentPlaylistScope == summary.playbackScope
     }
 
     private func isCurrentTrack(_ summary: TrackSummaryPresentation, in playlist: PlaylistRecord) -> Bool {
@@ -289,8 +293,9 @@ final class CarPlayCoordinator: NSObject {
             )
 
             visiblePlaylistID = playlist.id
+            visiblePlaylistScope = summary.playbackScope
             let template = CPListTemplate(
-                title: playlist.name,
+                title: summary.title,
                 sections: try playlistSections(for: playlist)
             )
             visiblePlaylistTemplate = template
@@ -334,13 +339,10 @@ final class CarPlayCoordinator: NSObject {
         return [CPListSection(items: tracks.map { trackItem($0, playlist: playlist, scope: scope) })]
     }
 
-    private func carPlayDisplayScope(for playlist: PlaylistRecord) -> PlaylistPlaybackScope {
-        guard let playbackController,
-              playbackController.currentPlaylistID == playlist.musicPlaylistID else {
-            return .active
-        }
+    private var visiblePlaylistScope: PlaylistPlaybackScope = .active
 
-        return playbackController.currentPlaylistScope
+    private func carPlayDisplayScope(for playlist: PlaylistRecord) -> PlaylistPlaybackScope {
+        visiblePlaylistID == playlist.id ? visiblePlaylistScope : .active
     }
 
     private func play(
@@ -573,7 +575,7 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func makeRestoreButton() -> CPNowPlayingImageButton {
-        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "arrow.uturn.backward.circle")) { [weak self] _ in
+        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "tray")) { [weak self] _ in
             Task { @MainActor in
                 self?.restoreCurrentTrack()
             }
