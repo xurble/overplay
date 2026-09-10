@@ -47,8 +47,12 @@ struct SplitAppShell: View {
         case .dashboard:
             DashboardView(settings: settings)
         case let .playlist(playlistID):
-            if let playlist = activePlaylists.first(where: { $0.id == playlistID }) {
+            if let playlist = resolvedActivePlaylist(for: playlistID) {
                 PlaylistManagementView(settings: settings, playlist: playlist)
+                    .task(id: playlist.id) {
+                        guard playlist.id != playlistID else { return }
+                        storedSelection = AppShellDestination.playlist(playlist.id).storageValue
+                    }
             } else {
                 ContentUnavailableView(
                     "Playlist Unavailable",
@@ -76,6 +80,20 @@ struct SplitAppShell: View {
                 }
                 return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
             }
+    }
+
+    private func resolvedActivePlaylist(for playlistID: UUID) -> PlaylistRecord? {
+        guard let requestedPlaylist = playlists.first(where: { $0.id == playlistID }) else {
+            return nil
+        }
+        let resolvedPlaylist = PlaylistRepository.canonicalPlaylist(
+            for: requestedPlaylist,
+            among: playlists
+        )
+        guard resolvedPlaylist.isActive, resolvedPlaylist.role.isPlaybackContext else {
+            return nil
+        }
+        return resolvedPlaylist
     }
 
     private func playlistIcon(for playlist: PlaylistRecord) -> String {

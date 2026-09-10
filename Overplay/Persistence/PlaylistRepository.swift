@@ -146,6 +146,25 @@ enum PlaylistRepository {
         return buckets.first(where: \.isActive) ?? buckets.first
     }
 
+    /// Resolves a bucket record retained by navigation or another UI surface
+    /// after CloudKit convergence changed which UUID owns the shared bucket.
+    /// Non-bucket playlists retain their own identity.
+    static func canonicalPlaylist(
+        for playlist: PlaylistRecord,
+        among playlists: [PlaylistRecord]
+    ) -> PlaylistRecord {
+        guard playlist.role == .triageBucket else { return playlist }
+        let buckets = orderedTriageBuckets(playlists)
+        return buckets.first(where: \.isActive) ?? buckets.first ?? playlist
+    }
+
+    static func canonicalPlaylist(
+        for playlist: PlaylistRecord,
+        in context: ModelContext
+    ) throws -> PlaylistRecord {
+        canonicalPlaylist(for: playlist, among: try triageBuckets(in: context))
+    }
+
     /// Sorts in memory for the UUID tie-break because CloudKit can preserve
     /// equal creation dates from independently created records. Every device
     /// must choose the same keeper once it sees the same set of buckets.
@@ -156,7 +175,13 @@ enum PlaylistRepository {
             sortBy: [SortDescriptor(\.createdAt)]
         )
         descriptor.includePendingChanges = true
-        return try context.fetch(descriptor).sorted {
+        return orderedTriageBuckets(try context.fetch(descriptor))
+    }
+
+    private static func orderedTriageBuckets(
+        _ playlists: [PlaylistRecord]
+    ) -> [PlaylistRecord] {
+        playlists.filter(\.isTriageBucket).sorted {
             if $0.createdAt != $1.createdAt {
                 return $0.createdAt < $1.createdAt
             }

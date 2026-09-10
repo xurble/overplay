@@ -2,17 +2,6 @@ import Foundation
 import SwiftData
 
 enum CarPlayLibrarySnapshot {
-    /// A CarPlay detail template can outlive the bucket record that opened
-    /// it. Resolve that stored alias to the active canonical bucket before
-    /// rebuilding rows or comparing against the controller snapshot.
-    static func canonicalPlaylist(
-        for playlist: PlaylistRecord,
-        in context: ModelContext
-    ) throws -> PlaylistRecord {
-        guard playlist.role == .triageBucket else { return playlist }
-        return try PlaylistRepository.existingTriageBucket(in: context) ?? playlist
-    }
-
     static func playlistSummaries(in context: ModelContext) throws -> [PlaylistSummaryPresentation] {
         let playlists = try PlaylistRepository.activePlaylists(in: context)
         let items = try PlaylistItemRepository.items(forPlaylistIDs: playlists.map(\.id), in: context)

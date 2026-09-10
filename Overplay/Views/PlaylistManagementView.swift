@@ -2,6 +2,25 @@ import SwiftData
 import SwiftUI
 
 struct PlaylistManagementView: View {
+    @Query(sort: \PlaylistRecord.createdAt) private var playlists: [PlaylistRecord]
+
+    var settings: OverplaySettings
+    var playlist: PlaylistRecord
+
+    var body: some View {
+        let canonicalPlaylist = PlaylistRepository.canonicalPlaylist(
+            for: playlist,
+            among: playlists
+        )
+        PlaylistManagementContentView(
+            settings: settings,
+            playlist: canonicalPlaylist
+        )
+        .id(canonicalPlaylist.id)
+    }
+}
+
+private struct PlaylistManagementContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackController.self) private var playbackController
 

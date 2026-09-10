@@ -29,7 +29,7 @@ struct CarPlayLibrarySnapshotTests {
         context.insert(alias)
         try context.save()
 
-        let resolved = try CarPlayLibrarySnapshot.canonicalPlaylist(for: alias, in: context)
+        let resolved = try PlaylistRepository.canonicalPlaylist(for: alias, in: context)
 
         #expect(resolved.id == canonical.id)
     }

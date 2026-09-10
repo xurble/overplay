@@ -283,7 +283,7 @@ final class CarPlayCoordinator: NSObject {
                 setRootTemplate(animated: true)
                 return
             }
-            let playlist = try CarPlayLibrarySnapshot.canonicalPlaylist(
+            let playlist = try PlaylistRepository.canonicalPlaylist(
                 for: storedPlaylist,
                 in: modelContext
             )
@@ -655,7 +655,7 @@ final class CarPlayCoordinator: NSObject {
               let visiblePlaylistID,
               let modelContext,
               let storedPlaylist = try? PlaylistRepository.playlist(id: visiblePlaylistID, in: modelContext),
-              let playlist = try? CarPlayLibrarySnapshot.canonicalPlaylist(
+              let playlist = try? PlaylistRepository.canonicalPlaylist(
                 for: storedPlaylist,
                 in: modelContext
               ),
