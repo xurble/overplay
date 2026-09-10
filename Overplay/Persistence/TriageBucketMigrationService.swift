@@ -43,6 +43,10 @@ enum TriageBucketMigrationService {
         let playlists = try PlaylistRepository.allPlaylists(in: context)
         let legacyPlaylists = playlists
             .filter(\.needsTriageBucketMigration)
+        let triageItemOwners = playlists.filter {
+            $0.needsTriageBucketMigration
+                || $0.roleRawValue == PlaylistRole.triageSource.rawValue
+        }
         let convergence = try PlaylistRepository.convergeTriageBuckets(in: context)
         var outcome = Outcome(
             createdBucket: convergence.createdBucket,
@@ -52,39 +56,54 @@ enum TriageBucketMigrationService {
             reparentedHistoryEventCount: convergence.reparentedHistoryEventCount
         )
         let bucket = convergence.bucket
-
-        guard !legacyPlaylists.isEmpty else {
-            if outcome.didChangeAnything {
-                try context.save()
-            }
-            return outcome
-        }
-
         let migratedAt = Date.now
 
-        for legacyPlaylist in legacyPlaylists {
-            let sourceMusicPlaylistID = legacyPlaylist.musicPlaylistID
-            let reparentSummary = try PlaylistItemRepository.reparentItems(
-                from: legacyPlaylist.id,
-                to: bucket.id,
-                sourceMusicPlaylistID: sourceMusicPlaylistID,
-                in: context
-            )
+        // A CloudKit import can deliver a pre-bucket item's row after this
+        // device has already converted its parent to `.triageSource`. Sweep
+        // every source owner on every pass, not only parents still carrying
+        // the legacy raw role. Inactive sources stay unattributed, matching
+        // unlink semantics.
+        for sourcePlaylist in triageItemOwners {
+            let reparentSummary = if sourcePlaylist.isActive {
+                try PlaylistItemRepository.reparentItems(
+                    from: sourcePlaylist.id,
+                    to: bucket.id,
+                    sourceMusicPlaylistID: sourcePlaylist.musicPlaylistID,
+                    in: context
+                )
+            } else {
+                try PlaylistItemRepository.reparentItems(
+                    from: sourcePlaylist.id,
+                    to: bucket.id,
+                    in: context
+                )
+            }
             outcome.movedItemCount += reparentSummary.movedCount
             outcome.mergedItemCount += reparentSummary.mergedCount
+            outcome.reparentedHistoryEventCount += try EventRepository.reparentEvents(
+                from: sourcePlaylist.id,
+                to: bucket.id,
+                in: context
+            )
 
-            legacyPlaylist.role = .triageSource
-            legacyPlaylist.updatedAt = migratedAt
-            outcome.migratedSourceCount += 1
+            if sourcePlaylist.needsTriageBucketMigration {
+                sourcePlaylist.role = .triageSource
+                sourcePlaylist.updatedAt = migratedAt
+                outcome.migratedSourceCount += 1
+            }
         }
 
-        rekeyDeviceLocalPlaybackState(
-            migratedMusicPlaylistIDs: legacyPlaylists.map(\.musicPlaylistID),
-            bucketMusicPlaylistID: bucket.musicPlaylistID,
-            defaults: defaults
-        )
+        if !legacyPlaylists.isEmpty {
+            rekeyDeviceLocalPlaybackState(
+                migratedMusicPlaylistIDs: legacyPlaylists.map(\.musicPlaylistID),
+                bucketMusicPlaylistID: bucket.musicPlaylistID,
+                defaults: defaults
+            )
+        }
 
-        try context.save()
+        if outcome.didChangeAnything {
+            try context.save()
+        }
         return outcome
     }
 

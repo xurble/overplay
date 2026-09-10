@@ -194,11 +194,15 @@ struct PlaylistSyncService {
     /// Syncs every contributing playlist and reports the combined result, so
     /// a bucket sync reads as one action.
     private func syncTriageSources(
-        into bucket: PlaylistRecord,
+        into _: PlaylistRecord,
         in context: ModelContext,
         runIdentityMerge: Bool,
         skipWhenRemoteUnchanged: Bool
     ) async throws -> PlaylistSyncSummary {
+        // A bucket refresh is also an import-convergence opportunity. Do this
+        // before checking sources so a no-contributor bucket still absorbs
+        // late CloudKit rows and hides independently created aliases.
+        let bucket = try PlaylistRepository.triageBucket(in: context)
         let sources = try PlaylistRepository.triageSources(in: context)
 
         guard !sources.isEmpty else {

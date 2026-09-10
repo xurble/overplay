@@ -106,6 +106,40 @@ struct TriageBucketTests {
         #expect(bucket.lastSyncError == nil)
     }
 
+    @Test("syncing a bucket with no contributors still converges imported aliases")
+    func syncingBucketWithoutContributorsConvergesAliases() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let keeper = PlaylistRecord(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket,
+            writePolicy: .incomingOnly,
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        let importedAlias = PlaylistRecord(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket,
+            writePolicy: .incomingOnly,
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        let lateTrack = TrackRecord(catalogID: "late", title: "Late", artistName: "Artist")
+        context.insert(keeper)
+        context.insert(importedAlias)
+        context.insert(lateTrack)
+        context.insert(PlaylistItemRecord(playlistID: importedAlias.id, trackID: lateTrack.id))
+
+        let summary = try await PlaylistSyncService().syncPlaylist(keeper, in: context)
+
+        #expect(summary.skippedReason == "noTriageSources")
+        #expect(importedAlias.isActive == false)
+        #expect(try PlaylistItemRepository.items(forPlaylistID: importedAlias.id, in: context).isEmpty)
+        #expect(try PlaylistItemRepository.items(forPlaylistID: keeper.id, in: context).count == 1)
+    }
+
     // MARK: - Unlinking a contributor
 
     @Test("unlinking a contributing playlist keeps its tracks unattributed")
@@ -278,6 +312,53 @@ struct TriageBucketTests {
         #expect(sharedItem.playthroughCount == 3)
         // Exactly one bucket, however many times this runs.
         #expect(try PlaylistRepository.allPlaylists(in: context).filter(\.isTriageBucket).count == 1)
+    }
+
+    @Test("migration absorbs legacy rows imported after their parent role changed")
+    func migrationAbsorbsLateLegacyRows() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let source = insertLegacyTriagePlaylist(
+            musicPlaylistID: "legacy-late",
+            name: "Legacy Late",
+            in: context
+        )
+        try TriageBucketMigrationService.migrate(in: context, defaults: makeDefaults())
+        #expect(source.role == .triageSource)
+
+        let lateTrack = TrackRecord(catalogID: "legacy-late-track", title: "Late", artistName: "Artist")
+        context.insert(lateTrack)
+        context.insert(PlaylistItemRecord(
+            playlistID: source.id,
+            trackID: lateTrack.id,
+            sourceMusicPlaylistIDs: [],
+            evictedAt: Date(timeIntervalSince1970: 200),
+            evictionReason: .manual,
+            evictionSource: .user
+        ))
+        let lateEvent = EventRepository.logHistory(
+            playlistID: source.id,
+            trackID: lateTrack.id,
+            eventType: .evicted,
+            source: .overplay,
+            in: context
+        )
+
+        let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: makeDefaults())
+
+        let bucket = try #require(try PlaylistRepository.existingTriageBucket(in: context))
+        #expect(outcome.migratedSourceCount == 0)
+        #expect(outcome.movedItemCount == 1)
+        #expect(outcome.reparentedHistoryEventCount == 1)
+        #expect(outcome.didChangeAnything)
+        #expect(try PlaylistItemRepository.items(forPlaylistID: source.id, in: context).isEmpty)
+        let movedItem = try #require(
+            try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context).first
+        )
+        #expect(movedItem.trackID == lateTrack.id)
+        #expect(movedItem.evictedAt != nil)
+        #expect(movedItem.sourceMusicPlaylistIDs == [source.musicPlaylistID])
+        #expect(lateEvent.playlistID == bucket.id)
     }
 
     @Test("migration preserves the most recent eviction decision")
