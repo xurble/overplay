@@ -111,6 +111,36 @@ To configure a local checkout:
 Apple Music and CloudKit capabilities must be configured in the Apple
 Developer portal and in the Xcode target for the identifiers you use.
 
+### Isolated developer app
+
+Select the shared **Overplay Dev** scheme and Run to install **Overplay Dev**
+alongside your everyday Overplay app. It uses the **Development** configuration,
+which appends `.dev` to your configured bundle identifier. Configure signing
+and Apple Music/CarPlay capabilities for that separate identifier as needed.
+Do not override it with your everyday app identifier.
+
+This build keeps its SwiftData database, preferences, onboarding state, playback
+restoration, and diagnostic files in its own app sandbox. Its database is
+persistent and local-only: CloudKit is disabled, and its entitlements contain
+no iCloud access. Everyday Overplay data and Overplay play/skip counts are
+preserved. All playback surfaces continue to use the shared app runtime.
+
+To start fresh, stop the developer app, **delete Overplay Dev** from the device
+(not Offload App), and run the scheme again. Delete only the developer app.
+This resets its local data and onboarding state without removing everyday
+Overplay. System-managed Apple Music permission prompts may not repeat.
+
+Apple Music remains your real account: playback and playlist edits can still
+affect your Apple Music library and its statistics. This is isolation of
+Overplay's own data, not a mock MusicKit environment.
+
+The ordinary **Overplay** scheme keeps its existing Debug and Release behavior.
+Both schemes use **Release** for Archive/Profile, producing the everyday app.
+The developer store requires both `DEBUG` and `OVERPLAY_DEVELOPMENT`; compiling
+the developer flag without `DEBUG` fails. A developer build also refuses to
+open its store without a `.dev` app identifier, and ordinary builds reject
+that reserved suffix instead of connecting the developer app to CloudKit.
+
 ## Current Status
 
 The core product loop is in place: linked playlist management, periodic sync

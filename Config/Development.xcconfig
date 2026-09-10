@@ -1,0 +1,6 @@
+// Separate app sandbox and preferences; keep local signing settings.
+#include "Shared.xcconfig"
+
+PRODUCT_BUNDLE_IDENTIFIER = $(inherited).dev
+CODE_SIGN_ENTITLEMENTS = Config/Development.entitlements
+ICLOUD_CONTAINER_IDENTIFIER =

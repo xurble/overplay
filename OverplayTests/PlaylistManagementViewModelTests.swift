@@ -576,7 +576,7 @@ struct PlaylistManagementViewModelTests {
 
         #expect(promotedItemID == item.id)
         #expect(viewModel.promotingItemIDs.isEmpty)
-        #expect(viewModel.message == "Promoted Track.")
+        #expect(viewModel.message == "Overplayed Track.")
     }
 
     @Test("promote ignores non-triage playlists")
