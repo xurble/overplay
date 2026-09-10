@@ -19,7 +19,7 @@ struct SettingsView: View {
                         Text(settings.selectedPlaylistName ?? "None")
                             .font(.body)
                         SettingsSubtitle(
-                            "Your One True Playlist. Retirements and triage promotions are manual."
+                            "Your One True Playlist. Retirements and sending triage tracks to Overplay are manual."
                         )
                     }
                     Spacer()

@@ -43,7 +43,7 @@ struct HistoryView: View {
                 ContentUnavailableView(
                     emptyTitle,
                     systemImage: "clock.arrow.circlepath",
-                    description: Text("Playback, promotion, removal, restore, and remote mutation events will appear here.")
+                    description: Text("Playback, Overplay, removal, restore, and remote mutation events will appear here.")
                 )
             }
 
@@ -58,6 +58,7 @@ struct HistoryView: View {
                     )
                     reloadToken += 1
                 }
+                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
             }
 
             if hasMoreEvents {
@@ -71,6 +72,7 @@ struct HistoryView: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .listStyle(.plain)
         .miniPlayerScrollContentInset()
         .navigationTitle("History")
         .task(id: historyDataKey) {
@@ -137,8 +139,8 @@ private struct HistoryEventRowView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ArtworkView(urlString: row.artworkURLTemplate, cornerRadius: 8)
-                .frame(width: 56, height: 56)
+            ArtworkView(urlString: row.artworkURLTemplate, pixelSize: 144, cornerRadius: 0)
+                .frame(width: 72, height: 72)
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -174,7 +176,6 @@ private struct HistoryEventRowView: View {
                     .buttonStyle(.bordered)
             }
         }
-        .padding(.vertical, 6)
     }
 }
 

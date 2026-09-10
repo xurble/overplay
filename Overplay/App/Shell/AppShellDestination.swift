@@ -7,7 +7,6 @@ enum AppShellDestination: Hashable {
     case search
     case history
     case settings
-    case linkedPlaylists
 
     init?(storageValue: String) {
         if storageValue.hasPrefix("playlist:") {
@@ -28,8 +27,6 @@ enum AppShellDestination: Hashable {
             self = .history
         case Self.settings.storageValue:
             self = .settings
-        case Self.linkedPlaylists.storageValue:
-            self = .linkedPlaylists
         default:
             return nil
         }
@@ -49,8 +46,6 @@ enum AppShellDestination: Hashable {
             "history"
         case .settings:
             "settings"
-        case .linkedPlaylists:
-            "linkedPlaylists"
         }
     }
 }

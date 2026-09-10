@@ -6,6 +6,14 @@ import Testing
 @MainActor
 @Suite("Playlist management view model")
 struct PlaylistManagementViewModelTests {
+    @Test("playlist play button describes shuffle behavior")
+    func playlistPlayButtonDescribesShuffleBehavior() {
+        let viewModel = PlaylistManagementViewModel()
+
+        #expect(viewModel.playButtonTitle(isCurrentPlaylist: false) == "Shuffle and Play")
+        #expect(viewModel.playButtonTitle(isCurrentPlaylist: true) == "Playing")
+    }
+
     @Test("ordered items filters by playlist and follows playback mode state")
     func orderedItemsFilterAndFollowPlaybackState() {
         let viewModel = PlaylistManagementViewModel()

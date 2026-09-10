@@ -299,7 +299,7 @@ struct TrackActionControlsView: View {
                 Button {
                     Task { playbackController.restoreCurrent(context: modelContext) }
                 } label: {
-                    Label("Move to Triage", systemImage: "tray.fill")
+                    Label("Triage", systemImage: "tray.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .disabled(playbackController.currentTrack == nil)
@@ -311,7 +311,7 @@ struct TrackActionControlsView: View {
                 Button {
                     Task { await playbackController.promoteCurrent(settings: settings, context: modelContext) }
                 } label: {
-                    Label("Move to One True Playlist", systemImage: "star.fill")
+                    Label("Overplay", systemImage: "arrow.up.circle")
                         .frame(maxWidth: .infinity)
                 }
                 .disabled(playbackController.currentTrack == nil)
@@ -323,7 +323,7 @@ struct TrackActionControlsView: View {
                     Button {
                         Task { await playbackController.promoteCurrent(settings: settings, context: modelContext) }
                     } label: {
-                        Label("Promote", systemImage: "star.fill")
+                        Label("Overplay", systemImage: "arrow.up.circle")
                             .frame(maxWidth: .infinity)
                     }
                     .disabled(playbackController.currentTrack == nil)
@@ -337,7 +337,7 @@ struct TrackActionControlsView: View {
                 Button {
                     Task { await playbackController.evictCurrent(settings: settings, context: modelContext) }
                 } label: {
-                    Label("Retire", systemImage: "trash.fill")
+                    Label("Retire", systemImage: "archivebox.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .disabled(playbackController.currentTrack == nil)

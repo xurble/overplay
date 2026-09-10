@@ -83,6 +83,7 @@ struct PlaylistSelectionView: View {
                 }
             }
         }
+        .listStyle(.plain)
         .miniPlayerScrollContentInset()
         .navigationTitle("Linked Playlists")
         .searchable(text: $viewModel.searchText, prompt: "Filter playlists")

@@ -48,6 +48,7 @@ struct TriageSourcesView: View {
                 }
             }
         }
+        .listStyle(.plain)
         .miniPlayerScrollContentInset()
         .navigationTitle("Triage Sources")
         .searchable(text: $viewModel.searchText, prompt: "Filter playlists")

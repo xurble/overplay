@@ -267,7 +267,7 @@ final class PlaylistManagementViewModel {
     }
 
     func playButtonTitle(isCurrentPlaylist: Bool) -> String {
-        isCurrentPlaylist ? "Playing" : "Play"
+        isCurrentPlaylist ? "Playing" : "Shuffle and Play"
     }
 
     func isCurrentItem(
@@ -347,7 +347,7 @@ final class PlaylistManagementViewModel {
         do {
             try await dependencies.promote(item, playlist, context)
             dependencies.reconcileStoredOrder(playlist, context)
-            message = "Promoted \(track.title)."
+            message = "Overplayed \(track.title)."
         } catch {
             message = error.localizedDescription
         }

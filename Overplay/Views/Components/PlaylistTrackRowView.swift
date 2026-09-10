@@ -11,12 +11,12 @@ struct PlaylistTrackRowView: View {
             ZStack(alignment: .bottomTrailing) {
                 ArtworkView(
                     urlString: summary.artworkURLString,
-                    pixelSize: 96,
+                    pixelSize: 144,
                     playlistID: playlistID,
-                    cornerRadius: 8,
+                    cornerRadius: 0,
                     loadsImmediately: loadsArtworkImmediately
                 )
-                .frame(width: 48, height: 48)
+                .frame(width: 72, height: 72)
 
                 if isCurrent {
                     Image(systemName: "play.fill")
@@ -48,7 +48,6 @@ struct PlaylistTrackRowView: View {
                 .foregroundStyle(.secondary)
         }
         .contentShape(Rectangle())
-        .padding(.vertical, 4)
     }
 }
 

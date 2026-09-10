@@ -565,7 +565,7 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func makeEvictButton() -> CPNowPlayingImageButton {
-        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "trash")) { [weak self] _ in
+        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "archivebox.fill")) { [weak self] _ in
             Task { @MainActor in
                 await self?.evictCurrentTrack()
             }
@@ -585,7 +585,7 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func makePromoteButton() -> CPNowPlayingImageButton {
-        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "star")) { [weak self] _ in
+        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "arrow.up.circle")) { [weak self] _ in
             Task { @MainActor in
                 await self?.promoteCurrentTrack()
             }

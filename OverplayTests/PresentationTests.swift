@@ -43,7 +43,7 @@ struct PlaylistSummaryPresentationTests {
 
         #expect(oneTrue.roleTitle == "One True Playlist")
         #expect(oneTrue.shortRoleTitle == "Main")
-        #expect(oneTrue.iconIntent.systemImage == "star.fill")
+        #expect(oneTrue.iconIntent.systemImage == "arrow.up.circle")
         #expect(oneTrue.displayPriority == 0)
         #expect(oneTrue.writePolicyTitle == "Managed")
 

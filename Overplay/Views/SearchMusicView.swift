@@ -46,8 +46,8 @@ struct SearchMusicView: View {
 
             ForEach(viewModel.searchService.results) { result in
                 HStack(spacing: 12) {
-                    ArtworkView(urlString: result.artworkURL, cornerRadius: 8)
-                        .frame(width: 56, height: 56)
+                    ArtworkView(urlString: result.artworkURL, pixelSize: 144, cornerRadius: 0)
+                        .frame(width: 72, height: 72)
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(result.title)
@@ -79,9 +79,10 @@ struct SearchMusicView: View {
                     .accessibilityLabel("Add \(result.title)")
                     .disabled(selectedPlaylist == nil || viewModel.addingSongIDs.contains(result.id))
                 }
-                .padding(.vertical, 6)
+                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
             }
         }
+        .listStyle(.plain)
         .miniPlayerScrollContentInset()
         .navigationTitle("Search Apple Music")
         .searchable(text: $viewModel.searchText, prompt: "Search songs")

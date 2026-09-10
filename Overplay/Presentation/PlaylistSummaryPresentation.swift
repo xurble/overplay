@@ -11,7 +11,7 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
         var systemImage: String {
             switch self {
             case .oneTruePlaylist:
-                "star.fill"
+                "arrow.up.circle"
             case .triageBucket:
                 "tray.fill"
             case .triageSource:

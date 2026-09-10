@@ -1093,6 +1093,30 @@ struct PlaybackTransitionTests {
         ).isShuffling)
     }
 
+    @Test("playlist-level play randomizes the handoff and enables shuffle")
+    func playlistLevelPlayRandomizesHandoffAndEnablesShuffle() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+
+        await fixture.controller.playPlaylist(
+            fixture.playlist,
+            settings: fixture.settings,
+            context: fixture.context
+        )
+
+        let shuffledOrder = PlaybackOrderStore.state(
+            playerID: fixture.playerID,
+            musicPlaylistID: fixture.playlist.musicPlaylistID
+        ).orderedTrackIDs
+        let localTrackIDs = fixture.tracks.map { $0.id.uuidString }
+        let firstLocalTrackID = try #require(shuffledOrder.first)
+        let firstTrackIndex = try #require(localTrackIDs.firstIndex(of: firstLocalTrackID))
+
+        #expect(fixture.player.shuffleMode == .songs)
+        #expect(Set(shuffledOrder) == Set(localTrackIDs))
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[firstTrackIndex].id.rawValue)
+    }
+
     @Test("repeat all toggles on and off without rebuilding the queue")
     func repeatAllTogglesWithoutRebuildingQueue() async throws {
         let fixture = try makeFixture()

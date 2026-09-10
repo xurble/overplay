@@ -77,7 +77,7 @@ private struct PlaylistManagementContentView: View {
                     } label: {
                         Label(
                             viewModel.playButtonTitle(isCurrentPlaylist: isCurrentPlaylistScope),
-                            systemImage: "play.fill"
+                            systemImage: "shuffle"
                         )
                         .font(.headline)
                         .frame(maxWidth: .infinity)
@@ -101,6 +101,7 @@ private struct PlaylistManagementContentView: View {
 
                 ForEach(detail.rows) { row in
                     playlistTrackButton(for: row)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
                         .swipeActions(edge: .trailing) {
                             if row.isRetired {
                                 Button {
@@ -113,7 +114,7 @@ private struct PlaylistManagementContentView: View {
                                 Button {
                                     Task { await promote(row) }
                                 } label: {
-                                    Label("Move to One True Playlist", systemImage: "star.fill")
+                                    Label("Overplay", systemImage: "arrow.up.circle")
                                 }
                                 .tint(.pink)
                                 .disabled(viewModel.promotingItemIDs.contains(row.id))
@@ -121,7 +122,7 @@ private struct PlaylistManagementContentView: View {
                                 Button(role: .destructive) {
                                     Task { await evict(row) }
                                 } label: {
-                                    Label("Retire", systemImage: "trash.fill")
+                                    Label("Retire", systemImage: "archivebox.fill")
                                 }
                                 .disabled(viewModel.evictingItemIDs.contains(row.id))
 
@@ -129,7 +130,7 @@ private struct PlaylistManagementContentView: View {
                                     Button {
                                         Task { await promote(row) }
                                     } label: {
-                                        Label("Promote", systemImage: "star.fill")
+                                        Label("Overplay", systemImage: "arrow.up.circle")
                                     }
                                     .tint(.pink)
                                     .disabled(viewModel.promotingItemIDs.contains(row.id))
@@ -146,6 +147,7 @@ private struct PlaylistManagementContentView: View {
                 }
             }
         }
+        .listStyle(.plain)
         .miniPlayerScrollContentInset()
         .onScrollPhaseChange { _, phase in
             isScrolling = phase.isScrolling
@@ -169,7 +171,7 @@ private struct PlaylistManagementContentView: View {
                     } label: {
                         Label(
                             viewModel.playButtonTitle(isCurrentPlaylist: isCurrentPlaylistScope),
-                            systemImage: "play.fill"
+                            systemImage: "shuffle"
                         )
                     }
                     .disabled(isCurrentPlaylistScope || !detail.rows.contains { $0.isPlayable })
@@ -197,11 +199,6 @@ private struct PlaylistManagementContentView: View {
                         Label("History", systemImage: "clock.arrow.circlepath")
                     }
 
-                    NavigationLink {
-                        PlaylistSelectionView()
-                    } label: {
-                        Label("Manage Links", systemImage: "music.note.list")
-                    }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }

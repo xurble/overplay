@@ -13,11 +13,11 @@ enum PlaylistMutationError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .oneTruePlaylistMissing:
-            "Choose a One True Playlist before promoting tracks."
+            "Choose a One True Playlist before Overplaying tracks."
         case .sourcePlaylistMissing:
             "The source playlist is no longer linked."
         case .sourcePlaylistNotTriage:
-            "Only tracks in the triage bucket can be promoted."
+            "Only tracks in the triage bucket can be Overplayed."
         case .trackMissing:
             "The track is no longer available locally."
         case .musicItemMissing:
@@ -117,7 +117,7 @@ struct PlaylistMutationService {
                 source: .user,
                 skipCountAtEvent: previousSkipCount,
                 remoteMutationStatus: .failed,
-                message: "Promotion failed: \(error.localizedDescription)",
+                message: "Overplay failed: \(error.localizedDescription)",
                 in: context
             )
             try? context.save()

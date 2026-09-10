@@ -22,7 +22,7 @@ enum HistoryEventFilter: String, CaseIterable, Identifiable, Sendable {
         case .removals:
             "Removals"
         case .promotions:
-            "Promotions"
+            "Overplayed"
         case .restores:
             "Restores"
         case .remoteMutations:
@@ -272,7 +272,7 @@ extension HistoryEventType {
         case .restored:
             "Restored"
         case .promoted:
-            "Promoted"
+            "Overplayed"
         case .remoteMutation:
             "Remote Mutation"
         }
@@ -293,11 +293,11 @@ extension HistoryEventType {
         case .playthrough:
             "checkmark.circle.fill"
         case .evicted:
-            "trash.fill"
+            "archivebox.fill"
         case .restored:
             "arrow.uturn.backward.circle.fill"
         case .promoted:
-            "star.fill"
+            "arrow.up.circle"
         case .remoteMutation:
             "arrow.triangle.2.circlepath"
         }

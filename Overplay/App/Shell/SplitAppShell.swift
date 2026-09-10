@@ -31,9 +31,6 @@ struct SplitAppShell: View {
 
                     Label("Retired", systemImage: "archivebox.fill")
                         .tag(AppShellDestination.retired)
-
-                    Label("Manage Links", systemImage: "music.note.list")
-                        .tag(AppShellDestination.linkedPlaylists)
                 }
             }
             .miniPlayerScrollContentInset()
@@ -75,8 +72,6 @@ struct SplitAppShell: View {
             HistoryView()
         case .settings:
             SettingsView(settings: settings)
-        case .linkedPlaylists:
-            PlaylistSelectionView()
         }
     }
 
@@ -112,7 +107,7 @@ struct SplitAppShell: View {
 
         switch playlist.role {
         case .oneTruePlaylist:
-            return "star.fill"
+            return "arrow.up.circle"
         case .triageBucket:
             return "tray.fill"
         case .triageSource:

@@ -29,7 +29,7 @@ struct DashboardView: View {
                             detail: "Choose the main playlist Overplay manages.",
                             artworkURLString: nil,
                             playlistID: nil,
-                            systemImage: "star.fill",
+                            systemImage: "arrow.up.circle",
                             badgeTint: .pink
                         )
                     }
@@ -70,6 +70,7 @@ struct DashboardView: View {
                 }
             }
         }
+        .listStyle(.plain)
         .miniPlayerScrollContentInset()
         .navigationTitle("Overplay")
         .toolbar {

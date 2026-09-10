@@ -485,7 +485,14 @@ final class PlaybackController {
         settings: OverplaySettings,
         context: ModelContext
     ) async {
-        await startPlaylistPlayback(playlist, startingAt: nil, scope: scope, settings: settings, context: context)
+        await startPlaylistPlayback(
+            playlist,
+            startingAt: nil,
+            scope: scope,
+            shuffleBeforePlayback: true,
+            settings: settings,
+            context: context
+        )
     }
 
     func playPlaylist(
@@ -577,18 +584,34 @@ final class PlaybackController {
         _ playlist: PlaylistRecord,
         startingAt trackRecord: TrackRecord?,
         scope: PlaylistPlaybackScope,
+        shuffleBeforePlayback: Bool = false,
         settings: OverplaySettings,
         context: ModelContext
     ) async {
         do {
             let startingTrackID = trackRecord?.id.uuidString
-            let queueEntries = try PlaybackQueueOrchestrator.orderedCachedQueueEntries(
-                for: playlist.musicPlaylistID,
-                playerID: playerID,
-                startingTrackID: startingTrackID,
-                scope: scope,
-                in: context
-            )
+            let queueEntries: [PlaybackQueueEntry]
+            let confirmedPlaybackOrder: [String]?
+            if shuffleBeforePlayback {
+                let shuffledQueue = try PlaybackQueueOrchestrator.previewedReshuffledQueue(
+                    playlistID: playlist.musicPlaylistID,
+                    playerID: playerID,
+                    scope: scope,
+                    avoiding: nil,
+                    in: context
+                )
+                queueEntries = shuffledQueue.entries
+                confirmedPlaybackOrder = shuffledQueue.orderedTrackIDs
+            } else {
+                queueEntries = try PlaybackQueueOrchestrator.orderedCachedQueueEntries(
+                    for: playlist.musicPlaylistID,
+                    playerID: playerID,
+                    startingTrackID: startingTrackID,
+                    scope: scope,
+                    in: context
+                )
+                confirmedPlaybackOrder = nil
+            }
             guard !queueEntries.isEmpty else {
                 statusMessage = "No locally cached \(scope.title.lowercased()) tracks for \(playlist.name)."
                 return
@@ -604,6 +627,8 @@ final class PlaybackController {
                 playlistID: playlist.musicPlaylistID,
                 scope: scope,
                 startingAt: startingTrackID,
+                confirmedPlaybackOrder: confirmedPlaybackOrder,
+                enableShuffleBeforePlayback: shuffleBeforePlayback,
                 outgoingSessionSettings: settings,
                 context: context
             )
@@ -831,6 +856,7 @@ final class PlaybackController {
         scope: PlaylistPlaybackScope = .active,
         startingAt localTrackID: String?,
         confirmedPlaybackOrder: [String]? = nil,
+        enableShuffleBeforePlayback: Bool = false,
         outgoingSessionSettings: OverplaySettings? = nil,
         context: ModelContext
     ) async throws {
@@ -854,7 +880,14 @@ final class PlaybackController {
             outgoingEntryID: outgoing.entryID,
             expectedEntryIDs: expectedEntryIDs,
             command: {
-                        player.replaceQueue(with: materialization)
+                player.replaceQueue(with: materialization)
+                if enableShuffleBeforePlayback {
+                    // MusicKit owns the active shuffle mode. The queue itself
+                    // was randomized once before this handoff so its first
+                    // entry is still random if MusicKit preserves that entry.
+                    player.shuffleMode = .songs
+                    playbackModeVersion += 1
+                }
                 try await player.play()
             },
             onObservedTransition: { confirmation in
@@ -1229,7 +1262,7 @@ final class PlaybackController {
 
     func promoteCurrent(settings: OverplaySettings, context: ModelContext) async {
         guard let target = currentPlaybackTarget(context: context) else {
-            statusMessage = "Choose a linked triage track to promote."
+            statusMessage = "Choose a linked triage track to Overplay."
             return
         }
 

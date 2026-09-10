@@ -129,7 +129,7 @@ final class SearchMusicViewModel {
     func destinationImage(for playlist: PlaylistRecord) -> String {
         switch playlist.role {
         case .oneTruePlaylist:
-            "star.fill"
+            "arrow.up.circle"
         case .triageBucket:
             "tray.fill"
         case .triageSource:
