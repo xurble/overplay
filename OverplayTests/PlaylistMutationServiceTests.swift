@@ -6,8 +6,8 @@ import Testing
 @MainActor
 @Suite("Playlist mutation service")
 struct PlaylistMutationServiceTests {
-    @Test("successful promotion creates active one true playlist item and evicts source")
-    func successfulPromotionCreatesActiveOneTruePlaylistItemAndEvictsSource() throws {
+    @Test("successful promotion moves the existing item to the one true playlist")
+    func successfulPromotionMovesExistingItem() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let sourcePlaylist = PlaylistRecord(
@@ -57,22 +57,16 @@ struct PlaylistMutationServiceTests {
         #expect(promotedItem.lastSeenInPlaylistAt == Date(timeIntervalSince1970: 100))
         #expect(sourceItem.skipCount == 2)
         #expect(sourceItem.playthroughCount == 1)
-        #expect(sourceItem.evictedAt != nil)
-        #expect(sourceItem.evictionReason == .manual)
-        #expect(sourceItem.evictionSource == .user)
-        #expect(history.count == 2)
+        #expect(sourceItem.id == promotedItem.id)
+        #expect(sourceItem.playlistID == oneTruePlaylist.id)
+        #expect(history.count == 1)
         #expect(history.contains {
             $0.playlistID == sourcePlaylist.id
                 && $0.trackID == track.id
                 && $0.eventType == .promoted
                 && $0.remoteMutationStatus == .succeeded
         })
-        #expect(history.contains {
-            $0.playlistID == sourcePlaylist.id
-                && $0.trackID == track.id
-                && $0.eventType == .evicted
-                && $0.source == .user
-        })
+        #expect(!history.contains { $0.eventType == .evicted })
     }
 
     @Test("successful promotion reactivates existing one true playlist item")
@@ -126,10 +120,10 @@ struct PlaylistMutationServiceTests {
         let oneTrueItems = try PlaylistItemRepository.items(forPlaylistID: oneTruePlaylist.id, in: context)
 
         #expect(oneTrueItems.count == 1)
-        #expect(promotedItem.id == existingMainItem.id)
-        #expect(existingMainItem.evictedAt == nil)
-        #expect(existingMainItem.evictionReason == nil)
-        #expect(existingMainItem.evictionSource == nil)
+        #expect(promotedItem.id == sourceItem.id)
+        #expect(promotedItem.evictedAt == nil)
+        #expect(promotedItem.evictionReason == nil)
+        #expect(promotedItem.evictionSource == nil)
     }
 
     @Test("promotion without one true playlist leaves local state unchanged")

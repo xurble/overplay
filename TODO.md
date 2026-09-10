@@ -115,17 +115,23 @@ verify the distinction without adding another navigation level.
 Track [GitHub issue #34](https://github.com/xurble/overplay/issues/34) and
 [GitHub issue #36](https://github.com/xurble/overplay/issues/36).
 
-Issue #34 replaces the separate triage playlists with one shared bucket fed by
-contributing Apple Music playlists. Issue #36 then makes track membership
+Issue #34 is complete: one shared bucket is fed by contributing Apple Music
+playlists. Issue #36 makes track membership
 globally exclusive: one row per track app-wide, with skip and playthrough
 counts travelling with the track as it moves, and retired tracks living in the
-bucket. #36 depends on #34.
+bucket and appearing in a third top-level Retired collection. It also includes
+source-link revival (not ordinary sync), stale OTP suppression, independent
+manual/restore keep intent, and last-source/retirement/reset cleanup. Active
+reset history survives unlink; retired unowned current 0/0 rows do not.
 
 Both reshape persistence, so they must land before the data-preservation
 decision below, while a schema reset is still cheap. The device holding the
 only existing dataset means migration is best effort on stats and strict on
 consistency — merge counts where it is straightforward, and never introduce a
-versioned schema for it.
+versioned schema for it. After identity/count convergence, the one historical
+cleanup deletes legacy unowned 0/0 rows even with reset history. Explicit keep,
+active OTP and necessary stale-OTP protection survive. New rows are marked to
+exclude them from the historical exception on repeated startup/CloudKit import.
 
 Per section 1, treat these as cross-surface playback changes: the bucket is a
 playback context with a reserved identifier rather than an Apple Music
@@ -240,6 +246,10 @@ a scoped issue only when its product benefit justifies its interaction with the
 shared playback, persistence, and cross-surface invariants above.
 
 ### Discovery and Intake
+
+The shared manual Triage intake boundary already tracks explicit keep intent
+independently of contributing playlists. Future intake UI must use it; do not
+invent a fake playlist or bypass the global ownership/retention rules.
 
 - Read the user's synced Shazam discoveries from `SHLibrary` and feed them
   directly into the triage bucket, retaining Apple Music ID, ISRC, artwork, and

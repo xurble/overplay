@@ -70,7 +70,7 @@ struct PlaybackSessionSupportTests {
     }
 
     @Test("resolve does not cross playlists when the track exists elsewhere")
-    func resolveDoesNotCrossPlaylistsWhenTheTrackExistsElsewhere() throws {
+    func resolveFollowsGlobalTrackAfterOwnershipChanges() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let playlist = PlaylistRecord(musicPlaylistID: "playlist-1", name: "Main", role: .oneTruePlaylist)
@@ -86,8 +86,7 @@ struct PlaybackSessionSupportTests {
         context.insert(track)
         context.insert(PlaylistItemRecord(playlistID: otherPlaylist.id, trackID: track.id))
 
-        // The indexed track lookup hits, but the item belongs to another
-        // playlist — resolution must fall through and return nil.
+        // An outgoing session must still find its item after ownership moves.
         let resolved = try PlaybackSessionSupport.resolvePlaylistItem(
             forMusicItemID: "catalog-elsewhere",
             currentPlaylistItem: nil,
@@ -95,7 +94,7 @@ struct PlaybackSessionSupportTests {
             in: context
         )
 
-        #expect(resolved == nil)
+        #expect(resolved?.playlistID == otherPlaylist.id)
     }
 
     @Test("resolve returns nil when no playlist item matches")

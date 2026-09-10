@@ -22,6 +22,13 @@ final class PlaylistRecord {
     /// Apple Music's reported modification date at the last successful
     /// sync. Lets an automatic cycle skip refetching an unchanged playlist.
     var remoteLastModifiedAt: Date?
+    /// Explicit link intent, distinct from ordinary refresh timestamps. A later
+    /// retirement must survive retries of this playlist's original import.
+    var triageLinkedAt: Date?
+    /// A deletion made after this source was linked beats its still-pending
+    /// import (initial or an already-running refresh). Scoped to this link, and discarded on unlink/re-link;
+    /// these are not retired items or permanent per-song tombstones.
+    var triageExcludedTrackIDs: [String] = []
     var sortOrder: Int = 0
     var createdAt: Date = Date()
     var updatedAt: Date = Date()

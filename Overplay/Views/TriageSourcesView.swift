@@ -3,10 +3,8 @@ import SwiftUI
 
 /// Manages which Apple Music playlists feed the single triage bucket.
 ///
-/// Unlinking a playlist here never removes its tracks from the bucket: the
-/// bucket row is the track's only row, so deleting it would throw away skip
-/// and playthrough history the user never asked to lose. The tracks simply
-/// become unattributed.
+/// Unlinking removes unowned, untouched intake while preserving listening
+/// data and explicitly kept active songs through the shared controller.
 struct TriageSourcesView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackController.self) private var playbackController
@@ -153,7 +151,7 @@ struct TriageSourcesView: View {
 
     private func removeTriageSources(at offsets: IndexSet) {
         for index in offsets {
-            viewModel.removeTriageSource(triageSources[index], context: modelContext)
+            viewModel.removeTriageSource(triageSources[index], context: modelContext, playbackController: playbackController)
         }
     }
 

@@ -41,16 +41,14 @@ enum PlaybackSessionSupport {
         in context: ModelContext
     ) throws -> PlaylistItemRecord? {
         if let currentPlaylistItem,
-           currentPlaylistItem.playlistID == playlist.id,
+           !currentPlaylistItem.isDeleted,
            try itemMatchesMusicItemID(currentPlaylistItem, musicItemID: musicItemID, in: context) {
             if let liveItem = try PlaylistItemRepository.item(id: currentPlaylistItem.id, in: context),
-               liveItem.playlistID == playlist.id,
                try itemMatchesMusicItemID(liveItem, musicItemID: musicItemID, in: context) {
                 return liveItem
             }
 
             if let liveItem = try PlaylistItemRepository.item(
-                playlistID: playlist.id,
                 trackID: currentPlaylistItem.trackID,
                 in: context
             ),
@@ -63,7 +61,6 @@ enum PlaybackSessionSupport {
         // indexed item fetch covers the common case.
         if let track = try TrackRecordRepository.track(musicItemID: musicItemID, in: context),
            let item = try PlaylistItemRepository.item(
-               playlistID: playlist.id,
                trackID: track.id,
                in: context
            ) {

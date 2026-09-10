@@ -85,7 +85,7 @@ struct TrackActionServiceTests {
         #expect(item.evictionReason == nil)
         #expect(item.evictionSource == nil)
         #expect(history.first?.eventType == .restored)
-        #expect(history.first?.message == "Restored locally")
+        #expect(history.first?.message == "Moved to Triage")
         #expect(history.first?.skipCountAtEvent == 2)
     }
 }

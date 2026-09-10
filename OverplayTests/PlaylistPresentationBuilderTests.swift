@@ -54,7 +54,7 @@ struct PlaylistPresentationBuilderTests {
         )
         .summary(for: playlist)
 
-        #expect(summary.activeTrackCount == 2)
+        #expect(summary.activeTrackCount == 1)
         #expect(summary.playableTrackCount == 1)
         #expect(summary.displayPriority == 1)
         #expect(summary.iconIntent == .currentPlayback)

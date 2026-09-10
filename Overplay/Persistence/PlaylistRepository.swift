@@ -319,6 +319,8 @@ enum PlaylistRepository {
             existingPlaylist.name = remotePlaylist.name
             existingPlaylist.isActive = true
             if isRelinking {
+                existingPlaylist.triageLinkedAt = .now
+                existingPlaylist.triageExcludedTrackIDs = []
                 // Unlinking deliberately removes this source's provenance
                 // from retained bucket rows. Force the first sync after a
                 // relink to fetch tracks even when Apple reports the remote
@@ -331,12 +333,15 @@ enum PlaylistRepository {
             return existingPlaylist
         }
 
-        return try upsert(
+        let source = try upsert(
             remotePlaylist: remotePlaylist,
             role: .triageSource,
             writePolicy: .managed,
             in: context
         )
+        source.triageLinkedAt = .now
+        try context.save()
+        return source
     }
 
     @discardableResult
@@ -344,22 +349,24 @@ enum PlaylistRepository {
         try addTriageSource(RemotePlaylistLink(appleMusicPlaylist), in: context)
     }
 
-    /// Unlinks a contributing playlist. Its tracks stay in the bucket and
-    /// keep their stats — they are simply left unattributed, because the row
-    /// is the track's only row and deleting it would destroy history the
-    /// user never asked to lose.
-    static func removeTriageSource(_ playlist: PlaylistRecord, in context: ModelContext) throws {
+    /// Detach provenance everywhere, including travelling OTP rows. Only
+    /// unowned bucket rows are eligible for retention cleanup.
+    static func removeTriageSource(
+        _ playlist: PlaylistRecord,
+        protectingItemID: UUID? = nil,
+        in context: ModelContext
+    ) throws {
         guard playlist.role == .triageSource else { return }
 
         let musicPlaylistID = playlist.musicPlaylistID
         playlist.isActive = false
+        playlist.triageExcludedTrackIDs = []
         playlist.updatedAt = .now
 
-        if let bucket = try existingTriageBucket(in: context) {
-            for item in try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
+        for item in try PlaylistItemRepository.allItems(in: context)
             where item.removeSourceMusicPlaylistID(musicPlaylistID) {
                 item.updatedAt = .now
-            }
+                try TrackRetentionPolicy.deleteIfUnowned(item, protectingItemID: protectingItemID, in: context)
         }
 
         try context.save()

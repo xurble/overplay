@@ -46,13 +46,12 @@ final class HistoryViewModel {
         for row: HistoryEventRowModel,
         playlistItems: [PlaylistItemRecord]
     ) -> PlaylistItemRecord? {
-        guard let playlistID = row.playlistID, let trackID = row.trackID else {
+        guard let trackID = row.trackID else {
             return nil
         }
 
         return playlistItems.first {
-            $0.playlistID == playlistID
-                && $0.trackID == trackID
+            !$0.isDeleted && $0.trackID == trackID
                 && $0.evictedAt != nil
         }
     }

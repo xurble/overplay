@@ -599,6 +599,25 @@ struct PlaylistManagementViewModelTests {
         #expect(viewModel.message == nil)
     }
 
+    @Test("evicting an unowned 0/0 row clears progress after the model is deleted")
+    func evictDeletedItemClearsProgressState() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let track = TrackRecord(title: "Disposable", artistName: "Artist")
+        let item = PlaylistItemRecord(playlistID: bucket.id, trackID: track.id, isExplicitlyKept: true)
+        context.insert(track)
+        context.insert(item)
+        let itemID = item.id
+        let viewModel = PlaylistManagementViewModel()
+        let dependencies = makeDependencies(evict: { item, playlist, context in
+            try TrackActionService.evictTrack(item, playlist: playlist, message: "Done", in: context)
+        })
+        await viewModel.evict(item, track: track, playlist: bucket, context: context, dependencies: dependencies)
+        #expect(try PlaylistItemRepository.item(id: itemID, in: context) == nil)
+        #expect(viewModel.evictingItemIDs.isEmpty)
+    }
+
     @Test("evict playable item reports success and clears progress state")
     func evictPlayableItemReportsSuccessAndClearsProgressState() async throws {
         let container = try OverplayTestSupport.makeModelContainer()

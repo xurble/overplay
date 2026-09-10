@@ -28,14 +28,12 @@ enum PlaybackTrackResolver {
         musicPlaylistID: String?,
         in context: ModelContext
     ) throws -> PlaylistItemRecord? {
-        guard let playlist = try currentPlaylist(musicPlaylistID: musicPlaylistID, in: context),
+        guard try currentPlaylist(musicPlaylistID: musicPlaylistID, in: context) != nil,
               let trackID = UUID(uuidString: localTrackID) else {
             return nil
         }
 
-        return try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context).first {
-            $0.trackID == trackID
-        }
+        return try PlaylistItemRepository.item(trackID: trackID, in: context)
     }
 
     static func restoredTrackAndItem(
@@ -47,7 +45,6 @@ enum PlaybackTrackResolver {
            let trackID = UUID(uuidString: localTrackID),
            let track = try TrackRecordRepository.track(id: trackID, in: context) {
             let item = try PlaylistItemRepository.item(
-                playlistID: playlist.id,
                 trackID: track.id,
                 in: context
             )
@@ -59,7 +56,6 @@ enum PlaybackTrackResolver {
         }
 
         let item = try PlaylistItemRepository.item(
-            playlistID: playlist.id,
             trackID: track.id,
             in: context
         )

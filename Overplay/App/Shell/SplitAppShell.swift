@@ -29,6 +29,9 @@ struct SplitAppShell: View {
                             .tag(AppShellDestination.playlist(playlist.id))
                     }
 
+                    Label("Retired", systemImage: "archivebox.fill")
+                        .tag(AppShellDestination.retired)
+
                     Label("Manage Links", systemImage: "music.note.list")
                         .tag(AppShellDestination.linkedPlaylists)
                 }
@@ -59,6 +62,12 @@ struct SplitAppShell: View {
                     systemImage: "music.note.list",
                     description: Text("Choose another linked playlist from the sidebar.")
                 )
+            }
+        case .retired:
+            if let bucket = activePlaylists.first(where: \.isTriageBucket) {
+                PlaylistManagementView(settings: settings, playlist: bucket, scope: .retired)
+            } else {
+                ContentUnavailableView("No Retired Tracks", systemImage: "archivebox")
             }
         case .search:
             SearchMusicView(settings: settings)

@@ -6,6 +6,7 @@ struct PlaylistManagementView: View {
 
     var settings: OverplaySettings
     var playlist: PlaylistRecord
+    var scope: PlaylistPlaybackScope = .active
 
     var body: some View {
         let canonicalPlaylist = PlaylistRepository.canonicalPlaylist(
@@ -14,9 +15,10 @@ struct PlaylistManagementView: View {
         )
         PlaylistManagementContentView(
             settings: settings,
-            playlist: canonicalPlaylist
+            playlist: canonicalPlaylist,
+            scope: scope
         )
-        .id(canonicalPlaylist.id)
+        .id(scope.playbackOrderPlaylistID(for: canonicalPlaylist.id.uuidString))
     }
 }
 
@@ -33,16 +35,17 @@ private struct PlaylistManagementContentView: View {
     @State private var viewModel = PlaylistManagementViewModel()
     @State private var tracks: [TrackRecord] = []
     @State private var isScrolling = false
-    @State private var selectedScope: PlaylistPlaybackScope = .active
+    let selectedScope: PlaylistPlaybackScope
     // Memoized row build: body re-runs for reasons that don't change the
     // rows (scroll phase, messages), and rebuilding every presentation
     // model per pass was measurable churn. detailPresentationKey names
     // every input the rows depend on.
     @State private var cachedDetail: PlaylistManagementViewModel.DetailPresentation?
 
-    init(settings: OverplaySettings, playlist: PlaylistRecord) {
+    init(settings: OverplaySettings, playlist: PlaylistRecord, scope: PlaylistPlaybackScope) {
         self.settings = settings
         self.playlist = playlist
+        self.selectedScope = scope
 
         let playlistID = playlist.id
         _playlistItems = Query(
@@ -65,7 +68,7 @@ private struct PlaylistManagementContentView: View {
                         Label(detail.playlist.roleTitle, systemImage: detail.playlist.iconIntent.systemImage)
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(roleTint(for: detail.playlist))
-                        Text(playlist.name)
+                        Text(detail.playlist.title)
                             .font(.title2.bold())
                     }
 
@@ -87,15 +90,6 @@ private struct PlaylistManagementContentView: View {
                 .padding(.vertical, 4)
             }
 
-            Section {
-                Picker("Playlist Tracks", selection: $selectedScope) {
-                    ForEach(PlaylistPlaybackScope.allCases) { scope in
-                        Text(scope.title).tag(scope)
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
-
             Section(selectedScope.title) {
                 if detail.rows.isEmpty {
                     ContentUnavailableView(
@@ -112,10 +106,17 @@ private struct PlaylistManagementContentView: View {
                                 Button {
                                     Task { await restore(row) }
                                 } label: {
-                                    Label("Restore", systemImage: "arrow.uturn.backward.circle.fill")
+                                    Label("Move to Triage", systemImage: "tray.fill")
                                 }
                                 .tint(.green)
                                 .disabled(viewModel.restoringItemIDs.contains(row.id))
+                                Button {
+                                    Task { await promote(row) }
+                                } label: {
+                                    Label("Move to One True Playlist", systemImage: "star.fill")
+                                }
+                                .tint(.pink)
+                                .disabled(viewModel.promotingItemIDs.contains(row.id))
                             } else if row.isPlayable {
                                 Button(role: .destructive) {
                                     Task { await evict(row) }
@@ -149,7 +150,7 @@ private struct PlaylistManagementContentView: View {
         .onScrollPhaseChange { _, phase in
             isScrolling = phase.isScrolling
         }
-        .navigationTitle("Playlist")
+        .navigationTitle(selectedScope == .retired ? "Retired" : playlist.name)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: playlist.musicPlaylistID) {
             await ArtworkCacheService.shared.touchPlaylistUsage(playlist.musicPlaylistID)
@@ -173,12 +174,14 @@ private struct PlaylistManagementContentView: View {
                     }
                     .disabled(isCurrentPlaylistScope || !detail.rows.contains { $0.isPlayable })
 
-                    Button {
-                        Task { await syncPlaylist() }
-                    } label: {
-                        Label(viewModel.isSyncing ? "Syncing" : "Sync", systemImage: "arrow.triangle.2.circlepath")
+                    if selectedScope == .active {
+                        Button {
+                            Task { await syncPlaylist() }
+                        } label: {
+                            Label(viewModel.isSyncing ? "Syncing" : "Sync", systemImage: "arrow.triangle.2.circlepath")
+                        }
+                        .disabled(viewModel.isSyncing)
                     }
-                    .disabled(viewModel.isSyncing)
 
                     Divider()
 
@@ -242,7 +245,7 @@ private struct PlaylistManagementContentView: View {
     private var playlistTrackIDsKey: String {
         playlistItems
             .map {
-                "\($0.trackID.uuidString):\($0.sourceMusicPlaylistIDs.joined(separator: ","))"
+                "\($0.trackID.uuidString):\($0.updatedAt.timeIntervalSinceReferenceDate):\($0.evictedAt?.timeIntervalSinceReferenceDate ?? 0):\($0.sourceMusicPlaylistIDs.joined(separator: ","))"
             }
             .sorted()
             .joined(separator: "|")

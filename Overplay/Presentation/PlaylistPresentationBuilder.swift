@@ -27,8 +27,8 @@ struct PlaylistPresentationBuilder {
         }
     }
 
-    func summary(for playlist: PlaylistRecord) -> PlaylistSummaryPresentation {
-        summary(playlist)
+    func summary(for playlist: PlaylistRecord, scope: PlaylistPlaybackScope = .active) -> PlaylistSummaryPresentation {
+        summary(playlist, scope: scope)
     }
 
     func displayOrderedPlaylists(_ candidates: [PlaylistRecord]) -> [PlaylistRecord] {
@@ -85,20 +85,21 @@ struct PlaylistPresentationBuilder {
         )
     }
 
-    private func summary(_ playlist: PlaylistRecord) -> PlaylistSummaryPresentation {
-        let playlistItems = itemsForPlaylist(playlist.id)
+    private func summary(_ playlist: PlaylistRecord, scope: PlaylistPlaybackScope = .active) -> PlaylistSummaryPresentation {
+        let playlistItems = itemsForPlaylist(playlist.id).filter { scope.includes($0) }
         return PlaylistSummaryPresentation(
             id: playlist.id,
             musicPlaylistID: playlist.musicPlaylistID,
-            title: playlist.name,
+            title: scope == .retired ? "Retired" : playlist.name,
             artworkURLString: representativeArtworkURL(for: playlist),
             role: playlist.role,
             source: playlist.source,
             writePolicy: playlist.writePolicy,
             activeTrackCount: playlistItems.count,
-            playableTrackCount: playlistItems.filter(\.isPlayable).count,
+            playableTrackCount: playlistItems.count,
             lastSyncedAt: playlist.lastSyncedAt,
-            isCurrentPlaybackPlaylist: playlist.musicPlaylistID == currentPlaylistID
+            isCurrentPlaybackPlaylist: playlist.musicPlaylistID == currentPlaylistID,
+            playbackScope: scope
         )
     }
 

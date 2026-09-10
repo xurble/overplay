@@ -116,6 +116,31 @@ enum PlaybackOrderStore {
         }
     }
 
+    /// Folds legacy per-playlist Retired orders into the global collection
+    /// for every local player, preserving existing destination order first.
+    static func mergeMusicPlaylistID(
+        from oldID: String,
+        to newID: String,
+        from defaults: UserDefaults = .standard
+    ) {
+        guard oldID != newID else { return }
+        let storedStates = states(from: defaults)
+        var updatedStates = storedStates
+        var didChange = false
+        for (key, source) in storedStates where source.musicPlaylistID == oldID {
+            let destinationKey = storageKey(playerID: source.playerID, musicPlaylistID: newID)
+            var destination = updatedStates[destinationKey] ?? PlaybackOrderState(
+                playerID: source.playerID, musicPlaylistID: newID
+            )
+            var seen = Set(destination.orderedTrackIDs)
+            destination.orderedTrackIDs += source.orderedTrackIDs.filter { seen.insert($0).inserted }
+            updatedStates[destinationKey] = destination
+            updatedStates.removeValue(forKey: key)
+            didChange = true
+        }
+        if didChange { save(updatedStates, to: defaults, flushImmediately: true) }
+    }
+
     private static func storageKey(playerID: String, musicPlaylistID: String) -> String {
         "\(playerID)::\(musicPlaylistID)"
     }

@@ -137,11 +137,16 @@ final class PlaylistSelectionViewModel {
         }
     }
 
-    /// Unlinking leaves the contributed tracks in the bucket with their stats
-    /// intact, just unattributed.
-    func removeTriageSource(_ playlist: PlaylistRecord, context: ModelContext) {
+    func removeTriageSource(
+        _ playlist: PlaylistRecord, context: ModelContext,
+        playbackController: PlaybackController? = nil
+    ) {
         do {
-            try PlaylistRepository.removeTriageSource(playlist, in: context)
+            if let playbackController {
+                try playbackController.removeTriageSource(playlist, context: context)
+            } else {
+                try PlaylistRepository.removeTriageSource(playlist, in: context)
+            }
             message = "\(playlist.name) no longer feeds the triage bucket."
         } catch {
             message = error.localizedDescription

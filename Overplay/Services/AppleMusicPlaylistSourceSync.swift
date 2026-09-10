@@ -134,11 +134,16 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
         // A former contributor can retain rows in the bucket after becoming
         // the One True Playlist. Heal every matching provenance reference,
         // not only those whose playlist is currently a triage source.
-        if let bucket = try PlaylistRepository.existingTriageBucket(in: context) {
-            for item in try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
-            where item.replaceSourceMusicPlaylistID(from: oldID, to: newID) {
-                item.updatedAt = .now
+        for item in try PlaylistItemRepository.allItems(in: context) {
+            var changed = item.replaceSourceMusicPlaylistID(from: oldID, to: newID)
+            if item.suppressedOTPMusicPlaylistIDs.contains(oldID) {
+                item.suppressedOTPMusicPlaylistIDs.removeAll { $0 == oldID }
+                if !item.suppressedOTPMusicPlaylistIDs.contains(newID) {
+                    item.suppressedOTPMusicPlaylistIDs.append(newID)
+                }
+                changed = true
             }
+            if changed { item.updatedAt = .now }
         }
 
         playlistRecord.musicPlaylistID = newID
@@ -182,18 +187,35 @@ enum AppleMusicPlaylistTrackLoader {
             try await playlist.with(.tracks)
         }
 
-        guard var collection = detailedPlaylist.tracks else { return [] }
-        var tracks = Array(collection)
-
-        while collection.hasNextBatch {
+        var collection = detailedPlaylist.tracks
+        return try await collectCompleteTracks(
+            firstBatch: collection.map(Array.init),
+            hasNextBatch: collection?.hasNextBatch ?? false
+        ) {
+            guard let current = collection else { throw PlaylistSyncError.incompletePlaylist }
             let batch = try await MusicKitActivityLog.shared.measure(
                 .playlistTrackFetch,
                 detail: "next batch",
                 resultMagnitude: { $0.map { Double($0.count) } }
             ) {
-                try await collection.nextBatch(limit: AppleMusicPlaylistSourceSync.trackPageLimit)
+                try await current.nextBatch(limit: AppleMusicPlaylistSourceSync.trackPageLimit)
             }
-            guard let batch else {
+            collection = batch
+            return batch.map { (tracks: Array($0), hasNextBatch: $0.hasNextBatch) }
+        }
+    }
+
+    /// Missing relationships/pages are not proof of remote absence. Keep the
+    /// pagination boundary injectable without requiring live MusicKit tests.
+    static func collectCompleteTracks(
+        firstBatch: [Track]?,
+        hasNextBatch: Bool,
+        nextBatch: () async throws -> (tracks: [Track], hasNextBatch: Bool)?
+    ) async throws -> [Track] {
+        guard var tracks = firstBatch else { throw PlaylistSyncError.incompletePlaylist }
+        var hasNextBatch = hasNextBatch
+        while hasNextBatch {
+            guard let batch = try await nextBatch() else {
                 // MusicKit promised another batch and then declined to give
                 // it. The result is an incomplete playlist, which callers
                 // must not treat as the whole remote track list, so flag it
@@ -204,10 +226,10 @@ enum AppleMusicPlaylistTrackLoader {
                     detail: "next batch missing after hasNextBatch",
                     notes: [.truncatedCollection]
                 )
-                break
+                throw PlaylistSyncError.incompletePlaylist
             }
-            tracks.append(contentsOf: batch)
-            collection = batch
+            tracks.append(contentsOf: batch.tracks)
+            hasNextBatch = batch.hasNextBatch
         }
 
         return tracks

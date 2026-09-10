@@ -150,7 +150,7 @@ final class PlaylistManagementViewModel {
         )
 
         return DetailPresentation(
-            playlist: builder.summary(for: playlist),
+            playlist: builder.summary(for: playlist, scope: scope),
             summary: builder.dashboardSummary(forPlaylistID: playlist.id),
             rows: rows
         )
@@ -201,7 +201,7 @@ final class PlaylistManagementViewModel {
         let playlistPresentation = PlaylistSummaryPresentation(
             id: playlist.id,
             musicPlaylistID: playlist.musicPlaylistID,
-            title: playlist.name,
+            title: scope == .retired ? "Retired" : playlist.name,
             artworkURLString: rows.first?.summary.artworkURLString,
             role: playlist.role,
             source: playlist.source,
@@ -209,7 +209,8 @@ final class PlaylistManagementViewModel {
             activeTrackCount: rows.count,
             playableTrackCount: rows.filter(\.isPlayable).count,
             lastSyncedAt: playlist.lastSyncedAt,
-            isCurrentPlaybackPlaylist: true
+            isCurrentPlaybackPlaylist: true,
+            playbackScope: scope
         )
 
         return DetailPresentation(
@@ -339,8 +340,9 @@ final class PlaylistManagementViewModel {
         dependencies: Dependencies
     ) async {
         guard playlist.role == .triageBucket else { return }
-        promotingItemIDs.insert(item.id)
-        defer { promotingItemIDs.remove(item.id) }
+        let itemID = item.id
+        promotingItemIDs.insert(itemID)
+        defer { promotingItemIDs.remove(itemID) }
 
         do {
             try await dependencies.promote(item, playlist, context)
@@ -359,8 +361,9 @@ final class PlaylistManagementViewModel {
         dependencies: Dependencies
     ) async {
         guard item.isPlayable else { return }
-        evictingItemIDs.insert(item.id)
-        defer { evictingItemIDs.remove(item.id) }
+        let itemID = item.id
+        evictingItemIDs.insert(itemID)
+        defer { evictingItemIDs.remove(itemID) }
 
         do {
             try dependencies.evict(item, playlist, context)
@@ -379,8 +382,9 @@ final class PlaylistManagementViewModel {
         dependencies: Dependencies
     ) async {
         guard item.evictedAt != nil else { return }
-        restoringItemIDs.insert(item.id)
-        defer { restoringItemIDs.remove(item.id) }
+        let itemID = item.id
+        restoringItemIDs.insert(itemID)
+        defer { restoringItemIDs.remove(itemID) }
 
         do {
             try dependencies.restore(item, playlist, context)

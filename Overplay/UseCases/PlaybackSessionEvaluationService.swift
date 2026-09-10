@@ -169,12 +169,11 @@ enum PlaybackSessionEvaluationService {
             )
         }
 
-        let canCountPlaythrough = item.evictedAt == nil
         // MusicKit advances tracks itself at natural completion, so most
         // completions arrive here as plain track changes. An observation
         // within a poll gap of the duration is a completion, not a skip.
         let completedNaturally = naturalCompletion || inferredNaturalCompletion(session: session)
-        if canCountPlaythrough && (completedNaturally || playthroughThresholdReached(session: session, settings: settings)) {
+        if completedNaturally || playthroughThresholdReached(session: session, settings: settings) {
             EvictionEngine.countPlaythrough(
                 item,
                 playlist: playlist,
@@ -225,8 +224,7 @@ enum PlaybackSessionEvaluationService {
                   fallbackLocalTrackID: fallbackLocalTrackID,
                   playlist: playlist,
                   context: context
-              ),
-              item.evictedAt == nil else {
+              ) else {
             return nil
         }
 

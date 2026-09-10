@@ -115,14 +115,14 @@ struct HistoryView: View {
         hasMoreEvents = page?.hasMore ?? false
         recoveredEvents = (try? EventRepository.recoveredPlaythroughEvents(in: modelContext)) ?? []
 
-        let playlistIDs = Array(Set(events.compactMap(\.playlistID)))
         let trackIDs = Array(Set(events.compactMap(\.trackID)))
+        playlistItems = (try? PlaylistItemRepository.items(forTrackIDs: trackIDs, in: modelContext)) ?? []
+        let playlistIDs = Array(Set(events.compactMap(\.playlistID) + playlistItems.map(\.playlistID)))
 
         playlists = playlistIDs.compactMap { playlistID in
             try? PlaylistRepository.playlist(id: playlistID, in: modelContext)
         }
         tracks = (try? TrackRecordRepository.tracks(ids: trackIDs, in: modelContext)) ?? []
-        playlistItems = (try? PlaylistItemRepository.items(forPlaylistIDs: playlistIDs, in: modelContext)) ?? []
     }
 
     private var dependencies: HistoryViewModel.Dependencies {
@@ -170,7 +170,7 @@ private struct HistoryEventRowView: View {
             Spacer()
 
             if canRestore {
-                Button("Restore", action: restore)
+                Button("Move to Triage", action: restore)
                     .buttonStyle(.bordered)
             }
         }

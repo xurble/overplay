@@ -3,6 +3,7 @@ import Foundation
 enum AppShellDestination: Hashable {
     case dashboard
     case playlist(UUID)
+    case retired
     case search
     case history
     case settings
@@ -21,6 +22,8 @@ enum AppShellDestination: Hashable {
             self = .dashboard
         case Self.search.storageValue:
             self = .search
+        case Self.retired.storageValue:
+            self = .retired
         case Self.history.storageValue:
             self = .history
         case Self.settings.storageValue:
@@ -40,6 +43,8 @@ enum AppShellDestination: Hashable {
             "playlist:\(id.uuidString)"
         case .search:
             "search"
+        case .retired:
+            "retired"
         case .history:
             "history"
         case .settings:

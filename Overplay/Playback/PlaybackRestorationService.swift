@@ -25,7 +25,9 @@ enum PlaybackRestorationService {
         }
 
         return DisplayRestoreState(
-            musicPlaylistID: playlist.musicPlaylistID,
+            musicPlaylistID: try restored.item.flatMap {
+                try PlaylistRepository.playlist(id: $0.playlistID, in: context)?.musicPlaylistID
+            } ?? playlist.musicPlaylistID,
             playlistItem: restored.item,
             track: CurrentPlaybackTrack(
                 restored.track,

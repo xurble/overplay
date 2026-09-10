@@ -13,10 +13,12 @@ enum TrackIdentityMergeService {
     struct MergeSummary: Equatable {
         var mergedTrackCount = 0
         var mergedItemCount = 0
+        var migratedItemCount = 0
+        var deletedItemCount = 0
         var localTrackIDMapping: [String: String] = [:]
 
         var didChange: Bool {
-            mergedTrackCount > 0 || mergedItemCount > 0
+            mergedTrackCount > 0 || mergedItemCount > 0 || migratedItemCount > 0 || deletedItemCount > 0
         }
     }
 
@@ -48,7 +50,18 @@ enum TrackIdentityMergeService {
             canonical.updatedAt = .now
         }
 
-        summary.mergedItemCount = try PlaylistItemRepository.mergeDuplicateItems(in: context, save: false)
+        if !summary.localTrackIDMapping.isEmpty {
+            for playlist in try PlaylistRepository.allPlaylists(in: context) {
+                playlist.triageExcludedTrackIDs = playlist.triageExcludedTrackIDs.map {
+                    summary.localTrackIDMapping[$0] ?? $0
+                }
+            }
+            TrackRetentionPolicy.rekeyPlaybackTracks(summary.localTrackIDMapping)
+        }
+        let ownership = try TrackOwnershipMigrationService.migrate(in: context)
+        summary.mergedItemCount = ownership.mergedCount
+        summary.migratedItemCount = ownership.migratedCount
+        summary.deletedItemCount = ownership.deletedCount
 
         if summary.didChange {
             try context.save()

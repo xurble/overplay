@@ -5,6 +5,7 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
         case oneTruePlaylist
         case triageBucket
         case triageSource
+        case retired
         case currentPlayback
 
         var systemImage: String {
@@ -15,6 +16,8 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
                 "tray.fill"
             case .triageSource:
                 "music.note.list"
+            case .retired:
+                "archivebox.fill"
             case .currentPlayback:
                 "play.fill"
             }
@@ -32,9 +35,11 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
     let playableTrackCount: Int
     let lastSyncedAt: Date?
     let isCurrentPlaybackPlaylist: Bool
+    var playbackScope: PlaylistPlaybackScope = .active
 
     var roleTitle: String {
-        switch role {
+        if playbackScope == .retired { return "Retired" }
+        return switch role {
         case .oneTruePlaylist:
             "One True Playlist"
         case .triageBucket:
@@ -59,6 +64,7 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
         if isCurrentPlaybackPlaylist {
             return .currentPlayback
         }
+        if playbackScope == .retired { return .retired }
 
         switch role {
         case .oneTruePlaylist:

@@ -6,7 +6,7 @@ struct DashboardView: View {
     @Environment(PlaybackController.self) private var playbackController
 
     @Query(filter: #Predicate<PlaylistRecord> { $0.isActive }, sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
-    @State private var playlistItems: [PlaylistItemRecord] = []
+    @Query private var playlistItems: [PlaylistItemRecord]
     @State private var tracks: [TrackRecord] = []
 
     var settings: OverplaySettings
@@ -54,6 +54,21 @@ struct DashboardView: View {
                     )
                 }
             }
+
+            if let triageBucket {
+                Section {
+                    NavigationLink {
+                        PlaylistManagementView(settings: settings, playlist: triageBucket, scope: .retired)
+                    } label: {
+                        PlaylistHomeRowView(
+                            title: "Retired",
+                            detail: "\(playlistItems.filter { $0.evictedAt != nil }.count) tracks · Revisit songs you put aside",
+                            artworkURLString: nil, playlistID: nil,
+                            systemImage: "archivebox.fill", badgeTint: .secondary
+                        )
+                    }
+                }
+            }
         }
         .miniPlayerScrollContentInset()
         .navigationTitle("Overplay")
@@ -95,6 +110,7 @@ struct DashboardView: View {
 
     private var dashboardDataKey: String {
         playlists.map(\.id.uuidString).joined(separator: "-")
+            + playlistItems.map(\.trackID.uuidString).joined(separator: "-")
     }
 
     private var oneTruePlaylist: PlaylistRecord? {
@@ -132,8 +148,6 @@ struct DashboardView: View {
     }
 
     private func reloadDashboardData() {
-        let playlistIDs = playlists.map(\.id)
-        playlistItems = (try? PlaylistItemRepository.items(forPlaylistIDs: playlistIDs, in: modelContext)) ?? []
         tracks = (try? TrackRecordRepository.tracks(ids: playlistItems.map(\.trackID), in: modelContext)) ?? []
     }
 

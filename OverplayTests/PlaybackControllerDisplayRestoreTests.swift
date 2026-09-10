@@ -443,7 +443,8 @@ struct PlaybackControllerDisplayRestoreTests {
 
         #expect(item.evictedAt == nil)
         #expect(!controller.displayedIsEvicted)
-        #expect(controller.activePlaylistSnapshot?.rows.first?.isEvicted == false)
+        #expect(item.playlistID == (try PlaylistRepository.triageBucket(in: context)).id)
+        #expect(controller.activePlaylistSnapshot?.rows.isEmpty == true)
         #expect(controller.playbackItemMetadataVersion > previousMetadataVersion)
     }
 
@@ -462,6 +463,7 @@ struct PlaybackControllerDisplayRestoreTests {
         let activeSecond = TrackRecord(title: "Second", artistName: "Artist")
         let changedTrack = TrackRecord(title: "Changed", artistName: "Artist")
         let retiredTrack = TrackRecord(title: "Retired", artistName: "Artist")
+        let bucket = try PlaylistRepository.triageBucket(in: context)
         let activeFirstItem = PlaylistItemRecord(
             playlistID: playlist.id,
             trackID: activeFirst.id,
@@ -478,7 +480,7 @@ struct PlaybackControllerDisplayRestoreTests {
             createdAt: Date(timeIntervalSince1970: 30)
         )
         let retiredItem = PlaylistItemRecord(
-            playlistID: playlist.id,
+            playlistID: bucket.id,
             trackID: retiredTrack.id,
             evictedAt: Date(timeIntervalSince1970: 100),
             createdAt: Date(timeIntervalSince1970: 5)
@@ -489,10 +491,11 @@ struct PlaybackControllerDisplayRestoreTests {
         try context.save()
 
         let activePlaylistID = playlist.musicPlaylistID
-        let retiredPlaylistID = PlaylistPlaybackScope.retired.playbackOrderPlaylistID(for: activePlaylistID)
+        let retiredPlaylistID = PlaylistPlaybackScope.retired.playbackOrderPlaylistID(for: bucket.musicPlaylistID)
         defer {
             PlaybackOrderStore.clear(playerID: playerID, musicPlaylistID: activePlaylistID)
             PlaybackOrderStore.clear(playerID: playerID, musicPlaylistID: retiredPlaylistID)
+            PlaybackOrderStore.clear(playerID: playerID, musicPlaylistID: bucket.musicPlaylistID)
         }
 
         PlaybackOrderStore.save(
@@ -522,9 +525,9 @@ struct PlaybackControllerDisplayRestoreTests {
 
         #expect(PlaybackOrderStore.state(playerID: playerID, musicPlaylistID: activePlaylistID).orderedTrackIDs == [
             activeSecond.id.uuidString,
-            activeFirst.id.uuidString,
-            changedTrack.id.uuidString
+            activeFirst.id.uuidString
         ])
+        #expect(PlaybackOrderStore.state(playerID: playerID, musicPlaylistID: bucket.musicPlaylistID).orderedTrackIDs == [changedTrack.id.uuidString])
         #expect(PlaybackOrderStore.state(playerID: playerID, musicPlaylistID: retiredPlaylistID).orderedTrackIDs == [
             retiredTrack.id.uuidString
         ])

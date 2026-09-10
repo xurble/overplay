@@ -239,7 +239,6 @@ enum PlaybackReconciliationService {
         var counted: [String] = []
         for localTrackID in outcome.continuityProvenLocalTrackIDs {
             guard let item = itemsByLocalTrackID[localTrackID],
-                  item.evictedAt == nil,
                   !alreadyCreditedDuringSpan(item: item, waypoint: waypoint) else {
                 continue
             }
@@ -267,7 +266,6 @@ enum PlaybackReconciliationService {
         for musicLibraryProven in outcome.musicLibraryProvenLocalTrackIDs {
             guard !counted.contains(musicLibraryProven),
                   let item = itemsByLocalTrackID[musicLibraryProven],
-                  item.evictedAt == nil,
                   !alreadyCreditedSinceMusicLibraryBaseline(
                     item: item,
                     localTrackID: musicLibraryProven,
@@ -297,7 +295,6 @@ enum PlaybackReconciliationService {
         if let pointProven = outcome.pointProvenLocalTrackID,
            !counted.contains(pointProven),
            let item = itemsByLocalTrackID[pointProven],
-           item.evictedAt == nil,
            !alreadyCreditedThisPlayInstance(item: item, observation: observation) {
             EvictionEngine.countPlaythrough(
                 item,

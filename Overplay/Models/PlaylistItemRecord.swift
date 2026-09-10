@@ -7,12 +7,20 @@ final class PlaylistItemRecord {
     var playlistID: UUID = UUID()
     var trackID: UUID = UUID()
     var musicPlaylistEntryID: String?
-    /// Which contributing Apple Music playlists put this track in the triage
-    /// bucket. Deliberately allowed to be empty: unlinking a contributor
-    /// leaves its rows in the bucket unattributed, and a track added straight
-    /// to the bucket never had a contributor at all. Empty means "no known
-    /// source", which is a normal state and not an error.
+    /// All linked playlists that contributed this track, independent of location.
     var sourceMusicPlaylistIDs: [String] = []
+    var isExplicitlyKept: Bool = false
+    var hasRecordedActivity: Bool = false
+    var pendingRetentionCleanup: Bool = false
+    /// Location intent is separate from metadata/stat timestamps, which sync
+    /// can update without a user choosing a different collection.
+    var locationChangedAt: Date?
+    /// Remote OTP memberships superseded by local retirement or movement.
+    /// Keep these until a full snapshot proves absence or explicit promotion wins.
+    var suppressedOTPMusicPlaylistIDs: [String] = []
+    /// Stored default identifies historical rows; new initializers opt out of
+    /// the one-time legacy 0/0 cleanup, including after reinstall/CloudKit delivery.
+    var ownershipVersion: Int = 0
     var sortOrder: Int = 0
     var skipCount: Int = 0
     var playthroughCount: Int = 0
@@ -41,6 +49,10 @@ final class PlaylistItemRecord {
         trackID: UUID,
         musicPlaylistEntryID: String? = nil,
         sourceMusicPlaylistIDs: [String] = [],
+        isExplicitlyKept: Bool = false,
+        hasRecordedActivity: Bool = false,
+        suppressedOTPMusicPlaylistIDs: [String] = [],
+        ownershipVersion: Int = 1,
         sortOrder: Int = 0,
         skipCount: Int = 0,
         playthroughCount: Int = 0,
@@ -58,6 +70,10 @@ final class PlaylistItemRecord {
         self.trackID = trackID
         self.musicPlaylistEntryID = musicPlaylistEntryID
         self.sourceMusicPlaylistIDs = sourceMusicPlaylistIDs
+        self.isExplicitlyKept = isExplicitlyKept
+        self.hasRecordedActivity = hasRecordedActivity
+        self.suppressedOTPMusicPlaylistIDs = suppressedOTPMusicPlaylistIDs
+        self.ownershipVersion = ownershipVersion
         self.sortOrder = sortOrder
         self.skipCount = skipCount
         self.playthroughCount = playthroughCount
@@ -73,6 +89,11 @@ final class PlaylistItemRecord {
 
     var isPlayable: Bool {
         evictedAt == nil
+    }
+
+    var hasListeningHistory: Bool {
+        hasRecordedActivity || skipCount != 0 || playthroughCount != 0
+            || lastPlayedAt != nil || lastSkippedAt != nil
     }
 
     /// Records a contributing playlist without duplicating it, preserving
