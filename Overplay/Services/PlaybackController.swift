@@ -2937,7 +2937,9 @@ final class PlaybackController {
             // every item they contribute belongs to the shared bucket. All
             // playback surfaces therefore reconcile the bucket, never the
             // inert source record.
-            let playlist = requestedPlaylist.role == .triageSource
+            let shouldUseTriageBucket = requestedPlaylist.role == .triageSource
+                || requestedPlaylist.role == .triageBucket
+            let playlist = shouldUseTriageBucket
                 ? try PlaylistRepository.triageBucket(in: context)
                 : requestedPlaylist
             let isCurrentPlaylist = currentPlaylistID == playlist.musicPlaylistID

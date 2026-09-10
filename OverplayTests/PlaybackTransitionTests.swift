@@ -344,6 +344,45 @@ struct PlaybackTransitionTests {
         } == true)
     }
 
+    @Test("a bucket alias callback reconciles the canonical playing bucket")
+    func bucketAliasCallbackReconcilesCanonicalPlayingBucket() async throws {
+        let fixture = try makeFixture(trackCount: 2)
+        fixture.playlist.musicPlaylistID = PlaylistRecord.triageBucketMusicPlaylistID
+        fixture.playlist.name = PlaylistRecord.triageBucketName
+        fixture.playlist.role = .triageBucket
+        fixture.playlist.writePolicy = .incomingOnly
+        fixture.playlist.createdAt = Date(timeIntervalSince1970: 200)
+        defer { fixture.cleanUp() }
+        try fixture.context.save()
+        try await fixture.start(at: 0)
+
+        let imported = try fixture.addPlaylist(prefix: "imported-bucket", trackCount: 1)
+        imported.playlist.musicPlaylistID = PlaylistRecord.triageBucketMusicPlaylistID
+        imported.playlist.name = PlaylistRecord.triageBucketName
+        imported.playlist.role = .triageBucket
+        imported.playlist.writePolicy = .incomingOnly
+        imported.playlist.createdAt = Date(timeIntervalSince1970: 100)
+        try fixture.context.save()
+
+        // A refresh can discover that the view's bucket record is now an
+        // inactive alias because an older CloudKit bucket became canonical.
+        let canonicalBucket = try PlaylistRepository.triageBucket(in: fixture.context)
+        #expect(canonicalBucket.id == imported.playlist.id)
+        #expect(fixture.playlist.isActive == false)
+        try fixture.context.save()
+
+        fixture.controller.reconcileStoredOrder(for: fixture.playlist, context: fixture.context)
+        await Task.yield()
+
+        let importedLocalTrackID = imported.tracks[0].id.uuidString
+        #expect(fixture.player.appendedTrackBatchSizes == [1])
+        #expect(fixture.player.queuedEntryCount == 3)
+        #expect(fixture.controller.activePlaylistSnapshot?.playlistID == canonicalBucket.id)
+        #expect(fixture.controller.activePlaylistSnapshot?.rows.contains {
+            $0.localTrackID == importedLocalTrackID
+        } == true)
+    }
+
     @Test("a promoted source sync callback still refreshes the playing triage bucket")
     func promotedSourceSyncCallbackStillRefreshesPlayingTriageBucket() async throws {
         let fixture = try makeFixture(trackCount: 2)
