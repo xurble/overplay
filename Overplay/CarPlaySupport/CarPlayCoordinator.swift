@@ -279,10 +279,14 @@ final class CarPlayCoordinator: NSObject {
         guard let interfaceController, let modelContext else { return }
 
         do {
-            guard let playlist = try PlaylistRepository.playlist(id: summary.id, in: modelContext) else {
+            guard let storedPlaylist = try PlaylistRepository.playlist(id: summary.id, in: modelContext) else {
                 setRootTemplate(animated: true)
                 return
             }
+            let playlist = try CarPlayLibrarySnapshot.canonicalPlaylist(
+                for: storedPlaylist,
+                in: modelContext
+            )
 
             visiblePlaylistID = playlist.id
             let template = CPListTemplate(
@@ -650,11 +654,16 @@ final class CarPlayCoordinator: NSObject {
         guard listTemplate === visiblePlaylistTemplate,
               let visiblePlaylistID,
               let modelContext,
-              let playlist = try? PlaylistRepository.playlist(id: visiblePlaylistID, in: modelContext),
+              let storedPlaylist = try? PlaylistRepository.playlist(id: visiblePlaylistID, in: modelContext),
+              let playlist = try? CarPlayLibrarySnapshot.canonicalPlaylist(
+                for: storedPlaylist,
+                in: modelContext
+              ),
               let sections = try? playlistSections(for: playlist) else {
             return
         }
 
+        self.visiblePlaylistID = playlist.id
         CarPlayListTemplateUpdater.update(listTemplate, sections: sections)
     }
 

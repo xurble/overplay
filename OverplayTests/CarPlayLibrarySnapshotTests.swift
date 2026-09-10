@@ -6,6 +6,34 @@ import Testing
 
 @MainActor
 struct CarPlayLibrarySnapshotTests {
+    @Test("an inactive bucket alias resolves to the active canonical bucket")
+    func inactiveBucketAliasResolvesToCanonicalBucket() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = ModelContext(container)
+        let canonical = PlaylistRecord(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket,
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        let alias = PlaylistRecord(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket,
+            isActive: false,
+            createdAt: Date(timeIntervalSince1970: 200)
+        )
+        context.insert(canonical)
+        context.insert(alias)
+        try context.save()
+
+        let resolved = try CarPlayLibrarySnapshot.canonicalPlaylist(for: alias, in: context)
+
+        #expect(resolved.id == canonical.id)
+    }
+
     @Test func playlistSummariesIncludeActivePlayablePlaylistsInCarPlayOrder() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = ModelContext(container)
