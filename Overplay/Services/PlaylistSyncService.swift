@@ -802,24 +802,32 @@ struct PlaylistSyncService {
         return tracks.filter { playableMusicItemIDs.contains($0.id.rawValue) }
     }
 
-    func removeTrackFromPlaylist(trackID: String, playlistID: String) async throws {
-        let playlist = try await loadPlaylist(id: playlistID)
-        let tracks = try await loadTracks(for: playlist)
-        let remainingTracks = tracks.filter { $0.id.rawValue != trackID }
+    @discardableResult
+    func removeTrackFromPlaylist(
+        trackID: String, playlistID: String, isCurrent: () -> Bool = { true }
+    ) async throws -> Bool {
+        try await PlaylistRemoteMutationCoordinator.shared.rewrite(
+            playlistID: playlistID,
+            isCurrent: isCurrent,
+            load: {
+                let playlist = try await loadPlaylist(id: playlistID)
+                return (playlist, try await loadTracks(for: playlist))
+            }
+        ) { playlist, tracks in
+            let remainingTracks = tracks.filter { $0.id.rawValue != trackID }
 
-        guard remainingTracks.count < tracks.count else {
-            throw PlaylistSyncError.trackNotFoundInPlaylist
-        }
+            guard remainingTracks.count < tracks.count else {
+                throw PlaylistSyncError.trackNotFoundInPlaylist
+            }
 
-        // A single removal rewrites the whole playlist, and the rewrite is
-        // built from the possibly truncated fetch above, so the size of the
-        // list actually sent is worth recording.
-        try await MusicKitActivityLog.shared.measure(
-            .libraryPlaylistEdit,
-            magnitude: Double(remainingTracks.count),
-            detail: "rewrote playlist to remove 1 track"
-        ) {
-            try await MusicLibrary.shared.edit(playlist, items: remainingTracks)
+            // The loader requires a complete snapshot before this replacement.
+            try await MusicKitActivityLog.shared.measure(
+                .libraryPlaylistEdit,
+                magnitude: Double(remainingTracks.count),
+                detail: "rewrote playlist to remove 1 track"
+            ) {
+                try await MusicLibrary.shared.edit(playlist, items: remainingTracks)
+            }
         }
     }
 

@@ -1795,9 +1795,26 @@ final class PlaybackController {
             ?? itemTrack?.libraryID
             ?? (currentPlaylistItem?.id == item.id ? currentTrack?.id : nil)
         guard let trackID else { return }
+        let itemID = item.id
+        let playlistID = playlist.id
+        let locationChangedAt = item.locationChangedAt
+        let container = context.container
 
         do {
-            try await PlaylistSyncService().removeTrackFromPlaylist(trackID: trackID, playlistID: playlist.musicPlaylistID)
+            let removed = try await PlaylistSyncService().removeTrackFromPlaylist(
+                trackID: trackID, playlistID: playlist.musicPlaylistID,
+                isCurrent: {
+                    // Read fresh persisted intent: another context may have
+                    // restored/promoted the item while this request waited.
+                    let freshContext = ModelContext(container)
+                    guard let liveItem = try? PlaylistItemRepository.item(id: itemID, in: freshContext),
+                          let livePlaylist = try? PlaylistRepository.playlist(id: playlistID, in: freshContext) else { return false }
+                    return liveItem.evictedAt != nil
+                        && liveItem.locationChangedAt == locationChangedAt
+                        && PlaylistRemoteMutationPolicy.shouldDeleteRemotelyAfterEviction(item: liveItem, playlist: livePlaylist)
+                }
+            )
+            guard removed else { return }
             statusMessage = "Removed \(currentTrack?.title ?? "track") from the Apple Music playlist."
         } catch {
             statusMessage = "Retired locally, but Apple Music playlist removal failed: \(error.localizedDescription)"

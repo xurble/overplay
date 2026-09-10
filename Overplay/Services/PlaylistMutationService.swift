@@ -39,6 +39,27 @@ struct PlaylistMutationService {
         beforeMove: () -> Void = {},
         in context: ModelContext
     ) async throws -> PlaylistItemRecord {
+        guard let playlist = try PlaylistRepository.oneTruePlaylist(in: context) else {
+            throw PlaylistMutationError.oneTruePlaylistMissing
+        }
+        let itemID = sourceItem.id
+        let locationChangedAt = sourceItem.locationChangedAt
+        let playlistID = playlist.id
+        return try await PlaylistRemoteMutationCoordinator.shared.perform(playlistID: playlist.musicPlaylistID) {
+            guard let liveItem = try PlaylistItemRepository.item(id: itemID, in: context),
+                  liveItem.locationChangedAt == locationChangedAt,
+                  try PlaylistRepository.oneTruePlaylist(in: context)?.id == playlistID else {
+                throw PlaylistMutationError.trackMissing
+            }
+            return try await promoteSerially(item: sourceItem, beforeMove: beforeMove, in: context)
+        }
+    }
+
+    private func promoteSerially(
+        item sourceItem: PlaylistItemRecord,
+        beforeMove: () -> Void,
+        in context: ModelContext
+    ) async throws -> PlaylistItemRecord {
         guard let oneTruePlaylist = try PlaylistRepository.oneTruePlaylist(in: context) else {
             throw PlaylistMutationError.oneTruePlaylistMissing
         }

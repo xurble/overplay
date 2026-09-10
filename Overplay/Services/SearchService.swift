@@ -68,11 +68,13 @@ final class SearchService {
             throw SearchServiceError.resultUnavailable
         }
 
-        let playlist = try await playlist(for: playlistID)
-        try await MusicKitActivityLog.shared.measure(.libraryPlaylistAddItem) {
-            try await MusicLibrary.shared.add(song, to: playlist)
+        return try await PlaylistRemoteMutationCoordinator.shared.perform(playlistID: playlistID) {
+            let playlist = try await playlist(for: playlistID)
+            try await MusicKitActivityLog.shared.measure(.libraryPlaylistAddItem) {
+                try await MusicLibrary.shared.add(song, to: playlist)
+            }
+            return playlist.name
         }
-        return playlist.name
     }
 
     private func searchFailureMessage(for error: Error) -> String {
