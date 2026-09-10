@@ -115,12 +115,14 @@ enum PlaybackTrackResolver {
     ) throws -> PlaylistRecord? {
         if let selectedPlaylistID = settings.selectedPlaylistID,
            let playlist = try PlaylistRepository.playlist(musicPlaylistID: selectedPlaylistID, in: context),
-           playlist.isActive {
+           playlist.isActive,
+           playlist.role.isPlaybackContext {
             return playlist
         }
 
-        let playlists = try PlaylistRepository.activePlaylists(in: context)
-        return playlists.first { $0.role == .oneTruePlaylist } ?? playlists.first
+        let playbackPlaylists = try PlaylistRepository.activePlaylists(in: context)
+            .filter { $0.role.isPlaybackContext }
+        return playbackPlaylists.first { $0.role == .oneTruePlaylist } ?? playbackPlaylists.first
     }
 
     static func currentPlaybackTrack(

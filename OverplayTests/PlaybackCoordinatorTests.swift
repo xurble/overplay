@@ -151,7 +151,7 @@ struct PlaybackCoordinatorTests {
         let otherPlaylist = PlaylistRecord(
             musicPlaylistID: "other-playlist",
             name: "Other",
-            role: .triage
+            role: .triageBucket
         )
         let targetTrack = TrackRecord(
             catalogID: "shared-music-id",

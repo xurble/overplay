@@ -48,6 +48,7 @@ final class PlaylistSelectionViewModel {
                 }
                 return syncedCount
             } reconcileStoredOrder: { playlist, context in
+                playbackController.reconcilePlaylistSelection(context: context)
                 playbackController.reconcileStoredOrder(for: playlist, context: context)
             } dismiss: {
                 dismiss()
@@ -67,6 +68,19 @@ final class PlaylistSelectionViewModel {
     var filteredPlaylists: [AppleMusicPlaylist] {
         guard !searchText.isEmpty else { return playlists }
         return playlists.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    func trackCount(
+        for playlist: PlaylistRecord,
+        playlistItems: [PlaylistItemRecord]
+    ) -> Int {
+        if let remoteTrackCount = playlists.first(where: { $0.id == playlist.musicPlaylistID })?.trackCount {
+            return remoteTrackCount
+        }
+
+        return playlistItems.count {
+            $0.sourceMusicPlaylistIDs.contains(playlist.musicPlaylistID)
+        }
     }
 
     func loadPlaylists(dependencies: Dependencies) async {
@@ -94,6 +108,7 @@ final class PlaylistSelectionViewModel {
 
         do {
             try SettingsRepository.selectPlaylist(playlist, in: context)
+            try reconcileSelectedPlaylist(playlist.id, context: context, dependencies: dependencies)
             refreshPlaylistInBackground(id: playlist.id, context: context, dependencies: dependencies)
             dependencies.dismiss()
         } catch {
@@ -104,6 +119,7 @@ final class PlaylistSelectionViewModel {
     func useIncomingOnly(_ playlist: AppleMusicPlaylist, context: ModelContext, dependencies: Dependencies) {
         do {
             try SettingsRepository.selectPlaylist(playlist, writePolicy: .incomingOnly, in: context)
+            try reconcileSelectedPlaylist(playlist.id, context: context, dependencies: dependencies)
             refreshPlaylistInBackground(id: playlist.id, context: context, dependencies: dependencies)
             dependencies.dismiss()
         } catch {
@@ -111,11 +127,22 @@ final class PlaylistSelectionViewModel {
         }
     }
 
-    func addTriage(_ playlist: AppleMusicPlaylist, context: ModelContext) {
+    func addTriageSource(_ playlist: AppleMusicPlaylist, context: ModelContext) {
         do {
-            try PlaylistRepository.addTriagePlaylist(playlist, in: context)
+            try PlaylistRepository.addTriageSource(playlist, in: context)
             try context.save()
-            message = "Added \(playlist.name) as a triage playlist."
+            message = "\(playlist.name) now feeds the triage bucket."
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    /// Unlinking leaves the contributed tracks in the bucket with their stats
+    /// intact, just unattributed.
+    func removeTriageSource(_ playlist: PlaylistRecord, context: ModelContext) {
+        do {
+            try PlaylistRepository.removeTriageSource(playlist, in: context)
+            message = "\(playlist.name) no longer feeds the triage bucket."
         } catch {
             message = error.localizedDescription
         }
@@ -128,6 +155,7 @@ final class PlaylistSelectionViewModel {
                 writePolicy: playlist.writePolicy,
                 in: context
             )
+            try reconcileSelectedPlaylist(playlist.musicPlaylistID, context: context, dependencies: dependencies)
             refreshPlaylistInBackground(playlist, context: context, dependencies: dependencies)
             dependencies.dismiss()
         } catch {
@@ -146,6 +174,7 @@ final class PlaylistSelectionViewModel {
                 writePolicy: .managed,
                 in: context
             )
+            try reconcileSelectedPlaylist(playlist.musicPlaylistID, context: context, dependencies: dependencies)
             message = "Created \(playlist.name) in Apple Music."
             dependencies.dismiss()
         } catch {
@@ -168,6 +197,7 @@ final class PlaylistSelectionViewModel {
                 writePolicy: .managed,
                 in: context
             )
+            try reconcileSelectedPlaylist(playlist.musicPlaylistID, context: context, dependencies: dependencies)
             message = "Copied \(sourcePlaylist.name) to \(playlist.name)."
             dependencies.dismiss()
         } catch {
@@ -176,6 +206,11 @@ final class PlaylistSelectionViewModel {
     }
 
     func sync(_ playlist: PlaylistRecord, context: ModelContext, dependencies: Dependencies) async {
+        guard playlist.isActive, playlist.hasRemoteSource else {
+            message = "\(playlist.name) is no longer linked."
+            return
+        }
+
         syncingPlaylistIDs.insert(playlist.id)
         defer { syncingPlaylistIDs.remove(playlist.id) }
 
@@ -196,9 +231,13 @@ final class PlaylistSelectionViewModel {
         isSyncingAll = true
         defer { isSyncingAll = false }
 
+        let syncablePlaylists = linkedPlaylists.filter {
+            $0.isActive && $0.hasRemoteSource
+        }
+
         do {
-            let count = try await dependencies.syncAllLinkedPlaylists(linkedPlaylists, context)
-            for playlist in linkedPlaylists {
+            let count = try await dependencies.syncAllLinkedPlaylists(syncablePlaylists, context)
+            for playlist in syncablePlaylists {
                 dependencies.reconcileStoredOrder(playlist, context)
             }
             message = "Synced \(count) tracks across linked playlists."
@@ -212,6 +251,8 @@ final class PlaylistSelectionViewModel {
         context: ModelContext,
         dependencies: Dependencies
     ) {
+        guard playlist.isActive, playlist.hasRemoteSource else { return }
+
         Task(priority: .background) {
             do {
                 _ = try await dependencies.syncPlaylist(playlist, context)
@@ -232,5 +273,19 @@ final class PlaylistSelectionViewModel {
                 message = error.localizedDescription
             }
         }
+    }
+
+    private func reconcileSelectedPlaylist(
+        _ musicPlaylistID: String,
+        context: ModelContext,
+        dependencies: Dependencies
+    ) throws {
+        guard let playlist = try PlaylistRepository.playlist(
+            musicPlaylistID: musicPlaylistID,
+            in: context
+        ) else {
+            return
+        }
+        dependencies.reconcileStoredOrder(playlist, context)
     }
 }

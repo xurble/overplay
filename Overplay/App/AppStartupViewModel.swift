@@ -7,6 +7,7 @@ import SwiftData
 final class AppStartupViewModel {
     struct Dependencies {
         var loadSettings: () throws -> Void
+        var migrateTriageBucket: () -> Void
         var refreshAuthorization: () async -> Void
         var installRemoteCommands: () -> Void
         var mergeDuplicateTrackIdentities: () async -> Void
@@ -41,6 +42,13 @@ final class AppStartupViewModel {
             StartupProfiler.mark("Startup settings load failed: \(error.localizedDescription)")
         }
 
+        // Runs before anything reads playlist roles. The pre-bucket `triage`
+        // raw value resolves to `.triageSource`, so a view that renders first
+        // would show a bucket with no tracks in it.
+        StartupProfiler.measure("Triage bucket migration") {
+            dependencies.migrateTriageBucket()
+        }
+
         await StartupProfiler.measure("Apple Music authorization refresh") {
             await dependencies.refreshAuthorization()
         }
@@ -71,6 +79,12 @@ final class AppStartupViewModel {
     ) -> Dependencies {
         Dependencies {
             _ = try SettingsRepository.settings(in: modelContext)
+        } migrateTriageBucket: {
+            do {
+                try TriageBucketMigrationService.migrate(in: modelContext)
+            } catch {
+                StartupProfiler.mark("Triage bucket migration failed: \(error.localizedDescription)")
+            }
         } refreshAuthorization: {
             await authorizationService.refresh()
         } installRemoteCommands: {

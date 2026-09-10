@@ -2,6 +2,11 @@ import Foundation
 import SwiftData
 
 enum PlaylistItemRepository {
+    struct ReparentSummary: Equatable {
+        var movedCount = 0
+        var mergedCount = 0
+    }
+
     static func allItems(in context: ModelContext) throws -> [PlaylistItemRecord] {
         let descriptor = FetchDescriptor<PlaylistItemRecord>(
             sortBy: [SortDescriptor(\.createdAt)]
@@ -82,6 +87,78 @@ enum PlaylistItemRepository {
         try playableItems(forPlaylistID: playlistID, in: context)
     }
 
+    /// Moves every item from one playlist into another, merging duplicate
+    /// tracks and retaining the most recently updated eviction decision.
+    /// Item timestamps are deliberately left untouched: they encode the
+    /// recency of the user's eviction or restoration intent, not migration
+    /// bookkeeping.
+    @discardableResult
+    static func reparentItems(
+        from sourcePlaylistID: UUID,
+        to destinationPlaylistID: UUID,
+        sourceMusicPlaylistID: String,
+        in context: ModelContext
+    ) throws -> ReparentSummary {
+        try reparentItems(
+            from: sourcePlaylistID,
+            to: destinationPlaylistID,
+            additionalSourceMusicPlaylistID: sourceMusicPlaylistID,
+            in: context
+        )
+    }
+
+    /// Moves items between two local containers without inventing source
+    /// provenance. This is used when duplicate triage buckets converge after
+    /// CloudKit sync: the rows already carry their contributing playlist IDs.
+    @discardableResult
+    static func reparentItems(
+        from sourcePlaylistID: UUID,
+        to destinationPlaylistID: UUID,
+        in context: ModelContext
+    ) throws -> ReparentSummary {
+        try reparentItems(
+            from: sourcePlaylistID,
+            to: destinationPlaylistID,
+            additionalSourceMusicPlaylistID: nil,
+            in: context
+        )
+    }
+
+    private static func reparentItems(
+        from sourcePlaylistID: UUID,
+        to destinationPlaylistID: UUID,
+        additionalSourceMusicPlaylistID: String?,
+        in context: ModelContext
+    ) throws -> ReparentSummary {
+        guard sourcePlaylistID != destinationPlaylistID else { return ReparentSummary() }
+
+        var summary = ReparentSummary()
+        var destinationItemsByTrackID = try items(
+            forPlaylistID: destinationPlaylistID,
+            in: context
+        ).firstValueDictionary(keyedBy: \.trackID)
+
+        for item in try items(forPlaylistID: sourcePlaylistID, in: context) {
+            if let keeper = destinationItemsByTrackID[item.trackID] {
+                mergeStats(from: item, into: keeper, adoptEvictionStateIfNewer: true)
+                if let additionalSourceMusicPlaylistID {
+                    keeper.addSourceMusicPlaylistID(additionalSourceMusicPlaylistID)
+                }
+                context.delete(item)
+                summary.mergedCount += 1
+            } else {
+                item.playlistID = destinationPlaylistID
+                if let additionalSourceMusicPlaylistID {
+                    item.addSourceMusicPlaylistID(additionalSourceMusicPlaylistID)
+                }
+                destinationItemsByTrackID[item.trackID] = item
+                summary.movedCount += 1
+            }
+        }
+
+        return summary
+    }
+
     @discardableResult
     static func upsert(
         playlistID: UUID,
@@ -157,21 +234,11 @@ enum PlaylistItemRepository {
 
             let latestUpdatedItem = orderedItems.max { $0.updatedAt < $1.updatedAt }
             if let latestUpdatedItem, latestUpdatedItem !== keeper {
-                keeper.evictedAt = latestUpdatedItem.evictedAt
-                keeper.evictionReason = latestUpdatedItem.evictionReason
-                keeper.evictionSource = latestUpdatedItem.evictionSource
+                adoptEvictionState(from: latestUpdatedItem, into: keeper)
             }
 
             for duplicate in duplicates {
-                keeper.skipCount += duplicate.skipCount
-                keeper.playthroughCount += duplicate.playthroughCount
-                keeper.lastPlayedAt = latestDate(keeper.lastPlayedAt, duplicate.lastPlayedAt)
-                keeper.lastSkippedAt = latestDate(keeper.lastSkippedAt, duplicate.lastSkippedAt)
-                keeper.lastSeenInPlaylistAt = latestDate(keeper.lastSeenInPlaylistAt, duplicate.lastSeenInPlaylistAt)
-                if keeper.musicPlaylistEntryID == nil {
-                    keeper.musicPlaylistEntryID = duplicate.musicPlaylistEntryID
-                }
-                keeper.updatedAt = max(keeper.updatedAt, duplicate.updatedAt)
+                mergeStats(from: duplicate, into: keeper, adoptEvictionStateIfNewer: false)
                 context.delete(duplicate)
                 mergedCount += 1
             }
@@ -181,6 +248,49 @@ enum PlaylistItemRepository {
             try context.save()
         }
         return mergedCount
+    }
+
+    /// Folds one item's accumulated history into another. Counts are summed
+    /// and dates take the later value, so a track that Overplay saw in two
+    /// places keeps the whole picture rather than the half that happened to
+    /// win.
+    ///
+    /// `adoptEvictionStateIfNewer` exists because the two callers resolve
+    /// eviction differently: `mergeDuplicateItems` settles it once across a
+    /// whole group before folding, while a pairwise merge has to decide as it
+    /// goes. Recency wins either way — the most recent decision is the user's
+    /// current intent, and letting eviction always win would hide tracks that
+    /// still sit in an active playlist.
+    static func mergeStats(
+        from duplicate: PlaylistItemRecord,
+        into keeper: PlaylistItemRecord,
+        adoptEvictionStateIfNewer: Bool
+    ) {
+        if adoptEvictionStateIfNewer, duplicate.updatedAt > keeper.updatedAt {
+            adoptEvictionState(from: duplicate, into: keeper)
+        }
+
+        keeper.skipCount += duplicate.skipCount
+        keeper.playthroughCount += duplicate.playthroughCount
+        keeper.lastPlayedAt = latestDate(keeper.lastPlayedAt, duplicate.lastPlayedAt)
+        keeper.lastSkippedAt = latestDate(keeper.lastSkippedAt, duplicate.lastSkippedAt)
+        keeper.lastSeenInPlaylistAt = latestDate(keeper.lastSeenInPlaylistAt, duplicate.lastSeenInPlaylistAt)
+        if keeper.musicPlaylistEntryID == nil {
+            keeper.musicPlaylistEntryID = duplicate.musicPlaylistEntryID
+        }
+        for sourceMusicPlaylistID in duplicate.sourceMusicPlaylistIDs {
+            keeper.addSourceMusicPlaylistID(sourceMusicPlaylistID)
+        }
+        keeper.updatedAt = max(keeper.updatedAt, duplicate.updatedAt)
+    }
+
+    private static func adoptEvictionState(
+        from donor: PlaylistItemRecord,
+        into keeper: PlaylistItemRecord
+    ) {
+        keeper.evictedAt = donor.evictedAt
+        keeper.evictionReason = donor.evictionReason
+        keeper.evictionSource = donor.evictionSource
     }
 
     private static func latestDate(_ left: Date?, _ right: Date?) -> Date? {

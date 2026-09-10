@@ -6,7 +6,7 @@ import Testing
 struct CarPlayNowPlayingActionPolicyTests {
     @Test("a triage track offers promote and retire")
     func triageOffersPromoteAndRetire() {
-        #expect(CarPlayNowPlayingActionPolicy.actions(playlistRole: .triage, isRetired: false)
+        #expect(CarPlayNowPlayingActionPolicy.actions(playlistRole: .triageBucket, isRetired: false)
             == [.shuffle, .repeatMode, .promote, .retire])
     }
 
@@ -14,7 +14,7 @@ struct CarPlayNowPlayingActionPolicyTests {
     func retiredTriageStillOffersPromote() {
         // Retirement in triage is local and reversible, and this is the case
         // where promote used to disappear.
-        #expect(CarPlayNowPlayingActionPolicy.actions(playlistRole: .triage, isRetired: true)
+        #expect(CarPlayNowPlayingActionPolicy.actions(playlistRole: .triageBucket, isRetired: true)
             == [.shuffle, .repeatMode, .promote, .restore])
     }
 
@@ -42,7 +42,7 @@ struct CarPlayNowPlayingActionPolicyTests {
 
     @Test("shuffle and repeat come first in every state")
     func shuffleAndRepeatComeFirst() {
-        for role in [PlaylistRole.triage, .oneTruePlaylist] {
+        for role in [PlaylistRole.triageBucket, .oneTruePlaylist] {
             for isRetired in [true, false] {
                 let actions = CarPlayNowPlayingActionPolicy.actions(playlistRole: role, isRetired: isRetired)
                 #expect(actions.prefix(2) == [.shuffle, .repeatMode])
@@ -53,7 +53,7 @@ struct CarPlayNowPlayingActionPolicyTests {
     @Test("promote is offered for every triage state")
     func promoteIsOfferedForEveryTriageState() {
         for isRetired in [true, false] {
-            #expect(CarPlayNowPlayingActionPolicy.actions(playlistRole: .triage, isRetired: isRetired)
+            #expect(CarPlayNowPlayingActionPolicy.actions(playlistRole: .triageBucket, isRetired: isRetired)
                 .contains(.promote))
         }
     }

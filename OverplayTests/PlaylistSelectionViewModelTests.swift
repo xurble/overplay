@@ -24,13 +24,43 @@ struct PlaylistSelectionViewModelTests {
         #expect(viewModel.filteredPlaylists.map(\.id) == ["one"])
     }
 
+    @Test("track count resolves from the matching Apple Music playlist")
+    func trackCountResolvesFromMatchingAppleMusicPlaylist() async {
+        let viewModel = PlaylistSelectionViewModel()
+        let source = PlaylistRecord(
+            musicPlaylistID: "source",
+            name: "Source",
+            role: .triageSource
+        )
+        let missingSource = PlaylistRecord(
+            musicPlaylistID: "missing",
+            name: "Missing",
+            role: .triageSource
+        )
+        let dependencies = makeDependencies(
+            fetchedPlaylists: [
+                AppleMusicPlaylist(id: "source", name: "Source", trackCount: 42)
+            ]
+        )
+        let locallyAttributedItem = PlaylistItemRecord(
+            playlistID: UUID(),
+            trackID: UUID(),
+            sourceMusicPlaylistIDs: ["missing"]
+        )
+
+        await viewModel.loadPlaylists(dependencies: dependencies)
+
+        #expect(viewModel.trackCount(for: source, playlistItems: [locallyAttributedItem]) == 42)
+        #expect(viewModel.trackCount(for: missingSource, playlistItems: [locallyAttributedItem]) == 1)
+    }
+
     @Test("sync linked playlists reconciles each playlist once")
     func syncLinkedPlaylistsReconcilesEachPlaylistOnce() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let viewModel = PlaylistSelectionViewModel()
         let first = PlaylistRecord(musicPlaylistID: "first", name: "First", role: .oneTruePlaylist)
-        let second = PlaylistRecord(musicPlaylistID: "second", name: "Second", role: .triage)
+        let second = PlaylistRecord(musicPlaylistID: "second", name: "Second", role: .triageSource)
         context.insert(first)
         context.insert(second)
         var reconciledIDs: [String] = []
@@ -54,23 +84,89 @@ struct PlaylistSelectionViewModelTests {
         #expect(reconciledIDs == ["first", "second"])
     }
 
-    @Test("adding triage playlist stores local link and message")
-    func addingTriagePlaylistStoresLocalLinkAndMessage() throws {
+    @Test("adding a triage source links it and creates the bucket")
+    func addingTriageSourceLinksItAndCreatesTheBucket() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let viewModel = PlaylistSelectionViewModel()
         let playlist = AppleMusicPlaylist(id: "triage", name: "Inbox", trackCount: 3)
 
-        viewModel.addTriage(playlist, context: context)
+        viewModel.addTriageSource(playlist, context: context)
 
         let stored = try #require(try PlaylistRepository.playlist(musicPlaylistID: "triage", in: context))
-        #expect(stored.role == .triage)
-        #expect(viewModel.message == "Added Inbox as a triage playlist.")
+        #expect(stored.role == .triageSource)
+        #expect(viewModel.message == "Inbox now feeds the triage bucket.")
+        let bucket = try #require(try PlaylistRepository.existingTriageBucket(in: context))
+        #expect(bucket.musicPlaylistID == PlaylistRecord.triageBucketMusicPlaylistID)
+    }
+
+    @Test("bulk sync skips the triage bucket, which has no remote playlist")
+    func bulkSyncSkipsTheTriageBucket() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let viewModel = PlaylistSelectionViewModel()
+        let source = PlaylistRecord(musicPlaylistID: "source", name: "Source", role: .triageSource)
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        context.insert(source)
+        var syncedIDs: [String] = []
+        var reconciledIDs: [String] = []
+        let dependencies = makeDependencies(
+            syncAllLinkedPlaylists: { playlists, _ in
+                syncedIDs = playlists.map(\.musicPlaylistID)
+                return 3
+            },
+            reconcileStoredOrder: { playlist, _ in
+                reconciledIDs.append(playlist.musicPlaylistID)
+            }
+        )
+
+        await viewModel.syncAllLinkedPlaylists([source, bucket], context: context, dependencies: dependencies)
+
+        #expect(syncedIDs == ["source"])
+        #expect(reconciledIDs == ["source"])
+    }
+
+    @Test("unlinking a source excludes it from every manual sync path")
+    func unlinkingSourceExcludesItFromManualSyncPaths() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let viewModel = PlaylistSelectionViewModel()
+        let source = try PlaylistRepository.addTriageSource(
+            AppleMusicPlaylist(id: "source", name: "Source", trackCount: 1),
+            in: context
+        )
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let main = PlaylistRecord(musicPlaylistID: "main", name: "Main", role: .oneTruePlaylist)
+        context.insert(main)
+        try PlaylistRepository.removeTriageSource(source, in: context)
+        var individuallySyncedIDs: [String] = []
+        var bulkSyncedIDs: [String] = []
+        let dependencies = makeDependencies(
+            syncPlaylist: { playlist, _ in
+                individuallySyncedIDs.append(playlist.musicPlaylistID)
+                return 0
+            },
+            syncAllLinkedPlaylists: { playlists, _ in
+                bulkSyncedIDs = playlists.map(\.musicPlaylistID)
+                return 0
+            }
+        )
+
+        await viewModel.sync(source, context: context, dependencies: dependencies)
+        await viewModel.syncAllLinkedPlaylists(
+            [source, bucket, main],
+            context: context,
+            dependencies: dependencies
+        )
+
+        #expect(individuallySyncedIDs.isEmpty)
+        #expect(bulkSyncedIDs == ["main"])
     }
 
     private func makeDependencies(
         fetchedPlaylists: [AppleMusicPlaylist] = [],
         syncAllCount: Int = 0,
+        syncPlaylist: ((_ playlist: PlaylistRecord, _ context: ModelContext) async throws -> Int)? = nil,
         syncAllLinkedPlaylists: ((_ playlists: [PlaylistRecord], _ context: ModelContext) async throws -> Int)? = nil,
         reconcileStoredOrder: @escaping (PlaylistRecord, ModelContext) -> Void = { _, _ in }
     ) -> PlaylistSelectionViewModel.Dependencies {
@@ -78,8 +174,11 @@ struct PlaylistSelectionViewModelTests {
             fetchedPlaylists
         } createManagedOneTruePlaylist: { name, _, _ in
             PlaylistRecord(musicPlaylistID: "created", name: name, role: .oneTruePlaylist)
-        } syncPlaylist: { _, _ in
-            0
+        } syncPlaylist: { playlist, context in
+            if let syncPlaylist {
+                return try await syncPlaylist(playlist, context)
+            }
+            return 0
         } syncPlaylistID: { _, _ in
             0
         } syncAllLinkedPlaylists: { playlists, context in

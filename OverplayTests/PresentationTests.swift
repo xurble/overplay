@@ -18,16 +18,27 @@ struct PlaylistSummaryPresentationTests {
             lastSyncedAt: nil,
             isCurrentPlaybackPlaylist: false
         )
-        let triage = PlaylistSummaryPresentation(
+        let triageBucket = PlaylistSummaryPresentation(
             id: UUID(),
             title: "Inbox",
-            role: .triage,
+            role: .triageBucket,
             source: .appleMusic,
             writePolicy: .incomingOnly,
             activeTrackCount: 1,
             playableTrackCount: 1,
             lastSyncedAt: nil,
             isCurrentPlaybackPlaylist: true
+        )
+        let triageSource = PlaylistSummaryPresentation(
+            id: UUID(),
+            title: "Weekly Finds",
+            role: .triageSource,
+            source: .appleMusic,
+            writePolicy: .managed,
+            activeTrackCount: 30,
+            playableTrackCount: 30,
+            lastSyncedAt: nil,
+            isCurrentPlaybackPlaylist: false
         )
 
         #expect(oneTrue.roleTitle == "One True Playlist")
@@ -36,20 +47,27 @@ struct PlaylistSummaryPresentationTests {
         #expect(oneTrue.displayPriority == 0)
         #expect(oneTrue.writePolicyTitle == "Managed")
 
-        #expect(triage.roleTitle == "Triage Playlist")
-        #expect(triage.shortRoleTitle == "Triage")
-        #expect(triage.iconIntent.systemImage == "play.fill")
-        #expect(triage.displayPriority == 1)
-        #expect(triage.writePolicyTitle == "Incoming only")
-        #expect(triage.sourceTitle == "Apple Music")
+        #expect(triageBucket.roleTitle == "Triage")
+        #expect(triageBucket.shortRoleTitle == "Triage")
+        #expect(triageBucket.iconIntent.systemImage == "play.fill")
+        #expect(triageBucket.displayPriority == 1)
+        #expect(triageBucket.writePolicyTitle == "Incoming only")
+        #expect(triageBucket.sourceTitle == "Apple Music")
+
+        // Contributing playlists sort below the bucket they feed and read as
+        // sources, so the sources screen never looks like another playlist.
+        #expect(triageSource.roleTitle == "Triage Source")
+        #expect(triageSource.shortRoleTitle == "Source")
+        #expect(triageSource.iconIntent.systemImage == "music.note.list")
+        #expect(triageSource.displayPriority == 2)
     }
 
     @Test("display ordering puts main playlists first then sorts names case-insensitively")
     func displayOrdering() {
         let summaries = [
-            summary(title: "zeta", role: .triage),
+            summary(title: "zeta", role: .triageSource),
             summary(title: "beta", role: .oneTruePlaylist),
-            summary(title: "Alpha", role: .triage)
+            summary(title: "Alpha", role: .triageSource)
         ]
 
         let orderedTitles = summaries.sorted(by: PlaylistSummaryPresentation.areInDisplayOrder).map(\.title)

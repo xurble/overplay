@@ -35,9 +35,12 @@ final class SearchMusicViewModel {
     var selectedPlaylistRecordID: UUID?
     var addingSongIDs = Set<String>()
 
+    /// Manual-add destinations. Contributing triage playlists are excluded:
+    /// they are intake sources, and writing to them would edit an Apple Music
+    /// playlist the user never designated as a destination.
     func activePlaylists(from playlists: [PlaylistRecord]) -> [PlaylistRecord] {
         playlists
-            .filter { $0.isActive && $0.allowsRemoteWrites }
+            .filter { $0.isActive && $0.role != .triageSource && $0.allowsRemoteWrites }
             .sorted { left, right in
                 if left.role != right.role {
                     return left.role == .oneTruePlaylist
@@ -116,8 +119,10 @@ final class SearchMusicViewModel {
         switch playlist.role {
         case .oneTruePlaylist:
             "\(playlist.name) - Main"
-        case .triage:
+        case .triageBucket:
             "\(playlist.name) - Triage"
+        case .triageSource:
+            "\(playlist.name) - Source"
         }
     }
 
@@ -125,8 +130,10 @@ final class SearchMusicViewModel {
         switch playlist.role {
         case .oneTruePlaylist:
             "star.fill"
-        case .triage:
+        case .triageBucket:
             "tray.fill"
+        case .triageSource:
+            "music.note.list"
         }
     }
 

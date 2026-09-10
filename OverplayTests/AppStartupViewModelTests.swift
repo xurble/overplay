@@ -10,6 +10,8 @@ struct AppStartupViewModelTests {
         var events: [String] = []
         let dependencies = AppStartupViewModel.Dependencies {
             events.append("settings")
+        } migrateTriageBucket: {
+            events.append("migrate-triage")
         } refreshAuthorization: {
             events.append("authorization")
         } installRemoteCommands: {
@@ -32,7 +34,19 @@ struct AppStartupViewModelTests {
         await viewModel.authorizedServicesTask?.value
 
         #expect(viewModel.hasStartedAuthorizedServices)
-        #expect(events == ["settings", "authorization", "remote", "merge", "restore", "monitor", "sync-start", "compact"])
+        // The triage migration runs before authorization, so nothing reads a
+        // playlist role before the pre-bucket rows have moved.
+        #expect(events == [
+            "settings",
+            "migrate-triage",
+            "authorization",
+            "remote",
+            "merge",
+            "restore",
+            "monitor",
+            "sync-start",
+            "compact"
+        ])
     }
 
     @Test("repeated authorized startup does not restart services")
@@ -40,6 +54,7 @@ struct AppStartupViewModelTests {
         let viewModel = AppStartupViewModel()
         var startCount = 0
         let dependencies = AppStartupViewModel.Dependencies {
+        } migrateTriageBucket: {
         } refreshAuthorization: {
         } installRemoteCommands: {
         } mergeDuplicateTrackIdentities: {
@@ -65,6 +80,7 @@ struct AppStartupViewModelTests {
         var startCount = 0
         var stopCount = 0
         let dependencies = AppStartupViewModel.Dependencies {
+        } migrateTriageBucket: {
         } refreshAuthorization: {
         } installRemoteCommands: {
         } mergeDuplicateTrackIdentities: {

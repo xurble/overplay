@@ -3,15 +3,18 @@ import Foundation
 struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
     enum IconIntent: Equatable, Sendable {
         case oneTruePlaylist
-        case triage
+        case triageBucket
+        case triageSource
         case currentPlayback
 
         var systemImage: String {
             switch self {
             case .oneTruePlaylist:
                 "star.fill"
-            case .triage:
+            case .triageBucket:
                 "tray.fill"
+            case .triageSource:
+                "music.note.list"
             case .currentPlayback:
                 "play.fill"
             }
@@ -34,8 +37,10 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
         switch role {
         case .oneTruePlaylist:
             "One True Playlist"
-        case .triage:
-            "Triage Playlist"
+        case .triageBucket:
+            "Triage"
+        case .triageSource:
+            "Triage Source"
         }
     }
 
@@ -43,8 +48,10 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
         switch role {
         case .oneTruePlaylist:
             "Main"
-        case .triage:
+        case .triageBucket:
             "Triage"
+        case .triageSource:
+            "Source"
         }
     }
 
@@ -56,8 +63,10 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
         switch role {
         case .oneTruePlaylist:
             return .oneTruePlaylist
-        case .triage:
-            return .triage
+        case .triageBucket:
+            return .triageBucket
+        case .triageSource:
+            return .triageSource
         }
     }
 
@@ -65,8 +74,10 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
         switch role {
         case .oneTruePlaylist:
             0
-        case .triage:
+        case .triageBucket:
             1
+        case .triageSource:
+            2
         }
     }
 

@@ -23,8 +23,9 @@ enum CarPlayLibrarySnapshot {
     ) throws -> [TrackSummaryPresentation] {
         let items = try PlaylistItemRepository.items(forPlaylistID: playlistID, in: context)
         let tracks = try TrackRecordRepository.tracks(ids: items.map(\.trackID), in: context)
+        let playlists = try PlaylistRepository.allPlaylists(in: context)
         return PlaylistPresentationBuilder(
-            playlists: [],
+            playlists: playlists,
             items: items,
             tracks: tracks
         ).trackSummaries(forPlaylistID: playlistID, playbackOrderState: playbackOrderState, scope: scope)
@@ -32,8 +33,14 @@ enum CarPlayLibrarySnapshot {
 
     /// Active playback surfaces consume the controller-owned snapshot so a
     /// write performed in another SwiftData context is visible immediately.
-    static func trackSummaries(from snapshot: ActivePlaylistSnapshot) -> [TrackSummaryPresentation] {
-        snapshot.rows
+    static func trackSummaries(
+        from snapshot: ActivePlaylistSnapshot,
+        playlistItems: [PlaylistItemRecord] = [],
+        sourcePlaylists: [PlaylistRecord] = []
+    ) -> [TrackSummaryPresentation] {
+        let persistedItemsByID = playlistItems.firstValueDictionary(keyedBy: \.id)
+        let playlistRole = sourcePlaylists.first { $0.id == snapshot.playlistID }?.role
+        return snapshot.rows
             .filter { row in
                 snapshot.playbackScope == .active ? !row.isEvicted : row.isEvicted
             }
@@ -48,6 +55,12 @@ enum CarPlayLibrarySnapshot {
                     artworkURLString: row.artworkURLString,
                     skipCount: row.skipCount,
                     playthroughCount: row.playthroughCount,
+                    provenanceText: TrackSummaryPresentation.provenanceText(
+                        sourceMusicPlaylistIDs: persistedItemsByID[row.id]?.sourceMusicPlaylistIDs
+                            ?? row.sourceMusicPlaylistIDs,
+                        playlistRole: playlistRole,
+                        sourcePlaylists: sourcePlaylists
+                    ),
                     isPlayable: snapshot.playbackScope == .retired || row.isPlayable,
                     isRetired: row.isEvicted
                 )

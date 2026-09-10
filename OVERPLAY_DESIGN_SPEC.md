@@ -20,10 +20,12 @@ intake and triage sources.
 
 The core playlist is the user's **One True Playlist**. Overplay plays it,
 tracks the user's own skip and playthrough behaviour, and exposes manual
-retirement. Additional linked playlists are tracked as triage playlists. They
+retirement. Everything awaiting review lives in a single **triage bucket**,
+fed by any number of contributing Apple Music playlists. Those contributors
 can represent sources such as TikTok saves, Shazam discoveries, a friend's
 playlist, or any other Apple Music playlist the user wants to review before
-promoting songs into the One True Playlist.
+promoting songs into the One True Playlist. The user triages in one place
+rather than playlist by playlist.
 
 Overplay maintains its own history and state. It does not rely on Apple
 Music's global play count or skip count.
@@ -34,13 +36,17 @@ Music's global play count or skip count.
 | --- | --- | --- |
 | `PLAT-001` | The current app supports iPhone and iPad on iOS/iPadOS 26+, with CarPlay supplied by the iPhone app. A native Mac target is planned, not implemented. | `Overplay.xcodeproj/project.pbxproj`, `Overplay/App/Shell/PlatformShell.swift` |
 | `AUTH-001` | Normal use requires Apple Music authorization, catalogue playback capability, and Sync Library. The simulator supplies a ready state for development. | `Overplay/Services/MusicAuthorizationService.swift`, `Overplay/App/StartupAuthorizationGate.swift` |
-| `PLAYLIST-001` | Exactly one active One True Playlist is selected. Selecting another demotes the previous main playlist to triage. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/NewModelRepositoryTests.swift` |
+| `PLAYLIST-001` | Exactly one active One True Playlist is selected. Selecting another demotes the previous main playlist to a triage source. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/NewModelRepositoryTests.swift` |
+| `PLAYLIST-003` | There is at most one triage bucket. It owns every triage item, is ensured during startup, and has a reserved `musicPlaylistID` rather than an Apple Music playlist, so it is never fetched or synced directly. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/TriageBucketTests.swift` |
+| `PLAYLIST-004` | Contributing playlists feed the bucket and keep their own sync bookkeeping, but own no items and are never a playback context. A track contributed by several playlists is one bucket row, so retiring it excludes it from the whole bucket and it stays excluded when a later playlist contributes it. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/TriageBucketTests.swift` |
+| `PLAYLIST-005` | Unlinking a contributing playlist leaves its tracks in the bucket with their stats, merely unattributed. Row provenance is nullable, and no source is a normal state. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/TriageBucketTests.swift` |
+| `PLAYLIST-006` | Pre-bucket triage data migrates onto the bucket at startup, merging counts for tracks that appeared in several triage playlists. The migration is idempotent and keyed on the stored legacy role value, not a local flag. | `Overplay/Persistence/TriageBucketMigrationService.swift`, `OverplayTests/TriageBucketTests.swift` |
 | `PLAYLIST-002` | Initial setup can create a managed playlist, copy an existing playlist into a managed playlist, or link an existing playlist as incoming-only. | `Overplay/ViewModels/PlaylistSelectionViewModel.swift`, `Overplay/Services/PlaylistSyncService.swift` |
 | `SYNC-001` | Automatic sync starts shortly after authorization, runs every 30 minutes, skips fresh successful playlists, retries failed playlists, and prioritizes the playing and selected playlists. | `Overplay/Services/PeriodicPlaylistSyncService.swift`, `OverplayTests/PeriodicPlaylistSyncServiceTests.swift` |
 | `SYNC-002` | Sync is idempotent, collapses duplicate identities, preserves history, and leaves remotely missing tracks locally playable unless retired. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/PlaylistSyncReconciliationTests.swift` |
-| `MUT-001` | Successful promotion adds or reactivates the destination item, records history, and locally retires the source triage item. | `Overplay/Services/PlaylistMutationService.swift`, `OverplayTests/PlaylistMutationServiceTests.swift` |
+| `MUT-001` | Successful promotion adds or reactivates the destination item, records history, and locally retires the source bucket item. Only bucket items can be promoted; a contributing playlist is not a promotion source. | `Overplay/Services/PlaylistMutationService.swift`, `OverplayTests/PlaylistMutationServiceTests.swift` |
 | `MUT-002` | Apple Music search can add songs only to active playlists that allow remote writes. | `Overplay/ViewModels/SearchMusicViewModel.swift`, `OverplayTests/SearchMusicViewModelTests.swift` |
-| `RETIRE-001` | Retirement is always authoritative locally. Current-track retirement attempts remote deletion only for a managed One True Playlist; playlist-row and triage retirement are local-only. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/PlaylistRemoteMutationPolicy.swift` |
+| `RETIRE-001` | Retirement is always authoritative locally. Current-track retirement attempts remote deletion only for a managed One True Playlist; playlist-row and triage retirement are local-only, and never remove the track from a contributing Apple Music playlist. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/PlaylistRemoteMutationPolicy.swift` |
 | `PLAY-001` | **WITHDRAWN.** Overplay owned queue order, shuffle and repeat. Replaced by `PLAY-004`; no longer implemented. | — |
 | `PLAY-002` | **WITHDRAWN.** The queue was handed over a window at a time. A window cannot be shuffled or repeated by MusicKit, so it could not coexist with `PLAY-004`; device evidence also showed hand-off size was not the cause of the Apple Music failures it was built for. | — |
 | `PLAY-004` | MusicKit owns shuffle and repeat. Overplay reads both modes, writes what a surface asked for, and never reorders or rebuilds the queue to emulate them. | `Overplay/Services/PlaybackController.swift`, `Overplay/Playback/PlaybackPlayer.swift` |
@@ -99,8 +105,8 @@ iPad is the review and management experience as well as a playback device.
 
 - Regular width uses `NavigationSplitView`; compact width falls back to the
   stacked dashboard flow.
-- The sidebar provides Dashboard, One True Playlist, triage playlists, Search,
-  History, and Settings.
+- The sidebar provides Dashboard, One True Playlist, the triage bucket,
+  Search, History, and Settings.
 - Sidebar selection is scene-local and the persistent mini-player remains
   available over detail content.
 
@@ -152,30 +158,53 @@ Overplay tracks multiple Apple Music playlists:
   Overplay links the source playlist as incoming only and does not attempt
   outbound Apple Music mutations for that playlist.
 
-- **Triage playlists**: additional playlists used as intake sources. Overplay
-  tracks skips and playthroughs for these playlists. Tracks can be manually
-  promoted to the One True Playlist or manually retired from triage playback.
+- **Triage bucket**: the single place where everything awaiting review lives.
+  Overplay tracks skips and playthroughs against bucket items. Tracks can be
+  manually promoted to the One True Playlist or manually retired from bucket
+  playback. The bucket has no Apple Music playlist of its own and carries a
+  reserved identifier instead, so it is never fetched or synced directly.
+
+- **Triage sources**: contributing Apple Music playlists that feed the bucket.
+  Each keeps its own sync bookkeeping, but owns no items and is never played.
+  A track contributed by several sources is a single bucket row.
 
 Each linked playlist stores:
 
-- Apple Music playlist identifier.
+- Apple Music playlist identifier, or the reserved bucket identifier.
 - Display name.
-- Role: `oneTruePlaylist` or `triage`.
+- Role: `oneTruePlaylist`, `triageBucket`, or `triageSource`.
 - Write policy: `managed` or `incomingOnly`.
 - Last successful sync date.
 - Last sync error, if any.
 - Whether the playlist is active.
 
-Exactly one active playlist has the `oneTruePlaylist` role. Selecting another
-main playlist demotes the previous one to triage. The current UI can add triage
-playlists and deactivate them from the dashboard; it does not rename linked
-playlists or delete their Apple Music source playlists.
+Exactly one active playlist has the `oneTruePlaylist` role, and at most one has
+the `triageBucket` role. Selecting another main playlist demotes the previous
+one to a triage source. The current UI can add and remove contributing
+playlists from the triage sources screen; it does not rename linked playlists
+or delete their Apple Music source playlists.
+
+Unlinking a contributing playlist never removes the tracks it put in the
+bucket. A bucket row is the only row for that track in the bucket, so deleting
+it would discard skip and playthrough history the user did not ask to lose.
+The tracks stay and become unattributed: row provenance records which
+contributing playlists supplied a track, and is legitimately empty for an
+unlinked contributor.
+
+Pre-bucket installs stored the role raw value `triage`. Because roles are
+stored as strings, retiring that role is a data change rather than a schema
+change, so a one-shot migration runs at startup before any view reads a role.
+It re-parents legacy triage items onto the bucket, merging counts where the
+same track appeared in more than one triage playlist, and is idempotent and
+derived from the stored value so re-running it cannot double-count. Merged
+rows take the most recent eviction decision.
 
 ### Track state
 
 Overplay tracks each song it sees in a linked playlist. Stats must be stored
 per playlist membership so the same song can have different context in the One
-True Playlist and in a triage playlist.
+True Playlist and in the triage bucket. Contributing playlists are not separate
+memberships: everything they supply is one row in the bucket.
 
 For every tracked playlist item, store:
 
@@ -297,7 +326,7 @@ When Overplay retires a track locally:
 
 Local retirement is authoritative. When the user retires the currently playing
 track, Overplay also attempts Apple Music deletion only when the source is a
-managed One True Playlist. Retiring a playlist row, retiring from a triage
+managed One True Playlist. Retiring a playlist row, retiring from the triage
 playlist, or retiring from an incoming-only playlist is local-only. A failed or
 unsupported remote deletion never rolls back the local retirement.
 
@@ -328,16 +357,17 @@ Ambiguous duplicate names should fail rather than relink silently.
 
 ## Promotion and Manual Add
 
-### Promotion from triage playlists
+### Promotion from the triage bucket
 
-Tracks in triage playlists can be manually promoted to the One True Playlist.
+Tracks in the triage bucket can be manually promoted to the One True Playlist.
+Contributing playlists are not promotion sources — they own no items.
 Promotion should:
 
 - Attempt to add the track to the linked Apple Music One True Playlist.
 - Create or reactivate the local One True Playlist item on success.
-- Preserve source triage stats and history.
+- Preserve source bucket stats and history.
 - Record a promotion event linking source playlist and destination playlist.
-- Locally retire the source triage item after the destination mutation
+- Locally retire the source bucket item after the destination mutation
   succeeds, moving it from Active to Retired without deleting it remotely.
 
 If Apple Music add-to-playlist fails, show a clear non-fatal error and do not
@@ -357,7 +387,7 @@ Add behaviour:
   returned identifiers.
 - On failure, Overplay displays a clear error.
 
-Manual add supports both One True Playlist and triage destinations when they
+Manual add supports the One True Playlist and the triage bucket when they
 allow remote writes.
 
 ## Play/Skip History
@@ -781,11 +811,11 @@ Purpose: manage linked Apple Music playlists.
 Required capabilities:
 
 - Choose the One True Playlist.
-- Add triage playlists.
+- Add and remove the triage bucket's contributing playlists.
 - Search/filter Apple Music library playlists.
 - Show playlist artwork, role, track count, and sync status.
-- Manually sync one playlist or all playlists.
-- Deactivate a linked triage playlist from the dashboard.
+- Manually sync one playlist or all playlists. Bulk sync skips the bucket,
+  which has no remote playlist to fetch.
 
 Platform notes:
 
@@ -795,17 +825,18 @@ Platform notes:
 
 ### Dashboard
 
-Purpose: provide entry points to the One True Playlist and triage playlists.
+Purpose: provide entry points to the One True Playlist and the triage bucket.
+The top level contains those two things and nothing else.
 
 Show:
 
 - One True Playlist row, or a link to configure it when absent.
-- Active triage playlist rows.
+- Triage bucket row, including on a fresh install and after its last
+  contributing playlist is removed.
 - For each row: representative artwork, role/current-playback icon, total
   tracked count, source, last-sync status, and write policy.
-- Link to add another triage playlist.
+- Link to the triage sources screen, labelled with the contributing count.
 - Settings action.
-- Swipe-to-deactivate for triage playlist rows.
 
 Platform notes:
 
@@ -827,7 +858,7 @@ Show:
   playable as a playlist context from iOS.
 - Skip and playthrough counts.
 - Retirement state.
-- Promote action for triage playlist tracks.
+- Promote action for triage bucket tracks.
 - Manual retire/remove action for active tracks.
 - Restore action for retired tracks.
 - Search/add action scoped to that playlist.
@@ -852,7 +883,7 @@ Show:
 - Playback controls.
 - Manual retire action for active tracks.
 - Restore action for retired tracks.
-- Promote action when playing from a triage playlist.
+- Promote action when playing from the triage bucket.
 
 The standard media controls should call into a shared playback controller.
 
@@ -874,7 +905,7 @@ Show:
 - A row for the One True Playlist, opening its track list. There is no
   one-tap entry point above it: two similar-looking rows is one too many for
   a driver to disambiguate.
-- Active linked triage playlists in a separate section, opening the same track
+- The triage bucket in a separate section, opening the same track
   list.
 - Tracks in their current local order, and nothing else in the list.
 - The currently playing Retired playlist context if playback was started from
@@ -884,7 +915,7 @@ Show:
 - Play, pause, next, previous, and Now Playing controls.
 - Direct Retire button in Now Playing for active tracks.
 - Direct Restore button in Now Playing for retired tracks.
-- Direct Promote button when the current track belongs to a triage playlist.
+- Direct Promote button when the current track belongs to the triage bucket.
 - An Up Next button that returns to the root menu.
 
 Selecting a track never restarts the track that is already playing. When its
@@ -1017,8 +1048,8 @@ window through the standard app settings command as well as in-app navigation.
 ### PlaylistMutationService
 
 - Add tracks to managed linked Apple Music playlists.
-- Promote tracks from triage playlists to a managed One True Playlist and
-  retire the source triage item after success.
+- Promote tracks from the triage bucket to a managed One True Playlist and
+  retire the source bucket item after success.
 - Return explicit success/failure results.
 
 ### SearchService
@@ -1153,7 +1184,7 @@ longer exists.
 - Authorized user without Apple Music playback capability.
 - No library playlists.
 - One True Playlist deleted or renamed in Apple Music.
-- Triage playlist deleted or renamed in Apple Music.
+- Contributing triage playlist deleted or renamed in Apple Music.
 - Playlist contains unavailable, cloud-only, or local-only tracks.
 - Same song appears in multiple playlists.
 - Same song appears more than once in one playlist.
@@ -1230,14 +1261,14 @@ commands independent of SwiftUI views so CarPlay templates use the same shared
 services as the phone UI.
 
 Navigation is three levels and nothing more (`CAR-001`): the root lists the
-One True Playlist and the active triage playlists, a playlist lists its
+One True Playlist and the triage bucket, a playlist lists its
 tracks, and a track opens Now Playing. There are no shuffle rows and no
 one-tap play row — a driver should not have to read a menu to tell two
 similar entries apart.
 
 CarPlay supports:
 
-- Browse the One True Playlist and active triage playlists.
+- Browse the One True Playlist and the triage bucket.
 - Browse playlist tracks with playthrough and skip totals in row detail.
 - Select a track to play it, skipping inside the live queue when the playlist
   is already playing so the order after it survives.
@@ -1247,7 +1278,7 @@ CarPlay supports:
 - Shuffle and repeat, as the system's own Now Playing controls, reflecting and
   setting MusicKit's modes (`PLAY-004`).
 - Retire the current track.
-- Promote the current triage track, whether or not it is retired — deciding to
+- Promote the current bucket track, whether or not it is retired — deciding to
   keep a track you had set aside is the point of hearing it again.
 - Restore the current track when it is retired.
 - Return to the root menu from Now Playing.
@@ -1288,13 +1319,13 @@ The product is healthy when a user can:
 1. Install and run Overplay on iPhone and iPad.
 2. Connect Apple Music on either target.
 3. Choose a One True Playlist.
-4. Link additional triage playlists.
+4. Add contributing playlists to the triage bucket.
 5. Sync all linked playlists.
 6. Play any linked playlist in Overplay.
 7. Track skips and playthroughs for all linked playlists.
 8. Surface skip/playthrough history while leaving retirement to explicit user actions.
 9. Manually retire and restore tracks from any linked playlist.
-10. Promote triage tracks into the One True Playlist.
+10. Promote bucket tracks into the One True Playlist.
 11. Search Apple Music and add tracks to active managed linked playlists.
 12. Share playlist, stats, and retirement data across devices through iCloud.
 13. Keep each device's current playback state independent.

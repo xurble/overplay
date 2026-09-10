@@ -119,6 +119,10 @@ final class PlaybackController {
     /// ID for yet. Correlation is retried until it succeeds, because reaching
     /// an uncorrelated entry reads as divergence and tears playback down.
     @ObservationIgnored private var appendedUncorrelatedEntries: [PendingQueueCorrelation] = []
+    /// Local IDs scheduled by reconciliation but not yet represented in the
+    /// player or pending-correlation arrays. Prevents two near-simultaneous
+    /// sync completions from enqueueing the same top-up twice.
+    @ObservationIgnored private var reconciliationPendingAppendTrackIDs = Set<String>()
     /// Bumped whenever the live queue correlation is replaced or discarded.
     /// An append that returns against an older generation must not register
     /// entries from the queue it started against.
@@ -639,6 +643,7 @@ final class PlaybackController {
     /// Invalidates append work associated with the previous live queue.
     private func resetAppendedQueueCorrelations() {
         appendedUncorrelatedEntries = []
+        reconciliationPendingAppendTrackIDs = []
         appendCorrelationGeneration &+= 1
     }
 
@@ -2923,14 +2928,25 @@ final class PlaybackController {
     /// manual add, promotion) — not from the playback tick, which only needs
     /// to track the current entry. Duplicate cleanup happens in the track
     /// identity merge pass at startup and after sync, not here.
-    func reconcileStoredOrder(for playlist: PlaylistRecord, context: ModelContext) {
+    func reconcileStoredOrder(for requestedPlaylist: PlaylistRecord, context: ModelContext) {
         // Membership changed (sync, link change, manual add): previously
         // unresolvable music item IDs may now have records.
         unresolvableMusicItemIDs.removeAll()
-        let currentLocalTrackID = currentPlaylistID == playlist.musicPlaylistID && currentPlaylistScope == .active
-            ? currentPlaylistItem?.trackID.uuidString
-            : nil
         do {
+            // Triage sources retain their own remote-sync bookkeeping, but
+            // every item they contribute belongs to the shared bucket. All
+            // playback surfaces therefore reconcile the bucket, never the
+            // inert source record.
+            let shouldUseTriageBucket = requestedPlaylist.role == .triageSource
+                || requestedPlaylist.role == .triageBucket
+            let playlist = shouldUseTriageBucket
+                ? try PlaylistRepository.triageBucket(in: context)
+                : requestedPlaylist
+            let isCurrentPlaylist = currentPlaylistID == playlist.musicPlaylistID
+            let isCurrentActivePlaylist = isCurrentPlaylist && currentPlaylistScope == .active
+            let currentLocalTrackID = isCurrentActivePlaylist
+                ? currentPlaylistItem?.trackID.uuidString
+                : nil
             let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
             let activeItems = items.filter { PlaylistPlaybackScope.active.includes($0) }
             let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: activeItems)
@@ -2940,8 +2956,7 @@ final class PlaybackController {
             )
             let playableOrder = PlaybackOrderEngine.normalOrder(for: orderTracks, includeUnplayableTrackID: currentLocalTrackID)
             let reconciledOrder: [String]
-            if currentPlaylistID == playlist.musicPlaylistID,
-               currentPlaylistScope == .active,
+            if isCurrentActivePlaylist,
                !previousState.orderedTrackIDs.isEmpty {
                 let existingSet = Set(previousState.orderedTrackIDs)
                 reconciledOrder = previousState.orderedTrackIDs + playableOrder.filter { !existingSet.contains($0) }
@@ -2962,25 +2977,185 @@ final class PlaybackController {
                     flushImmediately: true
                 )
                 playbackModeVersion += 1
-                let previousSet = Set(previousState.orderedTrackIDs)
-                let appendedIDs = reconciledOrder.filter { !previousSet.contains($0) }
-                if currentPlaylistID == playlist.musicPlaylistID,
-                   currentPlaylistScope == .active,
-                   !appendedIDs.isEmpty {
+            }
+
+            // Sync reconciliation may already have appended new rows to the
+            // stored order. Compare against the live and pending queue instead
+            // so that equality with the store cannot hide a required append.
+            if isCurrentActivePlaylist {
+                let previouslyPublishedTrackIDs = activePlaylistSnapshot.flatMap { snapshot in
+                    snapshot.musicPlaylistID == playlist.musicPlaylistID
+                        && snapshot.playbackScope == .active
+                        ? Set(snapshot.rows.map(\.localTrackID))
+                        : nil
+                }
+                let knownLiveTrackIDs = Set(
+                    activeQueueEntries.map(\.localTrackID)
+                        + appendedUncorrelatedEntries.map(\.localTrackID)
+                        + reconciliationPendingAppendTrackIDs
+                )
+                // A re-materialized MusicKit queue can be only partially
+                // correlated, so `activeQueueEntries` may temporarily omit
+                // tracks that are already live. That remains true after the
+                // last item hydrates but before the next playback refresh.
+                // Until correlation covers the live queue, only rows absent
+                // from the last published playlist snapshot are proven
+                // additions. A complete live map can recover any failed
+                // append normally.
+                let appendedIDs = if !isQueueCorrelationComplete {
+                    previouslyPublishedTrackIDs.map { publishedTrackIDs in
+                        reconciledOrder.filter {
+                            !publishedTrackIDs.contains($0) && !knownLiveTrackIDs.contains($0)
+                        }
+                    } ?? []
+                } else {
+                    reconciledOrder.filter { !knownLiveTrackIDs.contains($0) }
+                }
+                if !appendedIDs.isEmpty {
+                    reconciliationPendingAppendTrackIDs.formUnion(appendedIDs)
                     Task { @MainActor [weak self] in
-                        await self?.appendLiveQueueEntries(
+                        guard let self else { return }
+                        defer { self.reconciliationPendingAppendTrackIDs.subtract(appendedIDs) }
+                        await self.appendLiveQueueEntries(
                             localTrackIDs: appendedIDs,
                             playlistID: playlist.musicPlaylistID,
                             context: context
                         )
                     }
                 }
-                if currentPlaylistID == playlist.musicPlaylistID {
-                    rebuildActivePlaylistSnapshot(context: context)
-                }
+            }
+
+            // Row metadata and provenance can change without changing order.
+            // Rebuild the shared snapshot on every current-playlist
+            // reconciliation so SwiftUI and CarPlay publish the sync result.
+            if isCurrentPlaylist {
+                rebuildActivePlaylistSnapshot(context: context)
+            }
+
+            // A source can become the One True Playlist while its sync is
+            // suspended between chunks. That sync may already have changed
+            // the bucket before its completion callback receives the now-main
+            // record. If the bucket is playing, reconcile it as well so its
+            // live queue and every playback surface publish those additions.
+            if currentPlaylistID == PlaylistRecord.triageBucketMusicPlaylistID,
+               playlist.musicPlaylistID != PlaylistRecord.triageBucketMusicPlaylistID,
+               let bucket = try PlaylistRepository.existingTriageBucket(in: context) {
+                reconcileStoredOrder(for: bucket, context: context)
             }
         } catch {
             statusMessage = error.localizedDescription
+        }
+    }
+
+    /// Keeps a live queue attached when selecting a new One True Playlist
+    /// demotes the playlist currently playing and reparents its rows into the
+    /// triage bucket. The MusicKit queue itself is unchanged; only Overplay's
+    /// playlist and item correlation needs to follow the moved records.
+    func reconcilePlaylistSelection(context: ModelContext) {
+        guard let previousMusicPlaylistID = currentPlaylistID,
+              let previousPlaylist = try? PlaylistRepository.playlist(
+                musicPlaylistID: previousMusicPlaylistID,
+                in: context
+              ),
+              previousPlaylist.role == .triageSource,
+              let bucket = try? PlaylistRepository.existingTriageBucket(in: context) else {
+            return
+        }
+
+        let bucketItems: [PlaylistItemRecord]
+        do {
+            bucketItems = try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
+        } catch {
+            statusMessage = error.localizedDescription
+            return
+        }
+        let itemsByTrackID = bucketItems.firstValueDictionary(keyedBy: \.trackID)
+
+        LocalPlaybackStateStore.rekeyMusicPlaylistID(
+            from: previousMusicPlaylistID,
+            to: bucket.musicPlaylistID,
+            flushImmediately: true
+        )
+        PlaybackIdentityStore.mergeMusicPlaylistID(
+            from: previousMusicPlaylistID,
+            into: bucket.musicPlaylistID,
+            playerID: playerID,
+            flushImmediately: true
+        )
+        mergePlaybackOrdersAfterDemotion(
+            from: previousMusicPlaylistID,
+            into: bucket.musicPlaylistID
+        )
+
+        let currentTrackID = currentPlaylistItem?.trackID
+            ?? activeQueueCurrentLocalTrackID.flatMap(UUID.init(uuidString:))
+        currentPlaylistID = bucket.musicPlaylistID
+        currentPlaylistItem = currentTrackID.flatMap { itemsByTrackID[$0] }
+        for index in activeQueueEntries.indices {
+            guard let trackID = UUID(uuidString: activeQueueEntries[index].localTrackID),
+                  let item = itemsByTrackID[trackID] else {
+                continue
+            }
+            activeQueueEntries[index].playlistItemID = item.id
+        }
+        for index in appendedUncorrelatedEntries.indices {
+            guard let trackID = UUID(uuidString: appendedUncorrelatedEntries[index].localTrackID),
+                  let item = itemsByTrackID[trackID] else {
+                continue
+            }
+            appendedUncorrelatedEntries[index].playlistItemID = item.id
+        }
+
+        lastLocalPlaybackStateIdentity = nil
+        if let musicItemID = currentTrack?.id {
+            persistLocalPlaybackState(musicItemID: musicItemID, forceFlush: true)
+        }
+        reconcileStoredOrder(for: bucket, context: context)
+        rebuildActivePlaylistSnapshot(context: context)
+        bumpPlaybackItemMetadataVersion()
+        publishNowPlayingMetadata(isPlaying: isPlaying)
+    }
+
+    private func mergePlaybackOrdersAfterDemotion(
+        from oldMusicPlaylistID: String,
+        into bucketMusicPlaylistID: String
+    ) {
+        let liveQueueTrackIDs = activeQueueEntries.map(\.localTrackID)
+
+        for scope in PlaylistPlaybackScope.allCases {
+            let oldID = scope.playbackOrderPlaylistID(for: oldMusicPlaylistID)
+            let bucketID = scope.playbackOrderPlaylistID(for: bucketMusicPlaylistID)
+            let sourceOrder = PlaybackOrderStore.state(
+                playerID: playerID,
+                musicPlaylistID: oldID
+            ).orderedTrackIDs
+            let bucketOrder = PlaybackOrderStore.state(
+                playerID: playerID,
+                musicPlaylistID: bucketID
+            ).orderedTrackIDs
+            let orderGroups = scope == currentPlaylistScope
+                ? [liveQueueTrackIDs, sourceOrder, bucketOrder]
+                : [bucketOrder, sourceOrder]
+            var seenTrackIDs = Set<String>()
+            let mergedOrder = orderGroups
+                .flatMap { $0 }
+                .filter { seenTrackIDs.insert($0).inserted }
+
+            if !mergedOrder.isEmpty {
+                PlaybackOrderStore.save(
+                    PlaybackOrderState(
+                        playerID: playerID,
+                        musicPlaylistID: bucketID,
+                        orderedTrackIDs: mergedOrder
+                    ),
+                    flushImmediately: true
+                )
+            }
+            PlaybackOrderStore.clear(
+                playerID: playerID,
+                musicPlaylistID: oldID,
+                flushImmediately: true
+            )
         }
     }
 

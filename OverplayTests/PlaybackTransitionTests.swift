@@ -297,6 +297,304 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.activePlaylistSnapshot == nil)
     }
 
+    @Test("syncing a source refreshes and extends the playing triage bucket")
+    func syncingSourceRefreshesAndExtendsPlayingTriageBucket() async throws {
+        let fixture = try makeFixture(trackCount: 2)
+        fixture.playlist.musicPlaylistID = PlaylistRecord.triageBucketMusicPlaylistID
+        fixture.playlist.name = PlaylistRecord.triageBucketName
+        fixture.playlist.role = .triageBucket
+        fixture.playlist.writePolicy = .incomingOnly
+        defer { fixture.cleanUp() }
+        try fixture.context.save()
+        try await fixture.start(at: 0)
+
+        let source = try fixture.addPlaylist(prefix: "source", trackCount: 1)
+        let contributedItem = source.items[0]
+        contributedItem.playlistID = fixture.playlist.id
+        contributedItem.addSourceMusicPlaylistID(source.playlist.musicPlaylistID)
+        try fixture.context.save()
+
+        // Source sync already updated the durable order before notifying the
+        // controller. The controller must still compare against the live queue
+        // and publish the newly persisted bucket row.
+        let contributedLocalTrackID = source.tracks[0].id.uuidString
+        let storedOrder = PlaybackOrderStore.state(
+            playerID: fixture.playerID,
+            musicPlaylistID: fixture.playlist.musicPlaylistID
+        ).orderedTrackIDs + [contributedLocalTrackID]
+        PlaybackOrderStore.save(
+            PlaybackOrderState(
+                playerID: fixture.playerID,
+                musicPlaylistID: fixture.playlist.musicPlaylistID,
+                orderedTrackIDs: storedOrder
+            ),
+            flushImmediately: true
+        )
+
+        fixture.controller.reconcileStoredOrder(for: source.playlist, context: fixture.context)
+        fixture.controller.reconcileStoredOrder(for: source.playlist, context: fixture.context)
+        await Task.yield()
+
+        #expect(fixture.player.appendedTrackBatchSizes == [1])
+        #expect(fixture.player.queuedEntryCount == 3)
+        #expect(fixture.controller.activePlaylistSnapshot?.musicPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(fixture.controller.activePlaylistSnapshot?.rows.contains {
+            $0.localTrackID == contributedLocalTrackID
+                && $0.sourceMusicPlaylistIDs == [source.playlist.musicPlaylistID]
+        } == true)
+    }
+
+    @Test("a bucket alias callback reconciles the canonical playing bucket")
+    func bucketAliasCallbackReconcilesCanonicalPlayingBucket() async throws {
+        let fixture = try makeFixture(trackCount: 2)
+        fixture.playlist.musicPlaylistID = PlaylistRecord.triageBucketMusicPlaylistID
+        fixture.playlist.name = PlaylistRecord.triageBucketName
+        fixture.playlist.role = .triageBucket
+        fixture.playlist.writePolicy = .incomingOnly
+        fixture.playlist.createdAt = Date(timeIntervalSince1970: 200)
+        defer { fixture.cleanUp() }
+        try fixture.context.save()
+        try await fixture.start(at: 0)
+
+        let imported = try fixture.addPlaylist(prefix: "imported-bucket", trackCount: 1)
+        imported.playlist.musicPlaylistID = PlaylistRecord.triageBucketMusicPlaylistID
+        imported.playlist.name = PlaylistRecord.triageBucketName
+        imported.playlist.role = .triageBucket
+        imported.playlist.writePolicy = .incomingOnly
+        imported.playlist.createdAt = Date(timeIntervalSince1970: 100)
+        try fixture.context.save()
+
+        // A refresh can discover that the view's bucket record is now an
+        // inactive alias because an older CloudKit bucket became canonical.
+        let canonicalBucket = try PlaylistRepository.triageBucket(in: fixture.context)
+        #expect(canonicalBucket.id == imported.playlist.id)
+        #expect(fixture.playlist.isActive == false)
+        try fixture.context.save()
+
+        fixture.controller.reconcileStoredOrder(for: fixture.playlist, context: fixture.context)
+        await Task.yield()
+
+        let importedLocalTrackID = imported.tracks[0].id.uuidString
+        #expect(fixture.player.appendedTrackBatchSizes == [1])
+        #expect(fixture.player.queuedEntryCount == 3)
+        #expect(fixture.controller.activePlaylistSnapshot?.playlistID == canonicalBucket.id)
+        #expect(fixture.controller.activePlaylistSnapshot?.rows.contains {
+            $0.localTrackID == importedLocalTrackID
+        } == true)
+    }
+
+    @Test("a promoted source sync callback still refreshes the playing triage bucket")
+    func promotedSourceSyncCallbackStillRefreshesPlayingTriageBucket() async throws {
+        let fixture = try makeFixture(trackCount: 2)
+        fixture.playlist.musicPlaylistID = PlaylistRecord.triageBucketMusicPlaylistID
+        fixture.playlist.name = PlaylistRecord.triageBucketName
+        fixture.playlist.role = .triageBucket
+        fixture.playlist.writePolicy = .incomingOnly
+        defer { fixture.cleanUp() }
+        try fixture.context.save()
+        try await fixture.start(at: 0)
+
+        let source = try fixture.addPlaylist(prefix: "source", trackCount: 1)
+        let contributedItem = source.items[0]
+        contributedItem.playlistID = fixture.playlist.id
+        contributedItem.addSourceMusicPlaylistID(source.playlist.musicPlaylistID)
+        source.playlist.role = .oneTruePlaylist
+        try fixture.context.save()
+
+        let contributedLocalTrackID = source.tracks[0].id.uuidString
+        let storedOrder = PlaybackOrderStore.state(
+            playerID: fixture.playerID,
+            musicPlaylistID: fixture.playlist.musicPlaylistID
+        ).orderedTrackIDs + [contributedLocalTrackID]
+        PlaybackOrderStore.save(
+            PlaybackOrderState(
+                playerID: fixture.playerID,
+                musicPlaylistID: fixture.playlist.musicPlaylistID,
+                orderedTrackIDs: storedOrder
+            ),
+            flushImmediately: true
+        )
+
+        fixture.controller.reconcileStoredOrder(for: source.playlist, context: fixture.context)
+        await Task.yield()
+
+        #expect(fixture.player.appendedTrackBatchSizes == [1])
+        #expect(fixture.player.queuedEntryCount == 3)
+        #expect(fixture.controller.activePlaylistSnapshot?.rows.contains {
+            $0.localTrackID == contributedLocalTrackID
+        } == true)
+    }
+
+    @Test("syncing a source after partial queue hydration appends only its new track")
+    func syncingSourceAfterPartialQueueHydrationAppendsOnlyItsNewTrack() async throws {
+        let fixture = try makeFixture(trackCount: 2)
+        fixture.playlist.musicPlaylistID = PlaylistRecord.triageBucketMusicPlaylistID
+        fixture.playlist.name = PlaylistRecord.triageBucketName
+        fixture.playlist.role = .triageBucket
+        fixture.playlist.writePolicy = .incomingOnly
+        defer { fixture.cleanUp() }
+        try fixture.context.save()
+        try await fixture.start(at: 0)
+
+        // MusicKit can re-materialize the queue under fresh entry IDs and
+        // hydrate only part of it. The second original track is still live,
+        // even though it is temporarily absent from the controller's mapped
+        // queue.
+        let reissued = fixture.player.reissueEntryIDs(for: fixture.musicTracks, currentIndex: 0)
+        fixture.player.unhydratedEntryIDs = [reissued[1]]
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        // Hydration finishes before the source-sync callback, but there is no
+        // intervening playback tick to merge that entry into the controller's
+        // mapped queue.
+        fixture.player.unhydratedEntryIDs = []
+
+        let source = try fixture.addPlaylist(prefix: "source", trackCount: 1)
+        let contributedItem = source.items[0]
+        contributedItem.playlistID = fixture.playlist.id
+        contributedItem.addSourceMusicPlaylistID(source.playlist.musicPlaylistID)
+        try fixture.context.save()
+
+        let contributedLocalTrackID = source.tracks[0].id.uuidString
+        let storedOrder = PlaybackOrderStore.state(
+            playerID: fixture.playerID,
+            musicPlaylistID: fixture.playlist.musicPlaylistID
+        ).orderedTrackIDs + [contributedLocalTrackID]
+        PlaybackOrderStore.save(
+            PlaybackOrderState(
+                playerID: fixture.playerID,
+                musicPlaylistID: fixture.playlist.musicPlaylistID,
+                orderedTrackIDs: storedOrder
+            ),
+            flushImmediately: true
+        )
+
+        fixture.controller.reconcileStoredOrder(for: source.playlist, context: fixture.context)
+        fixture.controller.reconcileStoredOrder(for: source.playlist, context: fixture.context)
+        await Task.yield()
+
+        #expect(fixture.player.appendedTrackBatchSizes == [1])
+        #expect(fixture.player.queuedEntryCount == 3)
+
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        #expect(fixture.player.appendedTrackBatchSizes == [1])
+        #expect(fixture.player.queuedEntryCount == 3)
+        #expect(fixture.controller.activePlaylistSnapshot?.rows.contains {
+            $0.localTrackID == contributedLocalTrackID
+        } == true)
+    }
+
+    @Test("demoting the playing main playlist keeps its queue attached to the bucket")
+    func demotingPlayingMainPlaylistKeepsItsQueueAttachedToBucket() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 15
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        let bucket = try PlaylistRepository.triageBucket(in: fixture.context)
+        let activeBucketOnlyTrackID = "bucket-active"
+        let retiredBucketTrackID = "bucket-retired"
+        let retiredSourceTrackID = "source-retired"
+        defer {
+            for scope in PlaylistPlaybackScope.allCases {
+                PlaybackOrderStore.clear(
+                    playerID: fixture.playerID,
+                    musicPlaylistID: scope.playbackOrderPlaylistID(for: fixture.playlist.musicPlaylistID),
+                    flushImmediately: true
+                )
+                PlaybackOrderStore.clear(
+                    playerID: fixture.playerID,
+                    musicPlaylistID: scope.playbackOrderPlaylistID(for: bucket.musicPlaylistID),
+                    flushImmediately: true
+                )
+            }
+            PlaybackIdentityStore.clear(
+                playerID: fixture.playerID,
+                musicPlaylistID: fixture.playlist.musicPlaylistID,
+                flushImmediately: true
+            )
+            PlaybackIdentityStore.clear(
+                playerID: fixture.playerID,
+                musicPlaylistID: bucket.musicPlaylistID,
+                flushImmediately: true
+            )
+        }
+        PlaybackOrderStore.save(PlaybackOrderState(
+            playerID: fixture.playerID,
+            musicPlaylistID: bucket.musicPlaylistID,
+            orderedTrackIDs: [activeBucketOnlyTrackID]
+        ))
+        PlaybackOrderStore.save(PlaybackOrderState(
+            playerID: fixture.playerID,
+            musicPlaylistID: PlaylistPlaybackScope.retired.playbackOrderPlaylistID(
+                for: fixture.playlist.musicPlaylistID
+            ),
+            orderedTrackIDs: [retiredSourceTrackID]
+        ))
+        PlaybackOrderStore.save(PlaybackOrderState(
+            playerID: fixture.playerID,
+            musicPlaylistID: PlaylistPlaybackScope.retired.playbackOrderPlaylistID(
+                for: bucket.musicPlaylistID
+            ),
+            orderedTrackIDs: [retiredBucketTrackID]
+        ))
+        let currentLocalTrackID = fixture.tracks[0].id.uuidString
+        PlaybackIdentityStore.recordAlias(
+            "source-alias",
+            playerID: fixture.playerID,
+            musicPlaylistID: fixture.playlist.musicPlaylistID,
+            localTrackID: currentLocalTrackID
+        )
+        PlaybackIdentityStore.recordAlias(
+            "bucket-alias",
+            playerID: fixture.playerID,
+            musicPlaylistID: bucket.musicPlaylistID,
+            localTrackID: currentLocalTrackID
+        )
+
+        try SettingsRepository.selectPlaylist(
+            AppleMusicPlaylist(id: "replacement", name: "Replacement", trackCount: 0),
+            in: fixture.context
+        )
+        fixture.controller.reconcilePlaylistSelection(context: fixture.context)
+
+        #expect(fixture.controller.currentPlaylistID == bucket.musicPlaylistID)
+        #expect(fixture.controller.currentPlaylistItem?.playlistID == bucket.id)
+        #expect(fixture.controller.activePlaylistSnapshot?.playlistID == bucket.id)
+        let liveQueueOrder = fixture.tracks.map { $0.id.uuidString }
+        let mergedActiveOrder = PlaybackOrderStore.state(
+            playerID: fixture.playerID,
+            musicPlaylistID: bucket.musicPlaylistID
+        ).orderedTrackIDs
+        #expect(Array(mergedActiveOrder.prefix(liveQueueOrder.count)) == liveQueueOrder)
+        #expect(mergedActiveOrder.contains(activeBucketOnlyTrackID))
+        #expect(PlaybackOrderStore.state(
+            playerID: fixture.playerID,
+            musicPlaylistID: PlaylistPlaybackScope.retired.playbackOrderPlaylistID(
+                for: bucket.musicPlaylistID
+            )
+        ).orderedTrackIDs == [retiredBucketTrackID, retiredSourceTrackID])
+        #expect(Set(PlaybackIdentityStore.aliases(
+            playerID: fixture.playerID,
+            musicPlaylistID: bucket.musicPlaylistID,
+            localTrackID: currentLocalTrackID
+        )) == ["source-alias", "bucket-alias"])
+        #expect(PlaybackIdentityStore.aliases(
+            playerID: fixture.playerID,
+            musicPlaylistID: fixture.playlist.musicPlaylistID,
+            localTrackID: currentLocalTrackID
+        ).isEmpty)
+
+        await fixture.controller.next(settings: fixture.settings, context: fixture.context)
+
+        let movedItems = try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: fixture.context)
+        let outgoingItem = try #require(movedItems.first { $0.trackID == fixture.tracks[0].id })
+        #expect(outgoingItem.skipCount == 1)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[1].id.rawValue)
+    }
+
     @Test("a queue replacement clears an earlier pending append correlation")
     func queueReplacementClearsEarlierPendingAppendCorrelation() async throws {
         let fixture = try makeFixture()
@@ -1809,6 +2107,7 @@ private func makeFixture(
     let container = try OverplayTestSupport.makeModelContainer()
     let context = container.mainContext
     let added = try PlaybackTransitionFixture.insertPlaylist(prefix: "main", trackCount: trackCount, context: context)
+    added.playlist.role = .oneTruePlaylist
     let settings = OverplaySettings(
         selectedPlaylistID: added.playlist.musicPlaylistID,
         selectedPlaylistName: added.playlist.name,

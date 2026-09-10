@@ -357,6 +357,364 @@ struct PlaylistSyncReconciliationTests {
         #expect(item.evictionSource == .user)
     }
 
+    @Test("unlinking during a remote fetch cannot restore source provenance")
+    func unlinkingDuringRemoteFetchCannotRestoreSourceProvenance() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let source = try PlaylistRepository.addTriageSource(
+            AppleMusicPlaylist(id: "source", name: "Source", trackCount: 1),
+            in: context
+        )
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let service = PlaylistSyncService()
+        try await service.reconcile(
+            snapshots: [snapshot(id: "track-1", title: "First")],
+            playlistRecord: source,
+            syncedAt: Date(timeIntervalSince1970: 100),
+            in: context
+        )
+        let item = try #require(PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context).first)
+        #expect(item.sourceMusicPlaylistIDs == [source.musicPlaylistID])
+
+        let deferredSource = DeferredPlaylistSourceSync()
+        let deferredService = PlaylistSyncService(
+            sourceRegistry: PlaylistSourceSyncRegistry(adapters: [.appleMusic: deferredSource])
+        )
+        let syncTask = Task {
+            try await deferredService.syncPlaylist(source, in: context)
+        }
+        await deferredSource.waitUntilFetchStarts()
+
+        try PlaylistRepository.removeTriageSource(source, in: context)
+        deferredSource.completeFetch(
+            with: PlaylistSourceFetchResult(
+                snapshots: [snapshot(id: "track-1", title: "First")],
+                skippedCount: 0,
+                skippedReason: nil,
+                remoteLastModifiedAt: nil
+            )
+        )
+        let summary = try await syncTask.value
+
+        #expect(summary.skippedReason == "inactivePlaylist")
+        #expect(!source.isActive)
+        #expect(item.sourceMusicPlaylistIDs.isEmpty)
+    }
+
+    @Test("demoting a playlist between sync chunks sends remaining rows to the bucket")
+    func demotingPlaylistBetweenSyncChunksSendsRemainingRowsToBucket() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let originalPlaylistID = "original-\(UUID().uuidString)"
+        let replacementPlaylistID = "replacement-\(UUID().uuidString)"
+        let original = try PlaylistRepository.setOneTruePlaylist(
+            AppleMusicPlaylist(id: originalPlaylistID, name: "Original", trackCount: nil),
+            in: context
+        )
+        let snapshots = (0...PlaylistSyncService.syncYieldStride).map { index in
+            snapshot(id: "track-\(index)-\(UUID().uuidString)", title: "Track \(index)")
+        }
+        PlaybackOrderStore.clear(
+            playerID: "main",
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            flushImmediately: true
+        )
+        defer {
+            PlaybackOrderStore.clear(
+                playerID: "main",
+                musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+                flushImmediately: true
+            )
+        }
+
+        var didDemote = false
+        let service = PlaylistSyncService(yieldDuringReconciliation: {
+            guard !didDemote else { return }
+            didDemote = true
+            _ = try PlaylistRepository.setOneTruePlaylist(
+                AppleMusicPlaylist(id: replacementPlaylistID, name: "Replacement", trackCount: nil),
+                in: context
+            )
+        })
+
+        let summary = try await service.reconcile(
+            snapshots: snapshots,
+            playlistRecord: original,
+            syncedAt: Date(timeIntervalSince1970: 100),
+            in: context
+        )
+
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let bucketItems = try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
+        #expect(didDemote)
+        #expect(original.role == .triageSource)
+        #expect(try PlaylistItemRepository.items(forPlaylistID: original.id, in: context).isEmpty)
+        #expect(bucketItems.count == snapshots.count)
+        #expect(bucketItems.allSatisfy {
+            $0.sourceMusicPlaylistIDs == [originalPlaylistID]
+        })
+        #expect(summary.insertedCount == snapshots.count)
+        #expect(Set(PlaybackOrderStore.state(
+            playerID: "main",
+            musicPlaylistID: bucket.musicPlaylistID
+        ).orderedTrackIDs) == Set(summary.insertedLocalTrackIDs))
+    }
+
+    @Test("promoting a source between sync chunks replays earlier rows into the new main")
+    func promotingSourceBetweenSyncChunksReplaysEarlierRowsIntoNewMain() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let sourcePlaylistID = "source-\(UUID().uuidString)"
+        let source = try PlaylistRepository.addTriageSource(
+            AppleMusicPlaylist(id: sourcePlaylistID, name: "Source", trackCount: nil),
+            in: context
+        )
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let snapshots = (0...PlaylistSyncService.syncYieldStride).map { index in
+            snapshot(id: "track-\(index)-\(UUID().uuidString)", title: "Track \(index)")
+        }
+        for musicPlaylistID in [sourcePlaylistID, bucket.musicPlaylistID] {
+            PlaybackOrderStore.clear(
+                playerID: "main",
+                musicPlaylistID: musicPlaylistID,
+                flushImmediately: true
+            )
+        }
+        defer {
+            for musicPlaylistID in [sourcePlaylistID, bucket.musicPlaylistID] {
+                PlaybackOrderStore.clear(
+                    playerID: "main",
+                    musicPlaylistID: musicPlaylistID,
+                    flushImmediately: true
+                )
+            }
+        }
+
+        var didPromote = false
+        let service = PlaylistSyncService(yieldDuringReconciliation: {
+            guard !didPromote else { return }
+            didPromote = true
+            _ = try PlaylistRepository.setOneTruePlaylist(
+                AppleMusicPlaylist(id: sourcePlaylistID, name: "Source", trackCount: nil),
+                in: context
+            )
+        })
+
+        let summary = try await service.reconcile(
+            snapshots: snapshots,
+            playlistRecord: source,
+            syncedAt: Date(timeIntervalSince1970: 100),
+            in: context
+        )
+
+        let mainItems = try PlaylistItemRepository.items(forPlaylistID: source.id, in: context)
+        let bucketItems = try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
+        #expect(didPromote)
+        #expect(source.role == .oneTruePlaylist)
+        #expect(mainItems.count == snapshots.count)
+        #expect(bucketItems.count == PlaylistSyncService.syncYieldStride)
+        #expect(bucketItems.allSatisfy {
+            $0.sourceMusicPlaylistIDs == [sourcePlaylistID]
+        })
+        #expect(summary.insertedCount == snapshots.count)
+        #expect(Set(PlaybackOrderStore.state(
+            playerID: "main",
+            musicPlaylistID: sourcePlaylistID
+        ).orderedTrackIDs) == Set(mainItems.map { $0.trackID.uuidString }))
+        #expect(Set(PlaybackOrderStore.state(
+            playerID: "main",
+            musicPlaylistID: bucket.musicPlaylistID
+        ).orderedTrackIDs) == Set(bucketItems.map { $0.trackID.uuidString }))
+    }
+
+    @Test("a main source main round trip between chunks still replays the moved prefix")
+    func mainSourceMainRoundTripBetweenChunksStillReplaysMovedPrefix() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let originalPlaylistID = "original-\(UUID().uuidString)"
+        let replacementPlaylistID = "replacement-\(UUID().uuidString)"
+        let original = try PlaylistRepository.setOneTruePlaylist(
+            AppleMusicPlaylist(id: originalPlaylistID, name: "Original", trackCount: nil),
+            in: context
+        )
+        let snapshots = (0...PlaylistSyncService.syncYieldStride).map { index in
+            snapshot(id: "track-\(index)-\(UUID().uuidString)", title: "Track \(index)")
+        }
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        for musicPlaylistID in [originalPlaylistID, bucket.musicPlaylistID] {
+            PlaybackOrderStore.clear(
+                playerID: "main",
+                musicPlaylistID: musicPlaylistID,
+                flushImmediately: true
+            )
+        }
+        defer {
+            for musicPlaylistID in [originalPlaylistID, bucket.musicPlaylistID] {
+                PlaybackOrderStore.clear(
+                    playerID: "main",
+                    musicPlaylistID: musicPlaylistID,
+                    flushImmediately: true
+                )
+            }
+        }
+
+        var didRoundTrip = false
+        let service = PlaylistSyncService(yieldDuringReconciliation: {
+            guard !didRoundTrip else { return }
+            didRoundTrip = true
+            _ = try PlaylistRepository.setOneTruePlaylist(
+                AppleMusicPlaylist(id: replacementPlaylistID, name: "Replacement", trackCount: nil),
+                in: context
+            )
+            _ = try PlaylistRepository.setOneTruePlaylist(
+                AppleMusicPlaylist(id: originalPlaylistID, name: "Original", trackCount: nil),
+                in: context
+            )
+        })
+
+        _ = try await service.reconcile(
+            snapshots: snapshots,
+            playlistRecord: original,
+            syncedAt: Date(timeIntervalSince1970: 100),
+            in: context
+        )
+
+        let mainItems = try PlaylistItemRepository.items(forPlaylistID: original.id, in: context)
+        let bucketItems = try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
+        #expect(didRoundTrip)
+        #expect(original.role == .oneTruePlaylist)
+        #expect(mainItems.count == snapshots.count)
+        #expect(bucketItems.count == PlaylistSyncService.syncYieldStride)
+        #expect(Set(PlaybackOrderStore.state(
+            playerID: "main",
+            musicPlaylistID: originalPlaylistID
+        ).orderedTrackIDs) == Set(mainItems.map { $0.trackID.uuidString }))
+    }
+
+    @Test("healing a source ID between chunks refreshes cached bucket provenance")
+    func healingSourceIDBetweenChunksRefreshesCachedBucketProvenance() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let oldSourceID = "source-old-\(UUID().uuidString)"
+        let newSourceID = "source-new-\(UUID().uuidString)"
+        let source = try PlaylistRepository.addTriageSource(
+            AppleMusicPlaylist(id: oldSourceID, name: "Source", trackCount: nil),
+            in: context
+        )
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let snapshots = (0...PlaylistSyncService.syncYieldStride).map { index in
+            snapshot(id: "track-\(index)-\(UUID().uuidString)", title: "Track \(index)")
+        }
+
+        var didHeal = false
+        let service = PlaylistSyncService(yieldDuringReconciliation: {
+            guard !didHeal else { return }
+            didHeal = true
+            try AppleMusicPlaylistSourceSync().applyHealedMusicPlaylistID(
+                from: oldSourceID,
+                to: newSourceID,
+                playlistRecord: source,
+                in: context
+            )
+        })
+
+        _ = try await service.reconcile(
+            snapshots: snapshots,
+            playlistRecord: source,
+            syncedAt: Date(timeIntervalSince1970: 100),
+            in: context
+        )
+
+        let bucketItems = try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
+        #expect(didHeal)
+        #expect(source.musicPlaylistID == newSourceID)
+        #expect(bucketItems.count == snapshots.count)
+        #expect(bucketItems.allSatisfy {
+            $0.sourceMusicPlaylistIDs == [newSourceID]
+        })
+    }
+
+    @Test("relinking a source between chunks restores provenance on the processed prefix")
+    func relinkingSourceBetweenChunksRestoresProvenanceOnProcessedPrefix() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let sourcePlaylistID = "source-\(UUID().uuidString)"
+        let remotePlaylist = AppleMusicPlaylist(
+            id: sourcePlaylistID,
+            name: "Source",
+            trackCount: nil
+        )
+        let source = try PlaylistRepository.addTriageSource(remotePlaylist, in: context)
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let snapshots = (0...PlaylistSyncService.syncYieldStride).map { index in
+            snapshot(id: "track-\(index)-\(UUID().uuidString)", title: "Track \(index)")
+        }
+
+        var didRelink = false
+        let service = PlaylistSyncService(yieldDuringReconciliation: {
+            guard !didRelink else { return }
+            didRelink = true
+            try PlaylistRepository.removeTriageSource(source, in: context)
+            _ = try PlaylistRepository.addTriageSource(remotePlaylist, in: context)
+        })
+
+        _ = try await service.reconcile(
+            snapshots: snapshots,
+            playlistRecord: source,
+            syncedAt: Date(timeIntervalSince1970: 100),
+            in: context
+        )
+
+        let bucketItems = try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
+        #expect(didRelink)
+        #expect(source.isActive)
+        #expect(bucketItems.count == snapshots.count)
+        #expect(bucketItems.allSatisfy {
+            $0.sourceMusicPlaylistIDs == [sourcePlaylistID]
+        })
+    }
+
+    @Test("healing a promoted source playlist ID also heals retained bucket provenance")
+    func healingPromotedSourcePlaylistIDAlsoHealsRetainedBucketProvenance() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let source = try PlaylistRepository.addTriageSource(
+            AppleMusicPlaylist(id: "source.old", name: "Source", trackCount: 1),
+            in: context
+        )
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        try await PlaylistSyncService().reconcile(
+            snapshots: [snapshot(id: "track-1", title: "First")],
+            playlistRecord: source,
+            syncedAt: Date(timeIntervalSince1970: 100),
+            in: context
+        )
+        let item = try #require(PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context).first)
+
+        _ = try PlaylistRepository.setOneTruePlaylist(
+            AppleMusicPlaylist(id: "source.old", name: "Source", trackCount: 1),
+            in: context
+        )
+
+        try AppleMusicPlaylistSourceSync().applyHealedMusicPlaylistID(
+            from: "source.old",
+            to: "source.new",
+            playlistRecord: source,
+            in: context
+        )
+
+        #expect(source.musicPlaylistID == "source.new")
+        #expect(source.role == .oneTruePlaylist)
+        #expect(item.sourceMusicPlaylistIDs == ["source.new"])
+
+        _ = try PlaylistRepository.setOneTruePlaylist(
+            AppleMusicPlaylist(id: "replacement", name: "Replacement", trackCount: 1),
+            in: context
+        )
+        try PlaylistRepository.removeTriageSource(source, in: context)
+        #expect(item.sourceMusicPlaylistIDs.isEmpty)
+    }
+
     private func snapshot(id: String, title: String) -> TrackSnapshot {
         TrackSnapshot(
             id: id,
@@ -370,5 +728,46 @@ struct PlaylistSyncReconciliationTests {
             artworkURLTemplate: nil,
             durationSeconds: 180
         )
+    }
+}
+
+@MainActor
+private final class DeferredPlaylistSourceSync: PlaylistSourceSyncing {
+    let source: PlaylistSource = .appleMusic
+
+    private var fetchContinuation: CheckedContinuation<PlaylistSourceFetchResult, Never>?
+    private var fetchStartWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func fetchLibraryPlaylists() async throws -> [RemotePlaylistLink] {
+        []
+    }
+
+    func fetchTrackSnapshots(
+        playlistID: String,
+        playlistName: String?,
+        playlistRecord: PlaylistRecord?,
+        skipWhenRemoteUnchanged: Bool,
+        in context: ModelContext
+    ) async throws -> PlaylistSourceFetchResult {
+        for waiter in fetchStartWaiters {
+            waiter.resume()
+        }
+        fetchStartWaiters.removeAll()
+
+        return await withCheckedContinuation { continuation in
+            fetchContinuation = continuation
+        }
+    }
+
+    func waitUntilFetchStarts() async {
+        guard fetchContinuation == nil else { return }
+        await withCheckedContinuation { continuation in
+            fetchStartWaiters.append(continuation)
+        }
+    }
+
+    func completeFetch(with result: PlaylistSourceFetchResult) {
+        fetchContinuation?.resume(returning: result)
+        fetchContinuation = nil
     }
 }

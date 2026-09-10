@@ -10,11 +10,11 @@ struct SearchMusicViewModelTests {
     func defaultSelectionPrefersInitialPlaylistThenSettings() {
         let viewModel = SearchMusicViewModel()
         let main = PlaylistRecord(musicPlaylistID: "main", name: "Main", role: .oneTruePlaylist)
-        let triage = PlaylistRecord(musicPlaylistID: "triage", name: "Inbox", role: .triage)
+        let triage = PlaylistRecord(musicPlaylistID: "triage", name: "Inbox", role: .triageBucket)
         let incoming = PlaylistRecord(
             musicPlaylistID: "incoming",
             name: "Incoming",
-            role: .triage,
+            role: .triageBucket,
             writePolicy: .incomingOnly
         )
         let settings = OverplaySettings(selectedPlaylistID: "main", selectedPlaylistName: "Main")

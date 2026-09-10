@@ -68,7 +68,7 @@ struct CarPlayNowPlayingButtonSignatureTests {
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-2",
             name: "Triage",
-            role: .triage
+            role: .triageBucket
         )
         let track = TrackRecord(
             catalogID: "music-1",
@@ -97,7 +97,7 @@ struct CarPlayNowPlayingButtonSignatureTests {
             context: context
         )
 
-        #expect(signature.playlistRole == .triage)
+        #expect(signature.playlistRole == .triageBucket)
     }
 
     @Test("changes when the current playlist role changes")
@@ -108,7 +108,7 @@ struct CarPlayNowPlayingButtonSignatureTests {
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-role-change",
             name: "Current",
-            role: .triage
+            role: .triageBucket
         )
         context.insert(playlist)
         controller.currentPlaylistID = playlist.musicPlaylistID
@@ -127,7 +127,7 @@ struct CarPlayNowPlayingButtonSignatureTests {
             context: context
         )
 
-        #expect(triage.playlistRole == .triage)
+        #expect(triage.playlistRole == .triageBucket)
         #expect(oneTruePlaylist.playlistRole == .oneTruePlaylist)
         #expect(oneTruePlaylist != triage)
     }

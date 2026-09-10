@@ -16,7 +16,14 @@ struct DomainVocabularyTests {
     @Test("playlist role raw values are stable")
     func playlistRoleRawValuesAreStable() {
         #expect(PlaylistRole.oneTruePlaylist.rawValue == "oneTruePlaylist")
-        #expect(PlaylistRole.triage.rawValue == "triage")
+        #expect(PlaylistRole.triageBucket.rawValue == "triageBucket")
+        #expect(PlaylistRole.triageSource.rawValue == "triageSource")
+        #expect(PlaylistRole.oneTruePlaylist.isPlaybackContext)
+        #expect(PlaylistRole.triageBucket.isPlaybackContext)
+        #expect(!PlaylistRole.triageSource.isPlaybackContext)
+        // Stored by every pre-bucket install, so the migration keys on it.
+        #expect(PlaylistRole.legacyTriageRawValue == "triage")
+        #expect(PlaylistRole(rawValue: PlaylistRole.legacyTriageRawValue) == nil)
     }
 
     @Test("playlist write policy raw values are stable")

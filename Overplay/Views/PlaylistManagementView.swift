@@ -2,10 +2,30 @@ import SwiftData
 import SwiftUI
 
 struct PlaylistManagementView: View {
+    @Query(sort: \PlaylistRecord.createdAt) private var playlists: [PlaylistRecord]
+
+    var settings: OverplaySettings
+    var playlist: PlaylistRecord
+
+    var body: some View {
+        let canonicalPlaylist = PlaylistRepository.canonicalPlaylist(
+            for: playlist,
+            among: playlists
+        )
+        PlaylistManagementContentView(
+            settings: settings,
+            playlist: canonicalPlaylist
+        )
+        .id(canonicalPlaylist.id)
+    }
+}
+
+private struct PlaylistManagementContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackController.self) private var playbackController
 
     @Query private var playlistItems: [PlaylistItemRecord]
+    @Query(sort: \PlaylistRecord.name) private var linkedPlaylists: [PlaylistRecord]
 
     var settings: OverplaySettings
     var playlist: PlaylistRecord
@@ -104,7 +124,7 @@ struct PlaylistManagementView: View {
                                 }
                                 .disabled(viewModel.evictingItemIDs.contains(row.id))
 
-                                if playlist.role == .triage {
+                                if playlist.role == .triageBucket {
                                     Button {
                                         Task { await promote(row) }
                                     } label: {
@@ -214,13 +234,16 @@ struct PlaylistManagementView: View {
             currentTrack: playbackController.nowPlayingDisplayTrack,
             playbackItemMetadataVersion: playbackController.playbackItemMetadataVersion,
             activePlaylistSnapshot: playbackController.activePlaylistSnapshot,
+            sourcePlaylists: linkedPlaylists,
             scope: selectedScope
         )
     }
 
     private var playlistTrackIDsKey: String {
         playlistItems
-            .map(\.trackID.uuidString)
+            .map {
+                "\($0.trackID.uuidString):\($0.sourceMusicPlaylistIDs.joined(separator: ","))"
+            }
             .sorted()
             .joined(separator: "|")
     }
@@ -234,6 +257,7 @@ struct PlaylistManagementView: View {
             selectedScope.rawValue,
             String(playlistItems.count),
             playlistTrackIDsKey,
+            linkedPlaylists.map { "\($0.musicPlaylistID):\($0.name)" }.joined(separator: "|"),
             String(tracks.count),
             String(playbackController.playbackItemMetadataVersion),
             String(playbackController.playbackModeVersion),
@@ -255,8 +279,10 @@ struct PlaylistManagementView: View {
         switch playlist.role {
         case .oneTruePlaylist:
             return .pink
-        case .triage:
+        case .triageBucket:
             return .teal
+        case .triageSource:
+            return .gray
         }
     }
 

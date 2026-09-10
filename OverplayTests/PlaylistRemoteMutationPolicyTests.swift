@@ -54,7 +54,7 @@ struct PlaylistRemoteMutationPolicyTests {
         let playlist = PlaylistRecord(
             musicPlaylistID: "triage-playlist",
             name: "Triage",
-            role: .triage,
+            role: .triageBucket,
             writePolicy: .managed
         )
         let item = PlaylistItemRecord(

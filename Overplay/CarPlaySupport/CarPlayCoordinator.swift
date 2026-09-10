@@ -182,11 +182,13 @@ final class CarPlayCoordinator: NSObject {
                 sections.append(CPListSection(items: [playlistItem(for: oneTruePlaylist)]))
             }
 
+            // Contributing playlists are intake sources, not playback
+            // contexts — the driver browses the bucket they feed.
             let triageItems = summaries
-                .filter { $0.role != .oneTruePlaylist }
+                .filter { $0.role == .triageBucket }
                 .map(playlistItem(for:))
             if !triageItems.isEmpty {
-                sections.append(CPListSection(items: triageItems, header: "Triage Playlists", sectionIndexTitle: nil))
+                sections.append(CPListSection(items: triageItems, header: "Triage", sectionIndexTitle: nil))
             }
             return sections
         } catch {
@@ -277,10 +279,14 @@ final class CarPlayCoordinator: NSObject {
         guard let interfaceController, let modelContext else { return }
 
         do {
-            guard let playlist = try PlaylistRepository.playlist(id: summary.id, in: modelContext) else {
+            guard let storedPlaylist = try PlaylistRepository.playlist(id: summary.id, in: modelContext) else {
                 setRootTemplate(animated: true)
                 return
             }
+            let playlist = try PlaylistRepository.canonicalPlaylist(
+                for: storedPlaylist,
+                in: modelContext
+            )
 
             visiblePlaylistID = playlist.id
             let template = CPListTemplate(
@@ -302,7 +308,14 @@ final class CarPlayCoordinator: NSObject {
            activePlaylistSnapshot.playlistID == playlist.id,
            activePlaylistSnapshot.musicPlaylistID == playlist.musicPlaylistID,
            activePlaylistSnapshot.playbackScope == scope {
-            tracks = CarPlayLibrarySnapshot.trackSummaries(from: activePlaylistSnapshot)
+            tracks = CarPlayLibrarySnapshot.trackSummaries(
+                from: activePlaylistSnapshot,
+                playlistItems: try PlaylistItemRepository.items(
+                    forPlaylistID: playlist.id,
+                    in: modelContext
+                ),
+                sourcePlaylists: try PlaylistRepository.allPlaylists(in: modelContext)
+            )
         } else {
             tracks = try CarPlayLibrarySnapshot.trackSummaries(
                 forPlaylistID: playlist.id,
@@ -641,11 +654,16 @@ final class CarPlayCoordinator: NSObject {
         guard listTemplate === visiblePlaylistTemplate,
               let visiblePlaylistID,
               let modelContext,
-              let playlist = try? PlaylistRepository.playlist(id: visiblePlaylistID, in: modelContext),
+              let storedPlaylist = try? PlaylistRepository.playlist(id: visiblePlaylistID, in: modelContext),
+              let playlist = try? PlaylistRepository.canonicalPlaylist(
+                for: storedPlaylist,
+                in: modelContext
+              ),
               let sections = try? playlistSections(for: playlist) else {
             return
         }
 
+        self.visiblePlaylistID = playlist.id
         CarPlayListTemplateUpdater.update(listTemplate, sections: sections)
     }
 

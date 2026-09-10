@@ -30,10 +30,10 @@ enum CarPlayNowPlayingActionPolicy {
         // Shuffle and repeat first: they belong to playback rather than to
         // this track, and a driver reaches for them without reading.
         switch (playlistRole, isRetired) {
-        case (.triage, false):
-            // The whole loop of a triage playlist: hear it, then decide.
+        case (.triageBucket, false):
+            // The whole loop of the triage bucket: hear it, then decide.
             return [.shuffle, .repeatMode, .promote, .retire]
-        case (.triage, true):
+        case (.triageBucket, true):
             // Retiring a triage track must not take promotion away with it.
             // Retirement there is local and reversible, and deciding to keep a
             // track you had set aside is the point of listening again.
@@ -42,6 +42,11 @@ enum CarPlayNowPlayingActionPolicy {
             return [.shuffle, .repeatMode, .retire]
         case (.oneTruePlaylist, true):
             return [.shuffle, .repeatMode, .restore]
+        case (.triageSource, _):
+            // Contributing playlists feed the bucket and are never a playback
+            // context, so there is no track here to promote or retire. The
+            // playback modes still apply to whatever is playing.
+            return [.shuffle, .repeatMode]
         }
     }
 }

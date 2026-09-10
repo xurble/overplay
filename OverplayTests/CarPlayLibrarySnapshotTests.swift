@@ -6,15 +6,45 @@ import Testing
 
 @MainActor
 struct CarPlayLibrarySnapshotTests {
+    @Test("an inactive bucket alias resolves to the active canonical bucket")
+    func inactiveBucketAliasResolvesToCanonicalBucket() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = ModelContext(container)
+        let canonical = PlaylistRecord(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket,
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        let alias = PlaylistRecord(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket,
+            isActive: false,
+            createdAt: Date(timeIntervalSince1970: 200)
+        )
+        context.insert(canonical)
+        context.insert(alias)
+        try context.save()
+
+        let resolved = try PlaylistRepository.canonicalPlaylist(for: alias, in: context)
+
+        #expect(resolved.id == canonical.id)
+    }
+
     @Test func playlistSummariesIncludeActivePlayablePlaylistsInCarPlayOrder() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = ModelContext(container)
 
         let oneTrue = PlaylistRecord(musicPlaylistID: "one", name: "Keepers", role: .oneTruePlaylist)
-        let triage = PlaylistRecord(musicPlaylistID: "triage", name: "Inbox", role: .triage)
-        let inactive = PlaylistRecord(musicPlaylistID: "inactive", name: "Old", role: .triage, isActive: false)
+        let triage = PlaylistRecord(musicPlaylistID: "triage", name: "Inbox", role: .triageBucket)
+        let source = PlaylistRecord(musicPlaylistID: "source", name: "Source", role: .triageSource)
+        let inactive = PlaylistRecord(musicPlaylistID: "inactive", name: "Old", role: .triageBucket, isActive: false)
         context.insert(oneTrue)
         context.insert(triage)
+        context.insert(source)
         context.insert(inactive)
 
         let playableTrack = TrackRecord(title: "A", artistName: "Artist")
@@ -57,7 +87,7 @@ struct CarPlayLibrarySnapshotTests {
         #expect(try CarPlayLibrarySnapshot.playlistSummaries(in: carPlayContext).map(\.title) == ["Keepers"])
 
         // Linking a playlist on the phone must reach the CarPlay root.
-        let linked = PlaylistRecord(musicPlaylistID: "triage", name: "Inbox", role: .triage)
+        let linked = PlaylistRecord(musicPlaylistID: "triage", name: "Inbox", role: .triageBucket)
         phoneContext.insert(linked)
         try phoneContext.save()
 
@@ -65,7 +95,7 @@ struct CarPlayLibrarySnapshotTests {
 
         // So must a One True Playlist role change, or the Overplay row would
         // start the former One True Playlist.
-        original.role = .triage
+        original.role = .triageBucket
         linked.role = .oneTruePlaylist
         try phoneContext.save()
 
@@ -123,6 +153,36 @@ struct CarPlayLibrarySnapshotTests {
         #expect(tracks == sharedTracks)
         #expect(tracks.first?.detailText == "The Killers - 0 plays / 0 skips")
         #expect(tracks.last?.detailText == "The Killers - 0 plays / 2 skips")
+    }
+
+    @Test("bucket track summaries include contributor provenance")
+    func bucketTrackSummariesIncludeContributorProvenance() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = ModelContext(container)
+        let bucket = PlaylistRecord(
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket
+        )
+        let source = PlaylistRecord(musicPlaylistID: "source", name: "Weekly", role: .triageSource)
+        let track = TrackRecord(title: "New Song", artistName: "Artist")
+        context.insert(bucket)
+        context.insert(source)
+        context.insert(track)
+        context.insert(PlaylistItemRecord(
+            playlistID: bucket.id,
+            trackID: track.id,
+            sourceMusicPlaylistIDs: [source.musicPlaylistID]
+        ))
+        try context.save()
+
+        let summaries = try CarPlayLibrarySnapshot.trackSummaries(
+            forPlaylistID: bucket.id,
+            in: context
+        )
+
+        #expect(summaries.first?.provenanceText == "From Weekly")
+        #expect(summaries.first?.detailText == "Artist - From Weekly - 0 plays / 0 skips")
     }
 
     @Test func trackSummariesFollowStoredShuffleOrder() throws {

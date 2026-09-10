@@ -125,12 +125,22 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
         return playlist
     }
 
-    private func applyHealedMusicPlaylistID(
+    func applyHealedMusicPlaylistID(
         from oldID: String,
         to newID: String,
         playlistRecord: PlaylistRecord,
         in context: ModelContext
     ) throws {
+        // A former contributor can retain rows in the bucket after becoming
+        // the One True Playlist. Heal every matching provenance reference,
+        // not only those whose playlist is currently a triage source.
+        if let bucket = try PlaylistRepository.existingTriageBucket(in: context) {
+            for item in try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
+            where item.replaceSourceMusicPlaylistID(from: oldID, to: newID) {
+                item.updatedAt = .now
+            }
+        }
+
         playlistRecord.musicPlaylistID = newID
         playlistRecord.updatedAt = .now
 

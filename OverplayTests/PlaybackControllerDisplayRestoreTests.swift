@@ -108,8 +108,8 @@ struct PlaybackControllerDisplayRestoreTests {
         #expect(controller.activePlaylistSnapshot?.rows.first { $0.id == fixture.nextItem.id }?.isCurrent == true)
     }
 
-    @Test("stored order reconcile rebuilds the active snapshot only when the order changes")
-    func storedOrderReconcileRebuildsTheActiveSnapshotOnlyWhenTheOrderChanges() throws {
+    @Test("stored order reconcile rebuilds the current snapshot when order is unchanged")
+    func storedOrderReconcileRebuildsCurrentSnapshotWhenOrderIsUnchanged() throws {
         let fixture = try makeTwoTrackFixture()
         let controller = PlaybackController(playerID: "test-\(UUID().uuidString)")
         defer {
@@ -130,7 +130,8 @@ struct PlaybackControllerDisplayRestoreTests {
         controller.activePlaylistSnapshot = nil
         controller.reconcileStoredOrder(for: fixture.playlist, context: fixture.context)
 
-        #expect(controller.activePlaylistSnapshot == nil)
+        #expect(controller.activePlaylistSnapshot != nil)
+        #expect(controller.activePlaylistSnapshot?.rows.count == 2)
     }
 
     @Test("display restore state builds a non-countable session")
@@ -307,7 +308,7 @@ struct PlaybackControllerDisplayRestoreTests {
         let targetPlaylist = PlaylistRecord(
             musicPlaylistID: "playlist-2",
             name: "Target",
-            role: .triage
+            role: .triageBucket
         )
         let currentTrack = TrackRecord(
             catalogID: "current-catalog",

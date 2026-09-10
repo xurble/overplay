@@ -345,11 +345,11 @@ struct PlaybackTrackResolverTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let main = PlaylistRecord(musicPlaylistID: "main", name: "Main", role: .oneTruePlaylist)
-        let triage = PlaylistRecord(musicPlaylistID: "triage", name: "Triage", role: .triage)
+        let triage = PlaylistRecord(musicPlaylistID: "triage", name: "Triage", role: .triageBucket)
         let inactiveSelected = PlaylistRecord(
             musicPlaylistID: "inactive",
             name: "Inactive",
-            role: .triage,
+            role: .triageBucket,
             isActive: false
         )
         context.insert(main)
@@ -367,5 +367,30 @@ struct PlaybackTrackResolverTests {
 
         #expect(selected?.id == triage.id)
         #expect(fallback?.id == main.id)
+    }
+
+    @Test("default playback never selects a triage source")
+    func defaultPlaybackNeverSelectsTriageSource() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let source = PlaylistRecord(
+            musicPlaylistID: "source",
+            name: "A Source",
+            role: .triageSource
+        )
+        let bucket = PlaylistRecord(
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket
+        )
+        context.insert(source)
+        context.insert(bucket)
+
+        let resolved = try PlaybackTrackResolver.defaultPlaybackPlaylist(
+            settings: OverplaySettings(selectedPlaylistID: source.musicPlaylistID),
+            in: context
+        )
+
+        #expect(resolved?.id == bucket.id)
     }
 }
