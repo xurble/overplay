@@ -8,6 +8,26 @@ import Testing
 @MainActor
 @Suite("Player-confirmed playback transitions", .serialized)
 struct PlaybackTransitionTests {
+    @Test("fixture cleanup releases a controller retained by the transition probe")
+    func fixtureCleanupReleasesController() async throws {
+        weak var releasedController: PlaybackController?
+        let defaults: UserDefaults
+        do {
+            let fixture = try makeFixture()
+            defer { fixture.cleanUp() }
+            defaults = fixture.playbackDefaults.defaults
+            releasedController = fixture.controller
+            try await fixture.start(at: 0)
+            fixture.sleepProbe.handler = {
+                fixture.sleepProbe.observedTrackIDs.append(fixture.controller.currentTrack?.id)
+            }
+            #expect(LocalPlaybackStateStore.load(from: defaults) != nil)
+        }
+
+        #expect(releasedController == nil)
+        #expect(LocalPlaybackStateStore.load(from: defaults) == nil)
+    }
+
     @Test("controllers persist, restore, and clear only their injected playback domain")
     func controllerPlaybackDomainsRemainIndependent() async throws {
         let first = try makeFixture()
@@ -2161,6 +2181,9 @@ private struct PlaybackTransitionFixture {
     }
 
     func cleanUp() {
+        // The probe callback can capture this fixture and retain its controller.
+        // Break that cycle so the weak monitor cannot outlive the test.
+        sleepProbe.handler = nil
         PlaybackOrderStore.clear(
             playerID: playerID,
             musicPlaylistID: playlist.musicPlaylistID,
