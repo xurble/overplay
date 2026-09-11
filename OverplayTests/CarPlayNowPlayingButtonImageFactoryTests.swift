@@ -9,7 +9,7 @@ struct CarPlayNowPlayingButtonImageFactoryTests {
     @Test("uses the vehicle scale and stays within CarPlay's maximum size", arguments: [1.0, 2.0, 3.0])
     func usesVehicleScale(displayScale: CGFloat) throws {
         let traitCollection = UITraitCollection(displayScale: displayScale)
-        for systemName in ["archivebox.fill", "arrow.uturn.backward.circle", "arrow.up.circle"] {
+        for systemName in ["archivebox", "arrow.uturn.backward.circle", "arrow.up.circle"] {
             let image = try #require(CarPlayNowPlayingButtonImageFactory.image(
                 systemName: systemName,
                 traitCollection: traitCollection

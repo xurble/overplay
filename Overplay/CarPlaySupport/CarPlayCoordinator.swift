@@ -565,7 +565,7 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func makeEvictButton() -> CPNowPlayingImageButton {
-        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "archivebox.fill")) { [weak self] _ in
+        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "archivebox")) { [weak self] _ in
             Task { @MainActor in
                 await self?.evictCurrentTrack()
             }
