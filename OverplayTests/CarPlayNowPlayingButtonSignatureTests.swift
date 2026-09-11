@@ -11,7 +11,9 @@ struct CarPlayNowPlayingButtonSignatureTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let settings = try SettingsRepository.settings(in: context)
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-1",
             name: "Main",
@@ -64,7 +66,9 @@ struct CarPlayNowPlayingButtonSignatureTests {
     func factoryReflectsTriagePlaylistRoleForDirectCarPlayActions() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-2",
             name: "Triage",
@@ -104,7 +108,9 @@ struct CarPlayNowPlayingButtonSignatureTests {
     func changesWithCurrentPlaylistRole() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-role-change",
             name: "Current",
@@ -136,7 +142,9 @@ struct CarPlayNowPlayingButtonSignatureTests {
     func ignoresTrackIdentityAndSkipCount() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-stable-layout",
             name: "Main",
@@ -184,7 +192,9 @@ struct CarPlayNowPlayingButtonSignatureTests {
     func changesWithTrackAvailability() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
 
         let empty = CarPlayNowPlayingButtonSignature.make(
             playbackController: controller,

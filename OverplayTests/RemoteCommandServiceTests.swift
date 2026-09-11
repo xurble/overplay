@@ -178,7 +178,9 @@ struct RemoteCommandServiceTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let firstContext = ModelContext(container)
         let secondContext = ModelContext(container)
-        let playbackController = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let playbackController = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let service = RemoteCommandService()
 
         service.activate(playbackController: playbackController, context: firstContext)
@@ -208,7 +210,9 @@ struct RemoteCommandServiceTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let firstContext = ModelContext(container)
         let carPlayContext = ModelContext(container)
-        let playbackController = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let playbackController = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let service = RemoteCommandService()
 
         service.activate(playbackController: playbackController, context: firstContext)
@@ -227,7 +231,9 @@ struct RemoteCommandServiceTests {
     func syncPublishesPlaybackModesToRemoteCommandCenter() throws {
         let playlistID = "playlist-\(UUID().uuidString)"
         let playerID = "player-\(UUID().uuidString)"
-        let playbackController = PlaybackController(playerID: playerID)
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let playbackController = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults, playerID: playerID)
         let service = RemoteCommandService()
         let commandCenter = MPRemoteCommandCenter.shared()
         defer {
@@ -257,7 +263,9 @@ struct RemoteCommandServiceTests {
     func activationOffersRepeatAsARealControl() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = ModelContext(container)
-        let playbackController = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let playbackController = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let service = RemoteCommandService()
         let commandCenter = MPRemoteCommandCenter.shared()
         defer {
@@ -275,7 +283,9 @@ struct RemoteCommandServiceTests {
     func commandCenterTracksControllerState() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = ModelContext(container)
-        let playbackController = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let playbackController = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let service = RemoteCommandService()
         let commandCenter = MPRemoteCommandCenter.shared()
         defer { service.deactivate() }

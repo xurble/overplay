@@ -1,3 +1,4 @@
+import Foundation
 import SwiftData
 import Testing
 @testable import Overplay
@@ -18,5 +19,19 @@ enum OverplayTestSupport {
             cloudKitDatabase: .none
         )
         return try ModelContainer(for: schema, configurations: [configuration])
+    }
+}
+
+/// A disposable domain for controller-owned playback restoration state.
+struct PlaybackTestDefaults {
+    let suiteName = "OverplayTests.Playback.\(UUID().uuidString)"
+    let defaults: UserDefaults
+
+    init() {
+        defaults = UserDefaults(suiteName: suiteName)!
+    }
+
+    func cleanUp() {
+        defaults.removePersistentDomain(forName: suiteName)
     }
 }

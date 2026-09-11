@@ -672,7 +672,9 @@ struct NewModelRepositoryTests {
     func triagePlaylistPlaybackUsesLinkedPlaylistState() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let settings = OverplaySettings(
             selectedPlaylistID: "playlist-1",
             selectedPlaylistName: "Main"

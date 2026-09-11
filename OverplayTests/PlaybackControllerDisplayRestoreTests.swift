@@ -8,7 +8,9 @@ import Testing
 struct PlaybackControllerDisplayRestoreTests {
     @Test("evaluation outcome matches currently displayed item")
     func evaluationOutcomeMatchesCurrentlyDisplayedItem() {
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let playlist = PlaylistRecord(musicPlaylistID: "playlist-1", name: "Main")
         let track = TrackRecord(catalogID: "music-1", title: "Track", artistName: "Artist")
         let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id)
@@ -34,7 +36,9 @@ struct PlaybackControllerDisplayRestoreTests {
 
     @Test("stale evaluation outcome does not match newly displayed item")
     func staleEvaluationOutcomeDoesNotMatchNewlyDisplayedItem() {
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let playlist = PlaylistRecord(musicPlaylistID: "playlist-1", name: "Main")
         let previousTrack = TrackRecord(catalogID: "previous", title: "Previous", artistName: "Artist")
         let newTrack = TrackRecord(catalogID: "new", title: "New", artistName: "Artist")
@@ -63,7 +67,9 @@ struct PlaybackControllerDisplayRestoreTests {
     @Test("stale evaluation refreshes active playlist snapshot without replacing display")
     func staleEvaluationRefreshesActivePlaylistSnapshotWithoutReplacingDisplay() throws {
         let fixture = try makeTwoTrackFixture()
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         controller.currentPlaylistID = fixture.playlist.musicPlaylistID
         controller.currentPlaylistItem = fixture.nextItem
         controller.currentTrack = CurrentPlaybackTrack(
@@ -111,7 +117,9 @@ struct PlaybackControllerDisplayRestoreTests {
     @Test("stored order reconcile rebuilds the current snapshot when order is unchanged")
     func storedOrderReconcileRebuildsCurrentSnapshotWhenOrderIsUnchanged() throws {
         let fixture = try makeTwoTrackFixture()
-        let controller = PlaybackController(playerID: "test-\(UUID().uuidString)")
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults, playerID: "test-\(UUID().uuidString)")
         defer {
             PlaybackOrderStore.clear(
                 playerID: controller.playerID,
@@ -155,17 +163,10 @@ struct PlaybackControllerDisplayRestoreTests {
 
     @Test("display-restored session never counts when playback moves elsewhere")
     func displayRestoredSessionNeverCountsWhenPlaybackMovesElsewhere() async throws {
-        let previousState = LocalPlaybackStateStore.load()
-        defer {
-            if let previousState {
-                LocalPlaybackStateStore.save(previousState)
-            } else {
-                LocalPlaybackStateStore.clear()
-            }
-        }
-
         let fixture = try makeTwoPlaylistFixture()
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         LocalPlaybackStateStore.save(LocalPlaybackState(
             playlistID: fixture.currentPlaylist.musicPlaylistID,
             musicItemID: "current-library",
@@ -173,7 +174,7 @@ struct PlaybackControllerDisplayRestoreTests {
             wasPlaying: false,
             updatedAt: Date(timeIntervalSince1970: 100),
             localTrackID: fixture.currentTrack.id.uuidString
-        ))
+        ), to: playbackDefaults.defaults)
 
         controller.restoreLocalPlaybackDisplay(context: fixture.context)
         #expect(controller.currentPlaylistItem?.id == fixture.currentItem.id)
@@ -186,18 +187,11 @@ struct PlaybackControllerDisplayRestoreTests {
 
     @Test("restores mini player display from local database state")
     func restoresMiniPlayerDisplayFromLocalDatabaseState() throws {
-        let previousState = LocalPlaybackStateStore.load()
-        defer {
-            if let previousState {
-                LocalPlaybackStateStore.save(previousState)
-            } else {
-                LocalPlaybackStateStore.clear()
-            }
-        }
-
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-1",
             name: "Main",
@@ -227,7 +221,7 @@ struct PlaybackControllerDisplayRestoreTests {
             wasPlaying: false,
             updatedAt: Date(timeIntervalSince1970: 100),
             localTrackID: track.id.uuidString
-        ))
+        ), to: playbackDefaults.defaults)
 
         controller.restoreLocalPlaybackDisplay(context: context)
 
@@ -337,18 +331,11 @@ struct PlaybackControllerDisplayRestoreTests {
 
     @Test("reset current skip count refreshes displayed metadata")
     func resetCurrentSkipCountRefreshesDisplayedMetadata() throws {
-        let previousState = LocalPlaybackStateStore.load()
-        defer {
-            if let previousState {
-                LocalPlaybackStateStore.save(previousState)
-            } else {
-                LocalPlaybackStateStore.clear()
-            }
-        }
-
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-1",
             name: "Main",
@@ -376,7 +363,7 @@ struct PlaybackControllerDisplayRestoreTests {
             wasPlaying: false,
             updatedAt: Date(timeIntervalSince1970: 100),
             localTrackID: track.id.uuidString
-        ))
+        ), to: playbackDefaults.defaults)
 
         controller.restoreLocalPlaybackDisplay(context: context)
         let previousMetadataVersion = controller.playbackItemMetadataVersion
@@ -394,18 +381,11 @@ struct PlaybackControllerDisplayRestoreTests {
 
     @Test("restore track refreshes displayed metadata")
     func restoreTrackRefreshesDisplayedMetadata() throws {
-        let previousState = LocalPlaybackStateStore.load()
-        defer {
-            if let previousState {
-                LocalPlaybackStateStore.save(previousState)
-            } else {
-                LocalPlaybackStateStore.clear()
-            }
-        }
-
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-1",
             name: "Main",
@@ -433,7 +413,7 @@ struct PlaybackControllerDisplayRestoreTests {
             wasPlaying: false,
             updatedAt: Date(timeIntervalSince1970: 100),
             localTrackID: track.id.uuidString
-        ))
+        ), to: playbackDefaults.defaults)
 
         controller.restoreLocalPlaybackDisplay(context: context)
         let previousMetadataVersion = controller.playbackItemMetadataVersion
@@ -453,7 +433,9 @@ struct PlaybackControllerDisplayRestoreTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let playerID = "test-\(UUID().uuidString)"
-        let controller = PlaybackController(playerID: playerID)
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults, playerID: playerID)
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-\(UUID().uuidString)",
             name: "Main",
@@ -535,18 +517,11 @@ struct PlaybackControllerDisplayRestoreTests {
 
     @Test("reset all local stats refreshes displayed metadata")
     func resetAllLocalStatsRefreshesDisplayedMetadata() throws {
-        let previousState = LocalPlaybackStateStore.load()
-        defer {
-            if let previousState {
-                LocalPlaybackStateStore.save(previousState)
-            } else {
-                LocalPlaybackStateStore.clear()
-            }
-        }
-
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-1",
             name: "Main",
@@ -576,7 +551,7 @@ struct PlaybackControllerDisplayRestoreTests {
             wasPlaying: false,
             updatedAt: Date(timeIntervalSince1970: 100),
             localTrackID: track.id.uuidString
-        ))
+        ), to: playbackDefaults.defaults)
 
         controller.restoreLocalPlaybackDisplay(context: context)
         let previousMetadataVersion = controller.playbackItemMetadataVersion

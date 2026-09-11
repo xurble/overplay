@@ -266,7 +266,9 @@ struct TriageBucketTests {
         let context = container.mainContext
         let (sharedTrack, onlyFirstTrack) = try insertLegacyTriageData(in: context)
 
-        let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: makeDefaults())
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: playbackDefaults.defaults)
 
         #expect(outcome.migratedSourceCount == 2)
         #expect(outcome.movedItemCount == 2)
@@ -298,7 +300,9 @@ struct TriageBucketTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let (sharedTrack, _) = try insertLegacyTriageData(in: context)
-        let defaults = makeDefaults()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let defaults = playbackDefaults.defaults
 
         try TriageBucketMigrationService.migrate(in: context, defaults: defaults)
         let secondOutcome = try TriageBucketMigrationService.migrate(in: context, defaults: defaults)
@@ -323,7 +327,9 @@ struct TriageBucketTests {
             name: "Legacy Late",
             in: context
         )
-        try TriageBucketMigrationService.migrate(in: context, defaults: makeDefaults())
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        try TriageBucketMigrationService.migrate(in: context, defaults: playbackDefaults.defaults)
         #expect(source.role == .triageSource)
 
         let lateTrack = TrackRecord(catalogID: "legacy-late-track", title: "Late", artistName: "Artist")
@@ -344,7 +350,9 @@ struct TriageBucketTests {
             in: context
         )
 
-        let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: makeDefaults())
+        let secondPlaybackDefaults = PlaybackTestDefaults()
+        defer { secondPlaybackDefaults.cleanUp() }
+        let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: secondPlaybackDefaults.defaults)
 
         let bucket = try #require(try PlaylistRepository.existingTriageBucket(in: context))
         #expect(outcome.migratedSourceCount == 0)
@@ -388,7 +396,9 @@ struct TriageBucketTests {
         )
         context.insert(evictedItem)
 
-        try TriageBucketMigrationService.migrate(in: context, defaults: makeDefaults())
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        try TriageBucketMigrationService.migrate(in: context, defaults: playbackDefaults.defaults)
 
         let bucket = try #require(try PlaylistRepository.existingTriageBucket(in: context))
         let bucketItems = try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
@@ -402,7 +412,9 @@ struct TriageBucketTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         _ = try insertLegacyTriageData(in: context)
-        let defaults = makeDefaults()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let defaults = playbackDefaults.defaults
         LocalPlaybackStateStore.save(
             LocalPlaybackState(
                 playlistID: "legacy-1",
@@ -427,7 +439,9 @@ struct TriageBucketTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         _ = try insertLegacyTriageData(in: context)
-        let defaults = makeDefaults()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let defaults = playbackDefaults.defaults
         LocalPlaybackStateStore.save(
             LocalPlaybackState(
                 playlistID: "main",
@@ -455,7 +469,9 @@ struct TriageBucketTests {
         )
         context.insert(oneTruePlaylist)
 
-        let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: makeDefaults())
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: playbackDefaults.defaults)
 
         #expect(outcome.createdBucket)
         #expect(outcome.didChangeAnything)
@@ -525,7 +541,9 @@ struct TriageBucketTests {
             in: context
         )
 
-        let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: makeDefaults())
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: playbackDefaults.defaults)
 
         #expect(outcome.createdBucket == false)
         #expect(outcome.normalizedBucketCount == 1)
@@ -587,7 +605,9 @@ struct TriageBucketTests {
         )
         context.insert(keeper)
         context.insert(alias)
-        try TriageBucketMigrationService.migrate(in: context, defaults: makeDefaults())
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        try TriageBucketMigrationService.migrate(in: context, defaults: playbackDefaults.defaults)
         #expect(alias.isActive == false)
 
         let lateTrack = TrackRecord(catalogID: "late", title: "Late", artistName: "Artist")
@@ -605,7 +625,9 @@ struct TriageBucketTests {
             in: context
         )
 
-        let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: makeDefaults())
+        let secondPlaybackDefaults = PlaybackTestDefaults()
+        defer { secondPlaybackDefaults.cleanUp() }
+        let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: secondPlaybackDefaults.defaults)
 
         #expect(outcome.normalizedBucketCount == 0)
         #expect(outcome.movedItemCount == 1)
@@ -665,13 +687,6 @@ struct TriageBucketTests {
         playlist.roleRawValue = PlaylistRole.legacyTriageRawValue
         context.insert(playlist)
         return playlist
-    }
-
-    private func makeDefaults() -> UserDefaults {
-        let suiteName = "overplay.tests.triage-bucket.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defaults.removePersistentDomain(forName: suiteName)
-        return defaults
     }
 
     private func snapshot(id: String) -> TrackSnapshot {
