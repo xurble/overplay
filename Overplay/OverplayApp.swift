@@ -85,7 +85,8 @@ struct OverplayApp: App {
 
         _ = await PlaybackReconciliationService.reconcileAndCaptureWaypoint(
             playbackController: AppRuntime.shared.playbackController,
-            context: context
+            context: context,
+            captureBeforeFetching: phase == .background
         )
 
         // Reconciliation above returns early when there is nothing to

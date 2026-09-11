@@ -2999,11 +2999,14 @@ final class PlaybackController {
         }
         guard let localTrackID else { return nil }
 
-        let duration = durationSeconds
-            ?? currentTrack?.durationSeconds
-            ?? UUID(uuidString: localTrackID)
-                .flatMap { try? TrackRecordRepository.track(id: $0, in: context) }?
-                .durationSeconds
+        // The player may have advanced while the displayed track was frozen
+        // during suspension. Never pair its new position with the old duration.
+        let duration = UUID(uuidString: localTrackID)
+            .flatMap { try? TrackRecordRepository.track(id: $0, in: context) }?
+            .durationSeconds
+            ?? (currentPlaylistItem?.trackID.uuidString == localTrackID
+                ? durationSeconds ?? currentTrack?.durationSeconds
+                : nil)
 
         return PlaybackReconciliationPolicy.Observation(
             playlistID: playlistID,

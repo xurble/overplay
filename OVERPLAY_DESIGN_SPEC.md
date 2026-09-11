@@ -522,6 +522,32 @@ track boundary for continuity. Double counting is prevented by the live
 session's evaluated flag, a counted-track ledger on the waypoint, and the
 item's `lastPlayedAt` recency.
 
+Background entry flushes a local waypoint before awaiting library metadata.
+If that request is cancelled or never completes, local proof remains available;
+new library baselines are only available after a successful response. Background
+refreshes submit a replacement before awaiting reconciliation, with a 15-minute
+fallback when no track target is available. iOS can reject requests or withhold
+grants, so recovery does not assume per-track wakes.
+
+At background entry, one batch also samples up to 20 following tracks in the
+stored order. At most 41 unresolved baselines (two windows plus the current
+track) are retained for 24 hours, with original timestamps preserved across
+wakes. A qualifying counter advance credits at most one playthrough even if
+its delta exceeds one: only the final play has a dated observation. Expired or
+ambiguous evidence credits nothing. While MusicKit shuffle is enabled, stored
+order is only a candidate-selection heuristic, not proof of traversal;
+wall-clock continuity is disabled. Recovery then covers sampled tracks whose
+library metadata proves a play, plus the current track's position proof.
+Long unattended spans beyond the sampled window, delayed or unavailable metadata,
+and repeated plays can therefore under-count by design.
+
+Stale transitions emit diagnostics but no outcome history event. A later proven
+playthrough is the sole history outcome for that unwitnessed transition.
+
+The unused `remote-notification` background mode is removed; `fetch` remains.
+The existing `audio` declaration is retained pending physical-device verification
+of MusicKit/CarPlay behavior. Its necessity has not yet been established.
+
 ### Manual retirement
 
 The user can manually retire a track from any linked playlist. Manual
@@ -1281,8 +1307,9 @@ The following are not requirements of the current product:
   hardware investigation
   ([GitHub #27](https://github.com/xurble/overplay/issues/27)). Intended behaviour
   is Back by one level and Up Next to the root playlist menu.
-- Suspended-playback reconciliation has known lifecycle, background re-arming,
-  history-deduplication, and baseline-coverage gaps tracked in
+- Suspended-playback recovery is bounded by the sampled library window and
+  metadata availability. Physical-device counter propagation and the necessity
+  of `audio` background mode remain unverified after the lifecycle fixes for
   [GitHub #9](https://github.com/xurble/overplay/issues/9). Skips remain
   deliberately unreconstructed for suspended intervals.
 - Keep/protection has been removed. It existed only to shield tracks from

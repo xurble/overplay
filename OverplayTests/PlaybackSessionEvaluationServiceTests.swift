@@ -147,9 +147,7 @@ struct PlaybackSessionEvaluationServiceTests {
         #expect(outcome?.session.hasEvaluated == true)
         #expect(fixture.item.skipCount == 1)
         #expect(fixture.item.playthroughCount == 0)
-        #expect(history.count == 1)
-        #expect(history.first?.eventType == .skipIgnored)
-        #expect(history.first?.message == "Stale observation")
+        #expect(history.isEmpty)
     }
 
     @Test("stale observation past playthrough threshold still counts playthrough")
@@ -253,8 +251,7 @@ struct PlaybackSessionEvaluationServiceTests {
         let history = try fixture.context.fetch(FetchDescriptor<HistoryEvent>())
         #expect(outcome?.session.hasEvaluated == true)
         #expect(fixture.item.skipCount == 0)
-        #expect(history.first?.eventType == .skipIgnored)
-        #expect(history.first?.message == "Stale observation")
+        #expect(history.isEmpty)
     }
 
     @Test("natural completion is inferred near the end of a track")
