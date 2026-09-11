@@ -126,7 +126,9 @@ struct PeriodicPlaylistSyncServiceTests {
         context.insert(playlist(musicPlaylistID: "playing", lastSyncedAt: nil, lastSyncError: nil))
         let settings = try SettingsRepository.settings(in: context)
         settings.selectedPlaylistID = "selected"
-        let playbackController = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let playbackController = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         playbackController.currentPlaylistID = "playing"
         let recorder = SyncRecorder()
         let service = makeService(recorder: recorder)

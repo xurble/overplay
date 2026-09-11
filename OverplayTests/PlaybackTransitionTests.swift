@@ -8,6 +8,33 @@ import Testing
 @MainActor
 @Suite("Player-confirmed playback transitions", .serialized)
 struct PlaybackTransitionTests {
+    @Test("controllers persist, restore, and clear only their injected playback domain")
+    func controllerPlaybackDomainsRemainIndependent() async throws {
+        let first = try makeFixture()
+        defer { first.cleanUp() }
+        let second = try makeFixture()
+        defer { second.cleanUp() }
+
+        try await first.start(at: 0)
+        let firstState = try #require(LocalPlaybackStateStore.load(from: first.playbackDefaults.defaults))
+        try await second.start(at: 1)
+        #expect(LocalPlaybackStateStore.load(from: first.playbackDefaults.defaults) == firstState)
+        #expect(LocalPlaybackStateStore.load(from: second.playbackDefaults.defaults)?.musicItemID == second.musicTracks[1].id.rawValue)
+
+        let restored = PlaybackController(
+            localPlaybackDefaults: first.playbackDefaults.defaults,
+            playerID: first.playerID,
+            player: ControllablePlaybackPlayer()
+        )
+        restored.restoreLocalPlaybackDisplay(context: first.context)
+        #expect(restored.currentPlaylistID == first.playlist.musicPlaylistID)
+        #expect(restored.currentPlaylistItem?.trackID == first.tracks[0].id)
+
+        second.controller.clearLocalStateAfterDatabaseReset()
+        #expect(LocalPlaybackStateStore.load(from: second.playbackDefaults.defaults) == nil)
+        #expect(LocalPlaybackStateStore.load(from: first.playbackDefaults.defaults) == firstState)
+    }
+
     @Test("Unlink preserves a playing session and prunes queued unowned songs without resetting modes")
     func unlinkDuringPlaybackPreservesAccounting() async throws {
         let fixture = try makeFixture()
@@ -708,7 +735,7 @@ struct PlaybackTransitionTests {
         fixture.player.nextConfirmationDelays = [2]
         fixture.sleepProbe.handler = {
             fixture.sleepProbe.observedTrackIDs.append(fixture.controller.currentTrack?.id)
-            fixture.sleepProbe.observedRestoreTrackIDs.append(LocalPlaybackStateStore.load()?.musicItemID)
+            fixture.sleepProbe.observedRestoreTrackIDs.append(LocalPlaybackStateStore.load(from: fixture.playbackDefaults.defaults)?.musicItemID)
             fixture.sleepProbe.observedCurrentRowTrackIDs.append(
                 fixture.controller.activePlaylistSnapshot?.rows.first(where: \.isCurrent)?.localTrackID
             )
@@ -1056,7 +1083,7 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.currentPlaylistID == nil)
         #expect(fixture.controller.currentTrack == nil)
         #expect(fixture.controller.activePlaylistSnapshot == nil)
-        #expect(LocalPlaybackStateStore.load() == nil)
+        #expect(LocalPlaybackStateStore.load(from: fixture.playbackDefaults.defaults) == nil)
         #expect(fixture.items[0].skipCount == 0)
         #expect(try fixture.history().isEmpty)
     }
@@ -1329,7 +1356,7 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.currentPlaylistID == nil)
         #expect(fixture.controller.nowPlayingDisplayLocalTrackID == nil)
         #expect(fixture.controller.activePlaylistSnapshot == nil)
-        #expect(LocalPlaybackStateStore.load() == nil)
+        #expect(LocalPlaybackStateStore.load(from: fixture.playbackDefaults.defaults) == nil)
         #expect(fixture.items[0].skipCount == 1)
         #expect(try fixture.history().count == 1)
     }
@@ -1357,7 +1384,7 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.currentPlaylistItem?.trackID == fixture.tracks[0].id)
         #expect(fixture.controller.canControlPlayback)
         #expect(fixture.controller.canSkipTracks)
-        #expect(LocalPlaybackStateStore.load()?.playlistID == fixture.playlist.musicPlaylistID)
+        #expect(LocalPlaybackStateStore.load(from: fixture.playbackDefaults.defaults)?.playlistID == fixture.playlist.musicPlaylistID)
 
         fixture.player.playbackTime = 15
         await fixture.controller.reconcilePlayerState(context: fixture.context)
@@ -2111,6 +2138,7 @@ private struct PlaybackTransitionFixture {
     var controller: PlaybackController
     var sleepProbe: TransitionSleepProbe
     var playerID: String
+    var playbackDefaults: PlaybackTestDefaults
 
     func start(at index: Int) async throws {
         await controller.playPlaylist(
@@ -2138,7 +2166,7 @@ private struct PlaybackTransitionFixture {
             musicPlaylistID: playlist.musicPlaylistID,
             flushImmediately: true
         )
-        LocalPlaybackStateStore.clear(flushImmediately: true)
+        playbackDefaults.cleanUp()
         PlaybackWaypointStore.clear(flushImmediately: true)
     }
 
@@ -2204,7 +2232,6 @@ private func makeFixture(
     maximumObservationCount: Int = 5,
     trackCount: Int = 3
 ) throws -> PlaybackTransitionFixture {
-    LocalPlaybackStateStore.clear(flushImmediately: true)
     let container = try OverplayTestSupport.makeModelContainer()
     let context = container.mainContext
     let added = try PlaybackTransitionFixture.insertPlaylist(prefix: "main", trackCount: trackCount, context: context)
@@ -2222,7 +2249,9 @@ private func makeFixture(
     let player = ControllablePlaybackPlayer()
     let sleepProbe = TransitionSleepProbe()
     let playerID = "transition-tests-\(UUID().uuidString)"
+    let playbackDefaults = PlaybackTestDefaults()
     let controller = PlaybackController(
+        localPlaybackDefaults: playbackDefaults.defaults,
         playerID: playerID,
         player: player,
         transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy(
@@ -2245,6 +2274,7 @@ private func makeFixture(
         player: player,
         controller: controller,
         sleepProbe: sleepProbe,
-        playerID: playerID
+        playerID: playerID,
+        playbackDefaults: playbackDefaults
     )
 }

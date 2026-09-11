@@ -212,7 +212,9 @@ struct NowPlayingPresentationFactoryTests {
     @Test("factory handles missing current track")
     @MainActor
     func factoryMissingTrack() {
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let settings = OverplaySettings()
 
         let presentation = NowPlayingPresentationFactory.presentation(
@@ -226,7 +228,9 @@ struct NowPlayingPresentationFactoryTests {
     @Test("factory includes playback timing state")
     @MainActor
     func factoryIncludesPlaybackTimingState() {
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         controller.elapsedSeconds = 30
         controller.durationSeconds = 120
         controller.isPlaying = true
@@ -245,7 +249,9 @@ struct NowPlayingPresentationFactoryTests {
     @Test("factory prefers MusicKit now-playing track for visible metadata")
     @MainActor
     func factoryPrefersMusicKitNowPlayingTrackForVisibleMetadata() {
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         controller.currentTrack = CurrentPlaybackTrack(
             id: "local-guess",
             title: "Local Guess",
@@ -280,7 +286,9 @@ struct NowPlayingPresentationFactoryTests {
     @Test("factory avoids local queue guess while MusicKit item is pending")
     @MainActor
     func factoryAvoidsLocalQueueGuessWhileMusicKitItemIsPending() {
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         controller.currentTrack = CurrentPlaybackTrack(
             id: "local-guess",
             title: "Local Guess",
@@ -312,7 +320,9 @@ struct NowPlayingPresentationFactoryTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let settings = try SettingsRepository.settings(in: context)
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-1",
             name: "Main",
@@ -353,7 +363,9 @@ struct NowPlayingPresentationFactoryTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let settings = try SettingsRepository.settings(in: context)
-        let controller = PlaybackController()
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
         let playlist = PlaylistRecord(
             musicPlaylistID: "playlist-1",
             name: "Main",

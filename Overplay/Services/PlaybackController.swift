@@ -159,7 +159,10 @@ final class PlaybackController {
     static let playbackStoppedMessage =
         "Playback stopped before the track finished — possibly a connection problem. Press play to resume."
 
+    @ObservationIgnored private let localPlaybackDefaults: UserDefaults
+
     init(
+        localPlaybackDefaults: UserDefaults = .standard,
         playerID: String = "main",
         player: any PlaybackPlayer = ApplicationMusicPlaybackPlayer(),
         transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy = .standard,
@@ -167,6 +170,7 @@ final class PlaybackController {
             try? await Task.sleep(for: duration)
         }
     ) {
+        self.localPlaybackDefaults = localPlaybackDefaults
         self.playerID = playerID
         self.player = player
         self.transitionConfirmationPolicy = transitionConfirmationPolicy
@@ -432,7 +436,7 @@ final class PlaybackController {
         playbackIntended = false
         statusMessage = "Overplay data reset."
         hasRestoredLocalPlaybackState = false
-        LocalPlaybackStateStore.clear(flushImmediately: true)
+        LocalPlaybackStateStore.clear(from: localPlaybackDefaults, flushImmediately: true)
         PlaybackWaypointStore.clear(flushImmediately: true)
         PlaybackIdentityStore.clearAll(flushImmediately: true)
         NowPlayingMetadataService.update(track: nil, elapsed: 0, isPlaying: false, ownsPlayback: false)
@@ -440,7 +444,7 @@ final class PlaybackController {
 
     func restoreLocalPlaybackDisplay(context: ModelContext) {
         guard currentTrack == nil else { return }
-        guard let state = LocalPlaybackStateStore.load() else { return }
+        guard let state = LocalPlaybackStateStore.load(from: localPlaybackDefaults) else { return }
 
         do {
             guard let restored = try PlaybackRestorationService.displayRestoreState(from: state, in: context) else {
@@ -846,7 +850,7 @@ final class PlaybackController {
         activePlaylistSnapshotNeedsRebuild = false
         prefetchedArtworkTrackID = nil
         lastLocalPlaybackStateIdentity = nil
-        LocalPlaybackStateStore.clear(flushImmediately: true)
+        LocalPlaybackStateStore.clear(from: localPlaybackDefaults, flushImmediately: true)
         bumpPlaybackItemMetadataVersion()
     }
 
@@ -2772,7 +2776,7 @@ final class PlaybackController {
             wasPlaying: isPlaying,
             updatedAt: now,
             localTrackID: localTrackID
-        ), flushImmediately: shouldFlush)
+        ), to: localPlaybackDefaults, flushImmediately: shouldFlush)
 
         lastLocalPlaybackStateIdentity = identity
         if shouldFlush {
@@ -2985,7 +2989,7 @@ final class PlaybackController {
     /// than the cached display, which may be stale during a background wake.
     func capturePlaybackObservation(context: ModelContext) -> PlaybackReconciliationPolicy.Observation? {
         guard let queueEntry = player.currentEntry else { return nil }
-        guard let playlistID = currentPlaylistID ?? LocalPlaybackStateStore.load()?.playlistID else {
+        guard let playlistID = currentPlaylistID ?? LocalPlaybackStateStore.load(from: localPlaybackDefaults)?.playlistID else {
             return nil
         }
 
@@ -3233,6 +3237,7 @@ final class PlaybackController {
         LocalPlaybackStateStore.rekeyMusicPlaylistID(
             from: previousMusicPlaylistID,
             to: bucket.musicPlaylistID,
+            from: localPlaybackDefaults,
             flushImmediately: true
         )
         PlaybackIdentityStore.mergeMusicPlaylistID(

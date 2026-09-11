@@ -177,7 +177,9 @@ struct PlaybackOrderStoreTests {
     func previewedPlaybackOrderStateReconcilesWithoutPersisting() {
         let playerID = "test-\(UUID().uuidString)"
         let playlistMusicID = "playlist-\(UUID().uuidString)"
-        let controller = PlaybackController(playerID: playerID)
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults, playerID: playerID)
         let playlistID = UUID()
         let trackID = UUID()
         let items = [
@@ -205,7 +207,9 @@ struct PlaybackOrderStoreTests {
         let playerID = "test-\(UUID().uuidString)"
         let playlistMusicID = "playlist-\(UUID().uuidString)"
         let retiredPlaylistMusicID = PlaylistPlaybackScope.retired.playbackOrderPlaylistID(for: playlistMusicID)
-        let controller = PlaybackController(playerID: playerID)
+        let playbackDefaults = PlaybackTestDefaults()
+        defer { playbackDefaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults, playerID: playerID)
         let playlistID = UUID()
         let firstTrackID = UUID()
         let secondTrackID = UUID()
