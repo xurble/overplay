@@ -350,9 +350,9 @@ struct TriageBucketTests {
             in: context
         )
 
-        let playbackDefaults = PlaybackTestDefaults()
-        defer { playbackDefaults.cleanUp() }
-        let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: playbackDefaults.defaults)
+        let secondPlaybackDefaults = PlaybackTestDefaults()
+        defer { secondPlaybackDefaults.cleanUp() }
+        let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: secondPlaybackDefaults.defaults)
 
         let bucket = try #require(try PlaylistRepository.existingTriageBucket(in: context))
         #expect(outcome.migratedSourceCount == 0)
@@ -625,9 +625,9 @@ struct TriageBucketTests {
             in: context
         )
 
-        let playbackDefaults = PlaybackTestDefaults()
-        defer { playbackDefaults.cleanUp() }
-        let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: playbackDefaults.defaults)
+        let secondPlaybackDefaults = PlaybackTestDefaults()
+        defer { secondPlaybackDefaults.cleanUp() }
+        let outcome = try TriageBucketMigrationService.migrate(in: context, defaults: secondPlaybackDefaults.defaults)
 
         #expect(outcome.normalizedBucketCount == 0)
         #expect(outcome.movedItemCount == 1)
