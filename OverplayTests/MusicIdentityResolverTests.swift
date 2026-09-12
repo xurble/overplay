@@ -91,4 +91,69 @@ struct MusicIdentityResolverTests {
         fail = false
         #expect(try await resolver.enrich([snapshot("1")])[0].hasDocumentedIdentity)
     }
+    @Test func includedCatalogMetadataAvoidsRedundantRequests() async throws {
+        var calls: [MusicIdentityResolver.Lookup: Int] = [:]
+        let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "a") }, fetch: { kind, ids, _ in
+            calls[kind, default: 0] += 1
+            return Dictionary(uniqueKeysWithValues: ids.map { id in
+                (id, kind == .library ? [song(String(id.dropFirst(2)), isrc: "ISRC-" + id)]
+                    : kind == .catalog ? [song(id, isrc: "ISRC-i." + id)] : [])
+            })
+        })
+        let result = try await resolver.enrich((0..<60).map { snapshot("i.\($0)") })
+        #expect(result.count == 60)
+        #expect(result.allSatisfy { $0.isrc != nil && $0.catalogID != nil })
+        #expect(calls[.library] == 3)
+        #expect(calls[.catalog] == nil)
+        #expect(calls[.isrc] == 3)
+        #expect(calls.values.reduce(0, +) == 6)
+    }
+
+    @Test func incompleteIncludedMetadataStillFetchesCatalog() async throws {
+        var catalogCalls = 0
+        let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "a") }, fetch: { kind, ids, _ in
+            if kind == .catalog { catalogCalls += 1 }
+            return Dictionary(uniqueKeysWithValues: ids.map { id in
+                (id, kind == .library ? [song("1")] : kind == .catalog ? [song(id, isrc: "KNOWN")] : [])
+            })
+        })
+        let result = try await resolver.enrich([snapshot("i.a")])
+        #expect(catalogCalls == 1)
+        #expect(result[0].isrc == "KNOWN")
+    }
+
+    @Test func simultaneousScansShareGlobalRequestLimit() async throws {
+        var active = 0
+        var peak = 0
+        var calls = 0
+        let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "a") }, fetch: { _, ids, _ in
+            active += 1; calls += 1; peak = max(peak, active)
+            defer { active -= 1 }
+            try await Task.sleep(for: .milliseconds(20))
+            return Dictionary(uniqueKeysWithValues: ids.map { ($0, [song($0)]) })
+        })
+        let first = Task { try await resolver.enrich((0..<150).map { snapshot(String($0)) }) }
+        let second = Task { try await resolver.enrich((150..<300).map { snapshot(String($0)) }) }
+        let firstResult = try await first.value
+        let secondResult = try await second.value
+        #expect(firstResult.count == 150 && secondResult.count == 150)
+        #expect(peak == 3)
+        #expect(active == 0 && calls == 12)
+    }
+
+    @Test func simultaneousIdenticalScansCoalesceBatches() async throws {
+        var calls = 0
+        let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "a") }, fetch: { _, ids, _ in
+            calls += 1
+            try await Task.sleep(for: .milliseconds(20))
+            return Dictionary(uniqueKeysWithValues: ids.map { ($0, [song($0)]) })
+        })
+        let input = (0..<60).map { snapshot(String($0)) }
+        let first = Task { try await resolver.enrich(input) }
+        let second = Task { try await resolver.enrich(input) }
+        let firstResult = try await first.value
+        let secondResult = try await second.value
+        #expect(firstResult == secondResult)
+        #expect(calls == 3)
+    }
 }

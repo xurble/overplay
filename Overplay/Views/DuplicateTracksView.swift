@@ -16,7 +16,7 @@ struct DuplicateTracksView: View {
     var body: some View {
         List {
             Section {
-                Text("Find possible copies of the same recording. Review the album and identity evidence before merging; remixes, live recordings and edits may be different.")
+                Text("Find possible copies of the same recording. Review the song and album details before merging; remixes, live recordings and edits may be different.")
                 Button(busy ? "Scanning…" : "Scan for Duplicates", systemImage: "magnifyingglass") {
                     scanTask = Task { await scan() }
                 }
@@ -36,13 +36,6 @@ struct DuplicateTracksView: View {
                                     .font(.subheadline).foregroundStyle(.secondary)
                                 Text("\(candidate.destination.rawValue) · \(candidate.plays) plays · \(candidate.skips) skips")
                                     .font(.caption)
-                                if let isrc = candidate.isrc { Text("ISRC: \(isrc)").font(.caption).foregroundStyle(.secondary) }
-                                Text("Apple Music: \(candidate.catalogID ?? candidate.libraryID ?? "Local track")")
-                                    .font(.caption).foregroundStyle(.secondary)
-                                if !candidate.equivalents.isEmpty {
-                                    Text("Possible catalog alternatives: \(candidate.equivalents.joined(separator: ", "))")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
                             }
                         }
                         .disabled(busy)

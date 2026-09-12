@@ -44,6 +44,10 @@ final class MusicIdentityResolver {
     private var inFlight: [String: Task<[String: [Resource]], Error>] = [:]
     private var scope: Scope?
     private var generation = 0
+    private static let batchSize = 25
+    private static let maximumConcurrentRequests = 3
+    private var activeRequests = 0
+    private var requestWaiters: [CheckedContinuation<Void, Never>] = []
     private let currentScope: () async throws -> Scope
     private let fetch: Fetch
     private let now: () -> Date
@@ -85,6 +89,15 @@ final class MusicIdentityResolver {
             result[index].hasDocumentedIdentity = true
             result[index].catalogID = resources.count == 1 ? resources.first?.id : nil
             result[index].isrc = resources.count == 1 ? resources.first?.attributes?.isrc : result[index].isrc
+            // Included catalog resources already supply the recording metadata.
+            // Reuse it instead of fetching every library song a second time.
+            if resources.count == 1, let resource = resources.first, resource.attributes?.isrc != nil {
+                let key = Key(lookup: .catalog, id: resource.id)
+                if cache[key].map({ $0.expires <= now() }) ?? true,
+                   let expires = cache[Key(lookup: .library, id: id)]?.expires {
+                    cache[key] = Cached(resources: [resource], expires: expires)
+                }
+            }
         }
         let catalogIDs = result.compactMap(\.catalogID)
         let catalog = try await lookup(.catalog, ids: catalogIDs, scope: current, revision: revision)
@@ -116,32 +129,70 @@ final class MusicIdentityResolver {
             if let cached = cache[Key(lookup: kind, id: id)], cached.expires > now() { result[id] = cached.resources }
             else { missing.append(id) }
         }
-        for start in stride(from: 0, to: missing.count, by: 25) {
+        // Start a small window together, rather than paying one round trip
+        // per batch. The shared gate also bounds simultaneous scan/sync calls.
+        let windowSize = Self.batchSize * Self.maximumConcurrentRequests
+        for window in stride(from: 0, to: missing.count, by: windowSize) {
             try Task.checkCancellation()
-            let batch = Array(missing[start..<min(start + 25, missing.count)])
-            let requestKey = "\(revision):\(kind.rawValue):\(batch.joined(separator: ","))"
-            let task: Task<[String: [Resource]], Error>
-            if let existing = inFlight[requestKey] { task = existing }
-            else {
-                task = Task { [fetch] in try await fetch(kind, batch, scope) }
-                inFlight[requestKey] = task
+            let end = min(window + windowSize, missing.count)
+            let tasks = stride(from: window, to: end, by: Self.batchSize).map { start in
+                let batch = Array(missing[start..<min(start + Self.batchSize, end)])
+                return Task { try await self.lookupBatch(kind, batch: batch, scope: scope, revision: revision) }
             }
-            let values: [String: [Resource]]
-            do { values = try await task.value }
-            catch { inFlight[requestKey] = nil; throw error }
-            inFlight[requestKey] = nil
-            try Task.checkCancellation()
-            guard generation == revision else { throw ResolutionError.scopeChanged }
-            for id in batch {
-                guard let resources = values[id] else { throw ResolutionError.incompleteResponse }
-                let ttl: TimeInterval = resources.count == 1 ? 7 * 24 * 3600 : 3600
-                cache[Key(lookup: kind, id: id)] = Cached(resources: resources, expires: now().addingTimeInterval(ttl))
-                result[id] = resources
+            for task in tasks {
+                let values = try await task.value
+                try Task.checkCancellation()
+                result.merge(values) { _, incoming in incoming }
             }
-            // Bound memory for large libraries; expired entries go first.
-            if cache.count > 20_000 { cache = cache.filter { $0.value.expires > now() }; if cache.count > 20_000 { cache.removeAll() } }
         }
         return result
+    }
+
+    private func lookupBatch(_ kind: Lookup, batch: [String], scope: Scope, revision: Int) async throws -> [String: [Resource]] {
+        try Task.checkCancellation()
+        guard generation == revision else { throw ResolutionError.scopeChanged }
+        // Another scan may have completed this batch while this window waited.
+        let cached = batch.compactMap { id -> (String, [Resource])? in
+            guard let value = cache[Key(lookup: kind, id: id)], value.expires > now() else { return nil }
+            return (id, value.resources)
+        }
+        if cached.count == batch.count { return Dictionary(uniqueKeysWithValues: cached) }
+        let requestKey = "\(revision):\(kind.rawValue):\(batch.joined(separator: ","))"
+        let task: Task<[String: [Resource]], Error>
+        if let existing = inFlight[requestKey] { task = existing }
+        else {
+            task = Task { try await self.performFetch(kind, batch: batch, scope: scope, revision: revision) }
+            inFlight[requestKey] = task
+        }
+        defer { inFlight[requestKey] = nil }
+        let values = try await task.value
+        try Task.checkCancellation()
+        guard generation == revision else { throw ResolutionError.scopeChanged }
+        // Validate the whole batch before accepting any negative entries.
+        guard batch.allSatisfy({ values[$0] != nil }) else { throw ResolutionError.incompleteResponse }
+        for id in batch {
+            let resources = values[id]!
+            let ttl: TimeInterval = resources.count == 1 ? 7 * 24 * 3600 : 3600
+            cache[Key(lookup: kind, id: id)] = Cached(resources: resources, expires: now().addingTimeInterval(ttl))
+        }
+        if cache.count > 20_000 {
+            cache = cache.filter { $0.value.expires > now() }
+            if cache.count > 20_000 { cache.removeAll() }
+        }
+        return values
+    }
+
+    private func performFetch(_ kind: Lookup, batch: [String], scope: Scope, revision: Int) async throws -> [String: [Resource]] {
+        if activeRequests == Self.maximumConcurrentRequests {
+            await withCheckedContinuation { requestWaiters.append($0) }
+        } else { activeRequests += 1 }
+        defer {
+            if requestWaiters.isEmpty { activeRequests -= 1 }
+            else { requestWaiters.removeFirst().resume() }
+        }
+        try Task.checkCancellation()
+        guard generation == revision else { throw ResolutionError.scopeChanged }
+        return try await fetch(kind, batch, scope)
     }
 
     static func liveScope() async throws -> Scope {

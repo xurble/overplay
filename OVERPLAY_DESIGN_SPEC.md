@@ -1427,15 +1427,18 @@ PlayParameters decoding remains only a fallback for records without documented
 identity. A documented empty catalog relationship preserves library-only content.
 
 Lookups run during sync or an explicit scan, never in view rendering or playback
-controls. Requests contain at most 25 IDs. A bounded memory cache keeps unique
+controls. Requests contain at most 25 IDs, with at most three requests in flight
+across scan and sync. Catalog metadata included with library songs is reused
+instead of fetched again. A bounded memory cache keeps unique
 successes for seven days and negative/ambiguous results for one hour. Restart,
 account fingerprint changes, or storefront changes invalidate cached results;
 request failures are not stored as proof of absence. Tokens are not persisted or
 logged. MusicKit authorization and live catalog responses need device validation.
 
 Settings > Find Duplicates scans local recordings and shows apparent duplicate
-groups, albums, identifiers, counts and collection membership. Users select the
-recordings to merge and confirm. Mixed collections require choosing One True
+groups, song and album details, counts and collection membership. Technical
+identifiers are used internally and are not displayed in the review screen. Users
+select the recordings to merge and confirm. Mixed collections require choosing One True
 Playlist, Triage, or Retired; a shared collection is retained. Canceling performs
 no merge. ISRC/equivalence can include different versions, so suggestions require
 human review.
