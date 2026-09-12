@@ -1373,7 +1373,7 @@ final class PlaybackController {
         var seen = Set<String>()
         if let current = activeQueueEntries.first(where: { $0.queueEntryID == currentEntryID }) { seen.insert(current.localTrackID) }
         let duplicateEntryIDs = Set(activeQueueEntries.compactMap { entry -> String? in
-            guard entry.queueEntryID != currentEntryID else { return nil }
+            guard entry.queueEntryID != currentEntryID, entry.localTrackID == result.trackID.uuidString else { return nil }
             return seen.insert(entry.localTrackID).inserted ? nil : entry.queueEntryID
         })
         if !duplicateEntryIDs.isEmpty {
