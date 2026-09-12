@@ -59,6 +59,7 @@ enum TrackLocationService {
         reason: EvictionReason,
         source: EvictionSource,
         message: String,
+        preserveForMerge: Bool = false,
         in context: ModelContext
     ) throws {
         let bucket = try PlaylistRepository.triageBucket(in: context)
@@ -70,7 +71,7 @@ enum TrackLocationService {
         item.playlistID = bucket.id
         item.musicPlaylistEntryID = nil
         EvictionEngine.evict(item, playlist: playlist, reason: reason, source: source, message: message, context: context)
-        try TrackRetentionPolicy.deleteIfUnowned(item, in: context)
+        if !preserveForMerge { try TrackRetentionPolicy.deleteIfUnowned(item, in: context) }
     }
 
     /// A source's link timestamp is durable intent, so retrying an import can

@@ -31,6 +31,12 @@ enum TrackRecordRepository {
     }
 
     static func track(catalogID: String?, libraryID: String?, in context: ModelContext) throws -> TrackRecord? {
+        if let libraryID {
+            var library = FetchDescriptor<TrackRecord>(predicate: #Predicate { $0.libraryID == libraryID })
+            library.fetchLimit = 1
+            library.includePendingChanges = true
+            if let exact = try context.fetch(library).first { return exact }
+        }
         let descriptor: FetchDescriptor<TrackRecord>
         if let catalogID, let libraryID {
             descriptor = FetchDescriptor<TrackRecord>(
@@ -55,7 +61,9 @@ enum TrackRecordRepository {
         var limitedDescriptor = descriptor
         limitedDescriptor.fetchLimit = 1
         limitedDescriptor.includePendingChanges = true
-        return try context.fetch(limitedDescriptor).first
+        if let exact = try context.fetch(limitedDescriptor).first { return exact }
+        let identifiers = Set([catalogID, libraryID].compactMap { $0 })
+        return try allTracks(in: context).first { !identifiers.isDisjoint(with: $0.identityAliases) }
     }
 
     static func track(musicItemID: String, in context: ModelContext) throws -> TrackRecord? {
@@ -64,34 +72,29 @@ enum TrackRecordRepository {
 
     @discardableResult
     static func upsert(_ snapshot: TrackSnapshot, in context: ModelContext) throws -> TrackRecord {
-        let identity = snapshot.resolvedIdentity
-        return try upsertWithResult(
-            catalogID: identity.catalogID,
-            libraryID: identity.libraryID,
-            title: snapshot.title,
-            artistName: snapshot.artistName,
-            albumTitle: snapshot.albumTitle,
-            artworkURLTemplate: snapshot.artworkURLTemplate,
-            durationSeconds: snapshot.durationSeconds,
-            musicKitPlaybackData: snapshot.musicKitPlaybackData,
-            in: context
-        ).record
+        try upsertWithResult(snapshot, in: context).record
     }
 
     @discardableResult
     static func upsertWithResult(_ snapshot: TrackSnapshot, in context: ModelContext) throws -> TrackRecordUpsertResult {
-        let identity = snapshot.resolvedIdentity
-        return try upsertWithResult(
-            catalogID: identity.catalogID,
-            libraryID: identity.libraryID,
-            title: snapshot.title,
-            artistName: snapshot.artistName,
-            albumTitle: snapshot.albumTitle,
-            artworkURLTemplate: snapshot.artworkURLTemplate,
-            durationSeconds: snapshot.durationSeconds,
-            musicKitPlaybackData: snapshot.musicKitPlaybackData,
-            in: context
+        var identity = snapshot.resolvedIdentity
+        if !snapshot.hasDocumentedIdentity,
+           let existing = try track(catalogID: identity.catalogID, libraryID: identity.libraryID, in: context),
+           existing.hasDocumentedIdentity {
+            identity.catalogID = existing.catalogID
+            identity.libraryID = existing.libraryID
+        }
+        let result = try upsertWithResult(
+            catalogID: identity.catalogID, libraryID: identity.libraryID,
+            title: snapshot.title, artistName: snapshot.artistName, albumTitle: snapshot.albumTitle,
+            artworkURLTemplate: snapshot.artworkURLTemplate, durationSeconds: snapshot.durationSeconds,
+            musicKitPlaybackData: snapshot.musicKitPlaybackData, in: context
         )
+        let changed = applyIdentity(snapshot, to: result.record)
+        if changed { result.record.updatedAt = .now }
+        return TrackRecordUpsertResult(record: result.record,
+            mutation: result.mutation == .unchanged && changed ? .updated : result.mutation,
+            shouldWarmUpArtworkTheme: result.shouldWarmUpArtworkTheme)
     }
 
     @discardableResult
@@ -185,6 +188,20 @@ enum TrackRecordRepository {
             mutation: didChange ? .updated : .unchanged,
             shouldWarmUpArtworkTheme: artworkThemeInputsChanged
         )
+    }
+
+    @discardableResult
+    static func applyIdentity(_ snapshot: TrackSnapshot, to track: TrackRecord) -> Bool {
+        let old: [String?] = [track.catalogID, track.isrc, String(track.hasDocumentedIdentity), track.identityAliases.joined(separator: ","), track.equivalentCatalogIDs.joined(separator: ",")]
+        if let isrc = snapshot.isrc { track.isrc = isrc }
+        if snapshot.hasDocumentedIdentity {
+            track.hasDocumentedIdentity = true
+            // A documented empty library relationship overrides an opaque hint.
+            if snapshot.libraryID != nil { track.catalogID = snapshot.catalogID }
+            track.equivalentCatalogIDs = snapshot.equivalentCatalogIDs
+        }
+        track.identityAliases = Array(Set(track.identityAliases + snapshot.identityAliases)).sorted()
+        return old != [track.catalogID, track.isrc, String(track.hasDocumentedIdentity), track.identityAliases.joined(separator: ","), track.equivalentCatalogIDs.joined(separator: ",")]
     }
 
     private static func assign<Value: Equatable>(

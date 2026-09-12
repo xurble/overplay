@@ -219,6 +219,21 @@ struct PlaylistMutationService {
         try? context.save()
     }
 
+    func ensureRemoteMembership(
+        track: TrackRecord, playlist: PlaylistRecord,
+        isCurrent: () throws -> Bool, beforeAdd: () throws -> Void,
+        in context: ModelContext
+    ) async throws {
+        guard playlist.allowsRemoteWrites else { throw PlaylistMutationError.playlistIncomingOnly }
+        try await PlaylistRemoteMutationCoordinator.shared.perform(playlistID: playlist.musicPlaylistID) {
+            guard try isCurrent(), playlist.allowsRemoteWrites else { throw PlaylistMutationError.trackMissing }
+            try beforeAdd()
+            if let addRemotely { try await addRemotely(track, playlist, context) }
+            else { try await add(track: track, to: playlist, in: context) }
+            guard try isCurrent() else { throw PlaylistMutationError.trackMissing }
+        }
+    }
+
     private func add(track: TrackRecord, to playlistRecord: PlaylistRecord, in context: ModelContext) async throws {
         guard let musicItemID = track.catalogID ?? track.libraryID else {
             throw PlaylistMutationError.musicItemMissing

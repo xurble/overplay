@@ -346,4 +346,20 @@ struct TrackIdentityMergeServiceTests {
         #expect(tracks.count == 1)
         #expect(tracks.first?.id == first.id)
     }
+    @Test("conflicting opaque bridges cannot merge an unrelated catalog recording")
+    func documentedEmptyRelationshipBreaksOpaqueBridge() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let upload = TrackRecord(libraryID: "i.same", title: "Upload", artistName: "Artist")
+        upload.hasDocumentedIdentity = true
+        let legacy = TrackRecord(catalogID: "123", libraryID: "i.same", title: "Legacy", artistName: "Artist")
+        let unrelated = TrackRecord(catalogID: "123", title: "Different recording", artistName: "Other artist")
+        for track in [upload, legacy, unrelated] { context.insert(track) }
+        let summary = try await TrackIdentityMergeService.mergeDuplicates(in: context)
+        #expect(summary.mergedTrackCount == 0)
+        #expect(try TrackRecordRepository.allTracks(in: context).count == 3)
+        #expect(unrelated.catalogID == "123")
+        #expect(upload.catalogID == nil)
+    }
+
 }

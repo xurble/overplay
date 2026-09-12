@@ -38,8 +38,8 @@ enum MusicTrackIdentity {
         )
     }
 
-    /// Play parameters are the only place MusicKit exposes a library track's
-    /// catalog correspondence. Their JSON shape is not API-stable, so decoding
+    /// Temporary fallback when documented library catalog resolution is unavailable.
+    /// The JSON shape is not API-stable, so decoding
     /// is best-effort enrichment: any failure falls back to classifying the
     /// raw ID alone.
     static func ids(fromRawID rawID: String, playParametersData: Data?) -> IDs {

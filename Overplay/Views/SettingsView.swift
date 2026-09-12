@@ -63,6 +63,10 @@ struct SettingsView: View {
             }
 
             Section {
+                NavigationLink("Find Duplicates", destination: DuplicateTracksView())
+            }
+
+            Section {
                 Button(role: .destructive) {
                     showResetConfirmation = true
                 } label: {
