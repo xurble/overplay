@@ -19,6 +19,9 @@ struct PlaybackWaypoint: Codable, Equatable, Sendable {
     /// Older baselines awaiting delayed MusicKit propagation. Optional so
     /// waypoints written before this field existed continue to decode.
     var pendingMusicLibraryBaselines: [MusicLibraryPlaybackBaseline]? = nil
+    /// Local proofs captured before an async query, not yet committed to
+    /// SwiftData. Keep them with the new waypoint so interruption loses neither.
+    var pendingLocalPlaythroughs: [PendingLocalPlaythrough]? = nil
 
     var allMusicLibraryBaselines: [MusicLibraryPlaybackBaseline] {
         var baselines = pendingMusicLibraryBaselines ?? []
@@ -32,6 +35,18 @@ struct PlaybackWaypoint: Codable, Equatable, Sendable {
         }
         return baselines
     }
+}
+
+/// A frozen local proof awaiting a durable counter/history write. These are
+/// proven outcomes, not a queue-order assumption to re-evaluate on a later wake.
+struct PendingLocalPlaythrough: Codable, Equatable, Sendable {
+    var playlistID: String
+    var localTrackID: String
+    var positionSeconds: Double
+    var durationSeconds: Double?
+    var observedAt: Date
+    var creditWindowStartedAt: Date
+    var mechanism: PlaybackReconciliationMechanism
 }
 
 enum PlaybackWaypointStore {

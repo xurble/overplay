@@ -524,7 +524,11 @@ item's `lastPlayedAt` recency.
 
 Background entry flushes a local waypoint before awaiting library metadata.
 If that request is cancelled or never completes, local proof remains available;
-new library baselines are only available after a successful response. Background
+new library baselines are only available after a successful response. Local
+playthroughs already proven at background entry are saved alongside the new
+waypoint until their counter and history writes commit together. A later wake
+can retry these proofs even if continuity has since broken; durable recency
+guards also cover termination between that commit and clearing the proofs. Background
 refreshes submit a replacement before awaiting reconciliation, with a 15-minute
 fallback when no track target is available. iOS can reject requests or withhold
 grants, so recovery does not assume per-track wakes.
@@ -532,7 +536,8 @@ grants, so recovery does not assume per-track wakes.
 At background entry, one batch also samples up to 20 following tracks in the
 stored order. At most 41 unresolved baselines (two windows plus the current
 track) are retained for 24 hours, with original timestamps preserved across
-wakes. A qualifying counter advance credits at most one playthrough even if
+wakes. Retention favors the current sampled window, including overlapping
+tracks whose earliest unresolved evidence predates the new sample. A qualifying counter advance credits at most one playthrough even if
 its delta exceeds one: only the final play has a dated observation. Expired or
 ambiguous evidence credits nothing. While MusicKit shuffle is enabled, stored
 order is only a candidate-selection heuristic, not proof of traversal;

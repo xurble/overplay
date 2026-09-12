@@ -118,6 +118,44 @@ enum PlaybackReconciliationService {
             } ?? []
             : []
 
+        var pendingLocalPlaythroughs = waypoint?.pendingLocalPlaythroughs ?? []
+        if captureBeforeFetching {
+            let localOutcome = PlaybackReconciliationPolicy.reconcile(
+                waypoint: waypoint,
+                observation: observation,
+                orderedTracks: continuityAllowed ? orderedTracks : [],
+                playthroughThresholdPercentage: threshold
+            )
+            if let waypoint {
+                for localTrackID in localOutcome.continuityProvenLocalTrackIDs {
+                    let duration = orderedTracks.first { $0.localTrackID == localTrackID }?.durationSeconds
+                    pendingLocalPlaythroughs.append(PendingLocalPlaythrough(
+                        playlistID: observation.playlistID,
+                        localTrackID: localTrackID,
+                        positionSeconds: duration ?? 0,
+                        durationSeconds: duration,
+                        observedAt: observation.observedAt,
+                        creditWindowStartedAt: waypoint.recordedAt,
+                        mechanism: .wallClockContinuity
+                    ))
+                }
+            }
+            if let localTrackID = localOutcome.pointProvenLocalTrackID,
+               !activeSessionHasEvaluated(localTrackID) {
+                pendingLocalPlaythroughs.append(PendingLocalPlaythrough(
+                    playlistID: observation.playlistID,
+                    localTrackID: localTrackID,
+                    positionSeconds: observation.positionSeconds,
+                    durationSeconds: observation.durationSeconds,
+                    observedAt: observation.observedAt,
+                    creditWindowStartedAt: observation.observedAt.addingTimeInterval(
+                        -(observation.positionSeconds + PlaybackReconciliationPolicy.baseToleranceSeconds)
+                    ),
+                    mechanism: .pointObservation
+                ))
+            }
+        }
+
         // This write is synchronous and durable even if the supporting query
         // never returns. Preserve older metadata with its original timestamp.
         if captureBeforeFetching {
@@ -126,6 +164,8 @@ enum PlaybackReconciliationService {
                 previousWaypoint: waypoint,
                 pointProvenAndCounted: false,
                 newBaselines: [],
+                prioritizedLocalTrackIDs: Set([observation.localTrackID] + upcomingIDs),
+                pendingLocalPlaythroughs: pendingLocalPlaythroughs,
                 resolvedMusicLibraryLocalTrackIDs: [],
                 countedLocalTrackIDs: [],
                 activeSessionHasEvaluated: activeSessionHasEvaluated,
@@ -181,15 +221,23 @@ enum PlaybackReconciliationService {
         var counted: [String] = []
         if let settings {
             do {
-                counted = try countPlaythroughs(
+                let pendingCounted = try countPendingLocalPlaythroughs(
+                    pendingLocalPlaythroughs, settings: settings, context: context
+                )
+                counted = countPlaythroughs(
                     outcome: outcome,
                     observation: observation,
                     waypoint: waypoint,
                     orderedTracks: orderedTracks,
                     settings: settings,
-                    context: context,
-                    saveChanges: saveChanges
+                    context: context
                 )
+                counted.append(contentsOf: pendingCounted.filter {
+                    $0.playlistID == observation.playlistID
+                }.map(\.localTrackID))
+                if !counted.isEmpty || !pendingCounted.isEmpty {
+                    try saveChanges(context)
+                }
             } catch {
                 context.rollback()
                 TrackMetadataDiagnostics.log(
@@ -220,6 +268,8 @@ enum PlaybackReconciliationService {
             previousWaypoint: waypoint,
             pointProvenAndCounted: counted.contains(observation.localTrackID),
             newBaselines: newBaselines,
+            prioritizedLocalTrackIDs: Set([observation.localTrackID] + upcomingIDs),
+            pendingLocalPlaythroughs: settings == nil ? pendingLocalPlaythroughs : [],
             resolvedMusicLibraryLocalTrackIDs: Set(outcome.musicLibraryProvenLocalTrackIDs),
             countedLocalTrackIDs: Set(counted),
             activeSessionHasEvaluated: activeSessionHasEvaluated,
@@ -240,6 +290,47 @@ enum PlaybackReconciliationService {
                 playthroughThresholdPercentage: threshold
             )
         )
+    }
+
+    /// Replays frozen proofs before evaluating the new span. The same durable
+    /// recency guards used by live reconciliation also protect a process death
+    /// between the SwiftData commit and clearing these proofs from defaults.
+    private static func countPendingLocalPlaythroughs(
+        _ proofs: [PendingLocalPlaythrough],
+        settings: OverplaySettings,
+        context: ModelContext
+    ) throws -> [PendingLocalPlaythrough] {
+        var counted: [PendingLocalPlaythrough] = []
+        for proof in proofs {
+            guard let trackID = UUID(uuidString: proof.localTrackID),
+                  let playlist = try PlaylistRepository.playlist(musicPlaylistID: proof.playlistID, in: context),
+                  let item = try PlaylistItemRepository.item(playlistID: playlist.id, trackID: trackID, in: context) else {
+                continue
+            }
+            if let lastPlayedAt = item.lastPlayedAt {
+                let alreadyCredited = proof.mechanism == .wallClockContinuity
+                    ? lastPlayedAt > proof.creditWindowStartedAt
+                    : lastPlayedAt >= proof.creditWindowStartedAt
+                if alreadyCredited { continue }
+            }
+            EvictionEngine.countPlaythrough(
+                item,
+                playlist: playlist,
+                session: syntheticSession(
+                    localTrackID: proof.localTrackID,
+                    positionSeconds: proof.positionSeconds,
+                    durationSeconds: proof.durationSeconds,
+                    observedAt: proof.observedAt
+                ),
+                settings: settings,
+                source: .reconciled,
+                reconciliationMechanism: proof.mechanism,
+                message: "Playthrough proven before Overplay was suspended",
+                context: context
+            )
+            counted.append(proof)
+        }
+        return counted
     }
 
     private static func musicLibraryCandidates(
@@ -292,9 +383,8 @@ enum PlaybackReconciliationService {
         waypoint: PlaybackWaypoint?,
         orderedTracks: [PlaybackReconciliationPolicy.OrderedTrack],
         settings: OverplaySettings,
-        context: ModelContext,
-        saveChanges: (ModelContext) throws -> Void
-    ) throws -> [String] {
+        context: ModelContext
+    ) -> [String] {
         guard let playlist = try? PlaylistRepository.playlist(
             musicPlaylistID: observation.playlistID,
             in: context
@@ -390,9 +480,6 @@ enum PlaybackReconciliationService {
             counted.append(pointProven)
         }
 
-        if !counted.isEmpty {
-            try saveChanges(context)
-        }
         return counted
     }
 
@@ -455,6 +542,8 @@ enum PlaybackReconciliationService {
         previousWaypoint: PlaybackWaypoint?,
         pointProvenAndCounted: Bool,
         newBaselines: [MusicLibraryPlaybackBaseline],
+        prioritizedLocalTrackIDs: Set<String>,
+        pendingLocalPlaythroughs: [PendingLocalPlaythrough],
         resolvedMusicLibraryLocalTrackIDs: Set<String>,
         countedLocalTrackIDs: Set<String>,
         activeSessionHasEvaluated: (String) -> Bool,
@@ -500,7 +589,11 @@ enum PlaybackReconciliationService {
                 && baseline.recordedAt >= pendingExpiry
                 && retainedLocalTrackIDs.insert(baseline.localTrackID).inserted
         }
-        let retained = Array(pendingMusicLibraryBaselines.suffix(maxPendingMusicLibraryBaselines))
+        // Keep the newly sampled window even when deduplication retained its
+        // original evidence at an older position in the list.
+        let prioritized = pendingMusicLibraryBaselines.filter { prioritizedLocalTrackIDs.contains($0.localTrackID) }
+        let older = pendingMusicLibraryBaselines.filter { !prioritizedLocalTrackIDs.contains($0.localTrackID) }
+        let retained = Array(older.suffix(maxPendingMusicLibraryBaselines - prioritized.count)) + prioritized
         PlaybackWaypointStore.save(
             PlaybackWaypoint(
                 playlistID: observation.playlistID,
@@ -509,7 +602,8 @@ enum PlaybackReconciliationService {
                 durationSeconds: observation.durationSeconds,
                 recordedAt: observation.observedAt,
                 countedLocalTrackID: countedLocalTrackID,
-                pendingMusicLibraryBaselines: retained.isEmpty ? nil : retained
+                pendingMusicLibraryBaselines: retained.isEmpty ? nil : retained,
+                pendingLocalPlaythroughs: pendingLocalPlaythroughs.isEmpty ? nil : pendingLocalPlaythroughs
             ),
             to: defaults,
             flushImmediately: true
