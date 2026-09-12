@@ -7,7 +7,9 @@ import SwiftData
 /// records the exact baseline waypoint).
 @MainActor
 enum PlaybackReconciliationService {
-    private static let maxPendingMusicLibraryBaselines = 12
+    static let upcomingBaselineLimit = 20
+    static let maxPendingMusicLibraryBaselines = 2 * upcomingBaselineLimit + 1
+    static let baselineRetentionSeconds: TimeInterval = 24 * 60 * 60
 
     struct Result {
         var countedLocalTrackIDs: [String] = []
@@ -42,6 +44,7 @@ enum PlaybackReconciliationService {
     static func reconcileAndCaptureWaypoint(
         playbackController: PlaybackController,
         context: ModelContext,
+        captureBeforeFetching: Bool = false,
         musicLibraryFetcher: any MusicLibraryPlaybackHistoryFetching = MusicKitLibraryPlaybackHistoryFetcher(),
         saveChanges: (ModelContext) throws -> Void = { try $0.save() }
     ) async -> Result {
@@ -52,21 +55,129 @@ enum PlaybackReconciliationService {
             return Result()
         }
 
-        let waypoint = PlaybackWaypointStore.load()
-        let settings = try? SettingsRepository.settings(in: context)
-        let threshold = settings?.playthroughThresholdPercentage ?? 90
-        let orderedTracks = orderedTracks(
+        let tracks = orderedTracks(
             playlistID: observation.playlistID,
             playerID: playbackController.playerID,
             scope: playbackController.currentPlaylistScope,
             context: context
         )
+        let result = await reconcileAndCaptureWaypoint(
+            observation: observation,
+            orderedTracks: tracks,
+            context: context,
+            captureBeforeFetching: captureBeforeFetching,
+            continuityAllowed: !playbackController.shuffleEnabled,
+            musicLibraryFetcher: musicLibraryFetcher,
+            activeSessionHasEvaluated: playbackController.activeSessionHasEvaluated,
+            saveChanges: saveChanges
+        )
+        for localTrackID in result.countedLocalTrackIDs {
+            playbackController.markActiveSessionPlaythroughCounted(localTrackID: localTrackID)
+        }
+        if !result.countedLocalTrackIDs.isEmpty {
+            await playbackController.reconcilePlayerState(context: context)
+            playbackController.publishReconciledPlaylistItemChanges(
+                localTrackIDs: result.countedLocalTrackIDs,
+                playlistID: observation.playlistID,
+                context: context
+            )
+        }
+        return result
+    }
+
+    /// Shared durable reconciliation boundary, independent of MusicKit's live
+    /// player so cancellation, relaunch and persistence failures are testable.
+    @discardableResult
+    static func reconcileAndCaptureWaypoint(
+        observation: PlaybackReconciliationPolicy.Observation,
+        orderedTracks: [PlaybackReconciliationPolicy.OrderedTrack],
+        context: ModelContext,
+        captureBeforeFetching: Bool = false,
+        continuityAllowed: Bool = true,
+        defaults: UserDefaults = .standard,
+        musicLibraryFetcher: any MusicLibraryPlaybackHistoryFetching,
+        activeSessionHasEvaluated: (String) -> Bool = { _ in false },
+        now: () -> Date = { .now },
+        saveChanges: (ModelContext) throws -> Void = { try $0.save() }
+    ) async -> Result {
+        var waypoint = PlaybackWaypointStore.load(from: defaults)
+        let expiry = observation.observedAt.addingTimeInterval(-baselineRetentionSeconds)
+        let unexpiredBaselines = waypoint?.pendingMusicLibraryBaselines?.filter { $0.recordedAt >= expiry }
+        waypoint?.pendingMusicLibraryBaselines = unexpiredBaselines
+        if let recordedAt = waypoint?.recordedAt, recordedAt < expiry {
+            waypoint?.musicLibrarySnapshot = nil
+        }
+        guard waypoint.map({ $0.recordedAt <= observation.observedAt }) ?? true else {
+            return Result()
+        }
+        let settings = try? SettingsRepository.settings(in: context)
+        let threshold = settings?.playthroughThresholdPercentage ?? 90
+        let upcomingIDs: [String] = captureBeforeFetching
+            ? orderedTracks.firstIndex(where: { $0.localTrackID == observation.localTrackID }).map {
+                Array(orderedTracks.dropFirst($0 + 1).prefix(upcomingBaselineLimit).map(\.localTrackID))
+            } ?? []
+            : []
+
+        var pendingLocalPlaythroughs = waypoint?.pendingLocalPlaythroughs ?? []
+        if captureBeforeFetching {
+            let localOutcome = PlaybackReconciliationPolicy.reconcile(
+                waypoint: waypoint,
+                observation: observation,
+                orderedTracks: continuityAllowed ? orderedTracks : [],
+                playthroughThresholdPercentage: threshold
+            )
+            if let waypoint {
+                for localTrackID in localOutcome.continuityProvenLocalTrackIDs {
+                    let duration = orderedTracks.first { $0.localTrackID == localTrackID }?.durationSeconds
+                    pendingLocalPlaythroughs.append(PendingLocalPlaythrough(
+                        playlistID: observation.playlistID,
+                        localTrackID: localTrackID,
+                        positionSeconds: duration ?? 0,
+                        durationSeconds: duration,
+                        observedAt: observation.observedAt,
+                        creditWindowStartedAt: waypoint.recordedAt,
+                        mechanism: .wallClockContinuity
+                    ))
+                }
+            }
+            if let localTrackID = localOutcome.pointProvenLocalTrackID,
+               !activeSessionHasEvaluated(localTrackID) {
+                pendingLocalPlaythroughs.append(PendingLocalPlaythrough(
+                    playlistID: observation.playlistID,
+                    localTrackID: localTrackID,
+                    positionSeconds: observation.positionSeconds,
+                    durationSeconds: observation.durationSeconds,
+                    observedAt: observation.observedAt,
+                    creditWindowStartedAt: observation.observedAt.addingTimeInterval(
+                        -(observation.positionSeconds + PlaybackReconciliationPolicy.baseToleranceSeconds)
+                    ),
+                    mechanism: .pointObservation
+                ))
+            }
+        }
+
+        // This write is synchronous and durable even if the supporting query
+        // never returns. Preserve older metadata with its original timestamp.
+        if captureBeforeFetching {
+            saveWaypoint(
+                observation: observation,
+                previousWaypoint: waypoint,
+                pointProvenAndCounted: false,
+                newBaselines: [],
+                prioritizedLocalTrackIDs: Set([observation.localTrackID] + upcomingIDs),
+                pendingLocalPlaythroughs: pendingLocalPlaythroughs,
+                resolvedMusicLibraryLocalTrackIDs: [],
+                countedLocalTrackIDs: [],
+                activeSessionHasEvaluated: activeSessionHasEvaluated,
+                defaults: defaults
+            )
+        }
         let candidateLocalTrackIDs = Set([
             waypoint?.localTrackID,
             observation.localTrackID
         ].compactMap { $0 }).union(
             waypoint?.allMusicLibraryBaselines.map(\.localTrackID) ?? []
-        )
+        ).union(upcomingIDs)
         let candidates = musicLibraryCandidates(
             localTrackIDs: candidateLocalTrackIDs,
             context: context
@@ -86,32 +197,47 @@ enum PlaybackReconciliationService {
         }
         guard !Task.isCancelled else { return Result() }
 
+        // A newer wake may have completed during the query. It owns both the
+        // waypoint and durable counters; an older operation must write neither.
+        if let stored = PlaybackWaypointStore.load(from: defaults),
+           stored.recordedAt > observation.observedAt {
+            return Result()
+        }
+        let snapshotRecordedAt = max(observation.observedAt, now())
         var outcome = PlaybackReconciliationPolicy.reconcile(
             waypoint: waypoint,
             observation: observation,
-            orderedTracks: orderedTracks,
+            orderedTracks: continuityAllowed ? orderedTracks : [],
             playthroughThresholdPercentage: threshold,
             musicLibrarySnapshots: musicLibrarySnapshots
         )
 
         // The live monitor may already have counted the current play.
         if let pointProven = outcome.pointProvenLocalTrackID,
-           playbackController.activeSessionHasEvaluated(localTrackID: pointProven) {
+           activeSessionHasEvaluated(pointProven) {
             outcome.pointProvenLocalTrackID = nil
         }
 
         var counted: [String] = []
         if let settings {
             do {
-                counted = try countPlaythroughs(
+                let pendingCounted = try countPendingLocalPlaythroughs(
+                    pendingLocalPlaythroughs, settings: settings, context: context
+                )
+                counted = countPlaythroughs(
                     outcome: outcome,
                     observation: observation,
                     waypoint: waypoint,
                     orderedTracks: orderedTracks,
                     settings: settings,
-                    context: context,
-                    saveChanges: saveChanges
+                    context: context
                 )
+                counted.append(contentsOf: pendingCounted.filter {
+                    $0.playlistID == observation.playlistID
+                }.map(\.localTrackID))
+                if !counted.isEmpty || !pendingCounted.isEmpty {
+                    try saveChanges(context)
+                }
             } catch {
                 context.rollback()
                 TrackMetadataDiagnostics.log(
@@ -127,28 +253,28 @@ enum PlaybackReconciliationService {
             }
         }
 
-        for localTrackID in counted {
-            playbackController.markActiveSessionPlaythroughCounted(localTrackID: localTrackID)
+        let newBaselines = ([observation.localTrackID] + upcomingIDs).compactMap { localTrackID in
+            musicLibrarySnapshots[localTrackID].map {
+                MusicLibraryPlaybackBaseline(
+                    playlistID: observation.playlistID,
+                    localTrackID: localTrackID,
+                    recordedAt: snapshotRecordedAt,
+                    snapshot: $0
+                )
+            }
         }
-
         saveWaypoint(
             observation: observation,
             previousWaypoint: waypoint,
-            pointProvenAndCounted: outcome.pointProvenLocalTrackID.map(counted.contains) == true,
-            musicLibrarySnapshot: musicLibrarySnapshots[observation.localTrackID],
+            pointProvenAndCounted: counted.contains(observation.localTrackID),
+            newBaselines: newBaselines,
+            prioritizedLocalTrackIDs: Set([observation.localTrackID] + upcomingIDs),
+            pendingLocalPlaythroughs: settings == nil ? pendingLocalPlaythroughs : [],
             resolvedMusicLibraryLocalTrackIDs: Set(outcome.musicLibraryProvenLocalTrackIDs),
             countedLocalTrackIDs: Set(counted),
-            playbackController: playbackController
+            activeSessionHasEvaluated: activeSessionHasEvaluated,
+            defaults: defaults
         )
-
-        if !counted.isEmpty {
-            await playbackController.reconcilePlayerState(context: context)
-            playbackController.publishReconciledPlaylistItemChanges(
-                localTrackIDs: counted,
-                playlistID: observation.playlistID,
-                context: context
-            )
-        }
 
         if !counted.isEmpty {
             TrackMetadataDiagnostics.log(
@@ -164,6 +290,47 @@ enum PlaybackReconciliationService {
                 playthroughThresholdPercentage: threshold
             )
         )
+    }
+
+    /// Replays frozen proofs before evaluating the new span. The same durable
+    /// recency guards used by live reconciliation also protect a process death
+    /// between the SwiftData commit and clearing these proofs from defaults.
+    private static func countPendingLocalPlaythroughs(
+        _ proofs: [PendingLocalPlaythrough],
+        settings: OverplaySettings,
+        context: ModelContext
+    ) throws -> [PendingLocalPlaythrough] {
+        var counted: [PendingLocalPlaythrough] = []
+        for proof in proofs {
+            guard let trackID = UUID(uuidString: proof.localTrackID),
+                  let playlist = try PlaylistRepository.playlist(musicPlaylistID: proof.playlistID, in: context),
+                  let item = try PlaylistItemRepository.item(playlistID: playlist.id, trackID: trackID, in: context) else {
+                continue
+            }
+            if let lastPlayedAt = item.lastPlayedAt {
+                let alreadyCredited = proof.mechanism == .wallClockContinuity
+                    ? lastPlayedAt > proof.creditWindowStartedAt
+                    : lastPlayedAt >= proof.creditWindowStartedAt
+                if alreadyCredited { continue }
+            }
+            EvictionEngine.countPlaythrough(
+                item,
+                playlist: playlist,
+                session: syntheticSession(
+                    localTrackID: proof.localTrackID,
+                    positionSeconds: proof.positionSeconds,
+                    durationSeconds: proof.durationSeconds,
+                    observedAt: proof.observedAt
+                ),
+                settings: settings,
+                source: .reconciled,
+                reconciliationMechanism: proof.mechanism,
+                message: "Playthrough proven before Overplay was suspended",
+                context: context
+            )
+            counted.append(proof)
+        }
+        return counted
     }
 
     private static func musicLibraryCandidates(
@@ -216,9 +383,8 @@ enum PlaybackReconciliationService {
         waypoint: PlaybackWaypoint?,
         orderedTracks: [PlaybackReconciliationPolicy.OrderedTrack],
         settings: OverplaySettings,
-        context: ModelContext,
-        saveChanges: (ModelContext) throws -> Void
-    ) throws -> [String] {
+        context: ModelContext
+    ) -> [String] {
         guard let playlist = try? PlaylistRepository.playlist(
             musicPlaylistID: observation.playlistID,
             in: context
@@ -314,9 +480,6 @@ enum PlaybackReconciliationService {
             counted.append(pointProven)
         }
 
-        if !counted.isEmpty {
-            try saveChanges(context)
-        }
         return counted
     }
 
@@ -378,10 +541,13 @@ enum PlaybackReconciliationService {
         observation: PlaybackReconciliationPolicy.Observation,
         previousWaypoint: PlaybackWaypoint?,
         pointProvenAndCounted: Bool,
-        musicLibrarySnapshot: MusicLibraryPlaybackSnapshot?,
+        newBaselines: [MusicLibraryPlaybackBaseline],
+        prioritizedLocalTrackIDs: Set<String>,
+        pendingLocalPlaythroughs: [PendingLocalPlaythrough],
         resolvedMusicLibraryLocalTrackIDs: Set<String>,
         countedLocalTrackIDs: Set<String>,
-        playbackController: PlaybackController
+        activeSessionHasEvaluated: (String) -> Bool,
+        defaults: UserDefaults
     ) {
         // Carry the point-proof ledger forward while the same play instance
         // continues, so repeated wakes inside one track never double count —
@@ -390,7 +556,7 @@ enum PlaybackReconciliationService {
             if pointProvenAndCounted {
                 return observation.localTrackID
             }
-            if playbackController.activeSessionHasEvaluated(localTrackID: observation.localTrackID) {
+            if activeSessionHasEvaluated(observation.localTrackID) {
                 return observation.localTrackID
             }
             if let previousWaypoint,
@@ -404,40 +570,30 @@ enum PlaybackReconciliationService {
 
         // Async MusicKit work can overlap a scene transition. Never allow an
         // older observation that finishes later to move the waypoint back.
-        if let storedWaypoint = PlaybackWaypointStore.load(),
+        if let storedWaypoint = PlaybackWaypointStore.load(from: defaults),
            storedWaypoint.recordedAt > observation.observedAt {
             return
         }
 
-        let persistedMusicLibrarySnapshot = musicLibrarySnapshot
-            ?? previousWaypoint.flatMap { waypoint in
-                waypoint.localTrackID == observation.localTrackID
-                    ? waypoint.musicLibrarySnapshot
-                    : nil
-            }
-        var pendingMusicLibraryBaselines = previousWaypoint?.pendingMusicLibraryBaselines ?? []
-        if let previousWaypoint,
-           previousWaypoint.localTrackID != observation.localTrackID,
-           let previousSnapshot = previousWaypoint.musicLibrarySnapshot {
-            pendingMusicLibraryBaselines.append(MusicLibraryPlaybackBaseline(
-                playlistID: previousWaypoint.playlistID,
-                localTrackID: previousWaypoint.localTrackID,
-                recordedAt: previousWaypoint.recordedAt,
-                snapshot: previousSnapshot
-            ))
-        }
         let resolvedLocalTrackIDs = resolvedMusicLibraryLocalTrackIDs.union(countedLocalTrackIDs)
-        let pendingExpiry = observation.observedAt.addingTimeInterval(-24 * 60 * 60)
+        let pendingExpiry = observation.observedAt.addingTimeInterval(-baselineRetentionSeconds)
         var retainedLocalTrackIDs = Set<String>()
-        pendingMusicLibraryBaselines = pendingMusicLibraryBaselines.filter { baseline in
+        // Keep the earliest unresolved evidence. Replacing it on every wake
+        // would lose delayed counter propagation. Refresh resolved baselines
+        // from this query so later plays can still be proven.
+        let unresolved = (previousWaypoint?.allMusicLibraryBaselines ?? []).filter {
+            !resolvedLocalTrackIDs.contains($0.localTrackID)
+        }
+        let pendingMusicLibraryBaselines = (unresolved + newBaselines).filter { baseline in
             baseline.playlistID == observation.playlistID
                 && baseline.recordedAt >= pendingExpiry
-                && !resolvedLocalTrackIDs.contains(baseline.localTrackID)
                 && retainedLocalTrackIDs.insert(baseline.localTrackID).inserted
         }
-        pendingMusicLibraryBaselines = Array(
-            pendingMusicLibraryBaselines.suffix(maxPendingMusicLibraryBaselines)
-        )
+        // Keep the newly sampled window even when deduplication retained its
+        // original evidence at an older position in the list.
+        let prioritized = pendingMusicLibraryBaselines.filter { prioritizedLocalTrackIDs.contains($0.localTrackID) }
+        let older = pendingMusicLibraryBaselines.filter { !prioritizedLocalTrackIDs.contains($0.localTrackID) }
+        let retained = Array(older.suffix(maxPendingMusicLibraryBaselines - prioritized.count)) + prioritized
         PlaybackWaypointStore.save(
             PlaybackWaypoint(
                 playlistID: observation.playlistID,
@@ -446,11 +602,10 @@ enum PlaybackReconciliationService {
                 durationSeconds: observation.durationSeconds,
                 recordedAt: observation.observedAt,
                 countedLocalTrackID: countedLocalTrackID,
-                musicLibrarySnapshot: persistedMusicLibrarySnapshot,
-                pendingMusicLibraryBaselines: pendingMusicLibraryBaselines.isEmpty
-                    ? nil
-                    : pendingMusicLibraryBaselines
+                pendingMusicLibraryBaselines: retained.isEmpty ? nil : retained,
+                pendingLocalPlaythroughs: pendingLocalPlaythroughs.isEmpty ? nil : pendingLocalPlaythroughs
             ),
+            to: defaults,
             flushImmediately: true
         )
     }

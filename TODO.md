@@ -50,27 +50,22 @@ Relevant regression checks:
 
 ## 2. Harden Suspended-Playback Reconciliation
 
-Track [GitHub issue #9](https://github.com/xurble/overplay/issues/9). It spans
-several independently verifiable changes and should be delivered in focused
-slices:
+The lifecycle and service changes for [GitHub issue #9](https://github.com/xurble/overplay/issues/9)
+now persist waypoints before metadata awaits, re-arm refreshes before work, keep
+stale observations out of outcome history, and pre-seed up to 20 following
+tracks. Recovery retains at most 41 baselines for 24 hours and credits at most
+one playthrough per qualifying counter advance. Service regression coverage
+includes cancellation, persistence rollback, deduplication, and relaunch.
 
-1. Persist the background-entry waypoint before awaiting supporting MusicKit
-   metadata so suspension cannot lose the baseline.
-2. Ensure every background refresh outcome leaves the next useful request
-   armed, including task expiration and temporarily unobservable playback.
-3. Prevent one play from producing both a stale-observation event and a
-   reconciled playthrough event.
-4. Add service-level regression coverage for the durable ledger, retained
-   baselines, expiry and cap, regression guard, deduplication, and save rollback.
-5. Decide the bounded upcoming-track baseline window and whether a MusicKit
-   `playCount` delta greater than one can credit multiple plays before adding
-   pre-seeding.
-6. Remove the unused `remote-notification` background mode, retain `fetch`, and
-   remove `audio` or document why it is required after device verification.
+Remaining physical-device checks:
 
-Skips must remain witnessed-only. Any change that can double-count, attribute a
-play to the wrong playlist item, or weaken the conservative proof policy is a
-release blocker.
+- Validate delayed MusicKit counter propagation after a long suspended span,
+  including shuffle and unavailable metadata.
+- Confirm whether the existing `audio` background mode is necessary for
+  MusicKit/CarPlay before removing it. `remote-notification` is removed and
+  `fetch` is retained.
+
+Skips remain witnessed-only; ambiguous or unsampled playback can under-count.
 
 ## 3. Restore CarPlay Curation Controls
 

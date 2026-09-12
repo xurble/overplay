@@ -69,15 +69,8 @@ enum EvictionEngine {
             TrackMetadataDiagnostics.log(
                 "ignored stale skip playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) elapsed=\(String(format: "%.1f", session.lastObservedPlaybackTime)) observedAt=\(session.lastObservedAt)"
             )
-            logHistory(
-                item: item,
-                playlist: playlist,
-                eventType: .skipIgnored,
-                source: .playback,
-                session: session,
-                message: "Stale observation",
-                context: context
-            )
+            // This is absence of evidence, not a play outcome. A later
+            // reconciliation may prove this same play; keep diagnostics only.
             return
         }
 

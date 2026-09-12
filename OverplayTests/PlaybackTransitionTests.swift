@@ -8,6 +8,23 @@ import Testing
 @MainActor
 @Suite("Player-confirmed playback transitions", .serialized)
 struct PlaybackTransitionTests {
+    @Test("suspended observation uses the actual incoming track duration before display catches up")
+    func suspendedObservationUsesIncomingDuration() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.tracks[1].durationSeconds = 400
+        fixture.player.advanceExternally()
+        fixture.player.playbackTime = 170
+        let observed = try #require(fixture.controller.capturePlaybackObservation(context: fixture.context))
+        #expect(observed.localTrackID == fixture.tracks[1].id.uuidString)
+        #expect(observed.durationSeconds == 400)
+        #expect(observed.positionSeconds == 170)
+        #expect(fixture.controller.currentPlaylistItem?.trackID == fixture.tracks[0].id)
+        fixture.tracks[1].durationSeconds = nil
+        #expect(fixture.controller.capturePlaybackObservation(context: fixture.context)?.durationSeconds == nil)
+    }
+
     @Test("fixture cleanup releases a controller retained by the transition probe")
     func fixtureCleanupReleasesController() async throws {
         weak var releasedController: PlaybackController?

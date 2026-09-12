@@ -16,7 +16,17 @@ final class PlaybackBackgroundRefreshService {
 
     private var isRegistered = false
 
-    private init() {}
+    static let fallbackWakeInterval: TimeInterval = 15 * 60
+    private let submit: (BGAppRefreshTaskRequest) throws -> Void
+    private let now: () -> Date
+
+    init(
+        submit: @escaping (BGAppRefreshTaskRequest) throws -> Void = { try BGTaskScheduler.shared.submit($0) },
+        now: @escaping () -> Date = { .now }
+    ) {
+        self.submit = submit
+        self.now = now
+    }
 
     /// Must run before the app finishes launching (OverplayApp.init).
     func register() {
@@ -42,39 +52,45 @@ final class PlaybackBackgroundRefreshService {
     }
 
     private func handle(task: BGAppRefreshTask) async {
-        let runtime = AppRuntime.shared
-        guard let context = runtime.makeModelContext() else {
-            TrackMetadataDiagnostics.log("background refresh woke before the model container was ready")
-            task.setTaskCompleted(success: false)
-            return
+        let success = await performRefresh {
+            let runtime = AppRuntime.shared
+            guard let context = runtime.makeModelContext() else {
+                TrackMetadataDiagnostics.log("background refresh woke before the model container was ready")
+                return nil
+            }
+            return await PlaybackReconciliationService.reconcileAndCaptureWaypoint(
+                playbackController: runtime.playbackController,
+                context: context
+            )
         }
-
-        let result = await PlaybackReconciliationService.reconcileAndCaptureWaypoint(
-            playbackController: runtime.playbackController,
-            context: context
-        )
-        guard !Task.isCancelled else {
-            task.setTaskCompleted(success: false)
-            return
-        }
-        TrackMetadataDiagnostics.log(
-            "background refresh wake counted=\(result.countedLocalTrackIDs.count) nextTarget=\(result.nextWakeTarget.map { $0.formatted(date: .omitted, time: .standard) } ?? "nil")"
-        )
-        scheduleNextWake(at: result.nextWakeTarget)
-        task.setTaskCompleted(success: true)
+        task.setTaskCompleted(success: success)
     }
 
-    /// Submits the single pending refresh request. A nil target (nothing
-    /// playing, unknown duration) submits nothing — with no playback there
-    /// is nothing to reconcile, and the scene-phase hooks re-arm whenever
-    /// playback state changes again.
+    /// Re-arm before the first suspension point. Expiration, a missing model
+    /// container, and an unobservable queue cannot silently end the wake chain.
+    func performRefresh(
+        operation: () async -> PlaybackReconciliationService.Result?
+    ) async -> Bool {
+        scheduleNextWake(at: nil)
+        guard !Task.isCancelled, let result = await operation(), !Task.isCancelled else {
+            return false
+        }
+        if let target = result.nextWakeTarget {
+            scheduleNextWake(at: target)
+        }
+        return true
+    }
+
+    /// iOS may decline a request or never grant it. Always attempt a bounded
+    /// fallback when there is no useful track target; foreground recovery does
+    /// not depend on a grant.
     func scheduleNextWake(at earliestBeginDate: Date?) {
-        guard let earliestBeginDate else { return }
+        let earliestBeginDate = earliestBeginDate ?? now().addingTimeInterval(Self.fallbackWakeInterval)
 
         let request = BGAppRefreshTaskRequest(identifier: Self.taskIdentifier)
         request.earliestBeginDate = earliestBeginDate
         do {
-            try BGTaskScheduler.shared.submit(request)
+            try submit(request)
             TrackMetadataDiagnostics.log(
                 "background refresh requested for \(earliestBeginDate.formatted(date: .omitted, time: .standard))"
             )
