@@ -1409,3 +1409,45 @@ The product is healthy when a user can:
     player-confirmed current track, queue context, play state, position,
     statistics, history, and now-playing metadata on every other active surface
     within the cross-surface timing contract, without manual refresh.
+
+
+## Documented music identity and duplicate review (#40)
+
+Library-to-catalog correspondence comes from Apple Music's library song `catalog`
+relationship, requested through `MusicDataRequest`. Catalog lookups capture ISRC;
+missing catalog resources use Apple's REST `filter[equivalents]`, and ISRC lookups
+supply additional candidates. Existing deployment targets remain unchanged.
+
+Identity precedence is contextual: local UUIDs identify durable Overplay rows;
+playlist entry IDs identify occurrences only within their playlist. Exact library
+IDs anchor catalog changes. Documented catalog relationships and confirmed aliases
+identify records across syncs. ISRC and catalog equivalents are review evidence,
+not automatic merge keys. Titles/artists never establish identity. Opaque
+PlayParameters decoding remains only a fallback for records without documented
+identity. A documented empty catalog relationship preserves library-only content.
+
+Lookups run during sync or an explicit scan, never in view rendering or playback
+controls. Requests contain at most 25 IDs. A bounded memory cache keeps unique
+successes for seven days and negative/ambiguous results for one hour. Restart,
+account fingerprint changes, or storefront changes invalidate cached results;
+request failures are not stored as proof of absence. Tokens are not persisted or
+logged. MusicKit authorization and live catalog responses need device validation.
+
+Settings > Find Duplicates scans local recordings and shows apparent duplicate
+groups, albums, identifiers, counts and collection membership. Users select the
+recordings to merge and confirm. Mixed collections require choosing One True
+Playlist, Triage, or Retired; a shared collection is retained. Canceling performs
+no merge. ISRC/equivalence can include different versions, so suggestions require
+human review.
+
+A confirmed merge revalidates identity and location, reads the latest counts,
+sums play and skip counts once, retains source attachments/keep intent and latest
+activity dates, and repoints history. Confirmed aliases prevent subsequent sync
+from recreating donor tracks. One track and one travelling statistics row remain.
+The shared playback controller updates active session, queue correlations, stored
+order and published metadata without manufacturing a skip. Destination writes use
+the existing Apple Music mutation paths; local OTP suppression remains protective
+when remote removal fails or the playlist is incoming-only.
+
+New identity fields use optional/default values in the existing SwiftData model;
+no historical migration layer is introduced under the pre-release data policy.

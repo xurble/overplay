@@ -6,6 +6,12 @@ final class TrackRecord {
     var id: UUID = UUID()
     var catalogID: String?
     var libraryID: String?
+    var isrc: String?
+    /// Confirmed aliases survive merging and prevent sync from recreating donors.
+    var identityAliases: [String] = []
+    /// Alternatives are evidence for review, never automatic merge keys.
+    var equivalentCatalogIDs: [String] = []
+    var hasDocumentedIdentity: Bool = false
     var title: String = ""
     var artistName: String = ""
     var albumTitle: String?

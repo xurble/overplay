@@ -82,12 +82,28 @@ enum TrackIdentityMergeService {
     private static func duplicateGroups(tracks: [TrackRecord]) async -> [[TrackRecord]] {
         var unionFind = UnionFind(count: tracks.count)
         var firstIndexByMusicItemID: [String: Int] = [:]
+        var documentedCatalogsByLibrary: [String: Set<String>] = [:]
+        for track in tracks where track.hasDocumentedIdentity {
+            if let libraryID = track.libraryID {
+                documentedCatalogsByLibrary[libraryID, default: []].insert(track.catalogID ?? "")
+            }
+        }
 
         for (index, track) in tracks.enumerated() {
             if index > 0, index.isMultiple(of: yieldStride) {
                 await Task.yield()
             }
-            for musicItemID in PlaybackQueueBuilder.musicItemIDs(for: track) {
+            let identifiers = PlaybackQueueBuilder.musicItemIDs(for: track)
+            if let libraryID = track.libraryID, let documented = documentedCatalogsByLibrary[libraryID] {
+                // Reject a conflicting opaque bridge BEFORE unioning groups.
+                // Correcting fields during absorb is too late: the bridge may
+                // already have attached a genuinely unrelated catalog row.
+                let catalogHints = Set(identifiers.filter { !MusicTrackIdentity.isLibraryID($0) })
+                if documented.count > 1 || (!track.hasDocumentedIdentity && !catalogHints.isSubset(of: documented)) {
+                    continue
+                }
+            }
+            for musicItemID in identifiers {
                 if let firstIndex = firstIndexByMusicItemID[musicItemID] {
                     unionFind.union(firstIndex, index)
                 } else {
@@ -110,10 +126,20 @@ enum TrackIdentityMergeService {
         return left.id.uuidString < right.id.uuidString
     }
 
-    private static func absorb(_ duplicate: TrackRecord, into canonical: TrackRecord) {
+    static func absorb(_ duplicate: TrackRecord, into canonical: TrackRecord, confirmed: Bool = false) {
+        let documented = canonical.hasDocumentedIdentity ? canonical : duplicate.hasDocumentedIdentity ? duplicate : nil
+        let documentedCatalog = documented?.catalogID
+        let sameLibrary = canonical.libraryID != nil && canonical.libraryID == duplicate.libraryID
+        let authoritativeLibrary = !confirmed && sameLibrary && documented != nil
+        let acceptedDonorCatalog = authoritativeLibrary ? documentedCatalog : duplicate.catalogID
+        canonical.identityAliases = Array(Set(canonical.identityAliases + duplicate.identityAliases + [acceptedDonorCatalog, duplicate.libraryID].compactMap { $0 })).sorted()
+        canonical.isrc = canonical.isrc ?? duplicate.isrc
+        canonical.equivalentCatalogIDs = Array(Set(canonical.equivalentCatalogIDs + duplicate.equivalentCatalogIDs)).sorted()
+        canonical.hasDocumentedIdentity = canonical.hasDocumentedIdentity || duplicate.hasDocumentedIdentity
         canonical.catalogID = preferredIdentifier(canonical.catalogID, duplicate.catalogID) {
             !MusicTrackIdentity.isLibraryID($0)
         }
+        if authoritativeLibrary { canonical.catalogID = documentedCatalog }
         canonical.libraryID = preferredIdentifier(canonical.libraryID, duplicate.libraryID) {
             MusicTrackIdentity.isLibraryID($0)
         }
@@ -164,7 +190,7 @@ enum TrackIdentityMergeService {
         }
     }
 
-    private static func repointHistoryEvents(
+    static func repointHistoryEvents(
         from duplicate: TrackRecord,
         to canonical: TrackRecord,
         in context: ModelContext

@@ -71,6 +71,9 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
             }
             snapshots.append(snapshot(from: track, playlistID: playlistID))
         }
+        do { snapshots = try await MusicIdentityResolver.shared.enrich(snapshots) }
+        catch is CancellationError { throw CancellationError() }
+        catch { TrackMetadataDiagnostics.log("Documented identity enrichment unavailable: \(error.localizedDescription)") }
         return PlaylistSourceFetchResult(
             snapshots: snapshots,
             skippedCount: 0,
@@ -248,7 +251,8 @@ enum AppleMusicPlaylistTrackLoader {
             albumTitle: track.albumTitle,
             artworkURLTemplate: track.artwork?.url(width: 512, height: 512)?.absoluteString,
             durationSeconds: track.duration,
-            musicKitPlaybackData: try? JSONEncoder().encode(track)
+            musicKitPlaybackData: try? JSONEncoder().encode(track),
+            isrc: track.isrc
         )
     }
 }

@@ -4,6 +4,12 @@ struct TrackSnapshot: Identifiable, Hashable, Sendable {
     var id: String
     var catalogID: String?
     var libraryID: String?
+    var isrc: String?
+    /// Confirmed aliases survive merging and prevent sync from recreating donors.
+    var identityAliases: [String] = []
+    /// Alternatives are evidence for review, never automatic merge keys.
+    var equivalentCatalogIDs: [String] = []
+    var hasDocumentedIdentity: Bool = false
     var playlistEntryID: String?
     var playlistID: String?
     var title: String
@@ -24,8 +30,10 @@ struct TrackSnapshot: Identifiable, Hashable, Sendable {
         albumTitle: String?,
         artworkURLTemplate: String?,
         durationSeconds: Double?,
-        musicKitPlaybackData: Data? = nil
+        musicKitPlaybackData: Data? = nil,
+        isrc: String? = nil
     ) {
+        self.isrc = isrc
         self.id = id
         self.catalogID = catalogID
         self.libraryID = libraryID

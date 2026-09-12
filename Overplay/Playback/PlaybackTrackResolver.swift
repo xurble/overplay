@@ -178,7 +178,8 @@ enum PlaybackTrackResolver {
             albumTitle: track.albumTitle,
             artworkURLTemplate: track.artwork?.url(width: 512, height: 512)?.absoluteString,
             durationSeconds: track.duration,
-            musicKitPlaybackData: try? JSONEncoder().encode(track)
+            musicKitPlaybackData: try? JSONEncoder().encode(track),
+            isrc: track.isrc
         )
     }
 
@@ -198,7 +199,8 @@ enum PlaybackTrackResolver {
                 artistName: song.artistName,
                 albumTitle: song.albumTitle,
                 artworkURLTemplate: song.artwork?.url(width: 512, height: 512)?.absoluteString,
-                durationSeconds: song.duration
+                durationSeconds: song.duration,
+                isrc: song.isrc
             )
         case let .musicVideo(musicVideo):
             let identity = MusicTrackIdentity.ids(

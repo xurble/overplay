@@ -1317,6 +1317,78 @@ final class PlaybackController {
         return true
     }
 
+    /// All duplicate-review surfaces commit through the shared controller so
+    /// the active session and every queue correlation follow the surviving row.
+    func mergeDuplicateTracks(
+        _ selected: [DuplicateTrackService.Candidate],
+        destination: DuplicateTrackService.Destination?,
+        context: ModelContext
+    ) async throws -> String {
+        let target = try DuplicateTrackService.validate(selected, destination: destination, in: context)
+        if target == .otp, !selected.contains(where: { $0.destination == .otp }) {
+            try await DuplicateTrackService.prepareOTPMembership(selected, in: context)
+        }
+        _ = try DuplicateTrackService.validate(selected, destination: target, in: context)
+        if let currentPlaylistItem, selected.contains(where: { $0.itemID == currentPlaylistItem.id }) {
+            settleSessionBeforeMoving(currentPlaylistItem, context: context)
+        }
+        let previousCurrentID = currentPlaylistItem?.trackID
+        let result = try DuplicateTrackService.merge(selected, destination: target, in: context)
+        applyDuplicateMerge(result, previousCurrentID: previousCurrentID, context: context)
+        var message = "Merged tracks. Play and skip counts were added together."
+        if let otp = result.previousOTP, !result.remoteRemovalIDs.isEmpty {
+            if !otp.allowsRemoteWrites { return message + " The playlist is incoming only; Apple Music was unchanged." }
+            let itemID = result.itemID
+            let locationDate = (try PlaylistItemRepository.item(id: itemID, in: context))?.locationChangedAt
+            do {
+                for musicID in result.remoteRemovalIDs {
+                    _ = try await PlaylistSyncService().removeTrackFromPlaylist(
+                        trackID: musicID, playlistID: otp.musicPlaylistID, isCurrent: {
+                            let fresh = ModelContext(context.container)
+                            guard let item = try? PlaylistItemRepository.item(id: itemID, in: fresh),
+                                  let liveOTP = try? PlaylistRepository.playlist(id: otp.id, in: fresh),
+                                  liveOTP.role == .oneTruePlaylist, liveOTP.allowsRemoteWrites else { return false }
+                            return item.locationChangedAt == locationDate && item.suppressedOTPMusicPlaylistIDs.contains(otp.musicPlaylistID)
+                        })
+                }
+            } catch { message += " Apple Music removal failed: \(error.localizedDescription)" }
+        }
+        return message
+    }
+
+    func applyDuplicateMerge(_ result: DuplicateTrackService.Result, previousCurrentID: UUID?, context: ModelContext) {
+        if let previousCurrentID, previousCurrentID == result.trackID || result.mapping[previousCurrentID.uuidString] != nil {
+            currentPlaylistItem = try? PlaylistItemRepository.item(id: result.itemID, in: context)
+        }
+        if let id = activeSession?.localTrackID, let replacement = result.mapping[id] { activeSession?.localTrackID = replacement }
+        for index in activeQueueEntries.indices {
+            if let replacement = result.mapping[activeQueueEntries[index].localTrackID] {
+                activeQueueEntries[index].localTrackID = replacement
+                activeQueueEntries[index].playlistItemID = result.itemID
+            }
+        }
+        // Keep the actual current entry; drop additional future occurrences of
+        // the merged recording without rebuilding or restarting MusicKit.
+        let currentEntryID = player.currentEntry?.id
+        var seen = Set<String>()
+        if let current = activeQueueEntries.first(where: { $0.queueEntryID == currentEntryID }) { seen.insert(current.localTrackID) }
+        let duplicateEntryIDs = Set(activeQueueEntries.compactMap { entry -> String? in
+            guard entry.queueEntryID != currentEntryID else { return nil }
+            return seen.insert(entry.localTrackID).inserted ? nil : entry.queueEntryID
+        })
+        if !duplicateEntryIDs.isEmpty {
+            player.removeQueueEntries(withIDs: duplicateEntryIDs)
+            activeQueueEntries.removeAll { duplicateEntryIDs.contains($0.queueEntryID) }
+        }
+        activeQueueIndex = activeQueueEntries.firstIndex { $0.queueEntryID == currentEntryID }
+        appendedUncorrelatedEntries.removeAll { result.mapping[$0.localTrackID] != nil }
+        reconcileTrackMembership(context: context)
+        if let item = currentPlaylistItem, let id = currentTrack?.id {
+            syncPlaybackMetadata(for: id, trustedPlaylistItem: item, context: context)
+        }
+        rebuildActivePlaylistSnapshot(context: context)
+    }
+
     func resetAllLocalStats(context: ModelContext) throws {
         try PlaylistItemRepository.resetAllStats(in: context)
         refreshCurrentPlaybackMetadata(context: context)

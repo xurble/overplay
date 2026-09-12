@@ -68,9 +68,9 @@ enum PlaybackQueueBuilder {
     }
 
     static func musicItemIDs(for track: TrackRecord) -> [String] {
-        var ids = [track.catalogID, track.libraryID].compactMap { $0 }
+        var ids = Array(Set([track.catalogID, track.libraryID].compactMap { $0 } + track.identityAliases))
 
-        if let playbackData = track.musicKitPlaybackData,
+        if !track.hasDocumentedIdentity, let playbackData = track.musicKitPlaybackData,
            let musicTrack = try? JSONDecoder().decode(Track.self, from: playbackData) {
             let identity = MusicTrackIdentity.ids(for: musicTrack)
             for candidate in [musicTrack.id.rawValue, identity.catalogID, identity.libraryID].compactMap({ $0 })
