@@ -121,6 +121,16 @@ enum DuplicateTrackService {
     static func validate(_ selected: [Candidate], destination: Destination?, in context: ModelContext) throws -> Destination {
         guard Set(selected.map(\.id)).count == selected.count, selected.count >= 2,
               groups(selected).count == 1, groups(selected).first?.candidates.count == selected.count else { throw MergeError.selection }
+        // CloudKit cannot enforce a unique statistics row. A row arriving
+        // after review must not be hidden by the dictionary below and orphaned
+        // when its track is deleted. Include all owners, even inactive sources.
+        let itemsByTrack = Dictionary(grouping: try PlaylistItemRepository.items(
+            forTrackIDs: selected.map(\.id), in: context
+        ), by: \.trackID)
+        guard selected.allSatisfy({ candidate in
+            let items = itemsByTrack[candidate.id] ?? []
+            return items.count == 1 && items.first?.id == candidate.itemID
+        }) else { throw MergeError.stale }
         let live = try candidates(in: context).firstValueDictionary(keyedBy: \.id)
         guard selected.allSatisfy({ old in live[old.id].map { old.stillMatches($0) } == true }) else { throw MergeError.stale }
         let destinations = Set(selected.map(\.destination))

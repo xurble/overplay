@@ -180,4 +180,33 @@ struct DuplicateTrackServiceTests {
         #expect(try DuplicateTrackService.candidates(in: context).allSatisfy { $0.destination == .triage })
     }
 
+    @Test(arguments: [false, true])
+    func newlyArrivedStatisticsRowRejectsMergeWithoutLosingCounts(hiddenOwner: Bool) throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let selected = try fixture(context)
+        let donor = selected[1]
+        let incomingContext = ModelContext(container)
+        let playlistID: UUID
+        if hiddenOwner {
+            let source = PlaylistRecord(musicPlaylistID: "inactive-source", name: "Source", role: .triageSource, isActive: false)
+            incomingContext.insert(source)
+            playlistID = source.id
+        } else { playlistID = donor.playlistID }
+        let incoming = PlaylistItemRecord(playlistID: playlistID, trackID: donor.id,
+            skipCount: 11, playthroughCount: 13, createdAt: .now.addingTimeInterval(1))
+        incomingContext.insert(incoming)
+        try incomingContext.save()
+
+        #expect(throws: DuplicateTrackService.MergeError.self) {
+            try DuplicateTrackService.merge(selected, destination: nil, in: context)
+        }
+        let persisted = ModelContext(container)
+        #expect(try TrackRecordRepository.allTracks(in: persisted).count == 2)
+        let items = try PlaylistItemRepository.allItems(in: persisted)
+        #expect(items.count == 3)
+        #expect(items.reduce(0) { $0 + $1.skipCount } == 14)
+        #expect(items.reduce(0) { $0 + $1.playthroughCount } == 19)
+        #expect(items.allSatisfy { item in selected.contains { $0.id == item.trackID } })
+    }
 }
