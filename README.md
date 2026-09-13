@@ -51,7 +51,15 @@ Playback uses MusicKit's application music player with a shared playback
 controller behind every surface: the in-app Now Playing UI and mini player,
 CarPlay, Lock Screen, Control Center, and headset/remote commands. All
 surfaces route through the same controller, queue policies, and
-skip/playthrough evaluation while Overplay is able to observe them. If iOS
+skip/playthrough evaluation while Overplay is able to observe them. MusicKit
+queue and player-state invalidations trigger shared reconciliation after the
+published values are readable. Bursts coalesce, queue observation follows queue
+replacement, and observation remains active when the sampling timer goes idle.
+The one-second timer remains for elapsed-time evidence, stall/hydration timing,
+and missed-event recovery while active. Existing MusicKit diagnostics distinguish
+event, timer, and explicit reconciliation, and record discrete changes first
+noticed by the timer. [Issue #48](https://github.com/xurble/overplay/issues/48)
+tracks the device-evidence review before reducing polling. If iOS
 suspends Overplay while the out-of-process MusicKit player continues, skips are
 never reconstructed from the unwitnessed interval; playthroughs are recovered
 only when persisted observations or MusicKit library evidence prove them.

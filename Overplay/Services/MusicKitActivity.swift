@@ -55,6 +55,16 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     /// A shuffle or repeat change Overplay noticed rather than made — the only
     /// evidence that another surface touched the modes.
     case playerModeObserved
+    case playbackQueueInvalidation
+    case playbackStateInvalidation
+    case playbackQueueObservationRebound
+    case playbackObservationCoalesced
+    case playbackEventReconciliation
+    case playbackPeriodicReconciliation
+    case playbackExplicitReconciliation
+    case playbackReconciliationDeferred
+    case playbackPeriodicStateChange
+
 
     // System media surfaces.
     case nowPlayingInfoWrite
@@ -107,7 +117,10 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case .artworkDownload:
             .asset
         case .queueCorrelationCleared, .queueCorrelationRebuilt, .deliveryStallDetected,
-             .queueEndObserved, .playerModeObserved:
+             .queueEndObserved, .playerModeObserved,
+             .playbackQueueInvalidation, .playbackStateInvalidation, .playbackQueueObservationRebound,
+             .playbackObservationCoalesced, .playbackEventReconciliation, .playbackPeriodicReconciliation,
+             .playbackExplicitReconciliation, .playbackReconciliationDeferred, .playbackPeriodicStateChange:
             .playbackDecision
         }
     }
@@ -128,6 +141,16 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case .deliveryStallDetected: "Delivery stall detected"
         case .queueEndObserved: "Queue end observed"
         case .playerModeObserved: "Playback mode changed elsewhere"
+        case .playbackQueueInvalidation: "Player queue invalidation"
+        case .playbackStateInvalidation: "Player state invalidation"
+        case .playbackQueueObservationRebound: "Player queue observation rebound"
+        case .playbackObservationCoalesced: "Player invalidation coalesced"
+        case .playbackEventReconciliation: "Playback reconciliation (event)"
+        case .playbackPeriodicReconciliation: "Playback reconciliation (timer)"
+        case .playbackExplicitReconciliation: "Playback reconciliation (explicit)"
+        case .playbackReconciliationDeferred: "Playback reconciliation deferred"
+        case .playbackPeriodicStateChange: "Timer discovered playback state change"
+
         case .libraryPlaylistCreate: "Playlist create"
         case .libraryPlaylistEdit: "Playlist rewrite"
         case .libraryPlaylistAddItem: "Playlist add item"
@@ -156,7 +179,10 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     var isHighFrequency: Bool {
         switch self {
         case .nowPlayingInfoWrite, .nowPlayingInfoWriteWhilePaused, .nowPlayingInfoClear,
-             .playerModeReset, .playerModeResetSkipped, .artworkDownload:
+             .playerModeReset, .playerModeResetSkipped, .artworkDownload,
+             .playbackQueueInvalidation, .playbackStateInvalidation, .playbackObservationCoalesced,
+             .playbackEventReconciliation, .playbackPeriodicReconciliation,
+             .playbackExplicitReconciliation, .playbackReconciliationDeferred:
             true
         default:
             false

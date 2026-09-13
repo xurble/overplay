@@ -66,10 +66,8 @@ final class PlaybackController {
     private(set) var isPlaybackTransitionInFlight = false
     /// Whether the shared player is holding a queue entry.
     ///
-    /// Mirrored into observable state deliberately: `MusicPlayer.Queue` is
-    /// not observable, and the entry-level correlation below is
-    /// `@ObservationIgnored`, so without this a SwiftUI control or a
-    /// remote-command sync could not see track navigation become available.
+    /// Mirrored into the shared observable state so SwiftUI and remote-command
+    /// adapters see the same reconciled queue availability.
     private(set) var hasLivePlayerEntry = false
     private(set) var playbackItemMetadataVersion = 0
     private(set) var playbackModeVersion = 0
@@ -77,6 +75,22 @@ final class PlaybackController {
     @ObservationIgnored private let player: any PlaybackPlayer
     @ObservationIgnored private let transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy
     @ObservationIgnored private let sleepForTransitionConfirmation: @MainActor (Duration) async -> Void
+    private enum RefreshTrigger: Hashable {
+        case periodic, explicit, event
+
+        var operation: MusicKitActivityOperation {
+            switch self {
+            case .periodic: .playbackPeriodicReconciliation
+            case .explicit: .playbackExplicitReconciliation
+            case .event: .playbackEventReconciliation
+            }
+        }
+    }
+
+    @ObservationIgnored private var observationGeneration = 0
+    @ObservationIgnored private var isObservingPlayer = false
+    @ObservationIgnored private var deferredObservationContext: ModelContext?
+    @ObservationIgnored private var lastReconciledPlayerSignature: String?
     @ObservationIgnored private var monitorTask: Task<Void, Never>?
     @ObservationIgnored private var warmUpTask: Task<Void, Never>?
     @ObservationIgnored private let retentionLease = TrackRetentionPolicy.makePlaybackLease()
@@ -110,8 +124,8 @@ final class PlaybackController {
     /// True once a queue end has been handled, so the state — which stays true
     /// every tick until something changes it — cannot be handled again.
     @ObservationIgnored private var didHandleQueueEnd = false
-    /// The modes as last seen. `MusicPlayer.State` is not observable, so the
-    /// only way another surface's change reaches Overplay is by comparing.
+    /// The modes as last reconciled. Player invalidations and timed fallback
+    /// both reread MusicKit and compare against this shared state.
     @ObservationIgnored private var lastObservedShuffleMode: MusicPlayer.ShuffleMode?
     @ObservationIgnored private var lastObservedRepeatMode: MusicPlayer.RepeatMode?
     /// Raw optionals are tracked separately because MusicKit can report nil.
@@ -338,14 +352,33 @@ final class PlaybackController {
         )
     }
 
+    private func startObservingPlayer(context: ModelContext) {
+        guard !isObservingPlayer else { return }
+        isObservingPlayer = true
+        let generation = observationGeneration
+        player.startObservingChanges { [weak self] changes in
+            guard let self, self.isObservingPlayer, self.observationGeneration == generation else { return }
+            await self.refresh(context: context, trigger: .event, detail: changes.map(\.rawValue).sorted().joined(separator: ","))
+            // Observation stays installed when the timer goes idle. An external
+            // resume must restore elapsed-time sampling too.
+            if self.isObservingPlayer, self.observationGeneration == generation,
+               self.player.playbackStatus == .playing {
+                self.startMonitoring(context: context)
+            }
+        }
+    }
+
     func startMonitoring(context: ModelContext) {
+        startObservingPlayer(context: context)
         guard monitorTask == nil else { return }
         monitorIdleSince = nil
         monitorTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                await self?.refresh(context: context)
-                if await self?.suspendMonitoringIfIdle() != false {
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                guard !Task.isCancelled else { return }
+                await self?.refresh(context: context, trigger: .periodic)
+                guard !Task.isCancelled else { return }
+                if self?.suspendMonitoringIfIdle() != false {
                     return
                 }
             }
@@ -356,24 +389,42 @@ final class PlaybackController {
     /// by the active monitor. Background/system adapters and deterministic
     /// tests can use this without inventing a surface-specific state update.
     func reconcilePlayerState(context: ModelContext) async {
+        startObservingPlayer(context: context)
         await refresh(context: context)
+    }
+
+    var isMonitoringPlayback: Bool { monitorTask != nil }
+
+    /// Explicit teardown; idle suspension only stops the timer.
+    func stopMonitoring() {
+        monitorTask?.cancel()
+        monitorTask = nil
+        monitorIdleSince = nil
+        isObservingPlayer = false
+        observationGeneration += 1
+        // Veto recovery already suspended in prepareToPlay when observation
+        // is torn down. Cancellation alone cannot retract a MusicKit await.
+        deliveryInterruptionGeneration += 1
+        deferredObservationContext = nil
+        player.stopObservingChanges()
     }
 
     /// Ticking while playback has been paused/stopped for a long time is
     /// pure waste — each tick runs SwiftData fetches on the main actor.
     /// Every play path calls startMonitoring, which resumes the loop.
-    private func suspendMonitoringIfIdle() -> Bool {
+    func suspendMonitoringIfIdle(now: Date = .now) -> Bool {
         monitorIdleSince = PlaybackMonitorIdlePolicy.updatedIdleStart(
             current: monitorIdleSince,
             isPlaying: isPlaying,
             isDeliveryStalled: isDeliveryStalled,
-            now: .now
+            now: now
         )
-        guard PlaybackMonitorIdlePolicy.shouldSuspend(idleSince: monitorIdleSince, now: .now) else {
+        guard PlaybackMonitorIdlePolicy.shouldSuspend(idleSince: monitorIdleSince, now: now) else {
             return false
         }
 
         TrackMetadataDiagnostics.log("playback monitor suspended after idle timeout")
+        monitorTask?.cancel()
         monitorTask = nil
         monitorIdleSince = nil
         return true
@@ -738,6 +789,14 @@ final class PlaybackController {
         defer {
             isPerformingTransition = false
             isPlaybackTransitionInFlight = false
+            if let context = deferredObservationContext {
+                deferredObservationContext = nil
+                let generation = observationGeneration
+                Task { [weak self] in
+                    guard let self, self.isObservingPlayer, self.observationGeneration == generation else { return }
+                    await self.refresh(context: context, trigger: .event, detail: "after transition")
+                }
+            }
         }
 
         do {
@@ -1514,14 +1573,62 @@ final class PlaybackController {
         }
     }
 
-    private func refresh(context: ModelContext) async {
+    private func refresh(
+        context: ModelContext,
+        trigger: RefreshTrigger = .explicit,
+        detail: String? = nil
+    ) async {
+        MusicKitActivityLog.shared.record(trigger.operation, detail: detail)
+        player.refreshObservationBindings()
+        // Interruption is an immediate veto on an awaited delivery recovery.
+        // Handle this even when a transition defers the event's snapshot: the
+        // player may report playing again by the time preparation returns.
+        if player.playbackStatus == .interrupted {
+            deliveryInterruptionGeneration += 1
+            deliveryStallState = PlaybackDeliveryStallPolicy.State()
+            clearDeliveryFailure(refillRecoveryBudget: false)
+        }
+        if trigger == .event, isPerformingTransition {
+            // The command owns outgoing-session accounting until confirmation.
+            // Reread immediately afterward even if MusicKit sends no more events.
+            deferredObservationContext = context
+            MusicKitActivityLog.shared.record(.playbackReconciliationDeferred, detail: "transition")
+            return
+        }
+        let signature = "entry=\(player.currentEntry?.id ?? "nil") status=\(player.playbackStatus) shuffle=\(String(describing: player.reportedShuffleMode)) repeat=\(String(describing: player.reportedRepeatMode))"
+        if trigger == .periodic, let previous = lastReconciledPlayerSignature, previous != signature {
+            MusicKitActivityLog.shared.record(.playbackPeriodicStateChange, detail: "\(previous) -> \(signature)")
+        }
+        lastReconciledPlayerSignature = signature
+        let advancesTimedPolicies = trigger != .event
+        // Identity, accounting, and metadata reconcile without suspension on
+        // the main actor. Explicit commands rely on this before capturing their
+        // outgoing session and after confirming a transition. Never defer those
+        // reads merely because an earlier recovery is awaiting MusicKit.
+        guard let tick = refreshPlayerSnapshot(context: context, advancesTimedPolicies: advancesTimedPolicies) else {
+            return
+        }
+        // Only recovery can suspend. Its own in-flight guard prevents duplicate
+        // recovery attempts while other callers reconcile newer player state.
+        await trackDeliveryHealth(
+            status: tick.playbackStatus,
+            hasCurrentEntry: tick.hasCurrentEntry,
+            playbackTime: tick.playbackTime,
+            advancesTimedPolicies: advancesTimedPolicies
+        )
+    }
+
+    private func refreshPlayerSnapshot(
+        context: ModelContext,
+        advancesTimedPolicies: Bool
+    ) -> PlaybackDeliveryStallPolicy.Tick? {
         // A user transition is mid-flight: reconciling identity now would
         // race the pending skip. Track time and play state only.
         if isPerformingTransition {
             elapsedSeconds = player.playbackTime
             isPlaying = player.playbackStatus == .playing
             publishNowPlayingMetadata(isPlaying: isPlaying)
-            return
+            return nil
         }
 
         let oldTrackID = activeSession?.trackID
@@ -1539,10 +1646,13 @@ final class PlaybackController {
         // MusicKit can report an entry before its item is available. Hold the
         // current belief while it hydrates instead of tearing playback state
         // down on one observation.
-        unresolvedEntryState = PlaybackUnresolvedEntryPolicy.assess(
-            unresolvedEntryState,
-            hasUnresolvedConcreteEntry: hasUnresolvedConcretePlayerEntry && !isAwaitingOwnQueueHydration
-        )
+        let isUnresolved = hasUnresolvedConcretePlayerEntry && !isAwaitingOwnQueueHydration
+        if advancesTimedPolicies || !isUnresolved {
+            unresolvedEntryState = PlaybackUnresolvedEntryPolicy.assess(
+                unresolvedEntryState,
+                hasUnresolvedConcreteEntry: isUnresolved
+            )
+        }
         let hasDivergedUnresolvedPlayerEntry = unresolvedEntryState.hasDiverged
         let hasUncorrelatedConcretePlayerEntry = player.currentEntry != nil
             && identity?.isQueueCorrelated == false
@@ -1745,8 +1855,8 @@ final class PlaybackController {
             persistLocalPlaybackState(musicItemID: newTrackID, localTrackID: newLocalTrackID)
         }
 
-        await trackDeliveryHealth(
-            status: player.playbackStatus,
+        return PlaybackDeliveryStallPolicy.Tick(
+            playbackStatus: player.playbackStatus,
             hasCurrentEntry: player.currentEntry != nil,
             playbackTime: currentPlaybackTime
         )
@@ -2588,9 +2698,9 @@ final class PlaybackController {
         }
     }
 
-    /// MusicKit owns shuffle and repeat, and `MusicPlayer.State` is not
-    /// observable, so a change made from the Lock Screen, Control Center,
-    /// Siri or the Music app reaches Overplay only by being noticed here.
+    /// MusicKit owns shuffle and repeat. Event-driven and periodic observations
+    /// both compare its current modes here, so changes from the Lock Screen,
+    /// Control Center, Siri or the Music app reach every shared surface.
     /// Without this, `PLAY-004` holds only for changes Overplay made itself.
     private func observePlaybackModeChanges() {
         let reportedShuffle = player.reportedShuffleMode
@@ -2943,15 +3053,13 @@ final class PlaybackController {
     private func trackDeliveryHealth(
         status: MusicPlayer.PlaybackStatus,
         hasCurrentEntry: Bool,
-        playbackTime: Double
+        playbackTime: Double,
+        advancesTimedPolicies: Bool
     ) async {
         if status == .interrupted {
             // MusicKit and the system own both the interruption and whether
             // playback resumes afterward. Never expose it as a delivery
             // failure or let it inherit a prior stall's automatic recovery.
-            deliveryInterruptionGeneration += 1
-            deliveryStallState = PlaybackDeliveryStallPolicy.State()
-            clearDeliveryFailure(refillRecoveryBudget: false)
             return
         }
 
@@ -2960,6 +3068,12 @@ final class PlaybackController {
             return
         }
 
+        // Invalidation bursts are not elapsed seconds. Still clear old stall
+        // evidence promptly for pauses/stops, but only samples advance ticks.
+        if !advancesTimedPolicies {
+            if status != .playing { deliveryStallState = PlaybackDeliveryStallPolicy.State() }
+            return
+        }
         deliveryStallState = PlaybackDeliveryStallPolicy.assess(
             deliveryStallState,
             tick: PlaybackDeliveryStallPolicy.Tick(
