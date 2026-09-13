@@ -44,12 +44,12 @@ struct PlaylistSyncReconciliationTests {
     @Test("Missing MusicKit pages or relationships throw instead of proving OTP absence")
     func incompleteSnapshotsCannotReleaseSuppression() async throws {
         await #expect(throws: PlaylistSyncError.self) {
-            _ = try await AppleMusicPlaylistTrackLoader.collectCompleteTracks(firstBatch: nil, hasNextBatch: false) { nil }
+            _ = try await AppleMusicPlaylistTrackLoader.collectCompleteEntries(firstBatch: Optional<[String]>.none, hasNextBatch: false, identity: { $0 }) { nil }
         }
         await #expect(throws: PlaylistSyncError.self) {
-            _ = try await AppleMusicPlaylistTrackLoader.collectCompleteTracks(firstBatch: [], hasNextBatch: true) { nil }
+            _ = try await AppleMusicPlaylistTrackLoader.collectCompleteEntries(firstBatch: [String](), hasNextBatch: true, identity: { $0 }) { nil }
         }
-        let completeEmpty = try await AppleMusicPlaylistTrackLoader.collectCompleteTracks(firstBatch: [], hasNextBatch: false) { nil }
+        let completeEmpty = try await AppleMusicPlaylistTrackLoader.collectCompleteEntries(firstBatch: [String](), hasNextBatch: false, identity: { $0 }) { nil }
         #expect(completeEmpty.isEmpty)
     }
 

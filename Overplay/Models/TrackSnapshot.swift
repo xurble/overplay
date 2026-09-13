@@ -11,6 +11,9 @@ struct TrackSnapshot: Identifiable, Hashable, Sendable {
     var equivalentCatalogIDs: [String] = []
     var hasDocumentedIdentity: Bool = false
     var playlistEntryID: String?
+    var remotePosition: Int?
+    var entryPlayCount: Int?
+    var entryLastPlayedDate: Date?
     var playlistID: String?
     var title: String
     var artistName: String

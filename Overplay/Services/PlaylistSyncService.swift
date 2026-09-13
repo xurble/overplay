@@ -207,6 +207,7 @@ struct PlaylistSyncService {
         summary.skippedCount += fetchResult.skippedCount
         summary.skippedReason = fetchResult.skippedReason
         playlistRecord.remoteLastModifiedAt = fetchResult.remoteLastModifiedAt
+        if fetchResult.didFetchEntries { playlistRecord.hasSyncedPlaylistEntries = true }
         try context.save()
         if runIdentityMerge {
             try await TrackIdentityMergeService.mergeDuplicates(in: context)
@@ -362,7 +363,7 @@ struct PlaylistSyncService {
             writePolicy: .managed,
             in: context
         )
-        let snapshots = sourceTracks.map { snapshot(from: $0, playlistID: record.musicPlaylistID) }
+        let snapshots = AppleMusicPlaylistTrackLoader.songSnapshots(from: sourceTracks, playlistID: record.musicPlaylistID)
         let summary = try await reconcile(
             snapshots: snapshots,
             playlistRecord: record,
@@ -396,6 +397,8 @@ struct PlaylistSyncService {
         var summary = PlaylistSyncSummary(fetchedCount: snapshots.count)
         let reconciliationLinkDate = playlistRecord.triageLinkedAt
         var seenRemoteTrackKeys = Set<String>()
+        let snapshotsByRemoteKey = Dictionary(grouping: snapshots) { $0.catalogID ?? $0.libraryID ?? $0.id }
+        var observationsByTrackID: [UUID: [PlaylistEntryProvenance]] = [:]
         // A contributing playlist keeps its own sync bookkeeping but does not
         // own items: everything it contributes lands in the shared bucket, so
         // the same track arriving from two playlists is one row.
@@ -503,6 +506,12 @@ struct PlaylistSyncService {
                     in: context
                 )
 
+                observationsByTrackID[trackResult.record.id, default: []].append(contentsOf:
+                    (snapshotsByRemoteKey[remoteTrackKey] ?? []).map {
+                        PlaylistEntryProvenance(snapshot: $0, playlistID: playlistRecord.musicPlaylistID, observedAt: syncedAt)
+                    }
+                )
+
                 let previousLocation = itemResult.record.playlistID
                 let previousRetiredAt = itemResult.record.evictedAt
                 let previousSources = itemResult.record.sourceMusicPlaylistIDs
@@ -558,6 +567,16 @@ struct PlaylistSyncService {
                 )
                 throw error
             }
+        }
+
+        // Replace only this source's occurrence observations, after the full
+        // reconcile succeeds. Historical source attachments and travelling
+        // statistics are independent of current remote occurrence membership.
+        for item in try PlaylistItemRepository.allItems(in: context) {
+            let otherSources = item.entryProvenance.filter { $0.playlistID != playlistRecord.musicPlaylistID }
+            let observations = observationsByTrackID[item.trackID] ?? []
+            let updated = PlaylistEntryProvenance.merging(otherSources + observations)
+            if updated != item.entryProvenance { item.entryProvenance = updated }
         }
 
         // Only a complete snapshot can release stale remote-membership
@@ -847,10 +866,6 @@ struct PlaylistSyncService {
 
     private func loadTracks(for playlist: Playlist) async throws -> [Track] {
         try await AppleMusicPlaylistTrackLoader.loadTracks(for: playlist)
-    }
-
-    private func snapshot(from track: Track, playlistID: String) -> TrackSnapshot {
-        AppleMusicPlaylistTrackLoader.snapshot(from: track, playlistID: playlistID)
     }
 
     private func warmUpArtworkThemes(for snapshots: [TrackSnapshot]) {

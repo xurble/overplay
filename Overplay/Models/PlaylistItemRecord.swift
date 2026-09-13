@@ -7,6 +7,12 @@ final class PlaylistItemRecord {
     var playlistID: UUID = UUID()
     var trackID: UUID = UUID()
     var musicPlaylistEntryID: String?
+    var entryProvenanceData: Data?
+
+    var entryProvenance: [PlaylistEntryProvenance] {
+        get { entryProvenanceData.flatMap { try? JSONDecoder().decode([PlaylistEntryProvenance].self, from: $0) } ?? [] }
+        set { entryProvenanceData = try? JSONEncoder().encode(newValue) }
+    }
     /// All linked playlists that contributed this track, independent of location.
     var sourceMusicPlaylistIDs: [String] = []
     var isExplicitlyKept: Bool = false
@@ -111,7 +117,9 @@ final class PlaylistItemRecord {
     /// changed.
     @discardableResult
     func removeSourceMusicPlaylistID(_ musicPlaylistID: String) -> Bool {
-        guard sourceMusicPlaylistIDs.contains(musicPlaylistID) else { return false }
+        guard sourceMusicPlaylistIDs.contains(musicPlaylistID)
+            || entryProvenance.contains(where: { $0.playlistID == musicPlaylistID }) else { return false }
+        entryProvenance.removeAll { $0.playlistID == musicPlaylistID }
         sourceMusicPlaylistIDs.removeAll { $0 == musicPlaylistID }
         return true
     }
@@ -121,7 +129,13 @@ final class PlaylistItemRecord {
     /// recorded by a previous sync.
     @discardableResult
     func replaceSourceMusicPlaylistID(from oldID: String, to newID: String) -> Bool {
-        guard oldID != newID, sourceMusicPlaylistIDs.contains(oldID) else { return false }
+        guard oldID != newID, sourceMusicPlaylistIDs.contains(oldID)
+            || entryProvenance.contains(where: { $0.playlistID == oldID }) else { return false }
+        entryProvenance = PlaylistEntryProvenance.merging(entryProvenance.map { observation in
+            var observation = observation
+            if observation.playlistID == oldID { observation.playlistID = newID }
+            return observation
+        })
 
         var replacedIDs: [String] = []
         for sourceID in sourceMusicPlaylistIDs {

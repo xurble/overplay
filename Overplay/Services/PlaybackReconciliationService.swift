@@ -344,7 +344,8 @@ enum PlaybackReconciliationService {
             guard !musicItemIDs.isEmpty else { return nil }
             return MusicLibraryPlaybackCandidate(
                 localTrackID: track.id.uuidString,
-                musicItemIDs: musicItemIDs
+                musicItemIDs: musicItemIDs,
+                entryObservations: (try? PlaylistItemRepository.item(trackID: track.id, in: context))?.entryProvenance ?? []
             )
         }
     }

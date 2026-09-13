@@ -13,6 +13,7 @@ struct PlaylistSourceFetchResult: Equatable, Sendable {
     /// remote playlist was unchanged, so the caller must keep the tracks it
     /// already has rather than reconciling against an empty list.
     var didFetchTracks: Bool = true
+    var didFetchEntries: Bool = false
 }
 
 protocol PlaylistSourceSyncing {

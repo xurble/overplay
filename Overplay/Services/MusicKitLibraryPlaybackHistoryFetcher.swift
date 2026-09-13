@@ -8,6 +8,8 @@ struct MusicLibraryPlaybackSnapshot: Codable, Equatable, Sendable {
     var musicItemID: String
     var playCount: Int?
     var lastPlayedDate: Date?
+    /// Nil for existing track observations. Entry counters are diagnostic only.
+    var playlistEntryEvidence: Bool? = nil
 }
 
 struct MusicLibraryPlaybackBaseline: Codable, Equatable, Sendable {
@@ -20,6 +22,8 @@ struct MusicLibraryPlaybackBaseline: Codable, Equatable, Sendable {
 struct MusicLibraryPlaybackCandidate: Equatable, Sendable {
     var localTrackID: String
     var musicItemIDs: [String]
+    /// Available to reconciliation diagnostics, never substituted for library proof.
+    var entryObservations: [PlaylistEntryProvenance] = []
 }
 
 @MainActor

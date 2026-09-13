@@ -208,6 +208,24 @@ struct PlaybackReconciliationPolicyTests {
         #expect(outcome.musicLibraryProvenLocalTrackIDs == ["a"])
     }
 
+    @Test("Entry counters cannot replace either side of credited library proof", arguments: [true, false])
+    func entryCountersAreDiagnosticOnly(entryBaseline: Bool) {
+        var baseline = waypoint(track: "a", position: 100, duration: 180)
+        baseline.musicLibrarySnapshot = musicLibrarySnapshot(playCount: 7, lastPlayedAt: start.addingTimeInterval(-500))
+        baseline.musicLibrarySnapshot?.playlistEntryEvidence = entryBaseline
+        var latest = musicLibrarySnapshot(playCount: 8, lastPlayedAt: start.addingTimeInterval(80))
+        latest.playlistEntryEvidence = !entryBaseline
+        let outcome = PlaybackReconciliationPolicy.reconcile(
+            waypoint: baseline,
+            observation: observation(track: "c", position: 20, duration: 120, at: start.addingTimeInterval(90)),
+            orderedTracks: order(), playthroughThresholdPercentage: threshold,
+            musicLibrarySnapshots: ["a": latest]
+        )
+        #expect(outcome.musicLibraryProvenLocalTrackIDs.isEmpty)
+        #expect(outcome.continuityProvenLocalTrackIDs.isEmpty)
+        #expect(outcome.pointProvenLocalTrackID == nil)
+    }
+
     @Test("missing stale or mismatched library metadata proves nothing")
     func missingStaleOrMismatchedLibraryMetadataProvesNothing() {
         var baseline = waypoint(track: "a", position: 100, duration: 180)
