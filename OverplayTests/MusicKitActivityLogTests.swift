@@ -5,6 +5,27 @@ import Testing
 
 @Suite("MusicKit activity log")
 struct MusicKitActivityLogTests {
+    @Test("reconciliation origins retain separate tallies without flooding the event list")
+    func reconciliationOriginsRemainVisible() {
+        let log = makeLog()
+        let frequent: [MusicKitActivityOperation] = [
+            .playbackQueueInvalidation, .playbackStateInvalidation,
+            .playbackObservationCoalesced, .playbackEventReconciliation,
+            .playbackPeriodicReconciliation, .playbackExplicitReconciliation,
+            .playbackReconciliationDeferred
+        ]
+        for operation in frequent {
+            for _ in 0..<20 { log.record(operation) }
+        }
+        log.record(.playbackPeriodicStateChange, detail: "timer caught an entry change")
+        log.record(.playbackQueueObservationRebound)
+        let snapshot = log.snapshot()
+        for operation in frequent {
+            #expect(snapshot.tallies.first { $0.operation == operation }?.count == 20)
+        }
+        #expect(snapshot.events.map(\.operation) == [.playbackPeriodicStateChange, .playbackQueueObservationRebound])
+    }
+
     // MARK: - Recording
 
     @Test("a recorded call is tallied into its own minute bucket")

@@ -8,6 +8,174 @@ import Testing
 @MainActor
 @Suite("Player-confirmed playback transitions", .serialized)
 struct PlaybackTransitionTests {
+    @Test("an event received during awaited recovery reconciles the latest entry afterward")
+    func invalidationDuringRecoveryGetsFollowUpPass() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.controller.isNetworkReachable = { true }
+        fixture.player.playbackTime = 10
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        fixture.player.onPrepareToPlay = {
+            fixture.player.advanceExternally()
+            await fixture.player.invalidate()
+        }
+        for _ in 0..<PlaybackDeliveryStallPolicy.frozenPlaybackTickThreshold {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+        #expect(fixture.controller.currentPlaylistItem?.trackID == fixture.tracks[1].id)
+        #expect(fixture.controller.nowPlayingDisplayLocalTrackID == fixture.tracks[1].id.uuidString)
+        #expect(fixture.items[0].skipCount == 1)
+        #expect(try fixture.history().count == 1)
+    }
+
+    @Test("an observed transient interruption vetoes a suspended recovery")
+    func observedInterruptionDuringRecoveryPreventsPlay() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.controller.isNetworkReachable = { true }
+        fixture.player.playbackTime = 10
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        let plays = fixture.player.playCallCount
+        fixture.player.onPrepareToPlay = {
+            fixture.player.playbackStatus = .interrupted
+            await fixture.player.invalidate([.state])
+            fixture.player.playbackStatus = .playing
+        }
+        for _ in 0..<PlaybackDeliveryStallPolicy.frozenPlaybackTickThreshold {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+        #expect(fixture.player.playCallCount == plays)
+        #expect(!fixture.controller.isDeliveryStalled)
+        #expect(fixture.controller.isPlaying)
+    }
+
+    @Test("event bursts preserve the unresolved-entry sampling grace period")
+    func invalidationsDoNotConsumeHydrationGrace() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let foreign = try fixture.addPlaylist(prefix: "foreign", trackCount: 2)
+        fixture.player.reissueEntryIDs(for: foreign.musicTracks, currentIndex: 0)
+        fixture.player.withholdsCurrentEntryItem = true
+        // The other hydrated foreign entry proves this is not our own queue
+        // awaiting hydration, so the unresolved-entry grace guard is exercised.
+        for _ in 0..<20 { await fixture.player.invalidate() }
+        #expect(fixture.controller.canControlPlayback)
+        for _ in 0..<PlaybackUnresolvedEntryPolicy.unresolvedTickThreshold {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+        #expect(!fixture.controller.canControlPlayback)
+    }
+
+    @Test("observation teardown vetoes recovery suspended in player preparation")
+    func stopDuringRecoveryPreventsPlay() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.controller.isNetworkReachable = { true }
+        fixture.player.playbackTime = 10
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        let plays = fixture.player.playCallCount
+        fixture.player.onPrepareToPlay = {
+            // Queue a second reconciliation while the first awaits MusicKit,
+            // then tear down both the observer and its pending work.
+            await fixture.player.invalidate()
+            fixture.controller.stopMonitoring()
+        }
+        for _ in 0..<PlaybackDeliveryStallPolicy.frozenPlaybackTickThreshold {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+        #expect(fixture.player.playCallCount == plays)
+        #expect(!fixture.controller.isMonitoringPlayback)
+        #expect(fixture.player.observationHandler == nil)
+    }
+
+    @Test("an event during transition confirmation is reconciled without duplicate history")
+    func invalidationDuringTransition() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 15
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        fixture.player.blockNextCommand = true
+        let transition = Task {
+            await fixture.controller.next(settings: fixture.settings, context: fixture.context)
+        }
+        while fixture.player.nextCallCount == 0 { await Task.yield() }
+        fixture.player.shuffleMode = .songs
+        await fixture.player.invalidate()
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
+        #expect(try fixture.history().isEmpty)
+        fixture.player.releaseBlockedNextCommand()
+        await transition.value
+        // Wait for the deferred event pass, not the one-second monitor.
+        for _ in 0..<10 { await Task.yield() }
+        #expect(fixture.controller.currentPlaylistItem?.trackID == fixture.tracks[1].id)
+        #expect(fixture.controller.shuffleEnabled)
+        #expect(fixture.items[0].skipCount == 1)
+        #expect(try fixture.history().count == 1)
+    }
+
+    @Test("observed external advancement updates shared state and credits history once")
+    func invalidationReconcilesOnce() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 20
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        fixture.player.advanceExternally()
+        fixture.player.shuffleMode = .songs
+        fixture.player.repeatMode = .all
+        await fixture.player.invalidate()
+        #expect(fixture.controller.currentPlaylistItem?.trackID == fixture.tracks[1].id)
+        #expect(fixture.controller.nowPlayingDisplayLocalTrackID == fixture.tracks[1].id.uuidString)
+        #expect(fixture.controller.isPlaying)
+        #expect(fixture.controller.shuffleEnabled)
+        #expect(fixture.controller.repeatMode == .all)
+        let historyCount = try fixture.history().count
+        #expect(historyCount == 1)
+        for _ in 0..<10 { await fixture.player.invalidate() }
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(try fixture.history().count == historyCount)
+    }
+
+    @Test("notification bursts do not accelerate frozen-position stall detection")
+    func invalidationsDoNotCountAsSeconds() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 20
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        let plays = fixture.player.playCallCount
+        for _ in 0..<20 { await fixture.player.invalidate() }
+        #expect(!fixture.controller.isDeliveryStalled)
+        #expect(fixture.player.playCallCount == plays)
+    }
+
+    @Test("external resume restarts an idle timer and observation teardown cancels updates")
+    func observationSurvivesIdle() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.pause()
+        await fixture.player.invalidate([.state])
+        let now = Date.now
+        #expect(!fixture.controller.suspendMonitoringIfIdle(now: now))
+        #expect(fixture.controller.suspendMonitoringIfIdle(now: now.addingTimeInterval(600)))
+        #expect(!fixture.controller.isMonitoringPlayback)
+        try await fixture.player.play()
+        await fixture.player.invalidate([.state])
+        #expect(fixture.controller.isPlaying)
+        #expect(fixture.controller.isMonitoringPlayback)
+        fixture.controller.stopMonitoring()
+        fixture.player.pause()
+        await fixture.player.invalidate([.state])
+        #expect(fixture.controller.isPlaying)
+        #expect(!fixture.controller.isMonitoringPlayback)
+    }
+
     @Test("suspended observation uses the actual incoming track duration before display catches up")
     func suspendedObservationUsesIncomingDuration() async throws {
         let fixture = try makeFixture()
@@ -1879,6 +2047,14 @@ private final class TransitionSleepProbe {
 
 @MainActor
 private final class ControllablePlaybackPlayer: PlaybackPlayer {
+    var observationHandler: (@MainActor (Set<PlaybackPlayerChange>) async -> Void)?
+    func startObservingChanges(_ handler: @escaping @MainActor (Set<PlaybackPlayerChange>) async -> Void) {
+        observationHandler = handler
+    }
+    func stopObservingChanges() { observationHandler = nil }
+    func invalidate(_ changes: Set<PlaybackPlayerChange> = [.queue, .state]) async {
+        await observationHandler?(changes)
+    }
     func removeQueueEntries(withIDs entryIDs: Set<String>) {
         entries.removeAll { entryIDs.contains($0.id) }
     }
@@ -2198,6 +2374,7 @@ private struct PlaybackTransitionFixture {
     }
 
     func cleanUp() {
+        controller.stopMonitoring()
         // The probe callback can capture this fixture and retain its controller.
         // Break that cycle so the weak monitor cannot outlive the test.
         sleepProbe.handler = nil

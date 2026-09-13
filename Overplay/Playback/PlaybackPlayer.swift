@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 @preconcurrency import MusicKit
 
@@ -22,6 +23,10 @@ protocol PlaybackPlayer: AnyObject {
     var reportedShuffleMode: MusicPlayer.ShuffleMode? { get }
     var reportedRepeatMode: MusicPlayer.RepeatMode? { get }
 
+    func startObservingChanges(_ handler: @escaping @MainActor (Set<PlaybackPlayerChange>) async -> Void)
+    func refreshObservationBindings()
+    func stopObservingChanges()
+
     func replaceQueue(with materialization: PlaybackQueueMaterialization)
     func prepareToPlay() async throws
     func play() async throws
@@ -34,6 +39,9 @@ protocol PlaybackPlayer: AnyObject {
 }
 
 extension PlaybackPlayer {
+    func startObservingChanges(_ handler: @escaping @MainActor (Set<PlaybackPlayerChange>) async -> Void) {}
+    func refreshObservationBindings() {}
+    func stopObservingChanges() {}
     var reportedShuffleMode: MusicPlayer.ShuffleMode? { shuffleMode }
     var reportedRepeatMode: MusicPlayer.RepeatMode? { repeatMode }
 }
@@ -41,6 +49,20 @@ extension PlaybackPlayer {
 @MainActor
 final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
     private let player = ApplicationMusicPlayer.shared
+    private lazy var observation = PlaybackPlayerObservation(
+        queueSource: { [player] in
+            let queue = player.queue
+            return .init(identity: queue, changes: queue.objectWillChange.eraseToAnyPublisher())
+        },
+        stateChanges: player.state.objectWillChange.eraseToAnyPublisher()
+    )
+
+    func startObservingChanges(_ handler: @escaping @MainActor (Set<PlaybackPlayerChange>) async -> Void) {
+        observation.start(handler)
+    }
+
+    func refreshObservationBindings() { observation.rebindQueueIfNeeded() }
+    func stopObservingChanges() { observation.stop() }
 
     var currentEntry: MusicPlayer.Queue.Entry? {
         player.queue.currentEntry
@@ -75,6 +97,7 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
                 materialization.queueEntries,
                 startingAt: materialization.startingEntry
             )
+            observation.rebindQueueIfNeeded()
         }
     }
 
