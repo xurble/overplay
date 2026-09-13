@@ -95,6 +95,8 @@ enum PlaybackReconciliationPolicy {
                   waypoint.countedLocalTrackID != baseline.localTrackID,
                   !provenLocalTrackIDs.contains(baseline.localTrackID),
                   let latest = latestSnapshots[baseline.localTrackID],
+                  baseline.snapshot.playlistEntryEvidence != true,
+                  latest.playlistEntryEvidence != true,
                   baseline.snapshot.musicItemID == latest.musicItemID,
                   let baselinePlayCount = baseline.snapshot.playCount,
                   let latestPlayCount = latest.playCount,

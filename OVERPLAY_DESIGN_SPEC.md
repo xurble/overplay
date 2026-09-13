@@ -361,6 +361,34 @@ managed One True Playlist. Retiring a playlist row, retiring from the triage
 playlist, or retiring from an incoming-only playlist is local-only. A failed or
 unsupported remote deletion never rolls back the local retirement.
 
+### Apple Music entry identity and completeness
+
+Linked playlist reads paginate MusicKit `Playlist.entries` before reconciling.
+Every usable song snapshot preserves the entry ID, remote position, ISRC,
+underlying song identity, and display/playback data. Remote occurrences are
+source-scoped provenance on the one global item row; duplicate occurrences do
+not create extra listening statistics or queue rows. Remote positions never
+replace Overplay's saved playback order. A successful source snapshot replaces
+that source's current occurrence observations, independently of the retained
+contributing-source attachments. Moves retain provenance; identity merges combine
+it, source-ID healing rekeys it, and explicit unlink removes it.
+
+Missing entry IDs remain missing; source/position distinguishes observations only,
+not durable playback identity. Music videos are skipped for song intake but
+retained, including their order, by playlist copies and rewrites. An unavailable
+or unsupported item fails the entire sync/copy/rewrite before any remote-absence
+inference. Missing relationships, missing or empty promised pages, repeated entry
+IDs/overlapping pages, errors, and cancellation likewise fail closed. A previously
+successful track-only sync must fetch entries once before the remote-unchanged
+shortcut applies.
+
+Entry play count and last-played date are retained with the source occurrence and
+observation time and exposed to the shared playback-history reconciliation
+boundary as diagnostic observations. They do not substitute for either side of
+library-track proof and cannot award playthroughs or skips. Reliability and entry-ID
+consistency across library/shared/catalog playlists remain physical-device checks.
+This adds optional/defaulted provenance storage without a historical data migration.
+
 ### Periodic sync
 
 After Apple Music becomes ready, automatic sync starts after a 10-second delay

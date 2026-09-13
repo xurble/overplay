@@ -318,6 +318,7 @@ enum PlaylistItemRepository {
             if donorWins { adoptEvictionState(from: duplicate, into: keeper) }
         }
 
+        keeper.entryProvenance = PlaylistEntryProvenance.merging(keeper.entryProvenance + duplicate.entryProvenance)
         keeper.skipCount += duplicate.skipCount
         keeper.playthroughCount += duplicate.playthroughCount
         keeper.isExplicitlyKept = keeper.isExplicitlyKept || duplicate.isExplicitlyKept

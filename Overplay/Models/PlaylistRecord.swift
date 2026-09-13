@@ -22,6 +22,8 @@ final class PlaylistRecord {
     /// Apple Music's reported modification date at the last successful
     /// sync. Lets an automatic cycle skip refetching an unchanged playlist.
     var remoteLastModifiedAt: Date?
+    /// Older track-only syncs need one full entry fetch even if unchanged.
+    var hasSyncedPlaylistEntries: Bool = false
     /// Explicit link intent, distinct from ordinary refresh timestamps. A later
     /// retirement must survive retries of this playlist's original import.
     var triageLinkedAt: Date?
