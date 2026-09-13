@@ -89,8 +89,6 @@ final class PlaybackController {
 
     @ObservationIgnored private var observationGeneration = 0
     @ObservationIgnored private var isObservingPlayer = false
-    @ObservationIgnored private var isRefreshingPlayer = false
-    @ObservationIgnored private var pendingRefreshTriggers: Set<RefreshTrigger> = []
     @ObservationIgnored private var deferredObservationContext: ModelContext?
     @ObservationIgnored private var lastReconciledPlayerSignature: String?
     @ObservationIgnored private var monitorTask: Task<Void, Never>?
@@ -404,7 +402,6 @@ final class PlaybackController {
         monitorIdleSince = nil
         isObservingPlayer = false
         observationGeneration += 1
-        pendingRefreshTriggers.removeAll()
         // Veto recovery already suspended in prepareToPlay when observation
         // is torn down. Cancellation alone cannot retract a MusicKit await.
         deliveryInterruptionGeneration += 1
@@ -1584,8 +1581,8 @@ final class PlaybackController {
         MusicKitActivityLog.shared.record(trigger.operation, detail: detail)
         player.refreshObservationBindings()
         // Interruption is an immediate veto on an awaited delivery recovery.
-        // Do not postpone this edge with the queued snapshot: the player may
-        // already report playing again by the time preparation returns.
+        // Handle this even when a transition defers the event's snapshot: the
+        // player may report playing again by the time preparation returns.
         if player.playbackStatus == .interrupted {
             deliveryInterruptionGeneration += 1
             deliveryStallState = PlaybackDeliveryStallPolicy.State()
@@ -1598,33 +1595,40 @@ final class PlaybackController {
             MusicKitActivityLog.shared.record(.playbackReconciliationDeferred, detail: "transition")
             return
         }
-        pendingRefreshTriggers.insert(trigger)
-        guard !isRefreshingPlayer else {
-            MusicKitActivityLog.shared.record(.playbackReconciliationDeferred, detail: "refresh in flight")
+        let signature = "entry=\(player.currentEntry?.id ?? "nil") status=\(player.playbackStatus) shuffle=\(String(describing: player.reportedShuffleMode)) repeat=\(String(describing: player.reportedRepeatMode))"
+        if trigger == .periodic, let previous = lastReconciledPlayerSignature, previous != signature {
+            MusicKitActivityLog.shared.record(.playbackPeriodicStateChange, detail: "\(previous) -> \(signature)")
+        }
+        lastReconciledPlayerSignature = signature
+        let advancesTimedPolicies = trigger != .event
+        // Identity, accounting, and metadata reconcile without suspension on
+        // the main actor. Explicit commands rely on this before capturing their
+        // outgoing session and after confirming a transition. Never defer those
+        // reads merely because an earlier recovery is awaiting MusicKit.
+        guard let tick = refreshPlayerSnapshot(context: context, advancesTimedPolicies: advancesTimedPolicies) else {
             return
         }
-        isRefreshingPlayer = true
-        defer { isRefreshingPlayer = false }
-        while !pendingRefreshTriggers.isEmpty {
-            let triggers = pendingRefreshTriggers
-            pendingRefreshTriggers.removeAll()
-            let signature = "entry=\(player.currentEntry?.id ?? "nil") status=\(player.playbackStatus) shuffle=\(String(describing: player.reportedShuffleMode)) repeat=\(String(describing: player.reportedRepeatMode))"
-            if triggers == [.periodic], let previous = lastReconciledPlayerSignature, previous != signature {
-                MusicKitActivityLog.shared.record(.playbackPeriodicStateChange, detail: "\(previous) -> \(signature)")
-            }
-            lastReconciledPlayerSignature = signature
-            await refreshPlayerSnapshot(context: context, advancesTimedPolicies: triggers != [.event])
-        }
+        // Only recovery can suspend. Its own in-flight guard prevents duplicate
+        // recovery attempts while other callers reconcile newer player state.
+        await trackDeliveryHealth(
+            status: tick.playbackStatus,
+            hasCurrentEntry: tick.hasCurrentEntry,
+            playbackTime: tick.playbackTime,
+            advancesTimedPolicies: advancesTimedPolicies
+        )
     }
 
-    private func refreshPlayerSnapshot(context: ModelContext, advancesTimedPolicies: Bool) async {
+    private func refreshPlayerSnapshot(
+        context: ModelContext,
+        advancesTimedPolicies: Bool
+    ) -> PlaybackDeliveryStallPolicy.Tick? {
         // A user transition is mid-flight: reconciling identity now would
         // race the pending skip. Track time and play state only.
         if isPerformingTransition {
             elapsedSeconds = player.playbackTime
             isPlaying = player.playbackStatus == .playing
             publishNowPlayingMetadata(isPlaying: isPlaying)
-            return
+            return nil
         }
 
         let oldTrackID = activeSession?.trackID
@@ -1851,11 +1855,10 @@ final class PlaybackController {
             persistLocalPlaybackState(musicItemID: newTrackID, localTrackID: newLocalTrackID)
         }
 
-        await trackDeliveryHealth(
-            status: player.playbackStatus,
+        return PlaybackDeliveryStallPolicy.Tick(
+            playbackStatus: player.playbackStatus,
             hasCurrentEntry: player.currentEntry != nil,
-            playbackTime: currentPlaybackTime,
-            advancesTimedPolicies: advancesTimedPolicies
+            playbackTime: currentPlaybackTime
         )
     }
 

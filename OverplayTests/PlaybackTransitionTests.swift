@@ -8,6 +8,44 @@ import Testing
 @MainActor
 @Suite("Player-confirmed playback transitions", .serialized)
 struct PlaybackTransitionTests {
+    @Test("Next reconciles and accounts for each track while recovery awaits MusicKit", arguments: [false, true])
+    func commandsReconcileDuringRecovery(awaitingPlay: Bool) async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.controller.isNetworkReachable = { true }
+        fixture.player.playbackTime = 10
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        let prepareCalls = fixture.player.prepareToPlayCallCount
+        let playCalls = fixture.player.playCallCount
+        let commands: () async -> Void = {
+            // Both commands complete before the original recovery await does.
+            await fixture.controller.next(settings: fixture.settings, context: fixture.context)
+            #expect(fixture.controller.currentPlaylistItem?.trackID == fixture.tracks[1].id)
+            #expect(fixture.controller.nowPlayingDisplayLocalTrackID == fixture.tracks[1].id.uuidString)
+            #expect(fixture.items[0].skipCount == 1)
+            fixture.player.playbackTime = 15
+            await fixture.controller.next(settings: fixture.settings, context: fixture.context)
+            #expect(fixture.controller.currentPlaylistItem?.trackID == fixture.tracks[2].id)
+            #expect(fixture.controller.nowPlayingDisplayLocalTrackID == fixture.tracks[2].id.uuidString)
+            #expect(fixture.items[1].skipCount == 1)
+        }
+        if awaitingPlay {
+            fixture.player.onPlay = commands
+        } else {
+            fixture.player.onPrepareToPlay = commands
+        }
+        for _ in 0..<PlaybackDeliveryStallPolicy.frozenPlaybackTickThreshold {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+        #expect(fixture.player.prepareToPlayCallCount == prepareCalls + 1)
+        #expect(fixture.player.playCallCount == playCalls + 1)
+        #expect(fixture.items[0].skipCount == 1)
+        #expect(fixture.items[1].skipCount == 1)
+        #expect(fixture.items[2].skipCount == 0)
+        #expect(try fixture.history().count == 2)
+    }
+
     @Test("an event received during awaited recovery reconciles the latest entry afterward")
     func invalidationDuringRecoveryGetsFollowUpPass() async throws {
         let fixture = try makeFixture()
@@ -48,6 +86,9 @@ struct PlaybackTransitionTests {
         }
         #expect(fixture.player.playCallCount == plays)
         #expect(!fixture.controller.isDeliveryStalled)
+        // The fake resumed silently inside preparation. Supply the later
+        // resume observation before asserting its presentation has caught up.
+        await fixture.player.invalidate([.state])
         #expect(fixture.controller.isPlaying)
     }
 
@@ -79,8 +120,8 @@ struct PlaybackTransitionTests {
         await fixture.controller.reconcilePlayerState(context: fixture.context)
         let plays = fixture.player.playCallCount
         fixture.player.onPrepareToPlay = {
-            // Queue a second reconciliation while the first awaits MusicKit,
-            // then tear down both the observer and its pending work.
+            // Reconcile an event while recovery awaits MusicKit, then tear
+            // down observation before that recovery continuation can play.
             await fixture.player.invalidate()
             fixture.controller.stopMonitoring()
         }
