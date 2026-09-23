@@ -2654,7 +2654,7 @@ final class PlaybackController {
         context: ModelContext
     ) throws -> [PendingQueueCorrelation] {
         let inputs = try PlaybackQueueOrchestrator.playlistInputs(for: playlistID, in: context)
-        return inputs.items.compactMap { item in
+        let members: [PendingQueueCorrelation] = inputs.items.compactMap { item in
             guard let track = inputs.tracksByID[item.trackID] else { return nil }
             let musicItemIDs = PlaybackQueueBuilder.musicItemIDs(for: track)
             guard let queuedMusicItemID = musicItemIDs.first else { return nil }
@@ -2665,6 +2665,33 @@ final class PlaybackController {
                 queuedMusicItemID: queuedMusicItemID,
                 matchableMusicItemIDs: Set(musicItemIDs)
             )
+        }
+
+        // Entry IDs can change after MusicKit reports a different song ID
+        // through a trusted entry. Rebuilding must retain those learned IDs,
+        // just like the individual track lookup, or a known local track is
+        // misclassified as foreign and loses the entire playlist context.
+        let aliases = PlaybackIdentityStore.state(
+            playerID: playerID,
+            musicPlaylistID: playlistID
+        ).aliasesByLocalTrackID
+        var ownersByMusicItemID: [String: Set<String>] = [:]
+        for member in members {
+            let ids = member.matchableMusicItemIDs.union(aliases[member.localTrackID] ?? [])
+            for id in ids {
+                ownersByMusicItemID[id, default: []].insert(member.localTrackID)
+            }
+        }
+
+        return members.map { member in
+            var member = member
+            // A runtime alias must identify exactly one current member and
+            // must not override another member's persisted identity.
+            let uniqueAliases = (aliases[member.localTrackID] ?? []).filter {
+                ownersByMusicItemID[$0]?.count == 1
+            }
+            member.matchableMusicItemIDs.formUnion(uniqueAliases)
+            return member
         }
     }
 
