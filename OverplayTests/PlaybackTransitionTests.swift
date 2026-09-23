@@ -1879,6 +1879,19 @@ struct PlaybackTransitionTests {
             #expect(fixture.items[trackIndex].skipCount == (isSkip ? 3 : 2))
             #expect(fixture.items[trackIndex].playthroughCount == (isSkip ? 3 : 4))
         }
+
+        let recovery = try #require(MusicKitActivityLog.shared.snapshot().events.last {
+            $0.operation == .queueCorrelationRebuilt
+                && $0.detail?.contains("player=\(fixture.playerID) ") == true
+        })
+        #expect(recovery.detail?.contains("runtimeAliasMatches=8 currentMatch=runtimeAlias") == true)
+        #expect(recovery.detail?.contains("storedAliasClaims=1") == true)
+        #expect(recovery.detail?.contains("rawShuffle=songs effectiveShuffle=songs") == true)
+        let report = MusicKitActivityReport.summary(
+            for: MusicKitActivitySnapshot(events: [recovery]), now: .now
+        ).text
+        #expect(report.contains("Queue correlation decisions"))
+        #expect(report.contains("currentMatch=runtimeAlias"))
     }
 
     @Test("runtime aliases recover entries that hydrate after a partial queue rebuild")
@@ -1912,6 +1925,13 @@ struct PlaybackTransitionTests {
         #expect(fixture.items[0].playthroughCount == 1)
         #expect(fixture.items[0].skipCount == 0)
         #expect(fixture.controller.canControlPlayback)
+        let recovery = try #require(MusicKitActivityLog.shared.snapshot().events.last {
+            $0.operation == .queueCorrelationRebuilt
+                && $0.detail?.contains("player=\(fixture.playerID) ") == true
+        })
+        #expect(recovery.detail?.contains("runtimeAliasMatches=1 currentMatch=runtimeAlias") == true)
+        #expect(recovery.detail?.contains("music=i.delayed") == true)
+        #expect(recovery.detail?.contains("matchedLocal=\(fixture.tracks[1].id.uuidString)") == true)
     }
 
     @Test("runtime aliases cannot adopt foreign or ambiguous entries", arguments: ["playlist", "player", "removed", "ambiguous"])
@@ -1938,6 +1958,7 @@ struct PlaybackTransitionTests {
             )
         }
         try await fixture.start(at: 0)
+        fixture.player.shuffleMode = .songs
         fixture.player.reissueEntryIDs(
             for: [aliasTrack, fixture.musicTracks[1], fixture.musicTracks[2]], currentIndex: 0
         )
@@ -1948,6 +1969,32 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.currentPlaylistItem == nil)
         #expect(LocalPlaybackStateStore.load(from: fixture.playbackDefaults.defaults) == nil)
         #expect(fixture.items.allSatisfy { $0.skipCount == 0 && $0.playthroughCount == 0 })
+
+        // Repeated reconciliation of the same lost context must not fill
+        // the bounded report with duplicates of the original incident.
+        for _ in 0..<3 {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+        let decisions = MusicKitActivityLog.shared.snapshot().events.filter {
+            $0.detail?.contains("player=\(fixture.playerID) ") == true
+        }
+        let rejections = decisions.filter { $0.operation == .queueCorrelationRejected }
+        let clears = decisions.filter { $0.operation == .queueCorrelationCleared }
+        #expect(rejections.count == 1)
+        #expect(clears.count == 1)
+        let rejection = try #require(rejections.first?.detail)
+        #expect(rejection.contains("reason=currentEntryUnmatched"))
+        #expect(rejection.contains("currentMatch=unmatched"))
+        let claimCount = scope == "ambiguous" ? 2 : (scope == "removed" ? 1 : 0)
+        #expect(rejection.contains("storedAliasClaims=\(claimCount)"))
+        let clear = try #require(clears.first?.detail)
+        #expect(clear.contains("reason=unmappedCurrentEntry"))
+        #expect(clear.contains("playlist=\(fixture.playlist.musicPlaylistID)"))
+        #expect(clear.contains("entry=\(try #require(fixture.player.currentEntry?.id))"))
+        #expect(clear.contains("music=i.foreign"))
+        #expect(clear.contains("previousLocal=\(fixture.tracks[0].id.uuidString)"))
+        #expect(clear.contains("previousMusic=\(fixture.musicTracks[0].id.rawValue)"))
+        #expect(clear.contains("rawShuffle=songs effectiveShuffle=songs"))
     }
 
     @Test("a runtime alias cannot steal another playlist member's persisted identity")

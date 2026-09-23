@@ -430,6 +430,59 @@ struct MusicKitActivityReportTests {
 
     // MARK: - Fixtures
 
+    @Test("queue evidence survives later sync events in the copied report")
+    func queueEvidenceSurvivesLaterSyncEvents() {
+        let incidentAt = Date(timeIntervalSince1970: 1_700_000_000.125)
+        let diagnostic = "reason=unmappedCurrentEntry playlist=local entry=entry-7 music=i.runtime "
+            + "storedAliasClaims=1 previousLocal=track-6 rawShuffle=songs"
+        let incident = MusicKitActivityEvent(
+            operation: .queueCorrelationCleared,
+            startedAt: incidentAt,
+            magnitude: 79,
+            detail: diagnostic
+        )
+        let laterSyncEvents = (1...65).map {
+            MusicKitActivityEvent(
+                operation: .catalogResourceFetch,
+                startedAt: incidentAt.addingTimeInterval(Double($0))
+            )
+        }
+        let text = MusicKitActivityReport.summary(
+            for: MusicKitActivitySnapshot(events: [incident] + laterSyncEvents),
+            now: incidentAt.addingTimeInterval(86_400)
+        ).text
+
+        #expect(text.contains("Generated at 2023-11-15T22:13:20.125Z"))
+        #expect(text.contains("2023-11-14T22:13:20.125Z queueCorrelationCleared size=79"))
+        #expect(text.contains(diagnostic))
+        #expect(text.contains("Queue correlation decisions (latest 20 retained, newest last):"))
+        let recentCalls = text.components(separatedBy: "Recent notable calls (newest last):").last ?? ""
+        #expect(!recentCalls.contains("queueCorrelationCleared"))
+    }
+
+    @Test("queue diagnostics are bounded and preserve rejection and alias evidence")
+    func queueDiagnosticsAreBounded() {
+        let events = (0..<25).map { index in
+            MusicKitActivityEvent(
+                operation: index.isMultiple(of: 2) ? .queueCorrelationRebuilt : .queueCorrelationRejected,
+                startedAt: Self.now.addingTimeInterval(Double(index)),
+                detail: "decision=\(index) currentMatch=runtimeAlias runtimeAliasMatches=8"
+            )
+        }
+        let text = MusicKitActivityReport.summary(
+            for: MusicKitActivitySnapshot(events: events), now: Self.now
+        ).text
+        let queueSection = text.components(separatedBy: "Queue correlation decisions (latest 20 retained, newest last):")
+            .last?.components(separatedBy: "Recent notable calls (newest last):").first ?? ""
+
+        #expect(queueSection.split(separator: "\n").count == 20)
+        #expect(!queueSection.contains("decision=4 "))
+        #expect(queueSection.contains("decision=5 "))
+        #expect(queueSection.contains("decision=24 "))
+        #expect(queueSection.contains("queueCorrelationRejected"))
+        #expect(queueSection.contains("currentMatch=runtimeAlias runtimeAliasMatches=8"))
+    }
+
     private func tally(
         _ operation: MusicKitActivityOperation,
         minutesAgo: Int,
