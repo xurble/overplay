@@ -27,6 +27,9 @@ struct PendingQueueCorrelation: Equatable, Sendable {
     /// ID alone silently drops those entries, so `MusicTrackIdentity` supplies
     /// both domains here.
     var matchableMusicItemIDs: Set<String>
+    /// The matchable IDs supplied only by the runtime alias store. Retained
+    /// for diagnostics so a successful rebuild can prove it used an alias.
+    var runtimeAliasMusicItemIDs: Set<String> = []
 
     init(
         playlistItemID: UUID,

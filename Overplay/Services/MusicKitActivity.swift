@@ -50,6 +50,8 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     /// being cleared. Paired with the case above so the report shows which
     /// way an uncorrelated entry was resolved.
     case queueCorrelationRebuilt
+    /// A live queue could not be mapped back to the current playlist.
+    case queueCorrelationRejected
     case deliveryStallDetected
     case queueEndObserved
     /// A shuffle or repeat change Overplay noticed rather than made — the only
@@ -116,7 +118,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
             .systemMediaSurface
         case .artworkDownload:
             .asset
-        case .queueCorrelationCleared, .queueCorrelationRebuilt, .deliveryStallDetected,
+        case .queueCorrelationCleared, .queueCorrelationRebuilt, .queueCorrelationRejected, .deliveryStallDetected,
              .queueEndObserved, .playerModeObserved,
              .playbackQueueInvalidation, .playbackStateInvalidation, .playbackQueueObservationRebound,
              .playbackObservationCoalesced, .playbackEventReconciliation, .playbackPeriodicReconciliation,
@@ -138,6 +140,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case .playerModeResetSkipped: "Player mode reset (skipped)"
         case .queueCorrelationCleared: "Queue correlation cleared"
         case .queueCorrelationRebuilt: "Queue correlation rebuilt"
+        case .queueCorrelationRejected: "Queue correlation rejected"
         case .deliveryStallDetected: "Delivery stall detected"
         case .queueEndObserved: "Queue end observed"
         case .playerModeObserved: "Playback mode changed elsewhere"

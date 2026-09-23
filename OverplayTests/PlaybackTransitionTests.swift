@@ -1818,6 +1818,203 @@ struct PlaybackTransitionTests {
         #expect(try fixture.history().contains { $0.eventType == .skipCounted })
     }
 
+    @Test("runtime aliases retain counts and CarPlay actions after six shuffled transitions", arguments: [false, true])
+    func runtimeAliasesRetainPlaylistAfterShuffledTransitions(reissueOnIncomingTrack: Bool) async throws {
+        let fixture = try makeFixture(trackCount: 8)
+        fixture.playlist.musicPlaylistID = PlaylistRecord.triageBucketMusicPlaylistID
+        fixture.playlist.role = .triageBucket
+        defer { fixture.cleanUp() }
+        let order = [0, 5, 2, 7, 3, 1, 6, 4]
+        let aliasTracks = try fixture.musicTracks.indices.map { index in
+            let alias = "i.runtime-\(index)"
+            PlaybackIdentityStore.recordAlias(
+                alias, playerID: fixture.playerID,
+                musicPlaylistID: fixture.playlist.musicPlaylistID,
+                localTrackID: fixture.tracks[index].id.uuidString
+            )
+            fixture.items[index].skipCount = 2
+            fixture.items[index].playthroughCount = 3
+            return try PlaybackTransitionFixture.makeMusicTrack(id: alias, title: "Track \(index)")
+        }
+        try fixture.context.save()
+        try await fixture.start(at: 0)
+        await fixture.controller.setShuffleEnabled(true, context: fixture.context)
+        fixture.player.reissueEntryIDs(for: order.map { fixture.musicTracks[$0] }, currentIndex: 0)
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        for position in 0..<order.count {
+            let trackIndex = order[position]
+            #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+            #expect(fixture.controller.currentPlaylistItem?.id == fixture.items[trackIndex].id)
+            #expect(fixture.controller.displayedSkipCount(context: fixture.context) == 2)
+            #expect(fixture.controller.displayedPlaythroughCount(context: fixture.context) == 3)
+            #expect(fixture.controller.shuffleEnabled)
+            let signature = NowPlayingPresentationFactory.carPlayButtonSignature(
+                playbackController: fixture.controller, context: fixture.context
+            )
+            #expect(CarPlayNowPlayingActionPolicy.actions(
+                playlistRole: signature.playlistRole, isRetired: signature.isEvicted
+            ) == [.shuffle, .repeatMode, .promote, .retire])
+            let saved = LocalPlaybackStateStore.load(from: fixture.playbackDefaults.defaults)
+            #expect(saved?.playlistID == fixture.playlist.musicPlaylistID)
+            #expect(saved?.localTrackID == fixture.tracks[trackIndex].id.uuidString)
+            guard position < order.count - 1 else { break }
+
+            let isSkip = position.isMultiple(of: 2)
+            fixture.player.playbackTime = isSkip ? 15 : 180
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+            if position == 5, !reissueOnIncomingTrack {
+                fixture.player.reissueEntryIDs(for: order.map { aliasTracks[$0] }, currentIndex: position)
+                await fixture.controller.reconcilePlayerState(context: fixture.context)
+            }
+            if isSkip {
+                await fixture.controller.next(settings: fixture.settings, context: fixture.context)
+            } else {
+                fixture.player.advanceExternally()
+                if position == 5, reissueOnIncomingTrack {
+                    fixture.player.reissueEntryIDs(for: order.map { aliasTracks[$0] }, currentIndex: position + 1)
+                }
+                await fixture.controller.reconcilePlayerState(context: fixture.context)
+            }
+            #expect(fixture.items[trackIndex].skipCount == (isSkip ? 3 : 2))
+            #expect(fixture.items[trackIndex].playthroughCount == (isSkip ? 3 : 4))
+        }
+
+        let recovery = try #require(MusicKitActivityLog.shared.snapshot().events.last {
+            $0.operation == .queueCorrelationRebuilt
+                && $0.detail?.contains("player=\(fixture.playerID) ") == true
+        })
+        #expect(recovery.detail?.contains("runtimeAliasMatches=8 currentMatch=runtimeAlias") == true)
+        #expect(recovery.detail?.contains("storedAliasClaims=1") == true)
+        #expect(recovery.detail?.contains("rawShuffle=songs effectiveShuffle=songs") == true)
+        let report = MusicKitActivityReport.summary(
+            for: MusicKitActivitySnapshot(events: [recovery]), now: .now
+        ).text
+        #expect(report.contains("Queue correlation decisions"))
+        #expect(report.contains("currentMatch=runtimeAlias"))
+    }
+
+    @Test("runtime aliases recover entries that hydrate after a partial queue rebuild")
+    func runtimeAliasRecoversAfterPartialHydration() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        let aliasTrack = try PlaybackTransitionFixture.makeMusicTrack(id: "i.delayed", title: "Delayed")
+        PlaybackIdentityStore.recordAlias(
+            aliasTrack.id.rawValue, playerID: fixture.playerID,
+            musicPlaylistID: fixture.playlist.musicPlaylistID,
+            localTrackID: fixture.tracks[1].id.uuidString
+        )
+        fixture.items[1].skipCount = 4
+        try fixture.context.save()
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 180
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        let entryIDs = fixture.player.reissueEntryIDs(
+            for: [fixture.musicTracks[0], aliasTrack, fixture.musicTracks[2]], currentIndex: 0
+        )
+        fixture.player.unhydratedEntryIDs = [entryIDs[1]]
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        fixture.player.advanceExternally()
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        fixture.player.unhydratedEntryIDs = []
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(fixture.controller.currentPlaylistItem?.id == fixture.items[1].id)
+        #expect(fixture.controller.displayedSkipCount(context: fixture.context) == 4)
+        #expect(fixture.items[0].playthroughCount == 1)
+        #expect(fixture.items[0].skipCount == 0)
+        #expect(fixture.controller.canControlPlayback)
+        let recovery = try #require(MusicKitActivityLog.shared.snapshot().events.last {
+            $0.operation == .queueCorrelationRebuilt
+                && $0.detail?.contains("player=\(fixture.playerID) ") == true
+        })
+        #expect(recovery.detail?.contains("runtimeAliasMatches=1 currentMatch=runtimeAlias") == true)
+        #expect(recovery.detail?.contains("music=i.delayed") == true)
+        #expect(recovery.detail?.contains("matchedLocal=\(fixture.tracks[1].id.uuidString)") == true)
+    }
+
+    @Test("runtime aliases cannot adopt foreign or ambiguous entries", arguments: ["playlist", "player", "removed", "ambiguous"])
+    func runtimeAliasesRejectUnprovenMembership(scope: String) async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        fixture.settings.minimumSkipListeningSeconds = 5
+        let aliasTrack = try PlaybackTransitionFixture.makeMusicTrack(id: "i.foreign", title: "Foreign")
+        let aliasPlayerID = scope == "player" ? "\(fixture.playerID)-other" : fixture.playerID
+        let aliasPlaylistID = scope == "playlist" ? "other-playlist" : fixture.playlist.musicPlaylistID
+        defer {
+            PlaybackIdentityStore.clear(playerID: aliasPlayerID, musicPlaylistID: aliasPlaylistID)
+        }
+        PlaybackIdentityStore.recordAlias(
+            aliasTrack.id.rawValue, playerID: aliasPlayerID,
+            musicPlaylistID: aliasPlaylistID,
+            localTrackID: scope == "removed" ? UUID().uuidString : fixture.tracks[0].id.uuidString
+        )
+        if scope == "ambiguous" {
+            PlaybackIdentityStore.recordAlias(
+                aliasTrack.id.rawValue, playerID: aliasPlayerID,
+                musicPlaylistID: aliasPlaylistID,
+                localTrackID: fixture.tracks[1].id.uuidString
+            )
+        }
+        try await fixture.start(at: 0)
+        fixture.player.shuffleMode = .songs
+        fixture.player.reissueEntryIDs(
+            for: [aliasTrack, fixture.musicTracks[1], fixture.musicTracks[2]], currentIndex: 0
+        )
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        #expect(fixture.controller.currentTrack?.id == aliasTrack.id.rawValue)
+        #expect(fixture.controller.currentPlaylistID == nil)
+        #expect(fixture.controller.currentPlaylistItem == nil)
+        #expect(LocalPlaybackStateStore.load(from: fixture.playbackDefaults.defaults) == nil)
+        #expect(fixture.items.allSatisfy { $0.skipCount == 0 && $0.playthroughCount == 0 })
+
+        // Repeated reconciliation of the same lost context must not fill
+        // the bounded report with duplicates of the original incident.
+        for _ in 0..<3 {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+        let decisions = MusicKitActivityLog.shared.snapshot().events.filter {
+            $0.detail?.contains("player=\(fixture.playerID) ") == true
+        }
+        let rejections = decisions.filter { $0.operation == .queueCorrelationRejected }
+        let clears = decisions.filter { $0.operation == .queueCorrelationCleared }
+        #expect(rejections.count == 1)
+        #expect(clears.count == 1)
+        let rejection = try #require(rejections.first?.detail)
+        #expect(rejection.contains("reason=currentEntryUnmatched"))
+        #expect(rejection.contains("currentMatch=unmatched"))
+        let claimCount = scope == "ambiguous" ? 2 : (scope == "removed" ? 1 : 0)
+        #expect(rejection.contains("storedAliasClaims=\(claimCount)"))
+        let clear = try #require(clears.first?.detail)
+        #expect(clear.contains("reason=unmappedCurrentEntry"))
+        #expect(clear.contains("playlist=\(fixture.playlist.musicPlaylistID)"))
+        #expect(clear.contains("entry=\(try #require(fixture.player.currentEntry?.id))"))
+        #expect(clear.contains("music=i.foreign"))
+        #expect(clear.contains("previousLocal=\(fixture.tracks[0].id.uuidString)"))
+        #expect(clear.contains("previousMusic=\(fixture.musicTracks[0].id.rawValue)"))
+        #expect(clear.contains("rawShuffle=songs effectiveShuffle=songs"))
+    }
+
+    @Test("a runtime alias cannot steal another playlist member's persisted identity")
+    func persistedMemberIdentityWinsOverConflictingRuntimeAlias() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        PlaybackIdentityStore.recordAlias(
+            fixture.musicTracks[1].id.rawValue, playerID: fixture.playerID,
+            musicPlaylistID: fixture.playlist.musicPlaylistID,
+            localTrackID: fixture.tracks[0].id.uuidString
+        )
+        try await fixture.start(at: 0)
+        fixture.player.reissueEntryIDs(for: [fixture.musicTracks[1]], currentIndex: 0)
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(fixture.controller.currentPlaylistItem?.id == fixture.items[1].id)
+        #expect(fixture.controller.nowPlayingDisplayLocalTrackID == fixture.tracks[1].id.uuidString)
+    }
+
     @Test("a queue re-materialized during initial playback still records a five-second skip")
     func requeuedDuringInitialPlaybackStillRecordsSkip() async throws {
         let fixture = try makeFixture()
@@ -2607,6 +2804,11 @@ private struct PlaybackTransitionFixture {
             musicPlaylistID: playlist.musicPlaylistID,
             flushImmediately: true
         )
+        PlaybackIdentityStore.clear(
+            playerID: playerID,
+            musicPlaylistID: playlist.musicPlaylistID,
+            flushImmediately: true
+        )
         playbackDefaults.cleanUp()
         PlaybackWaypointStore.clear(flushImmediately: true)
     }
@@ -2649,7 +2851,7 @@ private struct PlaybackTransitionFixture {
         return AddedPlaylist(playlist: playlist, tracks: tracks, items: items, musicTracks: musicTracks)
     }
 
-    private static func makeMusicTrack(id: String, title: String) throws -> Track {
+    static func makeMusicTrack(id: String, title: String) throws -> Track {
         let data = """
         {
           "id": "\(id)",

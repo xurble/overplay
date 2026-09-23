@@ -571,6 +571,7 @@ nonisolated enum MusicKitActivityReport {
         var lines: [String] = []
 
         lines.append("MusicKit Activity")
+        lines.append("Generated at \(timeText(summary.generatedAt))")
         if let observationStartedAt = summary.observationStartedAt {
             let elapsed = summary.generatedAt.timeIntervalSince(observationStartedAt)
             lines.append("Observed since \(timeText(observationStartedAt)) (\(durationText(elapsed)))")
@@ -633,39 +634,52 @@ nonisolated enum MusicKitActivityReport {
             }
         }
 
+        // Sync reads can displace the incident from the general last-60 list.
+        // Keep a bounded view of queue evidence from the retained event buffer.
+        let queueDecisions = summary.recentEvents.filter {
+            [.queueCorrelationCleared, .queueCorrelationRebuilt, .queueCorrelationRejected].contains($0.operation)
+        }.suffix(20)
+        if !queueDecisions.isEmpty {
+            lines.append("")
+            lines.append("Queue correlation decisions (latest 20 retained, newest last):")
+            lines.append(contentsOf: queueDecisions.map(eventText))
+        }
+
         lines.append("")
         lines.append("Recent notable calls (newest last):")
         if summary.recentEvents.isEmpty {
             lines.append("  none recorded")
         } else {
-            for event in summary.recentEvents.suffix(60) {
-                var line = "  \(timeText(event.startedAt)) \(event.operation.rawValue)"
-                if let magnitude = event.magnitude {
-                    line += " size=\(Int(magnitude))"
-                }
-                if let durationMilliseconds = event.durationMilliseconds {
-                    line += String(format: " %.0fms", durationMilliseconds)
-                }
-                if let origin = event.origin {
-                    line += " via=\(origin.rawValue)"
-                }
-                if !event.notes.isEmpty {
-                    line += " notes=\(event.notes.map(\.rawValue).joined(separator: ","))"
-                }
-                if let detail = event.detail {
-                    line += " \(detail)"
-                }
-                if event.didFail {
-                    line += " FAILED \(event.errorDomain ?? "?") \(event.errorCode ?? 0)"
-                    if let errorDescription = event.errorDescription {
-                        line += ": \(collapseWhitespace(errorDescription))"
-                    }
-                }
-                lines.append(line)
-            }
+            lines.append(contentsOf: summary.recentEvents.suffix(60).map(eventText))
         }
 
         return lines.joined(separator: "\n")
+    }
+
+    private static func eventText(_ event: MusicKitActivityEvent) -> String {
+        var line = "  \(timeText(event.startedAt)) \(event.operation.rawValue)"
+        if let magnitude = event.magnitude {
+            line += " size=\(Int(magnitude))"
+        }
+        if let durationMilliseconds = event.durationMilliseconds {
+            line += String(format: " %.0fms", durationMilliseconds)
+        }
+        if let origin = event.origin {
+            line += " via=\(origin.rawValue)"
+        }
+        if !event.notes.isEmpty {
+            line += " notes=\(event.notes.map(\.rawValue).joined(separator: ","))"
+        }
+        if let detail = event.detail {
+            line += " \(collapseWhitespace(detail))"
+        }
+        if event.didFail {
+            line += " FAILED \(event.errorDomain ?? "?") \(event.errorCode ?? 0)"
+            if let errorDescription = event.errorDescription {
+                line += ": \(collapseWhitespace(errorDescription))"
+            }
+        }
+        return line
     }
 
     private static func collapseWhitespace(_ value: String) -> String {
@@ -675,7 +689,7 @@ nonisolated enum MusicKitActivityReport {
     }
 
     private static func timeText(_ date: Date) -> String {
-        date.formatted(date: .omitted, time: .standard)
+        date.ISO8601Format(.init(includingFractionalSeconds: true))
     }
 
     private static func durationText(_ seconds: TimeInterval) -> String {
