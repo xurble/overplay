@@ -1,5 +1,7 @@
 import Foundation
 import enum MediaPlayer.MPRemoteCommandHandlerStatus
+import class MediaPlayer.MPRemoteCommandCenter
+import enum MediaPlayer.MPShuffleType
 @preconcurrency import MusicKit
 import SwiftData
 import Testing
@@ -8,6 +10,64 @@ import Testing
 @MainActor
 @Suite("Player-confirmed playback transitions", .serialized)
 struct PlaybackTransitionTests {
+    @Test("Shuffle and Play restarts the queue and publishes shuffle on", arguments: [PlaylistPlaybackScope.active, .retired], [false, true])
+    func shuffleAndPlayRestartsCurrentPlaylist(scope: PlaylistPlaybackScope, shuffleInitiallyEnabled: Bool) async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        if scope == .retired {
+            for item in fixture.items { item.evictedAt = .now }
+            try fixture.context.save()
+        }
+        await fixture.controller.playPlaylist(
+            fixture.playlist, scope: scope, settings: fixture.settings, context: fixture.context
+        )
+        await fixture.controller.setShuffleEnabled(shuffleInitiallyEnabled, context: fixture.context)
+        let remoteCommands = RemoteCommandService()
+        remoteCommands.activate(playbackController: fixture.controller, context: fixture.context)
+        let commandCenter = MPRemoteCommandCenter.shared()
+        defer {
+            remoteCommands.deactivate()
+            commandCenter.changeShuffleModeCommand.currentShuffleType = .off
+        }
+        #expect(commandCenter.changeShuffleModeCommand.currentShuffleType == (shuffleInitiallyEnabled ? .items : .off))
+        fixture.player.playbackTime = 15
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        let modeVersion = fixture.controller.playbackModeVersion
+        let outgoing = try #require(fixture.controller.currentPlaylistItem)
+        let oldEntryID = fixture.player.currentEntry?.id
+        fixture.player.commandEvents.removeAll()
+        let replacements = fixture.player.replaceQueueCallCount
+
+        await fixture.controller.playPlaylist(
+            fixture.playlist, scope: scope, settings: fixture.settings, context: fixture.context
+        )
+
+        #expect(fixture.player.commandEvents == ["pause", "replace", "play"])
+        #expect(fixture.player.replaceQueueCallCount == replacements + 1)
+        #expect(fixture.player.currentEntry?.id != oldEntryID)
+        #expect(fixture.player.queuedEntryCount == fixture.tracks.count)
+        #expect(fixture.controller.currentPlaylistScope == scope)
+        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(fixture.player.shuffleMode == .songs)
+        #expect(fixture.controller.shuffleEnabled)
+        #expect(fixture.controller.playbackModeVersion > modeVersion)
+        #expect(NowPlayingPresentationFactory.playbackControlsPresentation(
+            playbackController: fixture.controller
+        ).isShuffling)
+        // CarPlay's system shuffle button reads the published remote-command
+        // mode. Wait for the actual observation callback, without manually syncing.
+        let deadline = ContinuousClock.now + .seconds(2)
+        while commandCenter.changeShuffleModeCommand.currentShuffleType != .items,
+              ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(commandCenter.changeShuffleModeCommand.currentShuffleType == .items)
+        #expect(fixture.controller.isPlaying)
+        #expect(fixture.controller.statusMessage == nil)
+        #expect(outgoing.skipCount == 1)
+        #expect(try fixture.history().count == 1)
+    }
+
     @Test("Next reconciles and accounts for each track while recovery awaits MusicKit", arguments: [false, true])
     func commandsReconcileDuringRecovery(awaitingPlay: Bool) async throws {
         let fixture = try makeFixture()
@@ -1366,28 +1426,145 @@ struct PlaybackTransitionTests {
         ).isShuffling)
     }
 
-    @Test("playlist-level play randomizes the handoff and enables shuffle")
-    func playlistLevelPlayRandomizesHandoffAndEnablesShuffle() async throws {
+    @Test("Shuffle and Play preserves the playlist order and selects a starting entry", arguments: [PlaylistPlaybackScope.active, .retired])
+    func playlistLevelPlayPreservesOrder(scope: PlaylistPlaybackScope) async throws {
         let fixture = try makeFixture()
         defer { fixture.cleanUp() }
+        if scope == .retired {
+            for item in fixture.items { item.evictedAt = .now }
+            try fixture.context.save()
+        }
+        let playlistID = scope.playbackOrderPlaylistID(for: fixture.playlist.musicPlaylistID)
+        let storedOrder = fixture.tracks.reversed().map { $0.id.uuidString }
+        PlaybackOrderStore.save(PlaybackOrderState(
+            playerID: fixture.playerID,
+            musicPlaylistID: playlistID,
+            orderedTrackIDs: storedOrder
+        ), flushImmediately: true)
+        defer { PlaybackOrderStore.clear(playerID: fixture.playerID, musicPlaylistID: playlistID) }
 
         await fixture.controller.playPlaylist(
-            fixture.playlist,
-            settings: fixture.settings,
-            context: fixture.context
+            fixture.playlist, scope: scope, settings: fixture.settings, context: fixture.context
         )
 
-        let shuffledOrder = PlaybackOrderStore.state(
-            playerID: fixture.playerID,
-            musicPlaylistID: fixture.playlist.musicPlaylistID
-        ).orderedTrackIDs
-        let localTrackIDs = fixture.tracks.map { $0.id.uuidString }
-        let firstLocalTrackID = try #require(shuffledOrder.first)
-        let firstTrackIndex = try #require(localTrackIDs.firstIndex(of: firstLocalTrackID))
-
+        #expect(PlaybackOrderStore.state(
+            playerID: fixture.playerID, musicPlaylistID: playlistID
+        ).orderedTrackIDs == storedOrder)
+        #expect(fixture.player.queueEntrySnapshots.map(\.musicItemID) == fixture.musicTracks.reversed().map { $0.id.rawValue })
+        #expect(fixture.player.requestedStartingEntryID != nil)
+        #expect(fixture.player.currentEntry?.id == fixture.player.requestedStartingEntryID)
         #expect(fixture.player.shuffleMode == .songs)
-        #expect(Set(shuffledOrder) == Set(localTrackIDs))
-        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[firstTrackIndex].id.rawValue)
+        #expect(fixture.controller.statusMessage == nil)
+    }
+
+    @Test("Shuffle and Play waits for reissued entries to hydrate", arguments: [PlaylistPlaybackScope.active, .retired])
+    func shuffleAndPlayWaitsForReissuedEntryHydration(scope: PlaylistPlaybackScope) async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 15
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        if scope == .retired {
+            for item in fixture.items { item.evictedAt = .now }
+            try fixture.context.save()
+        }
+        fixture.player.reissuedTracksOnReplace = fixture.musicTracks
+        fixture.player.withholdsQueueItemIDs = true
+        fixture.player.withholdsCurrentEntryItem = true
+        var waits = 0
+        fixture.sleepProbe.handler = {
+            waits += 1
+            fixture.player.withholdsQueueItemIDs = false
+            fixture.player.withholdsCurrentEntryItem = false
+        }
+
+        await fixture.controller.playPlaylist(
+            fixture.playlist, scope: scope, settings: fixture.settings, context: fixture.context
+        )
+
+        #expect(waits > 0)
+        #expect(fixture.controller.statusMessage == nil)
+        #expect(fixture.controller.isPlaying)
+        #expect(fixture.controller.shuffleEnabled)
+        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(fixture.controller.currentPlaylistScope == scope)
+        #expect(fixture.controller.currentTrack?.id == fixture.player.currentEntryItem?.id.rawValue)
+        #expect(fixture.items[0].skipCount == 1)
+        #expect(try fixture.history().count == 1)
+        #expect(LocalPlaybackStateStore.load(from: fixture.playbackDefaults.defaults)?.playlistID == fixture.playlist.musicPlaylistID)
+    }
+
+    @Test("a hydrated current entry confirms startup before the queue snapshot hydrates")
+    func initialPlaybackUsesHydratedCurrentEntry() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        fixture.player.reissuedTracksOnReplace = fixture.musicTracks
+        fixture.player.withholdsQueueItemIDs = true
+
+        await fixture.controller.playPlaylist(
+            fixture.playlist, settings: fixture.settings, context: fixture.context
+        )
+
+        #expect(fixture.controller.statusMessage == nil)
+        #expect(fixture.controller.isPlaying)
+        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(fixture.controller.currentTrack?.id == fixture.player.currentEntryItem?.id.rawValue)
+    }
+
+    @Test("Shuffle and Play accounts for a restarted single-track session")
+    func shuffleAndPlayRestartsSingleTrackSession() async throws {
+        let fixture = try makeFixture(trackCount: 1)
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 15
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+
+        await fixture.controller.playPlaylist(
+            fixture.playlist, settings: fixture.settings, context: fixture.context
+        )
+
+        #expect(fixture.controller.statusMessage == nil)
+        #expect(fixture.controller.currentPlaylistItem?.id == fixture.items[0].id)
+        #expect(fixture.items[0].skipCount == 1)
+        #expect(try fixture.history().count == 1)
+        #expect(fixture.player.playbackTime == 0)
+    }
+
+    @Test("Shuffle and Play still rejects a genuinely foreign current track")
+    func shuffleAndPlayRejectsForeignTrack() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        let external = try fixture.addPlaylist(prefix: "external", trackCount: 1)
+        fixture.player.onPlay = {
+            fixture.player.replaceQueueExternally(with: external.musicTracks)
+        }
+
+        await fixture.controller.playPlaylist(
+            fixture.playlist, settings: fixture.settings, context: fixture.context
+        )
+
+        #expect(fixture.controller.statusMessage == "Apple Music moved to a different track while replacing the queue.")
+        #expect(fixture.controller.currentPlaylistID == nil)
+        #expect(LocalPlaybackStateStore.load(from: fixture.playbackDefaults.defaults) == nil)
+    }
+
+    @Test("startup hydration confirmation remains bounded")
+    func startupHydrationTimesOut() async throws {
+        let fixture = try makeFixture(maximumObservationCount: 3)
+        defer { fixture.cleanUp() }
+        fixture.player.reissuedTracksOnReplace = fixture.musicTracks
+        fixture.player.withholdsQueueItemIDs = true
+        fixture.player.withholdsCurrentEntryItem = true
+        var waits = 0
+        fixture.sleepProbe.handler = { waits += 1 }
+
+        await fixture.controller.playPlaylist(
+            fixture.playlist, settings: fixture.settings, context: fixture.context
+        )
+
+        #expect(waits == 2)
+        #expect(fixture.controller.statusMessage == PlaybackTransitionError.confirmationTimedOut.localizedDescription)
+        #expect(fixture.controller.currentPlaylistID == nil)
     }
 
     @Test("repeat all toggles on and off without rebuilding the queue")
@@ -2088,6 +2265,7 @@ private final class TransitionSleepProbe {
 
 @MainActor
 private final class ControllablePlaybackPlayer: PlaybackPlayer {
+    var commandEvents: [String] = []
     var observationHandler: (@MainActor (Set<PlaybackPlayerChange>) async -> Void)?
     func startObservingChanges(_ handler: @escaping @MainActor (Set<PlaybackPlayerChange>) async -> Void) {
         observationHandler = handler
@@ -2127,6 +2305,7 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     private(set) var skipToEntryCallCount = 0
     private(set) var replaceQueueCallCount = 0
     var reissuedTracksOnReplace: [Track]?
+    private(set) var requestedStartingEntryID: String?
 
     private var entries: [MusicPlayer.Queue.Entry] = []
     private var currentEntryStorage: MusicPlayer.Queue.Entry?
@@ -2152,6 +2331,8 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     }
 
     func replaceQueue(with materialization: PlaybackQueueMaterialization) {
+        commandEvents.append("replace")
+        requestedStartingEntryID = materialization.startingEntry?.id
         replaceQueueCallCount += 1
         if let reissuedTracksOnReplace {
             entries = reissuedTracksOnReplace.map { MusicPlayer.Queue.Entry($0) }
@@ -2181,6 +2362,7 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     }
 
     func play() async throws {
+        commandEvents.append("play")
         playCallCount += 1
         if let onPlay {
             self.onPlay = nil
@@ -2194,6 +2376,7 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     }
 
     func pause() {
+        commandEvents.append("pause")
         playbackStatus = .paused
     }
 

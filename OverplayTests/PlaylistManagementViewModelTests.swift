@@ -10,8 +10,7 @@ struct PlaylistManagementViewModelTests {
     func playlistPlayButtonDescribesShuffleBehavior() {
         let viewModel = PlaylistManagementViewModel()
 
-        #expect(viewModel.playButtonTitle(isCurrentPlaylist: false) == "Shuffle and Play")
-        #expect(viewModel.playButtonTitle(isCurrentPlaylist: true) == "Playing")
+        #expect(viewModel.playButtonTitle == "Shuffle and Play")
     }
 
     @Test("ordered items filters by playlist and follows playback mode state")
@@ -517,7 +516,6 @@ struct PlaylistManagementViewModelTests {
             playlist: playlist,
             settings: settings,
             scope: .retired,
-            isCurrentPlaylist: false,
             context: context,
             dependencies: dependencies
         )
@@ -526,8 +524,8 @@ struct PlaylistManagementViewModelTests {
         #expect(playedScope == .retired)
     }
 
-    @Test("playlist play does not restart the current queue")
-    func playlistPlayDoesNotRestartCurrentQueue() async throws {
+    @Test("playlist play forwards every request including repeated playback")
+    func playlistPlayForwardsRepeatedRequests() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main")
@@ -540,15 +538,16 @@ struct PlaylistManagementViewModelTests {
             }
         )
 
-        await viewModel.playPlaylist(
-            playlist: playlist,
-            settings: settings,
-            isCurrentPlaylist: true,
-            context: context,
-            dependencies: dependencies
-        )
+        for _ in 0..<2 {
+            await viewModel.playPlaylist(
+                playlist: playlist,
+                settings: settings,
+                context: context,
+                dependencies: dependencies
+            )
+        }
 
-        #expect(playCallCount == 0)
+        #expect(playCallCount == 2)
     }
 
     @Test("promote triage item reports success and clears progress state")

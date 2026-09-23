@@ -330,13 +330,12 @@ final class CarPlayCoordinator: NSObject {
             )
         }
 
-        guard !tracks.isEmpty else {
-            return [CPListSection(items: [
-                disabledItem(title: "No playable tracks", detail: "Sync this playlist in Overplay.")
-            ])]
+        return CarPlayPlaylistSectionFactory.sections(
+            trackItems: tracks.map { trackItem($0, playlist: playlist, scope: scope) },
+            scope: scope
+        ) { [weak self] scope in
+            await self?.shuffleAndPlay(playlist, scope: scope)
         }
-
-        return [CPListSection(items: tracks.map { trackItem($0, playlist: playlist, scope: scope) })]
     }
 
     private var visiblePlaylistScope: PlaylistPlaybackScope = .active
@@ -394,6 +393,27 @@ final class CarPlayCoordinator: NSObject {
             }
 
             refreshAfterTrackAction()
+            showNowPlaying()
+        } catch {
+            showError(title: "Playback failed", message: error.localizedDescription)
+        }
+    }
+
+    private func shuffleAndPlay(_ playlist: PlaylistRecord, scope: PlaylistPlaybackScope) async {
+        guard let playbackController, let modelContext else { return }
+        do {
+            let settings = try SettingsRepository.settings(in: modelContext)
+            await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+                await playbackController.playPlaylist(playlist, scope: scope, settings: settings, context: modelContext)
+            }
+            refreshAfterTrackAction()
+            guard playbackController.statusMessage == nil,
+                  playbackController.isPlaying,
+                  playbackController.currentPlaylistID == playlist.musicPlaylistID,
+                  playbackController.currentPlaylistScope == scope else {
+                showPlaybackFailure(title: "Playback failed")
+                return
+            }
             showNowPlaying()
         } catch {
             showError(title: "Playback failed", message: error.localizedDescription)

@@ -266,9 +266,7 @@ final class PlaylistManagementViewModel {
         .summary(for: playlist)
     }
 
-    func playButtonTitle(isCurrentPlaylist: Bool) -> String {
-        isCurrentPlaylist ? "Playing" : "Shuffle and Play"
-    }
+    var playButtonTitle: String { "Shuffle and Play" }
 
     func isCurrentItem(
         _ item: PlaylistItemRecord,
@@ -307,11 +305,9 @@ final class PlaylistManagementViewModel {
         playlist: PlaylistRecord,
         settings: OverplaySettings,
         scope: PlaylistPlaybackScope = .active,
-        isCurrentPlaylist: Bool,
         context: ModelContext,
         dependencies: Dependencies
     ) async {
-        guard !isCurrentPlaylist else { return }
         await dependencies.playPlaylist(playlist, scope, settings, context)
     }
 

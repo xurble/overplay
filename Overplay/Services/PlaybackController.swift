@@ -644,28 +644,18 @@ final class PlaybackController {
         context: ModelContext
     ) async {
         do {
-            let startingTrackID = trackRecord?.id.uuidString
-            let queueEntries: [PlaybackQueueEntry]
-            let confirmedPlaybackOrder: [String]?
+            var startingTrackID = trackRecord?.id.uuidString
+            let queueEntries = try PlaybackQueueOrchestrator.orderedCachedQueueEntries(
+                for: playlist.musicPlaylistID,
+                playerID: playerID,
+                startingTrackID: startingTrackID,
+                scope: scope,
+                in: context
+            )
             if shuffleBeforePlayback {
-                let shuffledQueue = try PlaybackQueueOrchestrator.previewedReshuffledQueue(
-                    playlistID: playlist.musicPlaylistID,
-                    playerID: playerID,
-                    scope: scope,
-                    avoiding: nil,
-                    in: context
-                )
-                queueEntries = shuffledQueue.entries
-                confirmedPlaybackOrder = shuffledQueue.orderedTrackIDs
-            } else {
-                queueEntries = try PlaybackQueueOrchestrator.orderedCachedQueueEntries(
-                    for: playlist.musicPlaylistID,
-                    playerID: playerID,
-                    startingTrackID: startingTrackID,
-                    scope: scope,
-                    in: context
-                )
-                confirmedPlaybackOrder = nil
+                // Pick the initial song without changing the stored/displayed
+                // order. MusicKit owns the subsequent shuffled playback order.
+                startingTrackID = queueEntries.randomElement()?.localTrackID
             }
             guard !queueEntries.isEmpty else {
                 statusMessage = "No locally cached \(scope.title.lowercased()) tracks for \(playlist.name)."
@@ -682,7 +672,6 @@ final class PlaybackController {
                 playlistID: playlist.musicPlaylistID,
                 scope: scope,
                 startingAt: startingTrackID,
-                confirmedPlaybackOrder: confirmedPlaybackOrder,
                 enableShuffleBeforePlayback: shuffleBeforePlayback,
                 outgoingSessionSettings: settings,
                 context: context
@@ -775,6 +764,7 @@ final class PlaybackController {
     private func performPlayerConfirmedTransition(
         outgoingEntryID: String?,
         expectedEntryIDs: Set<String>? = nil,
+        waitForQueueHydration: Bool = false,
         command: () async throws -> Void,
         onObservedTransition: (PlaybackTransitionConfirmation) async -> Void,
         onUnconfirmed: () async -> Void = {}
@@ -808,11 +798,19 @@ final class PlaybackController {
 
         let observationCount = max(transitionConfirmationPolicy.maximumObservationCount, 1)
         for observationIndex in 0..<observationCount {
-            let resolution = transitionConfirmationPolicy.resolution(
+            let currentEntry = player.currentEntry
+            var resolution = transitionConfirmationPolicy.resolution(
                 outgoingEntryID: outgoingEntryID,
                 expectedEntryIDs: expectedEntryIDs,
-                observedEntryID: player.currentEntry?.id
+                observedEntryID: currentEntry?.id
             )
+            if waitForQueueHydration,
+               case .diverged(let entryID) = resolution,
+               liveQueueSnapshots(currentEntry: currentEntry).first(where: { $0.id == entryID })?.musicItemID == nil {
+                // A new entry ID alone is not evidence of another track.
+                // Keep the bounded confirmation window open for its item.
+                resolution = .waiting
+            }
             switch resolution {
             case .confirmed(let entryID):
                 await onObservedTransition(resolution)
@@ -918,7 +916,6 @@ final class PlaybackController {
         playlistID: String,
         scope: PlaylistPlaybackScope = .active,
         startingAt localTrackID: String?,
-        confirmedPlaybackOrder: [String]? = nil,
         enableShuffleBeforePlayback: Bool = false,
         outgoingSessionSettings: OverplaySettings? = nil,
         context: ModelContext
@@ -942,12 +939,18 @@ final class PlaybackController {
         let result = await performPlayerConfirmedTransition(
             outgoingEntryID: outgoing.entryID,
             expectedEntryIDs: expectedEntryIDs,
+            waitForQueueHydration: true,
             command: {
+                if enableShuffleBeforePlayback {
+                    // Shuffle and Play is an explicit fresh start on every
+                    // surface, even for the current playlist. Capture outgoing
+                    // listening evidence above before stopping the old queue.
+                    player.pause()
+                }
                 player.replaceQueue(with: materialization)
                 if enableShuffleBeforePlayback {
-                    // MusicKit owns the active shuffle mode. The queue itself
-                    // was randomized once before this handoff so its first
-                    // entry is still random if MusicKit preserves that entry.
+                    // The starting entry is random; MusicKit shuffles the
+                    // remaining playback without changing the playlist order.
                     player.shuffleMode = .songs
                     playbackModeVersion += 1
                 }
@@ -955,11 +958,11 @@ final class PlaybackController {
             },
             onObservedTransition: { confirmation in
                 if let outgoingSessionSettings,
-                   shouldEvaluateOutgoingTransition(
+                   (enableShuffleBeforePlayback || shouldEvaluateOutgoingTransition(
                        outgoing,
                        targetPlaylistID: playlistID,
                        targetLocalTrackID: localTrackID
-                   ) {
+                   )) {
                     evaluateOutgoingTransition(
                         outgoing,
                         settings: outgoingSessionSettings,
@@ -995,13 +998,6 @@ final class PlaybackController {
                 clearDeliveryFailure()
                 currentPlaylistID = playlistID
                 currentPlaylistScope = scope
-                if let confirmedPlaybackOrder {
-                    persistConfirmedPlaybackOrder(
-                        confirmedPlaybackOrder,
-                        playlistID: playlistID,
-                        scope: scope
-                    )
-                }
                 statusMessage = nil
                 startMonitoring(context: context)
             },
@@ -2513,6 +2509,22 @@ final class PlaybackController {
         }
     }
 
+    /// MusicKit's current entry can hydrate before the queue's entries do.
+    /// Use that concrete identity immediately instead of rejecting a valid
+    /// startup while waiting for the queue snapshot to catch up.
+    private func liveQueueSnapshots(currentEntry: MusicPlayer.Queue.Entry?) -> [PlayerQueueEntrySnapshot] {
+        var snapshots = player.queueEntrySnapshots
+        if let currentEntry, let item = player.currentEntryItem {
+            let currentSnapshot = PlayerQueueEntrySnapshot(id: currentEntry.id, musicItemID: item.id.rawValue)
+            if let index = snapshots.firstIndex(where: { $0.id == currentEntry.id }) {
+                snapshots[index] = currentSnapshot
+            } else {
+                snapshots.append(currentSnapshot)
+            }
+        }
+        return snapshots
+    }
+
     /// Rebuilds entry-level correlation from the queue the player is holding.
     ///
     /// MusicKit owns shuffle and repeat now, and a mode change reorders — and
@@ -2548,7 +2560,7 @@ final class PlaybackController {
             return
         }
 
-        let snapshots = player.queueEntrySnapshots
+        let snapshots = liveQueueSnapshots(currentEntry: currentEntry)
         let mappedEntryIDs = Set(activeQueueEntries.map(\.queueEntryID))
         let mappableEntryIDs = snapshots.filter { snapshot in
             snapshot.musicItemID != nil
@@ -3033,21 +3045,6 @@ final class PlaybackController {
             }
         }
         return false
-    }
-
-    private func persistConfirmedPlaybackOrder(
-        _ orderedTrackIDs: [String],
-        playlistID: String,
-        scope: PlaylistPlaybackScope
-    ) {
-        PlaybackQueueOrchestrator.persistReshuffledOrder(
-            orderedTrackIDs,
-            playlistID: playlistID,
-            playerID: playerID,
-            scope: scope
-        )
-        playbackModeVersion += 1
-        activePlaylistSnapshotNeedsRebuild = true
     }
 
     private func trackDeliveryHealth(

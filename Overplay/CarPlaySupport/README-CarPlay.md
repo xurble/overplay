@@ -12,6 +12,8 @@ entitlement, and `Config/Info.plist` declares a CarPlay scene using
   isolated from the SwiftUI iPhone/iPad shell.
 - `CarPlayLibrarySnapshot` builds testable playlist summaries for the CarPlay
   list UI.
+- `CarPlayPlaylistSectionFactory` builds the shared Shuffle and Play action
+  and track sections for all three playlist screens.
 - `CarPlayNavigationPolicy` decides what track rows do, free of CarPlay types
   so the rules are testable.
 - `AppRuntime.shared` provides the shared model container, playback controller,
@@ -25,12 +27,17 @@ The root template has no navigation-bar actions. It shows:
 - A row for the One True Playlist, which opens its track list. There is no
   one-tap entry point above it: two similar-looking rows is one too many to
   disambiguate while driving.
-- A separate section of the active triage playlists, which open the same
-  track-list screen.
+- A Triage row for the shared intake bucket.
+- A Retired row for locally retired tracks.
 
-A track list contains the tracks in their current local order and nothing
-else. Shuffle and repeat live on Now Playing as the system's own controls,
-not as menu rows.
+Each of these three track lists starts with a **Shuffle and Play** row above
+tracks in their current local order. The action uses the shared controller's
+playlist playback path, stops existing playback, selects a random starting track,
+and enables MusicKit shuffle without changing the displayed playlist order. It
+preserves the displayed Active or Retired scope and opens Now Playing on success.
+It remains available when that playlist is already playing, matching the phone's
+Shuffle and Play button. Empty lists show the action
+disabled. Shuffle and repeat also remain available as Now Playing controls.
 
 Tapping a track routes through `CarPlayNavigationPolicy.trackIntent`:
 
@@ -51,9 +58,8 @@ catches phone-side library changes — linking a playlist, changing the One True
 Playlist, or a sync updating counts — which touch SwiftData without touching
 playback state.
 
-CarPlay browsing intentionally exposes only Active playlist contents. If the
-user starts a Retired playlist context from iOS and then uses CarPlay, CarPlay
-displays that current Retired context through the shared playback state.
+CarPlay exposes Active and Retired playback contexts through the same shared
+playback state used by iOS.
 
 The shared Now Playing template installs the system shuffle and repeat
 buttons, which reflect and set MusicKit's own modes (`PLAY-004`). Repeat is an
@@ -66,7 +72,8 @@ point of hearing it again. Its Up Next button returns to the root menu.
 ## Verification
 
 The app target builds and unit tests cover CarPlay playlist summary ordering,
-playable counts, template refresh targeting, track navigation rules in
+playable counts, Shuffle and Play placement and scope forwarding, empty-list
+behavior, template refresh targeting, track navigation rules in
 `CarPlayNavigationPolicy`, Now Playing action policy, and the shared in-queue
 skip and playback-mode paths in `PlaybackController`. The initial physical-device
 acceptance pass was completed on 2026-09-08. Repeat the affected hardware checks

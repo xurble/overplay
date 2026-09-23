@@ -76,7 +76,7 @@ private struct PlaylistManagementContentView: View {
                         Task { await playPlaylist() }
                     } label: {
                         Label(
-                            viewModel.playButtonTitle(isCurrentPlaylist: isCurrentPlaylistScope),
+                            viewModel.playButtonTitle,
                             systemImage: "shuffle"
                         )
                         .font(.headline)
@@ -85,7 +85,7 @@ private struct PlaylistManagementContentView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .disabled(isCurrentPlaylistScope || !detail.rows.contains { $0.isPlayable })
+                    .disabled(!detail.rows.contains { $0.isPlayable })
                 }
                 .padding(.vertical, 4)
             }
@@ -170,11 +170,11 @@ private struct PlaylistManagementContentView: View {
                         Task { await playPlaylist() }
                     } label: {
                         Label(
-                            viewModel.playButtonTitle(isCurrentPlaylist: isCurrentPlaylistScope),
+                            viewModel.playButtonTitle,
                             systemImage: "shuffle"
                         )
                     }
-                    .disabled(isCurrentPlaylistScope || !detail.rows.contains { $0.isPlayable })
+                    .disabled(!detail.rows.contains { $0.isPlayable })
 
                     if selectedScope == .active {
                         Button {
@@ -216,10 +216,6 @@ private struct PlaylistManagementContentView: View {
             scope: selectedScope,
             items: playlistItems
         )
-    }
-
-    private var isCurrentPlaylistScope: Bool {
-        playbackController.isCurrentPlaylist(playlist) && playbackController.currentPlaylistScope == selectedScope
     }
 
     private var detailPresentation: PlaylistManagementViewModel.DetailPresentation {
@@ -339,7 +335,6 @@ private struct PlaylistManagementContentView: View {
             playlist: playlist,
             settings: settings,
             scope: selectedScope,
-            isCurrentPlaylist: isCurrentPlaylistScope,
             context: modelContext,
             dependencies: dependencies
         )
