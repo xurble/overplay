@@ -28,6 +28,8 @@ struct AppStartupViewModelTests {
             events.append("sync-stop")
         } compactHistory: {
             events.append("compact")
+        } removeVideoTracks: {
+            events.append("remove-videos")
         }
 
         await viewModel.bootstrap(isReady: true, dependencies: dependencies)
@@ -38,6 +40,7 @@ struct AppStartupViewModelTests {
         // playlist role before the pre-bucket rows have moved.
         #expect(events == [
             "settings",
+            "remove-videos",
             "migrate-triage",
             "authorization",
             "remote",

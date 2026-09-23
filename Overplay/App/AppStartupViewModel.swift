@@ -16,6 +16,7 @@ final class AppStartupViewModel {
         var startPeriodicPlaylistSync: () -> Void
         var stopPeriodicPlaylistSync: () -> Void
         var compactHistory: () -> Void
+        var removeVideoTracks: () -> Void = {}
     }
 
     private(set) var hasStartedAuthorizedServices = false
@@ -41,6 +42,8 @@ final class AppStartupViewModel {
         } catch {
             StartupProfiler.mark("Startup settings load failed: \(error.localizedDescription)")
         }
+
+        dependencies.removeVideoTracks()
 
         // Runs before anything reads playlist roles. The pre-bucket `triage`
         // raw value resolves to `.triageSource`, so a view that renders first
@@ -111,6 +114,12 @@ final class AppStartupViewModel {
                 try HistoryRetentionService.compact(in: modelContext)
             } catch {
                 StartupProfiler.mark("History retention failed: \(error.localizedDescription)")
+            }
+        } removeVideoTracks: {
+            do {
+                try VideoTrackCleanupService.removeVideos(in: modelContext)
+            } catch {
+                StartupProfiler.mark("Video cleanup failed: \(error.localizedDescription)")
             }
         }
     }

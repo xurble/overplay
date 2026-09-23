@@ -143,6 +143,7 @@ struct PlaylistSyncService {
         runIdentityMerge: Bool = true,
         skipWhenRemoteUnchanged: Bool = false
     ) async throws -> PlaylistSyncSummary {
+        try VideoTrackCleanupService.removeVideos(in: context)
         guard playlistRecord.isActive else {
             return inactivePlaylistSummary()
         }
@@ -179,6 +180,8 @@ struct PlaylistSyncService {
         guard playlistRecord.isActive, playlistRecord.triageLinkedAt == requestedLinkDate else {
             return inactivePlaylistSummary(skippedCount: fetchResult.snapshots.count)
         }
+
+        try VideoTrackCleanupService.removeVideos(knownVideoIDs: fetchResult.videoMusicItemIDs, in: context)
 
         guard fetchResult.didFetchTracks else {
             // Nothing was fetched because nothing changed. Record the visit
@@ -317,7 +320,7 @@ struct PlaylistSyncService {
 
         if let sourcePlaylistID {
             let sourcePlaylist = try await loadPlaylist(id: sourcePlaylistID)
-            sourceTracks = try await loadTracks(for: sourcePlaylist)
+            sourceTracks = try await loadTracks(for: sourcePlaylist).filter(VideoTrackPolicy.isSong)
         } else {
             sourceTracks = []
         }
@@ -391,10 +394,13 @@ struct PlaylistSyncService {
             return inactivePlaylistSummary(skippedCount: snapshots.count)
         }
 
+        try VideoTrackCleanupService.removeVideos(in: context)
+        let rejectedCount = snapshots.filter { VideoTrackPolicy.isVideo(playbackData: $0.musicKitPlaybackData) }.count
+        let snapshots = snapshots.filter { !VideoTrackPolicy.isVideo(playbackData: $0.musicKitPlaybackData) }
         let sourceReadID = playlistRecord.id
         Self.beginSourceRead(sourceReadID)
         defer { Self.endSourceRead(sourceReadID) }
-        var summary = PlaylistSyncSummary(fetchedCount: snapshots.count)
+        var summary = PlaylistSyncSummary(fetchedCount: snapshots.count, skippedCount: rejectedCount)
         let reconciliationLinkDate = playlistRecord.triageLinkedAt
         var seenRemoteTrackKeys = Set<String>()
         let snapshotsByRemoteKey = Dictionary(grouping: snapshots) { $0.catalogID ?? $0.libraryID ?? $0.id }
@@ -794,7 +800,7 @@ struct PlaylistSyncService {
         }
 
         let playlist = try await loadPlaylist(id: playlistID)
-        return try await loadTracks(for: playlist)
+        return try await loadTracks(for: playlist).filter(VideoTrackPolicy.isSong)
     }
 
     func playableMusicTracks(for playlistRecord: PlaylistRecord, in context: ModelContext) async throws -> [Track] {
@@ -818,7 +824,7 @@ struct PlaylistSyncService {
             in: context
         )
         let tracks = try await loadTracks(for: playlist)
-        return tracks.filter { playableMusicItemIDs.contains($0.id.rawValue) }
+        return tracks.filter { VideoTrackPolicy.isSong($0) && playableMusicItemIDs.contains($0.id.rawValue) }
     }
 
     @discardableResult

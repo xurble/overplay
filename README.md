@@ -66,6 +66,10 @@ only when persisted observations or MusicKit library evidence prove them.
 
 ## Sync and Data
 
+Only songs are imported, copied into new managed playlists, and synced. Music
+videos are excluded. Legacy video records and their local membership/history
+are removed at startup and during sync; original Apple Music items are untouched.
+
 Shared app data is backed by iCloud/CloudKit so devices on the same account
 can share playlist definitions, track stats, promotions, and retirement
 history. Linked playlists are periodically re-synced from Apple Music, with

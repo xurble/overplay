@@ -140,6 +140,9 @@ enum TrackRecordRepository {
         updatedAt: Date = .now,
         in context: ModelContext
     ) throws -> TrackRecordUpsertResult {
+        guard !VideoTrackPolicy.isVideo(playbackData: musicKitPlaybackData) else {
+            throw TrackImportError.videoNotSupported
+        }
         guard let track = try track(catalogID: catalogID, libraryID: libraryID, in: context) else {
             let insertedTrack = TrackRecord(
                 catalogID: catalogID,

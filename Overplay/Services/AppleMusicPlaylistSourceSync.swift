@@ -67,7 +67,7 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
         }
 
         let entries = try await entryLoader(playlist)
-        _ = try AppleMusicPlaylistTrackLoader.completeTracks(from: entries)
+        let tracks = try AppleMusicPlaylistTrackLoader.completeTracks(from: entries)
         // Snapshot mapping JSON-encodes every track's playback data on the
         // main actor; yield periodically so large playlists don't stall UI.
         var snapshots: [TrackSnapshot] = []
@@ -89,7 +89,8 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
             skippedReason: entries.count == snapshots.count ? nil : "nonSongEntries",
             remoteLastModifiedAt: playlist.lastModifiedDate,
             didFetchTracks: true,
-            didFetchEntries: true
+            didFetchEntries: true,
+            videoMusicItemIDs: AppleMusicPlaylistTrackLoader.videoMusicItemIDs(from: tracks)
         )
     }
 
@@ -276,7 +277,14 @@ enum AppleMusicPlaylistTrackLoader {
         return snapshot
     }
 
-    /// Copies keep videos remotely, but local intake remains song-only.
+    static func videoMusicItemIDs(from tracks: [Track]) -> Set<String> {
+        Set(tracks.filter { !VideoTrackPolicy.isSong($0) }.flatMap { track in
+            let identity = MusicTrackIdentity.ids(for: track)
+            return [track.id.rawValue, identity.catalogID, identity.libraryID].compactMap { $0 }
+        })
+    }
+
+    /// Local intake is always song-only.
     static func songSnapshots(from tracks: [Track], playlistID: String) -> [TrackSnapshot] {
         tracks.compactMap { track in
             guard case .song = track else { return nil }

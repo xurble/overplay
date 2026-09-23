@@ -14,6 +14,7 @@ struct PlaylistSourceFetchResult: Equatable, Sendable {
     /// already has rather than reconciling against an empty list.
     var didFetchTracks: Bool = true
     var didFetchEntries: Bool = false
+    var videoMusicItemIDs: Set<String> = []
 }
 
 protocol PlaylistSourceSyncing {

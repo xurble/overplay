@@ -82,6 +82,12 @@ final class PeriodicPlaylistSyncService {
         let playlists: [PlaylistRecord]
 
         do {
+            let deletedCount = try VideoTrackCleanupService.removeVideos(in: context)
+            if deletedCount > 0 {
+                for playlist in try PlaylistRepository.activePlaylists(in: context) {
+                    playbackController?.reconcileStoredOrder(for: playlist, context: context)
+                }
+            }
             // The bucket has no Apple Music playlist to fetch; its
             // contributing sources are what get synced.
             playlists = try PlaylistRepository.activePlaylists(in: context)

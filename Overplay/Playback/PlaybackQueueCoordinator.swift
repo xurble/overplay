@@ -85,7 +85,8 @@ enum PlaybackQueueCoordinator {
               let item = itemsByTrackID[trackID],
               let trackRecord = tracksByID[trackID],
               let playbackData = trackRecord.musicKitPlaybackData,
-              let musicTrack = try? JSONDecoder().decode(Track.self, from: playbackData) else {
+              let musicTrack = try? JSONDecoder().decode(Track.self, from: playbackData),
+              VideoTrackPolicy.isSong(musicTrack) else {
             return nil
         }
 
