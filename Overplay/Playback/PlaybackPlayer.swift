@@ -83,7 +83,7 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
 
     var queueEntrySnapshots: [PlayerQueueEntrySnapshot] {
         player.queue.entries.map {
-            PlayerQueueEntrySnapshot(id: $0.id, musicItemID: $0.item?.id.rawValue)
+            PlayerQueueEntrySnapshot(entry: $0, item: $0.item)
         }
     }
 

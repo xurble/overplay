@@ -1,15 +1,40 @@
 import Foundation
 @preconcurrency import MusicKit
 
-/// One entry of the player's live queue, reduced to the two identifiers
-/// Overplay needs to correlate it with local records.
+/// Metadata is corroborating playback evidence, never a canonical song identity.
+struct PlaybackTrackMatchMetadata: Codable, Equatable, Sendable {
+    var title: String
+    var artist: String
+    var duration: Double?
+
+    init(title: String, artist: String, duration: Double? = nil) {
+        func normalized(_ value: String) -> String {
+            value.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased()
+        }
+        self.title = normalized(title)
+        self.artist = normalized(artist)
+        self.duration = duration
+    }
+
+    func matches(_ other: Self) -> Bool {
+        guard !title.isEmpty, !artist.isEmpty, title == other.title, artist == other.artist else { return false }
+        if let duration, let otherDuration = other.duration {
+            return duration.isFinite && otherDuration.isFinite && abs(duration - otherDuration) <= 2
+        }
+        return true
+    }
+}
+
+/// One hydrated entry of the player's live queue.
 struct PlayerQueueEntrySnapshot: Equatable, Sendable {
     var id: String
     var musicItemID: String?
+    var metadata: PlaybackTrackMatchMetadata?
 
-    init(id: String, musicItemID: String?) {
+    init(id: String, musicItemID: String?, metadata: PlaybackTrackMatchMetadata? = nil) {
         self.id = id
         self.musicItemID = musicItemID
+        self.metadata = metadata
     }
 }
 
@@ -30,6 +55,10 @@ struct PendingQueueCorrelation: Equatable, Sendable {
     /// The matchable IDs supplied only by the runtime alias store. Retained
     /// for diagnostics so a successful rebuild can prove it used an alias.
     var runtimeAliasMusicItemIDs: Set<String> = []
+    var metadata: PlaybackTrackMatchMetadata?
+    /// Only the actual submitted manifest is eligible for new metadata matches.
+    var wasSubmitted = false
+    var cachedAssociations: [String: PlaybackTrackMatchMetadata] = [:]
 
     init(
         playlistItemID: UUID,
@@ -53,8 +82,8 @@ struct PendingQueueCorrelation: Equatable, Sendable {
 /// `PlaybackQueueMaterializer` knows the entry IDs it builds, but two paths
 /// have no such luxury: a top-up batch appended into a live queue, and a
 /// mirror playlist queue that Apple Music materializes from a `Playlist`.
-/// Both are matched back to local records on Apple Music item ID, which is
-/// unique per playlist because Overplay forbids duplicate songs.
+/// Known song IDs take priority. Reissued IDs can also be recovered from the
+/// submitted manifest or validated playback associations.
 enum PlaybackQueueSnapshotCorrelator {
     static func realizedEntries(
         expected: [PendingQueueCorrelation],
@@ -97,22 +126,59 @@ enum PlaybackQueueSnapshotCorrelator {
     /// duplicate songs within a playlist.
     static func realizedEntriesInPlayerOrder(
         snapshots: [PlayerQueueEntrySnapshot],
-        members: [PendingQueueCorrelation]
+        members: [PendingQueueCorrelation],
+        allowPositionMatching: Bool = false
     ) -> [RealizedPlaybackQueueEntry] {
-        var availableMembers = members
-
-        return snapshots.compactMap { snapshot in
-            guard let musicItemID = snapshot.musicItemID,
-                  let index = availableMembers.firstIndex(where: { $0.matches(musicItemID) }) else {
-                return nil
+        var matches: [Int: (PendingQueueCorrelation, PlaybackQueueMatchSource)] = [:]
+        var claimed = Set<String>()
+        // Resolve IDs first across the complete snapshot. An earlier metadata
+        // guess must never steal a later entry's documented identity.
+        for (index, snapshot) in snapshots.enumerated() {
+            guard let id = snapshot.musicItemID else { continue }
+            let candidates = members.filter { $0.matches(id) }
+            guard candidates.count == 1, let member = candidates.first,
+                  claimed.insert(member.localTrackID).inserted else { continue }
+            matches[index] = (member, .identifier)
+        }
+        let hasIDAnchor = !matches.isEmpty
+        let positionsAgree = snapshots.count == members.count && hasIDAnchor && members.allSatisfy(\.wasSubmitted)
+            && matches.allSatisfy { members[$0.key].localTrackID == $0.value.0.localTrackID }
+            && zip(snapshots, members).allSatisfy { snapshot, member in
+                snapshot.metadata.map { member.metadata?.matches($0) == true } == true
             }
 
-            let member = availableMembers.remove(at: index)
+        for (index, snapshot) in snapshots.enumerated() where matches[index] == nil {
+            guard let id = snapshot.musicItemID, let metadata = snapshot.metadata else { continue }
+            // Conflicting known IDs cannot be rehabilitated through metadata.
+            guard !members.contains(where: { $0.matches(id) }),
+                  snapshots.filter({ $0.musicItemID == id }).count == 1 else { continue }
+            let candidates = members.filter { $0.metadata?.matches(metadata) == true }
+            let member: PendingQueueCorrelation
+            let source: PlaybackQueueMatchSource
+            if candidates.count == 1, let unique = candidates.first,
+               unique.wasSubmitted || unique.cachedAssociations[id]?.matches(metadata) == true {
+                member = unique
+                source = unique.cachedAssociations[id]?.matches(metadata) == true ? .cachedAssociation : .metadata
+            } else if allowPositionMatching, positionsAgree,
+                      candidates.contains(where: { $0.localTrackID == members[index].localTrackID }) {
+                member = members[index]
+                source = .positionAndMetadata
+            } else {
+                continue
+            }
+            // Count against ALL candidates, not just unclaimed ones: a duplicate
+            // title/artist is still ambiguous after another candidate was claimed.
+            guard claimed.insert(member.localTrackID).inserted else { continue }
+            matches[index] = (member, source)
+        }
+        return snapshots.enumerated().compactMap { index, snapshot in
+            guard let (member, source) = matches[index], let musicItemID = snapshot.musicItemID else { return nil }
             return RealizedPlaybackQueueEntry(
                 queueEntryID: snapshot.id,
                 playlistItemID: member.playlistItemID,
                 localTrackID: member.localTrackID,
-                queuedMusicItemID: musicItemID
+                queuedMusicItemID: musicItemID,
+                matchSource: source
             )
         }
     }
@@ -127,5 +193,21 @@ extension PendingQueueCorrelation {
             queuedMusicItemID: entry.queuedMusicItemID,
             matchableMusicItemIDs: Set([entry.queuedMusicItemID, ids.catalogID, ids.libraryID].compactMap { $0 })
         )
+        wasSubmitted = true
+        metadata = PlaybackTrackMatchMetadata(
+            title: entry.musicTrack.title, artist: entry.musicTrack.artistName, duration: entry.musicTrack.duration
+        )
+    }
+}
+
+extension PlayerQueueEntrySnapshot {
+    init(entry: MusicPlayer.Queue.Entry, item: MusicPlayer.Queue.Entry.Item?) {
+        let metadata: PlaybackTrackMatchMetadata?
+        if case let .song(song) = item {
+            metadata = PlaybackTrackMatchMetadata(title: song.title, artist: song.artistName, duration: song.duration)
+        } else {
+            metadata = nil
+        }
+        self.init(id: entry.id, musicItemID: item?.id.rawValue, metadata: metadata)
     }
 }
