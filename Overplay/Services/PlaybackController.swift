@@ -3077,6 +3077,7 @@ final class PlaybackController {
             !retainedIDs.contains($0.localTrackID) && $0.queueEntryID != currentEntryID
         }
         var removedIDs = Set(removedEntries.map(\.queueEntryID))
+        var removedLocalIDs = Set(removedEntries.map(\.localTrackID))
         let correlatedIDs = Set(activeQueueEntries.map(\.queueEntryID))
         // A rehydrating queue may not yet have local correlations. Only prune
         // entries whose concrete MusicKit identity resolves to our local track.
@@ -3086,11 +3087,11 @@ final class PlaybackController {
                let track = try? TrackRecordRepository.track(musicItemID: musicID, in: context),
                !retainedIDs.contains(track.id.uuidString) {
                 removedIDs.insert(entry.id)
+                removedLocalIDs.insert(track.id.uuidString)
             }
         }
         guard !removedIDs.isEmpty else { return }
         player.removeQueueEntries(withIDs: removedIDs)
-        let removedLocalIDs = Set(removedEntries.map(\.localTrackID))
         submittedQueueMembers.removeAll { removedLocalIDs.contains($0.localTrackID) }
         lastCorrelationSnapshots = nil
         activeQueueEntries.removeAll { removedIDs.contains($0.queueEntryID) }

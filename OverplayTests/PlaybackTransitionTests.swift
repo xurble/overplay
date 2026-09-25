@@ -2181,6 +2181,43 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.nowPlayingDisplayLocalTrackID == nil)
     }
 
+    @Test("removing a newly hydrated uncorrelated row preserves positional recovery")
+    func snapshotPruningUpdatesSubmittedManifest() async throws {
+        let fixture = try makeFixture(trackCount: 4)
+        defer { fixture.cleanUp() }
+        let duplicates = try (0..<2).map { index in
+            try PlaybackTransitionFixture.makeMusicTrack(id: fixture.musicTracks[index].id.rawValue, title: "Duplicate title")
+        }
+        for index in 0..<2 {
+            fixture.tracks[index].title = "Duplicate title"
+            fixture.tracks[index].musicKitPlaybackData = try JSONEncoder().encode(duplicates[index])
+        }
+        try fixture.context.save()
+        try await fixture.start(at: 0)
+        let queue = duplicates + Array(fixture.musicTracks.suffix(2))
+        let ids = fixture.player.reissueEntryIDs(for: queue, currentIndex: 0)
+        fixture.player.unhydratedEntryIDs = [ids[3]]
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        // The future entry hydrates just before membership changes, without
+        // a player refresh that would add it to activeQueueEntries first.
+        fixture.player.unhydratedEntryIDs = []
+        fixture.items[3].evictedAt = .now
+        try fixture.context.save()
+        fixture.controller.reconcileTrackMembership(context: fixture.context)
+        #expect(fixture.player.queuedEntryCount == 3)
+        #expect(!fixture.player.queueEntrySnapshots.contains { $0.id == ids[3] })
+        let unfamiliar = try PlaybackTransitionFixture.makeMusicTrack(id: "pruned-position-current", title: "Duplicate title")
+        fixture.player.reissueEntryIDs(for: [unfamiliar, duplicates[1], fixture.musicTracks[2]], currentIndex: 0)
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(fixture.controller.currentPlaylistItem?.id == fixture.items[0].id)
+        #expect(fixture.controller.nowPlayingDisplayLocalTrackID == fixture.tracks[0].id.uuidString)
+        #expect(fixture.controller.currentPlaylistRole(context: fixture.context) == .oneTruePlaylist)
+        #expect(MusicKitActivityLog.shared.snapshot().events.contains {
+            $0.detail?.contains("player=\(fixture.playerID) ") == true
+                && $0.detail?.contains("currentMatch=positionAndMetadata") == true
+        })
+    }
+
     @Test("an unresolved item does not discard the rest of the submitted queue")
     func unknownEntryPreservesQueueForLaterMetadataHydration() async throws {
         let fixture = try makeFixture()
