@@ -34,7 +34,7 @@ struct DuplicateTracksView: View {
                                 Text(candidate.title)
                                 Text(candidate.artist + " · " + (candidate.album ?? "Unknown album"))
                                     .font(.subheadline).foregroundStyle(.secondary)
-                                Text("\(candidate.destination.rawValue) · \(candidate.plays) plays · \(candidate.skips) skips")
+                                Text("\(candidate.destination.rawValue) · \(PlayCountPresentation.metric(overplay: candidate.plays, apple: candidate.applePlays, skips: candidate.skips))")
                                     .font(.caption)
                             }
                         }
@@ -55,7 +55,7 @@ struct DuplicateTracksView: View {
                 Form {
                     Section {
                         Text("Merge \(pending.count) tracks into one?")
-                        Text("Play and skip counts will be added together. History and source playlists will be preserved.")
+                        Text("Overplay plays and skips will be added together. Shared Apple Music counter increases will be counted once. History and source playlists will be preserved.")
                         if Set(pending.map(\.destination)).count > 1 {
                             Picker("Keep in", selection: $destination) {
                                 Text("Choose a collection").tag(Optional<DuplicateTrackService.Destination>.none)

@@ -210,6 +210,10 @@ struct TrackPlaybackFactsView: View {
     var body: some View {
         HStack(spacing: 14) {
             Label(presentation.playSkipMetricText, systemImage: "waveform.path.ecg")
+                .help("Plays: Overplay / Apple Music")
+                .accessibilityLabel(PlayCountPresentation.accessibilityLabel(
+                    overplay: presentation.playthroughCount, apple: presentation.applePlayCount, skips: presentation.skipCount
+                ))
 
             if presentation.isEvicted {
                 let badge = TrackStateBadgePresentation(isEvicted: true)

@@ -194,6 +194,9 @@ struct PlaylistSyncService {
             playlistRecord.lastSyncError = nil
             playlistRecord.updatedAt = .now
             try context.save()
+            if runIdentityMerge {
+                await ApplePlayCountSyncService.shared.refresh(in: context, playbackController: AppRuntime.shared.playbackController)
+            }
             logSyncSummary(summary, playlistRecord: playlistRecord)
             return summary
         }
@@ -214,6 +217,7 @@ struct PlaylistSyncService {
         try context.save()
         if runIdentityMerge {
             try await TrackIdentityMergeService.mergeDuplicates(in: context)
+            await ApplePlayCountSyncService.shared.refresh(in: context, playbackController: AppRuntime.shared.playbackController)
         }
         logSyncSummary(summary, playlistRecord: playlistRecord)
         warmUpArtworkThemes(for: summary.artworkWarmupSnapshots)
@@ -242,6 +246,9 @@ struct PlaylistSyncService {
             bucket.lastSyncError = nil
             bucket.updatedAt = .now
             try context.save()
+            if runIdentityMerge {
+                await ApplePlayCountSyncService.shared.refresh(in: context, playbackController: AppRuntime.shared.playbackController)
+            }
             return summary
         }
 
@@ -279,6 +286,9 @@ struct PlaylistSyncService {
         if runIdentityMerge, combinedSummary.didMutateRecords {
             try await TrackIdentityMergeService.mergeDuplicates(in: context)
         }
+        if runIdentityMerge {
+            await ApplePlayCountSyncService.shared.refresh(in: context, playbackController: AppRuntime.shared.playbackController)
+        }
 
         if let firstError, combinedSummary.fetchedCount == 0 {
             throw firstError
@@ -305,6 +315,7 @@ struct PlaylistSyncService {
             try await TrackIdentityMergeService.mergeDuplicates(in: context)
         }
 
+        await ApplePlayCountSyncService.shared.refresh(in: context, playbackController: AppRuntime.shared.playbackController)
         return syncedCount
     }
 

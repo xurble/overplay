@@ -30,6 +30,33 @@ final class PlaylistItemRecord {
     var sortOrder: Int = 0
     var skipCount: Int = 0
     var playthroughCount: Int = 0
+    @Transient private var detachedApplePlayCountState: ApplePlayCountState?
+
+    @MainActor var applePlayCountState: ApplePlayCountState? {
+        get {
+            guard let modelContext else { return detachedApplePlayCountState }
+            return try? ApplePlayCountRepository.state(for: id, in: modelContext)
+        }
+        set {
+            guard let modelContext else { detachedApplePlayCountState = newValue; return }
+            if let newValue { ApplePlayCountRepository.append(newValue, for: id, in: modelContext) }
+        }
+    }
+
+    @MainActor var applePlayCount: Int? {
+        // Reading the stamp lets ordinary SwiftData row invalidations refresh
+        // the presentation after the shared service publishes new evidence.
+        _ = updatedAt
+        guard let modelContext else {
+            return detachedApplePlayCountState?.counters.isEmpty == false ? detachedApplePlayCountState?.count : nil
+        }
+        return try? ApplePlayCountRepository.count(for: id, in: modelContext)
+    }
+
+    @MainActor var applePlayCountResetAt: Date? {
+        guard let state = applePlayCountState, !state.resetID.isEmpty else { return nil }
+        return state.resetAt
+    }
     var lastPlayedAt: Date?
     var lastSkippedAt: Date?
     var lastSeenInPlaylistAt: Date?
@@ -97,8 +124,8 @@ final class PlaylistItemRecord {
         evictedAt == nil
     }
 
-    var hasListeningHistory: Bool {
-        hasRecordedActivity || skipCount != 0 || playthroughCount != 0
+    @MainActor var hasListeningHistory: Bool {
+        hasRecordedActivity || skipCount != 0 || playthroughCount != 0 || (applePlayCount ?? 0) > 0
             || lastPlayedAt != nil || lastSkippedAt != nil
     }
 

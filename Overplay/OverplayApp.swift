@@ -97,6 +97,9 @@ struct OverplayApp: App {
         // Overplay was away stay stale on screen.
         if phase == .active {
             await AppRuntime.shared.playbackController.reconcilePlayerState(context: context)
+            await ApplePlayCountSyncService.shared.refresh(
+                in: context, playbackController: AppRuntime.shared.playbackController
+            )
         }
     }
 }

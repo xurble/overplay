@@ -27,6 +27,53 @@ the track past the playthrough threshold, wall-clock accounting showing the
 span played continuously, or an Apple Music library play-count advance tied to
 the observed interval. Anything ambiguous counts nothing.
 
+Track rows and Now Playing also show an independent Apple Music count as
+`Overplay/Apple plays` (for example, `1/1 plays`). On the first successful
+library-count refresh, the Apple comparison starts at the existing Overplay
+count; subsequent increases come only from Apple's counter. This includes
+listening outside Overplay that Apple records. An unavailable initial count
+is shown as `—`, never treated as zero.
+
+Unknown counts get a broader, paginated library lookup at most every fifteen
+minutes. Matching uses known Apple IDs, a unique recording code (ISRC), or a
+unique title/artist/album match with duration within two seconds. Ambiguous
+matches stay unknown, and missing Apple metadata is never replaced with zero.
+When an unknown track starts playing, a focused ID and title lookup runs
+immediately without waiting for the bulk refresh. Repeated misses for that
+track retry at most once a minute. Recovered library IDs are retained for future
+count refreshes without changing playback identities or merging tracks.
+
+Counts refresh on foregrounding, after playlist sync, and once a minute while
+the app is running. All retained tracks are included, even retired tracks or
+tracks absent from their source playlist. Apple controls how soon its local
+library counters update. Each distinct library item retains its own baseline;
+aliases of the same item share one counter when merged. Devices insert immutable
+counter observations into CloudKit instead of overwriting one shared value.
+The displayed Apple count never decreases when older observations arrive or a
+different initialization baseline wins. It holds at the highest published count
+until playback or Apple's propagation makes the calculated count exceed it.
+
+Concurrent initialization uses the earliest observation (with a stable tie-break)
+for each counter and keeps a tracked item's initial credit paired with its first observation. Credits
+for aliases of the same Apple counter are not added twice. Separate counters
+retain their own history. CloudKit imports reconcile without needing MusicKit
+access, including late observations for merged tracks.
+An alias without an observed count uses its known library identity to bind its
+starting credit. If that identity is still unknown, its credit is withheld from
+the sum until later evidence resolves it; already-published floors remain intact.
+Automatic deduplication captures these identities before repointing tracks. If
+no merged item has an observed counter yet, the first reading seeds the combined
+current Overplay count once and records which earlier credits it covers.
+
+Reset All Local Overplay Stats is the explicit exception: it starts a new reset
+version and rebases known counters without changing Apple's own counts. Late
+observations from before that reset cannot resurrect the previous total.
+Resetting an unresolved track retains `—` and keeps it eligible for discovery;
+its first valid reading seeds the then-current Overplay count. New
+library identities start at their first valid reading without importing lifetime
+plays. Counter observations are retained as evidence; they are not individual
+play-history events.
+
 Retirement is the user-facing state for tracks removed from Active playback:
 Overplay surfaces playthroughs versus skips for every linked
 playlist, and tracks are retired by explicit user action. Promotion moves a

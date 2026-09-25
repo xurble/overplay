@@ -512,6 +512,86 @@ witnessed listening time required for a skip.
 Playthroughs and skips accumulate independently. A playthrough does not reset
 the playlist item's skip count.
 
+### Independent Apple play-count comparison
+
+Playback surfaces display `Overplay/Apple plays` alongside the existing skip
+count. The original threshold-based evaluation and reconciliation below keep
+their existing behavior. The second total is seeded from the current Overplay
+playthrough count at the first valid Apple library observation, then advances
+by Apple's cumulative counter deltas. For example, one Overplay play and an
+Apple counter of ten display `1/1`, equivalent to an effective baseline of nine.
+Missing initial metadata displays `—`; it does not create a zero baseline.
+
+Unresolved tracks also use a paginated local library scan, at most once every
+fifteen minutes. Matching prefers Apple identity aliases, then a unique ISRC
+with compatible duration, then unique case/diacritic/whitespace-normalized title,
+artist and album plus duration within two seconds. Conflicting ISRCs and ambiguous
+metadata matches are rejected. Missing-count candidates still participate in
+ambiguity checks. Metadata matches are scoped to the local track and do not
+change playback aliases or authorize deduplication. A discovered library counter
+ID becomes part of the persisted counter state for subsequent direct refreshes.
+
+Shared playback reconciliation immediately requests a focused lookup when a
+track starts playing with an unknown count, including externally initiated track
+changes. This does not wait for the bulk refresh or its discovery cooldown.
+It queries the track's IDs, then paginates a title search if still unresolved.
+Title searches require identity or complete metadata matching; only a full scan
+can prove ISRC uniqueness. Concurrent requests for the same track are coalesced,
+and repeated misses retry at most once per minute. Playback is not blocked by
+these lookups, and completed counts publish through the shared playback state.
+
+The shared ApplePlayCountSyncService queries retained tracks in batches on
+foreground, after playlist sync (including unchanged playlists), and every
+minute while running. Library observations are independent of playback
+sessions, so no per-play HistoryEvent is synthesized. Listening outside
+Overplay may contribute, and Apple controls counter propagation latency.
+
+ApplePlayCountRecord stores immutable snapshots as separate CloudKit records,
+with a device identifier, item identifier, published count, reset version, and
+encoded counter evidence. No shared mutable counter blob is authoritative.
+Reconciliation joins counter high-water readings and picks the earliest baseline
+by observation time, breaking ties by its stable baseline identifier. Initial
+credits merge by origin identifier, keeping the credit paired with the earliest
+observation so intervening plays are not counted twice. Independent alias origins
+sharing the same Apple counter also use the maximum rather than summing. Separate
+counter credits remain additive. The join is associative, commutative, and
+idempotent; new totals are calculated only after all observations are joined.
+Mixed-initialization merges bind unobserved initial credits to known library IDs
+before publishing the floor. Credits with unresolved identity are not assumed
+independent: their addition waits for an observation whose aliases bind the seed.
+The join still preserves the maximum existing floor while identity is unresolved.
+Automatic deduplication captures each original seed identity before absorbing
+TrackRecords or repointing items. First observation of a wholly unobserved merged
+item seeds its combined current Overplay count and records covered origin IDs.
+Coverage remains paired with the selected initialization credit during joins;
+late original seed snapshots cannot add the covered credits a second time.
+
+The display reads the highest published count in the current reset version.
+A calculation can only raise that floor, including when late initialization
+changes the canonical baseline. If Apple reports a lower value or resets its
+counter, the display holds steady until the calculated total overtakes it.
+New library identities start from their first valid observation. Missing,
+negative, failed, duplicated, or out-of-order readings do not decrease the count.
+
+Track merges publish a snapshot retaining both items' lineages. The repository
+follows those lineages when reading evidence, so observations arriving for a
+subsequently deleted donor remain discoverable. Published observations are never
+rewritten or compacted during ordinary refreshes or merges. Indexed item lookups
+keep display reads scoped to the relevant track. Nuke Database deletes this
+evidence alongside the other app records.
+
+Reset-only state without any observed counter continues to display `—` and stays
+eligible for both discovery paths. The first usable reading after such a reset
+seeds the then-current Overplay count; a real observed zero displays zero.
+An explicit stats reset creates a new reset version, zeros its initial credits,
+and rebases known counters at their high-water readings. Reset versions order by
+timestamp and stable identifier. Earlier-version observations cannot undo the
+reset, and requests started before a reset are discarded for that item. Successful
+CloudKit imports reconcile the evidence in a fresh context and publish through
+the shared playback controller, independently of MusicKit availability. Tests
+simulate reordered delivery between independent stores; live CloudKit transport
+still needs physical-device verification.
+
 ### Suspended-playback reconciliation
 
 Playback continues out-of-process while Overplay is suspended, so the live

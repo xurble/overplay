@@ -9,6 +9,7 @@ struct CurrentPlaybackTrack: Equatable, Sendable {
     var durationSeconds: Double?
     var skipCount: Int
     var playthroughCount: Int
+    var applePlayCount: Int?
     var evictedAt: Date?
 
     var isEvicted: Bool {
@@ -24,6 +25,7 @@ struct CurrentPlaybackTrack: Equatable, Sendable {
         durationSeconds: Double? = nil,
         skipCount: Int = 0,
         playthroughCount: Int = 0,
+        applePlayCount: Int? = nil,
         evictedAt: Date? = nil
     ) {
         self.id = id
@@ -34,6 +36,7 @@ struct CurrentPlaybackTrack: Equatable, Sendable {
         self.durationSeconds = durationSeconds
         self.skipCount = skipCount
         self.playthroughCount = playthroughCount
+        self.applePlayCount = applePlayCount
         self.evictedAt = evictedAt
     }
 
@@ -47,6 +50,7 @@ struct CurrentPlaybackTrack: Equatable, Sendable {
             durationSeconds: track.durationSeconds,
             skipCount: item?.skipCount ?? 0,
             playthroughCount: item?.playthroughCount ?? 0,
+            applePlayCount: item?.applePlayCount,
             evictedAt: item?.evictedAt
         )
     }

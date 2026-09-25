@@ -34,10 +34,15 @@ enum PlaylistItemRepository {
 
     static func resetAllStats(in context: ModelContext) throws {
         let items = try allItems(in: context)
+        let resetAt = Date.now
+        let resetID = UUID().uuidString
         for item in items {
             item.hasRecordedActivity = item.hasListeningHistory
             item.skipCount = 0
             item.playthroughCount = 0
+            var appleState = item.applePlayCountState ?? ApplePlayCountState(initialCount: 0, originID: item.id)
+            appleState.reset(at: resetAt, id: resetID)
+            item.applePlayCountState = appleState
             item.lastPlayedAt = nil
             item.lastSkippedAt = nil
             item.evictedAt = nil
@@ -319,6 +324,14 @@ enum PlaylistItemRepository {
         }
 
         keeper.entryProvenance = PlaylistEntryProvenance.merging(keeper.entryProvenance + duplicate.entryProvenance)
+        if keeper.applePlayCountState != nil || duplicate.applePlayCountState != nil {
+            var appleState = keeper.applePlayCountState ?? unobservedAppleState(for: keeper)
+            appleState.merge(duplicate.applePlayCountState ?? unobservedAppleState(for: duplicate))
+            keeper.applePlayCountState = appleState
+        }
+        if let context = keeper.modelContext {
+            ApplePlayCountRepository.link(donorID: duplicate.id, keeperID: keeper.id, in: context)
+        }
         keeper.skipCount += duplicate.skipCount
         keeper.playthroughCount += duplicate.playthroughCount
         keeper.isExplicitlyKept = keeper.isExplicitlyKept || duplicate.isExplicitlyKept
@@ -339,6 +352,27 @@ enum PlaylistItemRepository {
             keeper.addSourceMusicPlaylistID(sourceMusicPlaylistID)
         }
         keeper.updatedAt = max(keeper.updatedAt, duplicate.updatedAt)
+    }
+
+    private static func unobservedAppleState(for item: PlaylistItemRecord) -> ApplePlayCountState {
+        let track = item.modelContext.flatMap { try? TrackRecordRepository.track(id: item.trackID, in: $0) }
+        let libraryID = track?.libraryID.flatMap { MusicTrackIdentity.isLibraryID($0) ? $0 : nil }
+        return ApplePlayCountState(initialCount: item.playthroughCount, originID: item.id,
+            musicItemIDs: libraryID.map { [$0] } ?? [],
+            identityAliases: track.map { PlaybackQueueBuilder.musicItemIDs(for: $0) } ?? [])
+    }
+
+    /// Capture original identities before automatic deduplication absorbs
+    /// TrackRecords or repoints items to the canonical record.
+    static func preserveAppleCountIdentity(for track: TrackRecord, in context: ModelContext) throws {
+        let libraryIDs = track.libraryID.map { MusicTrackIdentity.isLibraryID($0) ? [$0] : [] } ?? []
+        let aliases = PlaybackQueueBuilder.musicItemIDs(for: track)
+        for item in try items(forTrackIDs: [track.id], in: context) {
+            let previous = item.applePlayCountState
+            var state = previous ?? ApplePlayCountState(initialCount: item.playthroughCount, originID: item.id)
+            state.retainUnobservedIdentity(originID: item.id, musicItemIDs: libraryIDs, aliases: aliases)
+            if state != previous { item.applePlayCountState = state }
+        }
     }
 
     private static func adoptEvictionState(

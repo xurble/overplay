@@ -31,7 +31,8 @@ enum TrackRetentionPolicy {
     static func shouldDelete(_ item: PlaylistItemRecord, legacyCleanup: Bool = false) -> Bool {
         guard item.sourceMusicPlaylistIDs.isEmpty,
               item.suppressedOTPMusicPlaylistIDs.isEmpty,
-              item.skipCount == 0, item.playthroughCount == 0 else { return false }
+              item.skipCount == 0, item.playthroughCount == 0,
+              (item.applePlayCount ?? 0) == 0 else { return false }
         if item.evictedAt != nil { return true }
         guard !item.isExplicitlyKept else { return false }
         return legacyCleanup || !item.hasListeningHistory

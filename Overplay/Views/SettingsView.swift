@@ -58,7 +58,7 @@ struct SettingsView: View {
             } header: {
                 Text("Tracking Rules")
             } footer: {
-                Text("Skip and playthrough counts are tracked for all linked playlists. Skips in the neutral middle of a track do not change either count.")
+                Text("Plays are shown as Overplay / Apple Music. The Apple count starts at your existing Overplay total, then follows Apple’s library count, including listening outside Overplay. Updates may be delayed; — means no count is available yet. These thresholds apply only to Overplay.")
                     .font(.caption)
             }
 
@@ -72,7 +72,7 @@ struct SettingsView: View {
                 } label: {
                     SettingsActionLabel(
                         title: "Reset All Local Overplay Stats",
-                        subtitle: "Clears skip, playthrough, and retired state without changing Apple Music playlists.",
+                        subtitle: "Resets both displayed play counts, skips, and retired state without changing Apple Music’s own counts or playlists.",
                         systemImage: "arrow.counterclockwise"
                     )
                 }
