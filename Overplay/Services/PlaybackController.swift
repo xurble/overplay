@@ -698,6 +698,14 @@ final class PlaybackController {
 
         switch result {
         case .confirmed, .diverged:
+            // An in-queue selection also resumes the player. Restore the same
+            // intent and recovery state as Play, unless a later pause or
+            // interruption stopped playback while confirmation was pending.
+            if player.playbackStatus == .playing {
+                playbackIntended = true
+                clearDeliveryFailure()
+                startMonitoring(context: context)
+            }
             await refresh(context: context)
         case .failed(let error):
             await refresh(context: context)

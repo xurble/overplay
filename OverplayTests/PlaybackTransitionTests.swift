@@ -1154,7 +1154,7 @@ struct PlaybackTransitionTests {
         #expect(fixture.player.replaceQueueCallCount == replacements)
         #expect(fixture.player.skipToEntryCallCount == 1)
         #expect(fixture.player.queueEntrySnapshots.map(\.id) == queueIDs)
-        #expect(fixture.player.commandEvents.isEmpty)
+        #expect(fixture.player.commandEvents == ["play"])
         #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[2].id.rawValue)
         #expect(fixture.controller.currentPlaylistItem?.id == fixture.items[2].id)
         #expect(fixture.controller.activePlaylistSnapshot?.rows.first(where: \.isCurrent)?.localTrackID == fixture.tracks[2].id.uuidString)
@@ -1190,6 +1190,69 @@ struct PlaybackTransitionTests {
         #expect(fixture.player.playbackTime == 15)
         #expect(fixture.controller.isPlaying)
         #expect(try fixture.history().isEmpty)
+    }
+
+    @Test("a paused row selection restores bounded recovery for the new track", arguments: [false, true])
+    func pausedRowSelectionRestoresRecovery(previouslyStalled: Bool) async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.controller.isNetworkReachable = { true }
+        fixture.player.playbackTime = 15
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        if previouslyStalled {
+            for _ in 0..<30 {
+                await fixture.controller.reconcilePlayerState(context: fixture.context)
+            }
+            #expect(fixture.controller.isDeliveryStalled)
+        }
+        fixture.controller.pause()
+        let replacements = fixture.player.replaceQueueCallCount
+
+        await fixture.controller.playPlaylist(
+            fixture.playlist, startingAt: fixture.tracks[2],
+            settings: fixture.settings, context: fixture.context
+        )
+
+        #expect(fixture.controller.isPlaying)
+        #expect(!fixture.controller.isDeliveryStalled)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[2].id.rawValue)
+        #expect(fixture.player.replaceQueueCallCount == replacements)
+        let prepareCalls = fixture.player.prepareToPlayCallCount
+        let playCalls = fixture.player.playCallCount
+        fixture.player.playbackTime = 10
+        for _ in 0..<30 {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+        #expect(fixture.controller.isDeliveryStalled)
+        #expect(fixture.player.prepareToPlayCallCount == prepareCalls + PlaybackDeliveryStallPolicy.maximumRecoveryAttempts)
+        #expect(fixture.player.playCallCount == playCalls + PlaybackDeliveryStallPolicy.maximumRecoveryAttempts)
+    }
+
+    @Test("a failed paused row selection stays paused without automatic recovery")
+    func failedPausedRowSelectionDoesNotResume() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.controller.isNetworkReachable = { true }
+        fixture.controller.pause()
+        fixture.player.skipToEntryFailuresRemaining = 1
+        let playCalls = fixture.player.playCallCount
+        let prepareCalls = fixture.player.prepareToPlayCallCount
+
+        await fixture.controller.playPlaylist(
+            fixture.playlist, startingAt: fixture.tracks[2],
+            settings: fixture.settings, context: fixture.context
+        )
+        for _ in 0..<30 {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+
+        #expect(!fixture.controller.isPlaying)
+        #expect(fixture.player.playbackStatus == .paused)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
+        #expect(fixture.player.playCallCount == playCalls)
+        #expect(fixture.player.prepareToPlayCallCount == prepareCalls)
     }
 
     @Test("a failed playlist row jump does not replace the queue")
@@ -3086,6 +3149,8 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
         }
         let delay = skipToEntryConfirmationDelays.isEmpty ? 0 : skipToEntryConfirmationDelays.removeFirst()
         scheduleTransition(to: entry, afterReads: delay)
+        // The concrete adapter selects the entry and calls player.play().
+        try await play()
     }
 
     func appendToQueue(_ tracks: [Track]) async throws {
