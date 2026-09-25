@@ -16,7 +16,9 @@ struct PlaybackTransitionTests {
         let fixture = try makeFixture(refreshUnknownApplePlayCount: { id, context in
             lookedUp.append(id)
             if let item = try? PlaylistItemRepository.allItems(in: context).first(where: { $0.trackID == id }) {
-                item.applePlayCountState = ApplePlayCountState(initialCount: 2, originID: item.id)
+                var state = ApplePlayCountState(initialCount: 2, originID: item.id)
+                state.observe(musicItemID: "i.test", count: 10, at: .now)
+                item.applePlayCountState = state
                 try? context.save()
             }
             return 1

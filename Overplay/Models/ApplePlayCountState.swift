@@ -9,6 +9,7 @@ nonisolated struct ApplePlayCountState: Codable, Equatable, Sendable {
         var musicItemIDs: [String] = []
         var firstObservedAt: Date = .distantFuture
         var baselineID: String = ""
+        var identityAliases: [String]? = nil
     }
 
     struct Counter: Codable, Equatable, Sendable {
@@ -26,31 +27,42 @@ nonisolated struct ApplePlayCountState: Codable, Equatable, Sendable {
     var resetID: String = ""
     private(set) var count: Int
 
-    init(initialCount: Int, originID: UUID) {
-        seeds = [Seed(id: originID, count: max(0, initialCount))]
+    init(initialCount: Int, originID: UUID, musicItemIDs: [String] = [], identityAliases: [String] = []) {
+        seeds = [Seed(id: originID, count: max(0, initialCount), musicItemIDs: musicItemIDs,
+                      identityAliases: identityAliases.isEmpty ? nil : identityAliases)]
         lineageIDs = [originID]
         count = max(0, initialCount)
     }
 
-    mutating func observe(musicItemID: String, count: Int, at date: Date) {
+    mutating func observe(musicItemID: String, count: Int, at date: Date, aliases: [String] = []) {
         guard count >= 0 else { return }
+        let firstCounter = counters.isEmpty
         if let index = counters.firstIndex(where: { $0.musicItemID == musicItemID }) {
             counters[index].latest = max(counters[index].latest, count)
         } else {
             let baselineID = UUID().uuidString
-            // Associate the initial credit with its first concrete counter.
-            // Two independently created aliases must not seed that counter twice.
-            if counters.isEmpty, !seeds.isEmpty {
-                seeds[0].musicItemIDs = [musicItemID]
-                seeds[0].firstObservedAt = date
-                seeds[0].baselineID = baselineID
-            }
             counters.append(Counter(musicItemID: musicItemID, baseline: count,
                                     latest: count, firstObservedAt: date,
                                     baselineID: baselineID))
             counters.sort { $0.musicItemID < $1.musicItemID }
         }
+        let observedAliases = Set(aliases + [musicItemID])
+        for index in seeds.indices where seeds[index].baselineID.isEmpty {
+            let seed = seeds[index]
+            let matches = seed.musicItemIDs.contains(musicItemID)
+                || (seed.musicItemIDs.isEmpty && !observedAliases.isDisjoint(with: seed.identityAliases ?? []))
+                || (firstCounter && seeds.count == 1 && seed.musicItemIDs.isEmpty)
+            guard matches else { continue }
+            seeds[index].musicItemIDs = [musicItemID]
+            seeds[index].firstObservedAt = date
+            seeds[index].baselineID = counters.first { $0.musicItemID == musicItemID }!.baselineID
+        }
         advance()
+    }
+
+    mutating func prepareFirstObservation(initialCount: Int, originID: UUID) {
+        guard counters.isEmpty, seeds.count == 1, seeds[0].id == originID else { return }
+        seeds[0].count = max(seeds[0].count, initialCount)
     }
 
     /// Explicit track merges and reconciliation calculate once after joining
@@ -87,6 +99,8 @@ nonisolated struct ApplePlayCountState: Codable, Equatable, Sendable {
                         canonical.count = max(existing.count, seed.count)
                     }
                     canonical.musicItemIDs = Array(Set(existing.musicItemIDs + seed.musicItemIDs)).sorted()
+                    let aliases = Array(Set((existing.identityAliases ?? []) + (seed.identityAliases ?? []))).sorted()
+                    canonical.identityAliases = aliases.isEmpty ? nil : aliases
                     seeds[seed.id] = canonical
                 } else { seeds[seed.id] = seed }
             }
@@ -108,7 +122,10 @@ nonisolated struct ApplePlayCountState: Codable, Equatable, Sendable {
         // Credits with a shared library identity are alternative initializations
         // of one counter, not independent plays. Distinct counters retain theirs.
         var groups: [(ids: Set<String>, credit: Int)] = []
-        for seed in seeds {
+        // Unknown identities must not be assumed independent. Their published
+        // individual floor is already preserved by the join; defer addition
+        // until evidence binds them to a concrete counter.
+        for seed in seeds where !seed.musicItemIDs.isEmpty {
             var group = (ids: Set(seed.musicItemIDs), credit: seed.count)
             for index in groups.indices.reversed() where !groups[index].ids.isDisjoint(with: group.ids) {
                 group.ids.formUnion(groups[index].ids)

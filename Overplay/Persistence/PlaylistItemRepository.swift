@@ -325,8 +325,8 @@ enum PlaylistItemRepository {
 
         keeper.entryProvenance = PlaylistEntryProvenance.merging(keeper.entryProvenance + duplicate.entryProvenance)
         if keeper.applePlayCountState != nil || duplicate.applePlayCountState != nil {
-            var appleState = keeper.applePlayCountState ?? ApplePlayCountState(initialCount: keeper.playthroughCount, originID: keeper.id)
-            appleState.merge(duplicate.applePlayCountState ?? ApplePlayCountState(initialCount: duplicate.playthroughCount, originID: duplicate.id))
+            var appleState = keeper.applePlayCountState ?? unobservedAppleState(for: keeper)
+            appleState.merge(duplicate.applePlayCountState ?? unobservedAppleState(for: duplicate))
             keeper.applePlayCountState = appleState
         }
         if let context = keeper.modelContext {
@@ -352,6 +352,14 @@ enum PlaylistItemRepository {
             keeper.addSourceMusicPlaylistID(sourceMusicPlaylistID)
         }
         keeper.updatedAt = max(keeper.updatedAt, duplicate.updatedAt)
+    }
+
+    private static func unobservedAppleState(for item: PlaylistItemRecord) -> ApplePlayCountState {
+        let track = item.modelContext.flatMap { try? TrackRecordRepository.track(id: item.trackID, in: $0) }
+        let libraryID = track?.libraryID.flatMap { MusicTrackIdentity.isLibraryID($0) ? $0 : nil }
+        return ApplePlayCountState(initialCount: item.playthroughCount, originID: item.id,
+            musicItemIDs: libraryID.map { [$0] } ?? [],
+            identityAliases: track.map { PlaybackQueueBuilder.musicItemIDs(for: $0) } ?? [])
     }
 
     private static func adoptEvictionState(

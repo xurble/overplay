@@ -47,7 +47,9 @@ final class PlaylistItemRecord {
         // Reading the stamp lets ordinary SwiftData row invalidations refresh
         // the presentation after the shared service publishes new evidence.
         _ = updatedAt
-        guard let modelContext else { return detachedApplePlayCountState?.count }
+        guard let modelContext else {
+            return detachedApplePlayCountState?.counters.isEmpty == false ? detachedApplePlayCountState?.count : nil
+        }
         return try? ApplePlayCountRepository.count(for: id, in: modelContext)
     }
 

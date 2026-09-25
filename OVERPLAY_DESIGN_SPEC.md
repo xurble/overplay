@@ -556,6 +556,10 @@ observation so intervening plays are not counted twice. Independent alias origin
 sharing the same Apple counter also use the maximum rather than summing. Separate
 counter credits remain additive. The join is associative, commutative, and
 idempotent; new totals are calculated only after all observations are joined.
+Mixed-initialization merges bind unobserved initial credits to known library IDs
+before publishing the floor. Credits with unresolved identity are not assumed
+independent: their addition waits for an observation whose aliases bind the seed.
+The join still preserves the maximum existing floor while identity is unresolved.
 
 The display reads the highest published count in the current reset version.
 A calculation can only raise that floor, including when late initialization
@@ -571,6 +575,9 @@ rewritten or compacted during ordinary refreshes or merges. Indexed item lookups
 keep display reads scoped to the relevant track. Nuke Database deletes this
 evidence alongside the other app records.
 
+Reset-only state without any observed counter continues to display `—` and stays
+eligible for both discovery paths. The first usable reading after such a reset
+seeds the then-current Overplay count; a real observed zero displays zero.
 An explicit stats reset creates a new reset version, zeros its initial credits,
 and rebases known counters at their high-water readings. Reset versions order by
 timestamp and stable identifier. Earlier-version observations cannot undo the

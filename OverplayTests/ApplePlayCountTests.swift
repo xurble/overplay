@@ -145,6 +145,53 @@ struct ApplePlayCountTests {
         #expect(first.applePlayCount == 5)
     }
 
+    @Test("Mixed-initialization aliases share credit before a floor is published", arguments: [false, true])
+    func mixedInitializationMerge(reverse: Bool) throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let initialized = try fixture(context)
+        try ApplePlayCountSyncService.apply([observation(count: 10)], startedAt: date, in: context)
+        let unknown = try fixture(context, plays: 4)
+        let unknownID = unknown.id
+        let keeper = reverse ? unknown : initialized
+        let donor = reverse ? initialized : unknown
+        PlaylistItemRepository.mergeStats(from: donor, into: keeper, adoptEvictionStateIfNewer: false)
+        context.delete(donor)
+        try context.save()
+        #expect(keeper.applePlayCount == 4)
+        #expect(keeper.playthroughCount == 5)
+        try ApplePlayCountSyncService.apply([observation(count: 10)], startedAt: date, in: context)
+        #expect(keeper.applePlayCount == 4)
+        var late = ApplePlayCountState(initialCount: 4, originID: unknownID)
+        late.observe(musicItemID: "i.song", count: 10, at: date)
+        context.insert(ApplePlayCountRecord(itemID: unknownID, state: late, deviceID: "late-device"))
+        try context.save()
+        try ApplePlayCountSyncService.apply([observation(count: 11)], startedAt: date, in: context)
+        #expect(keeper.applePlayCount == 5)
+    }
+
+    @Test("Unknown donor identity defers credit until later aliases prove the counter", arguments: ["i.song", "i.other"])
+    func deferredDonorCredit(counter: String) throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let keeper = try fixture(context)
+        try ApplePlayCountSyncService.apply([observation(count: 10)], startedAt: date, in: context)
+        let donor = try fixture(context, plays: 4)
+        let donorTrack = try #require(try TrackRecordRepository.track(id: donor.trackID, in: context))
+        donorTrack.libraryID = nil
+        donorTrack.catalogID = "other-catalog"
+        PlaylistItemRepository.mergeStats(from: donor, into: keeper, adoptEvictionStateIfNewer: false)
+        context.delete(donor)
+        try context.save()
+        #expect(keeper.applePlayCount == 4)
+        var found = observation(counter, count: 10, aliases: ["other-catalog"])
+        found.matchedTrackID = keeper.trackID
+        try ApplePlayCountSyncService.apply([found], startedAt: date, in: context)
+        #expect(keeper.applePlayCount == (counter == "i.song" ? 4 : 5))
+        try ApplePlayCountSyncService.apply([found], startedAt: date, in: context)
+        #expect(keeper.applePlayCount == (counter == "i.song" ? 4 : 5))
+    }
+
     @Test("Reset rebases the comparison and rejects a request started before reset")
     func resetCounts() throws {
         let container = try OverplayTestSupport.makeModelContainer()

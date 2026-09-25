@@ -58,10 +58,15 @@ for each counter and keeps a tracked item's initial credit paired with its first
 for aliases of the same Apple counter are not added twice. Separate counters
 retain their own history. CloudKit imports reconcile without needing MusicKit
 access, including late observations for merged tracks.
+An alias without an observed count uses its known library identity to bind its
+starting credit. If that identity is still unknown, its credit is withheld from
+the sum until later evidence resolves it; already-published floors remain intact.
 
 Reset All Local Overplay Stats is the explicit exception: it starts a new reset
 version and rebases known counters without changing Apple's own counts. Late
-observations from before that reset cannot resurrect the previous total. New
+observations from before that reset cannot resurrect the previous total.
+Resetting an unresolved track retains `—` and keeps it eligible for discovery;
+its first valid reading seeds the then-current Overplay count. New
 library identities start at their first valid reading without importing lifetime
 plays. Counter observations are retained as evidence; they are not individual
 play-history events.

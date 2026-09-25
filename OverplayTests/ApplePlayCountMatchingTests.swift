@@ -136,4 +136,33 @@ struct ApplePlayCountMatchingTests {
         _ = await bulk.value
         #expect(item.applePlayCount == 2)
     }
+
+    @Test("Reset before first observation preserves discovery and seeds current plays", arguments: [false, true], [0, 3])
+    func discoveryAfterReset(priority: Bool, plays: Int) async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let (track, item) = try fixture(context)
+        try PlaylistItemRepository.resetAllStats(in: context)
+        #expect(item.applePlayCount == nil)
+        #expect(item.applePlayCountResetAt != nil)
+        let initialRecordCount = try context.fetchCount(FetchDescriptor<ApplePlayCountRecord>())
+        #expect(try ApplePlayCountSyncService.apply([], startedAt: .now, in: context) == 0)
+        #expect(try context.fetchCount(FetchDescriptor<ApplePlayCountRecord>()) == initialRecordCount)
+        item.playthroughCount = plays
+        let service = ApplePlayCountSyncService(fetchLibrary: { title in
+            #expect((title != nil) == priority)
+            return [entry()]
+        }, fetch: { _ in [] })
+        let changed = priority
+            ? await service.refreshCurrentTrack(track.id, in: context)
+            : await service.refresh(in: context)
+        #expect(changed == 1)
+        #expect(item.applePlayCount == plays)
+        let update = ApplePlayCountSyncService(fetchLibrary: { _ in [] }, fetch: { ids in
+            #expect(ids.contains("i.found"))
+            return [entry(count: 11).observation]
+        })
+        _ = await update.refresh(in: context)
+        #expect(item.applePlayCount == plays + 1)
+    }
 }

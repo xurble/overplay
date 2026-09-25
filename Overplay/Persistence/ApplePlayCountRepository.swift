@@ -32,7 +32,18 @@ enum ApplePlayCountRepository {
                      SortDescriptor(\.creditedCount, order: .reverse)]
         )
         request.fetchLimit = 1
-        return try context.fetch(request).first?.creditedCount
+        guard let newest = try context.fetch(request).first else { return nil }
+        if newest.state?.counters.isEmpty == false { return newest.creditedCount }
+        // A reset-only record must mask older epochs without pretending that
+        // zero was observed. Within the epoch, a real zero beats an unresolved
+        // reset even when their published floors tie.
+        let resetAt = newest.resetAt
+        let resetID = newest.resetID
+        let epoch = FetchDescriptor<ApplePlayCountRecord>(
+            predicate: #Predicate { $0.itemID == itemID && $0.hasState && $0.resetAt == resetAt && $0.resetID == resetID },
+            sortBy: [SortDescriptor(\.creditedCount, order: .reverse)]
+        )
+        return try context.fetch(epoch).first { $0.state?.counters.isEmpty == false }?.creditedCount
     }
 
     static func state(for itemID: UUID, in context: ModelContext) throws -> ApplePlayCountState? {
