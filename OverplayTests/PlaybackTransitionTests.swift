@@ -1126,6 +1126,178 @@ struct PlaybackTransitionTests {
         #expect(try fixture.history().count == 1)
     }
 
+    @Test("playlist row selection uses the live queue and publishes the selected track", arguments: [PlaylistPlaybackScope.active, .retired], [false, true])
+    func playlistRowSelectionPreservesLiveQueue(scope: PlaylistPlaybackScope, shuffleEnabled: Bool) async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        if scope == .retired {
+            for item in fixture.items { item.evictedAt = .now }
+            try fixture.context.save()
+        }
+        await fixture.controller.playPlaylist(
+            fixture.playlist, startingAt: fixture.tracks[1], scope: scope,
+            settings: fixture.settings, context: fixture.context
+        )
+        await fixture.controller.setShuffleEnabled(shuffleEnabled, context: fixture.context)
+        fixture.player.playbackTime = 15
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        let queueIDs = fixture.player.queueEntrySnapshots.map(\.id)
+        let replacements = fixture.player.replaceQueueCallCount
+        fixture.player.commandEvents.removeAll()
+
+        // This is the shared entry point used by the app's live dependencies.
+        await fixture.controller.playPlaylist(
+            fixture.playlist, startingAt: fixture.tracks[2], scope: scope,
+            settings: fixture.settings, context: fixture.context
+        )
+
+        #expect(fixture.player.replaceQueueCallCount == replacements)
+        #expect(fixture.player.skipToEntryCallCount == 1)
+        #expect(fixture.player.queueEntrySnapshots.map(\.id) == queueIDs)
+        #expect(fixture.player.commandEvents == ["play"])
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[2].id.rawValue)
+        #expect(fixture.controller.currentPlaylistItem?.id == fixture.items[2].id)
+        #expect(fixture.controller.activePlaylistSnapshot?.rows.first(where: \.isCurrent)?.localTrackID == fixture.tracks[2].id.uuidString)
+        #expect(LocalPlaybackStateStore.load(from: fixture.playbackDefaults.defaults)?.musicItemID == fixture.musicTracks[2].id.rawValue)
+        #expect(fixture.controller.shuffleEnabled == shuffleEnabled)
+        #expect(fixture.controller.isPlaying)
+        #expect(fixture.items[0].skipCount == 0)
+        if scope == .active {
+            #expect(fixture.items[1].skipCount == 1)
+            #expect(try fixture.history().count == 1)
+        }
+        #expect(fixture.items[2].skipCount == 0)
+    }
+
+    @Test("selecting the current playlist row resumes without restarting", arguments: [false, true])
+    func currentPlaylistRowResumesWithoutRestarting(initiallyPaused: Bool) async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 1)
+        fixture.player.playbackTime = 15
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        if initiallyPaused { fixture.controller.pause() }
+        let entryID = fixture.player.currentEntry?.id
+        let replacements = fixture.player.replaceQueueCallCount
+
+        await fixture.controller.playPlaylist(
+            fixture.playlist, startingAt: fixture.tracks[1],
+            settings: fixture.settings, context: fixture.context
+        )
+
+        #expect(fixture.player.replaceQueueCallCount == replacements)
+        #expect(fixture.player.currentEntry?.id == entryID)
+        #expect(fixture.player.playbackTime == 15)
+        #expect(fixture.controller.isPlaying)
+        #expect(try fixture.history().isEmpty)
+    }
+
+    @Test("a paused row selection restores bounded recovery for the new track", arguments: [false, true])
+    func pausedRowSelectionRestoresRecovery(previouslyStalled: Bool) async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.controller.isNetworkReachable = { true }
+        fixture.player.playbackTime = 15
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        if previouslyStalled {
+            for _ in 0..<30 {
+                await fixture.controller.reconcilePlayerState(context: fixture.context)
+            }
+            #expect(fixture.controller.isDeliveryStalled)
+        }
+        fixture.controller.pause()
+        let replacements = fixture.player.replaceQueueCallCount
+
+        await fixture.controller.playPlaylist(
+            fixture.playlist, startingAt: fixture.tracks[2],
+            settings: fixture.settings, context: fixture.context
+        )
+
+        #expect(fixture.controller.isPlaying)
+        #expect(!fixture.controller.isDeliveryStalled)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[2].id.rawValue)
+        #expect(fixture.player.replaceQueueCallCount == replacements)
+        let prepareCalls = fixture.player.prepareToPlayCallCount
+        let playCalls = fixture.player.playCallCount
+        fixture.player.playbackTime = 10
+        for _ in 0..<30 {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+        #expect(fixture.controller.isDeliveryStalled)
+        #expect(fixture.player.prepareToPlayCallCount == prepareCalls + PlaybackDeliveryStallPolicy.maximumRecoveryAttempts)
+        #expect(fixture.player.playCallCount == playCalls + PlaybackDeliveryStallPolicy.maximumRecoveryAttempts)
+    }
+
+    @Test("a failed paused row selection stays paused without automatic recovery")
+    func failedPausedRowSelectionDoesNotResume() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.controller.isNetworkReachable = { true }
+        fixture.controller.pause()
+        fixture.player.skipToEntryFailuresRemaining = 1
+        let playCalls = fixture.player.playCallCount
+        let prepareCalls = fixture.player.prepareToPlayCallCount
+
+        await fixture.controller.playPlaylist(
+            fixture.playlist, startingAt: fixture.tracks[2],
+            settings: fixture.settings, context: fixture.context
+        )
+        for _ in 0..<30 {
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+
+        #expect(!fixture.controller.isPlaying)
+        #expect(fixture.player.playbackStatus == .paused)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[0].id.rawValue)
+        #expect(fixture.player.playCallCount == playCalls)
+        #expect(fixture.player.prepareToPlayCallCount == prepareCalls)
+    }
+
+    @Test("a failed playlist row jump does not replace the queue")
+    func failedPlaylistRowJumpDoesNotReplaceQueue() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 1)
+        fixture.player.skipToEntryFailuresRemaining = 1
+        let replacements = fixture.player.replaceQueueCallCount
+
+        await fixture.controller.playPlaylist(
+            fixture.playlist, startingAt: fixture.tracks[2],
+            settings: fixture.settings, context: fixture.context
+        )
+
+        #expect(fixture.player.replaceQueueCallCount == replacements)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[1].id.rawValue)
+        #expect(fixture.controller.isDeliveryStalled)
+        #expect(try fixture.history().isEmpty)
+    }
+
+    @Test("selecting another playlist pauses before replacing its queue")
+    func playlistRowReplacementPausesBeforeHandoff() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 1)
+        fixture.player.playbackTime = 15
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        let other = try fixture.addPlaylist(prefix: "other", trackCount: 3)
+        fixture.player.commandEvents.removeAll()
+
+        await fixture.controller.playPlaylist(
+            other.playlist, startingAt: other.tracks[2],
+            settings: fixture.settings, context: fixture.context
+        )
+
+        #expect(fixture.player.commandEvents == ["pause", "replace", "play"])
+        #expect(fixture.player.skipToEntryCallCount == 0)
+        #expect(fixture.player.currentEntry?.id == fixture.player.requestedStartingEntryID)
+        #expect(fixture.controller.currentPlaylistID == other.playlist.musicPlaylistID)
+        #expect(fixture.controller.currentTrack?.id == other.musicTracks[2].id.rawValue)
+        #expect(fixture.items[1].skipCount == 1)
+        #expect(try fixture.history().count == 1)
+    }
+
     @Test("an in-queue skip evaluates the outgoing track once and keeps the queue order")
     func inQueueSkipEvaluatesOutgoingOnceAndKeepsQueueOrder() async throws {
         let fixture = try makeFixture()
@@ -2977,6 +3149,8 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
         }
         let delay = skipToEntryConfirmationDelays.isEmpty ? 0 : skipToEntryConfirmationDelays.removeFirst()
         scheduleTransition(to: entry, afterReads: delay)
+        // The concrete adapter selects the entry and calls player.play().
+        try await play()
     }
 
     func appendToQueue(_ tracks: [Track]) async throws {
