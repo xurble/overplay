@@ -9,11 +9,16 @@ struct PlaybackQueueEntry {
     var musicTrack: Track
 }
 
+enum PlaybackQueueMatchSource: String, Equatable {
+    case identifier, metadata, positionAndMetadata, cachedAssociation
+}
+
 struct RealizedPlaybackQueueEntry: Equatable {
     var queueEntryID: String
     var playlistItemID: UUID
     var localTrackID: String
     var queuedMusicItemID: String
+    var matchSource: PlaybackQueueMatchSource = .identifier
 }
 
 struct PlaybackQueueMaterialization {
