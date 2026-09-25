@@ -165,4 +165,256 @@ struct ApplePlayCountMatchingTests {
         _ = await update.refresh(in: context)
         #expect(item.applePlayCount == plays + 1)
     }
+
+    private func playlistObservation(count: Int?) -> MusicLibraryPlaybackObservation {
+        MusicLibraryPlaybackObservation(aliases: ["123"], snapshot:
+            MusicLibraryPlaybackSnapshot(musicItemID: "123", playCount: count,
+                lastPlayedDate: nil, playlistEntryEvidence: true))
+    }
+
+    private func recentObservation(_ id: String = "123", count: Int?) -> MusicLibraryPlaybackObservation {
+        MusicLibraryPlaybackObservation(aliases: [id], snapshot:
+            MusicLibraryPlaybackSnapshot(musicItemID: id, playCount: count,
+                lastPlayedDate: nil, recentlyPlayedEvidence: true))
+    }
+
+    @Test("Recently played resolves unattributed songs and refreshes their counts", arguments: [false, true])
+    func recentFallback(priority: Bool) async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let (track, item) = try fixture(context)
+        #expect(item.sourceMusicPlaylistIDs.isEmpty)
+        var logs: [String] = []
+        let service = ApplePlayCountSyncService(fetchRecentlyPlayed: {
+            [recentObservation(count: 10)]
+        }, logRecentLookup: { logs.append($0) }, fetchPlaylist: { _ in
+            Issue.record("An unattributed song should not require a playlist")
+            return []
+        }, fetchLibrary: { _ in [] }, fetch: { _ in [] })
+        let changed = priority ? await service.refreshCurrentTrack(track.id, in: context) : await service.refresh(in: context)
+        #expect(changed == 1)
+        #expect(item.applePlayCount == 2)
+        #expect(logs.contains { $0.contains("count=10") })
+        #expect(track.libraryID == nil && track.identityAliases.isEmpty)
+        let next = ApplePlayCountSyncService(fetchRecentlyPlayed: {
+            [recentObservation(count: 12), recentObservation(count: 12)]
+        }, fetchLibrary: { _ in [] }, fetch: { ids in
+            #expect(!ids.contains { $0.hasPrefix("recent-count:") })
+            return []
+        })
+        _ = await next.refresh(in: context)
+        #expect(item.applePlayCount == 4)
+        #expect(item.applePlayCountState?.counters.count == 1)
+    }
+
+    @Test("Recent history logs missing songs separately from nil counts and retries after a minute")
+    func recentProbeDiagnostics() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let (track, item) = try fixture(context)
+        var logs: [String] = []
+        var observations = [recentObservation("other", count: 100)]
+        var queries = 0
+        let service = ApplePlayCountSyncService(fetchRecentlyPlayed: {
+            queries += 1
+            return observations
+        }, logRecentLookup: { logs.append($0) }, fetchLibrary: { _ in [] }, fetch: { _ in [] })
+        let now = Date.now
+        _ = await service.refreshCurrentTrack(track.id, in: context, now: now)
+        #expect(item.applePlayCount == nil)
+        #expect(logs.last?.contains("not returned") == true)
+        observations = [recentObservation(count: nil)]
+        _ = await service.refreshCurrentTrack(track.id, in: context, now: now.addingTimeInterval(61))
+        #expect(item.applePlayCount == nil)
+        #expect(logs.last?.contains("count=nil") == true)
+        observations = [recentObservation(count: 0)]
+        _ = await service.refreshCurrentTrack(track.id, in: context, now: now.addingTimeInterval(62))
+        #expect(item.applePlayCount == nil)
+        #expect(queries == 2)
+        _ = await service.refreshCurrentTrack(track.id, in: context, now: now.addingTimeInterval(122))
+        #expect(item.applePlayCount == 2)
+        #expect(logs.last?.contains("count=0") == true)
+    }
+
+    @Test("A cached recent-history result cannot restore a count after a reset")
+    func recentCacheAfterReset() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let (track, item) = try fixture(context)
+        var queries = 0
+        let service = ApplePlayCountSyncService(fetchRecentlyPlayed: {
+            queries += 1
+            return [recentObservation(count: 10)]
+        }, fetchLibrary: { _ in [] }, fetch: { _ in [] })
+        _ = await service.refreshCurrentTrack(track.id, in: context)
+        #expect(item.applePlayCount == 2)
+        try PlaylistItemRepository.resetAllStats(in: context)
+        _ = await service.refresh(in: context)
+        #expect(queries == 1)
+        #expect(item.applePlayCount == 0)
+    }
+
+    @Test("Recent query failures are throttled and preserve unknown counts")
+    func recentFailure() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let (track, item) = try fixture(context)
+        var queries = 0
+        var logs: [String] = []
+        let service = ApplePlayCountSyncService(fetchRecentlyPlayed: {
+            queries += 1
+            throw PlaylistSyncError.playlistNotFound
+        }, logRecentLookup: { logs.append($0) }, fetchLibrary: { _ in [] }, fetch: { _ in [] })
+        _ = await service.refreshCurrentTrack(track.id, in: context)
+        _ = await service.refresh(in: context)
+        #expect(queries == 1)
+        #expect(item.applePlayCount == nil)
+        #expect(logs.contains { $0.contains("probe failed") })
+    }
+
+    @Test("Recent, playlist and library evidence share increases across devices")
+    func recentSourceJoin() throws {
+        let now = Date.now
+        var recent = ApplePlayCountState(initialCount: 1, originID: UUID())
+        recent.observe(musicItemID: "recent-count:123", count: 10, at: now,
+                       aliases: ["123"], isRecentlyPlayedCount: true)
+        recent.observe(musicItemID: "recent-count:123", count: 12, at: now,
+                       aliases: ["123"], isRecentlyPlayedCount: true)
+        var playlist = ApplePlayCountState(initialCount: 1, originID: UUID())
+        playlist.observe(musicItemID: "playlist-count:123", count: 20, at: now,
+                         aliases: ["123"], isPlaylistCount: true)
+        playlist.observe(musicItemID: "playlist-count:123", count: 23, at: now,
+                         aliases: ["123"], isPlaylistCount: true)
+        var library = ApplePlayCountState(initialCount: 1, originID: UUID())
+        library.observe(musicItemID: "i.song", count: 100, at: now, aliases: ["123", "i.song"])
+        library.observe(musicItemID: "i.song", count: 103, at: now, aliases: ["123", "i.song"])
+        var joined = try #require(ApplePlayCountState.joined([recent, playlist, library]))
+        joined.advance()
+        #expect(joined.count == 4)
+        var reverse = try #require(ApplePlayCountState.joined([library, playlist, recent, recent]))
+        reverse.advance()
+        #expect(joined == reverse)
+        joined.observe(musicItemID: "recent-count:123", count: 9, at: now,
+                       aliases: ["123"], isRecentlyPlayedCount: true)
+        #expect(joined.count == 4)
+        let restored = try JSONDecoder().decode(ApplePlayCountState.self, from: JSONEncoder().encode(joined))
+        #expect(restored == joined)
+    }
+
+    @Test("Playlist-only songs resolve during playback or bulk refresh without a library match", arguments: [false, true])
+    func playlistFallback(priority: Bool) async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let (track, item) = try fixture(context)
+        item.sourceMusicPlaylistIDs = ["p.tiktok"]
+        var queried: [String] = []
+        let service = ApplePlayCountSyncService(fetchPlaylist: { id in
+            queried.append(id)
+            return [playlistObservation(count: 10)]
+        }, fetchLibrary: { _ in [] }, fetch: { _ in [] })
+        let changed = priority ? await service.refreshCurrentTrack(track.id, in: context) : await service.refresh(in: context)
+        #expect(changed == 1)
+        #expect(queried == ["p.tiktok"])
+        #expect(item.applePlayCount == 2)
+        #expect(track.libraryID == nil && track.identityAliases.isEmpty)
+
+        // A subsequent refresh still queries the playlist after the dash has
+        // resolved, even though there is no corresponding library song.
+        let refresh = ApplePlayCountSyncService(fetchPlaylist: { _ in
+            [playlistObservation(count: 12), playlistObservation(count: 12)]
+        }, fetchLibrary: { _ in [] }, fetch: { ids in
+            #expect(!ids.contains { $0.hasPrefix("playlist-count:") })
+            return []
+        })
+        _ = await refresh.refresh(in: context)
+        #expect(item.applePlayCount == 4)
+        #expect(item.applePlayCountState?.counters.count == 1)
+    }
+
+    @Test("Missing playlist counts stay unknown; library query errors still allow playlist lookup")
+    func playlistNilAndLibraryFailure() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let (track, item) = try fixture(context)
+        item.sourceMusicPlaylistIDs = ["p.tiktok"]
+        var count: Int?
+        let service = ApplePlayCountSyncService(fetchPlaylist: { _ in
+            [playlistObservation(count: count)]
+        }, fetchLibrary: { _ in [] }, fetch: { _ in throw PlaylistSyncError.playlistNotFound })
+        let now = Date.now
+        _ = await service.refreshCurrentTrack(track.id, in: context, now: now)
+        #expect(item.applePlayCount == nil)
+        count = 0
+        _ = await service.refreshCurrentTrack(track.id, in: context, now: now.addingTimeInterval(61))
+        #expect(item.applePlayCount == 2)
+    }
+
+    @Test("Playlist fetches are shared within a minute and cached evidence cannot undo a reset")
+    func playlistCacheAndReset() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let (track, item) = try fixture(context)
+        item.sourceMusicPlaylistIDs = ["p.tiktok"]
+        var requests = 0
+        let service = ApplePlayCountSyncService(fetchPlaylist: { _ in
+            requests += 1
+            return [playlistObservation(count: 10)]
+        }, fetchLibrary: { _ in [] }, fetch: { _ in [] })
+        _ = await service.refreshCurrentTrack(track.id, in: context)
+        _ = await service.refresh(in: context)
+        #expect(requests == 1)
+        #expect(item.applePlayCount == 2)
+        try PlaylistItemRepository.resetAllStats(in: context)
+        _ = await service.refresh(in: context)
+        #expect(requests == 1)
+        #expect(item.applePlayCount == 0)
+    }
+
+    @Test("Playlist and library totals have separate baselines and do not add the same plays twice")
+    func playlistThenLibrary() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let (_, item) = try fixture(context)
+        let now = Date.now
+        func library(_ count: Int) -> MusicLibraryPlaybackObservation {
+            var result = entry(count: count).observation
+            result.aliases.append("123")
+            return result
+        }
+        try ApplePlayCountSyncService.apply([playlistObservation(count: 10)], startedAt: now, in: context)
+        try ApplePlayCountSyncService.apply([playlistObservation(count: 12), library(100)], startedAt: now, in: context)
+        #expect(item.applePlayCount == 4)
+        try ApplePlayCountSyncService.apply([playlistObservation(count: 13), library(103)], startedAt: now, in: context)
+        #expect(item.applePlayCount == 5)
+        try ApplePlayCountSyncService.apply([playlistObservation(count: 0), library(90)], startedAt: now, in: context)
+        #expect(item.applePlayCount == 5)
+    }
+
+    @Test("Different devices and merged aliases join playlist/library evidence without duplicate credit")
+    func playlistCloudMerge() throws {
+        let origin = UUID()
+        let now = Date.now
+        var phone = ApplePlayCountState(initialCount: 1, originID: origin)
+        phone.observe(musicItemID: "playlist-count:123", count: 10, at: now,
+                      aliases: ["123"], isPlaylistCount: true)
+        phone.observe(musicItemID: "playlist-count:123", count: 12, at: now,
+                      aliases: ["123"], isPlaylistCount: true)
+        var tablet = ApplePlayCountState(initialCount: 1, originID: UUID())
+        tablet.observe(musicItemID: "i.found", count: 100, at: now, aliases: ["123", "i.found"])
+        tablet.observe(musicItemID: "i.found", count: 103, at: now, aliases: ["123", "i.found"])
+        var merged = try #require(ApplePlayCountState.joined([phone, tablet]))
+        merged.advance()
+        #expect(merged.count == 4)
+        var reverse = try #require(ApplePlayCountState.joined([tablet, phone, tablet]))
+        reverse.advance()
+        #expect(reverse == merged)
+        // An unrelated recording's increase remains additive after a merge.
+        var other = ApplePlayCountState(initialCount: 1, originID: UUID())
+        other.observe(musicItemID: "playlist-count:456", count: 20, at: now, aliases: ["456"], isPlaylistCount: true)
+        other.observe(musicItemID: "playlist-count:456", count: 21, at: now, aliases: ["456"], isPlaylistCount: true)
+        merged.merge(other)
+        #expect(merged.count == 6)
+        let restored = try JSONDecoder().decode(ApplePlayCountState.self, from: JSONEncoder().encode(merged))
+        #expect(restored == merged)
+    }
 }

@@ -16,6 +16,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     case catalogSearch
     case catalogResourceFetch
     case libraryTrackQuery
+    case recentlyPlayedQuery
     case subscriptionCheck
     case authorizationRequest
 
@@ -66,6 +67,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     case playbackExplicitReconciliation
     case playbackReconciliationDeferred
     case playbackPeriodicStateChange
+    case playCountLookupResult
 
 
     // System media surfaces.
@@ -104,7 +106,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     var category: Category {
         switch self {
         case .libraryPlaylistEnumeration, .libraryPlaylistLookup, .playlistTrackFetch,
-             .catalogSearch, .catalogResourceFetch, .libraryTrackQuery, .subscriptionCheck,
+             .catalogSearch, .catalogResourceFetch, .libraryTrackQuery, .recentlyPlayedQuery, .subscriptionCheck,
              .authorizationRequest:
             .read
         case .libraryPlaylistCreate, .libraryPlaylistEdit, .libraryPlaylistAddItem:
@@ -122,7 +124,8 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
              .queueEndObserved, .playerModeObserved,
              .playbackQueueInvalidation, .playbackStateInvalidation, .playbackQueueObservationRebound,
              .playbackObservationCoalesced, .playbackEventReconciliation, .playbackPeriodicReconciliation,
-             .playbackExplicitReconciliation, .playbackReconciliationDeferred, .playbackPeriodicStateChange:
+             .playbackExplicitReconciliation, .playbackReconciliationDeferred, .playbackPeriodicStateChange,
+             .playCountLookupResult:
             .playbackDecision
         }
     }
@@ -135,6 +138,8 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case .catalogSearch: "Catalog search"
         case .catalogResourceFetch: "Catalog resource fetch"
         case .libraryTrackQuery: "Library track query"
+        case .recentlyPlayedQuery: "Recently played songs query"
+        case .playCountLookupResult: "Apple play count lookup result"
         case .subscriptionCheck: "Subscription check"
         case .authorizationRequest: "Authorization request"
         case .playerModeResetSkipped: "Player mode reset (skipped)"

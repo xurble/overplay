@@ -8,8 +8,10 @@ struct MusicLibraryPlaybackSnapshot: Codable, Equatable, Sendable {
     var musicItemID: String
     var playCount: Int?
     var lastPlayedDate: Date?
-    /// Nil for existing track observations. Entry counters are diagnostic only.
+    /// Entry counts can feed the comparison counter, but cannot prove a
+    /// suspended playback session completed.
     var playlistEntryEvidence: Bool? = nil
+    var recentlyPlayedEvidence: Bool? = nil
 }
 
 struct MusicLibraryPlaybackObservation: Equatable, Sendable {
@@ -46,6 +48,40 @@ protocol MusicLibraryPlaybackHistoryFetching {
 /// current track and a bounded set of unresolved baselines in one request.
 @MainActor
 struct MusicKitLibraryPlaybackHistoryFetcher: MusicLibraryPlaybackHistoryFetching {
+    /// A bounded history probe, not a complete play-event ledger. Only actual
+    /// numeric metadata counts; presence in this list never credits a play.
+    func recentlyPlayedObservations() async throws -> [MusicLibraryPlaybackObservation] {
+        var request = MusicRecentlyPlayedRequest<Song>()
+        request.limit = 30
+        let songs = try await MusicKitActivityLog.shared.measure(
+            .recentlyPlayedQuery, detail: "play-count probe: latest 30 songs",
+            resultMagnitude: { Double($0.count) }
+        ) { try await request.response().items }
+        return songs.map { song in
+            let identity = MusicTrackIdentity.ids(fromRawID: song.id.rawValue, playParameters: song.playParameters)
+            return MusicLibraryPlaybackObservation(
+                aliases: [song.id.rawValue, identity.catalogID, identity.libraryID].compactMap { $0 },
+                snapshot: MusicLibraryPlaybackSnapshot(musicItemID: song.id.rawValue,
+                    playCount: song.playCount, lastPlayedDate: song.lastPlayedDate,
+                    recentlyPlayedEvidence: true))
+        }
+    }
+
+    func playlistObservations(for playlistID: String) async throws -> [MusicLibraryPlaybackObservation] {
+        let playlist = try await AppleMusicPlaylistSourceSync().loadPlaylist(id: playlistID)
+        let entries = try await AppleMusicPlaylistTrackLoader.loadEntries(for: playlist)
+        return entries.compactMap { entry in
+            guard case .song(let song) = entry.item else { return nil }
+            let identity = MusicTrackIdentity.ids(fromRawID: song.id.rawValue, playParameters: song.playParameters)
+            let aliases = [song.id.rawValue, identity.catalogID, identity.libraryID].compactMap { $0 }
+            return MusicLibraryPlaybackObservation(aliases: aliases, snapshot:
+                MusicLibraryPlaybackSnapshot(musicItemID: song.id.rawValue,
+                    playCount: song.playCount ?? entry.playCount,
+                    lastPlayedDate: song.lastPlayedDate ?? entry.lastPlayedDate,
+                    playlistEntryEvidence: true))
+        }
+    }
+
     /// Scan the local library, including songs whose library ID was never
     /// present in a playlist response. Follow every page before matching so
     /// an unseen duplicate cannot make a metadata match look unique.

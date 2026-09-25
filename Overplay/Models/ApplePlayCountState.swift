@@ -21,6 +21,11 @@ nonisolated struct ApplePlayCountState: Codable, Equatable, Sendable {
         var latest: Int
         var firstObservedAt: Date
         var baselineID: String
+        var aliases: [String]? = nil
+        var isPlaylistCount: Bool? = nil
+        var isRecentlyPlayedCount: Bool? = nil
+
+        var isAlternativeCount: Bool { isPlaylistCount == true || isRecentlyPlayedCount == true }
     }
 
     var seeds: [Seed]
@@ -37,16 +42,21 @@ nonisolated struct ApplePlayCountState: Codable, Equatable, Sendable {
         count = max(0, initialCount)
     }
 
-    mutating func observe(musicItemID: String, count: Int, at date: Date, aliases: [String] = []) {
+    mutating func observe(musicItemID: String, count: Int, at date: Date, aliases: [String] = [],
+                          isPlaylistCount: Bool = false, isRecentlyPlayedCount: Bool = false) {
         guard count >= 0 else { return }
         let firstCounter = counters.isEmpty
         if let index = counters.firstIndex(where: { $0.musicItemID == musicItemID }) {
             counters[index].latest = max(counters[index].latest, count)
+            let combined = Array(Set((counters[index].aliases ?? []) + aliases)).sorted()
+            counters[index].aliases = combined.isEmpty ? nil : combined
         } else {
             let baselineID = UUID().uuidString
             counters.append(Counter(musicItemID: musicItemID, baseline: count,
                                     latest: count, firstObservedAt: date,
-                                    baselineID: baselineID))
+                                    baselineID: baselineID, aliases: aliases.isEmpty ? nil : aliases.sorted(),
+                                    isPlaylistCount: isPlaylistCount ? true : nil,
+                                    isRecentlyPlayedCount: isRecentlyPlayedCount ? true : nil))
             counters.sort { $0.musicItemID < $1.musicItemID }
         }
         let observedAliases = Set(aliases + [musicItemID])
@@ -88,8 +98,43 @@ nonisolated struct ApplePlayCountState: Codable, Equatable, Sendable {
     }
 
     mutating func advance() {
-        let calculated = initialCredit + counters.reduce(0) { $0 + max(0, $1.latest - $1.baseline) }
+        // Playlist, recent-history and library views can describe the same listening history.
+        // Compare their increases instead of adding them. Each source retains
+        // its own baseline because Apple's raw totals need not agree.
+        let increase = counterGroups.reduce(0) { total, group in
+            let library = group.filter { !$0.isAlternativeCount }
+                .reduce(0) { $0 + max(0, $1.latest - $1.baseline) }
+            let alternative = group.filter { $0.isAlternativeCount }
+                .map { max(0, $0.latest - $0.baseline) }.max() ?? 0
+            return total + max(library, alternative)
+        }
+        let calculated = initialCredit + increase
         count = max(count, calculated)
+    }
+
+    private var counterGroups: [[Counter]] {
+        var groups: [[Counter]] = []
+        for counter in counters {
+            var group = [counter]
+            // Only fallback evidence links alternative counter sources. Two
+            // distinct library records retain their existing additive meaning.
+            var merged = true
+            while merged {
+                merged = false
+                for index in groups.indices.reversed() where groups[index].contains(where: { left in
+                    group.contains { right in
+                        (left.isAlternativeCount || right.isAlternativeCount)
+                            && !Set((left.aliases ?? []) + [left.musicItemID])
+                                .isDisjoint(with: (right.aliases ?? []) + [right.musicItemID])
+                    }
+                }) {
+                    group += groups.remove(at: index)
+                    merged = true
+                }
+            }
+            groups.append(group)
+        }
+        return groups
     }
 
     /// Joining is commutative, associative and idempotent. It preserves the
@@ -127,6 +172,8 @@ nonisolated struct ApplePlayCountState: Codable, Equatable, Sendable {
                     var canonical = (existing.firstObservedAt, existing.baselineID) < (counter.firstObservedAt, counter.baselineID)
                         ? existing : counter
                     canonical.latest = max(existing.latest, counter.latest)
+                    let aliases = Array(Set((existing.aliases ?? []) + (counter.aliases ?? []))).sorted()
+                    canonical.aliases = aliases.isEmpty ? nil : aliases
                     counters[counter.musicItemID] = canonical
                 } else { counters[counter.musicItemID] = counter }
             }
@@ -140,11 +187,13 @@ nonisolated struct ApplePlayCountState: Codable, Equatable, Sendable {
         // Credits with a shared library identity are alternative initializations
         // of one counter, not independent plays. Distinct counters retain theirs.
         var groups: [(ids: Set<String>, origins: Set<UUID>, credit: Int)] = []
+        let alternatives = counterGroups.map { Set($0.map(\.musicItemID)) }
         // Unknown identities must not be assumed independent. Their published
         // individual floor is already preserved by the join; defer addition
         // until evidence binds them to a concrete counter.
         for seed in seeds where !seed.musicItemIDs.isEmpty {
             var group = (ids: Set(seed.musicItemIDs), origins: Set([seed.id] + (seed.coveredOriginIDs ?? [])), credit: seed.count)
+            for ids in alternatives where !ids.isDisjoint(with: group.ids) { group.ids.formUnion(ids) }
             for index in groups.indices.reversed() where !groups[index].ids.isDisjoint(with: group.ids)
                 || !groups[index].origins.isDisjoint(with: group.origins) {
                 group.ids.formUnion(groups[index].ids)

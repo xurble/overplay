@@ -97,6 +97,8 @@ enum PlaybackReconciliationPolicy {
                   let latest = latestSnapshots[baseline.localTrackID],
                   baseline.snapshot.playlistEntryEvidence != true,
                   latest.playlistEntryEvidence != true,
+                  baseline.snapshot.recentlyPlayedEvidence != true,
+                  latest.recentlyPlayedEvidence != true,
                   baseline.snapshot.musicItemID == latest.musicItemID,
                   let baselinePlayCount = baseline.snapshot.playCount,
                   let latestPlayCount = latest.playCount,
