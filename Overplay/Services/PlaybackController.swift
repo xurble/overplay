@@ -2621,7 +2621,9 @@ final class PlaybackController {
         let realizedEntries = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(
             snapshots: snapshots,
             members: members,
-            allowPositionMatching: player.shuffleMode == .off && snapshots.count == player.queueEntrySnapshots.count
+            allowPositionMatching: player.shuffleMode == .off && snapshots.count == player.queueEntrySnapshots.count,
+            submittedLocalTrackIDs: submittedPlaylistID == currentPlaylistID
+                ? submittedQueueMembers.map(\.localTrackID) : []
         )
         let realizedEntryIDs = Set(realizedEntries.map(\.queueEntryID))
         // Report hydrated entries that remain unresolved. Retry decisions use
@@ -3764,6 +3766,12 @@ final class PlaybackController {
             // entry reads as divergence and tears playback down.
             let pending = entries.map(PendingQueueCorrelation.init(entry:))
             appendedUncorrelatedEntries.append(contentsOf: pending)
+            // Restoration can adopt a live queue without a known submission.
+            // Retain evidence for this append without inventing its prefix.
+            if submittedPlaylistID != playlistID {
+                submittedQueueMembers = []
+                submittedPlaylistID = playlistID
+            }
             let submittedIDs = Set(submittedQueueMembers.map(\.localTrackID))
             submittedQueueMembers.append(contentsOf: pending.filter { !submittedIDs.contains($0.localTrackID) })
             lastCorrelationSnapshots = nil

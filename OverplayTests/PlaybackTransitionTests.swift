@@ -667,6 +667,47 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.canControlPlayback)
     }
 
+    @Test("an append after restoration retains submitted metadata for unfamiliar IDs")
+    func restoredControllerRecoversAppendedMetadata() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.controller.stopMonitoring()
+        let restored = PlaybackController(
+            localPlaybackDefaults: fixture.playbackDefaults.defaults,
+            playerID: fixture.playerID, player: fixture.player,
+            loadAssociationScope: { "test-account-storefront" }
+        )
+        defer { restored.stopMonitoring() }
+        restored.restoreLocalPlaybackDisplay(context: fixture.context)
+        await restored.reconcilePlayerState(context: fixture.context)
+        #expect(restored.currentPlaylistItem?.id == fixture.items[0].id)
+        let added = try fixture.addPlaylist(prefix: "appended", trackCount: 1)
+        let item = PlaylistItemRecord(playlistID: fixture.playlist.id, trackID: added.tracks[0].id)
+        item.playthroughCount = 1
+        item.skipCount = 1
+        fixture.context.insert(item)
+        try fixture.context.save()
+        let unfamiliar = try PlaybackTransitionFixture.makeMusicTrack(id: "unfamiliar-append", title: "appended 0")
+        fixture.player.onAppendToQueue = {
+            if let entryID = fixture.player.queueEntrySnapshots.last?.id {
+                fixture.player.reportedItemOverrides[entryID] = MusicPlayer.Queue.Entry(unfamiliar).item
+            }
+        }
+        await restored.appendLiveQueueEntries(
+            localTrackIDs: [added.tracks[0].id.uuidString],
+            playlistID: fixture.playlist.musicPlaylistID, context: fixture.context
+        )
+        for _ in fixture.musicTracks { fixture.player.advanceExternally() }
+        await restored.reconcilePlayerState(context: fixture.context)
+        #expect(restored.currentPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(restored.currentPlaylistItem?.id == item.id)
+        #expect(restored.currentPlaylistItem?.playthroughCount == 1)
+        #expect(restored.currentPlaylistItem?.skipCount == 1)
+        #expect(restored.nowPlayingDisplayLocalTrackID == added.tracks[0].id.uuidString)
+        #expect(restored.currentPlaylistRole(context: fixture.context) == .oneTruePlaylist)
+    }
+
     @Test("a queue replacement during append cannot mask a later external takeover")
     func queueReplacementDuringAppendCannotMaskExternalTakeover() async throws {
         let fixture = try makeFixture()
@@ -2111,10 +2152,11 @@ struct PlaybackTransitionTests {
         #expect(fixture.controller.currentPlaylistRole(context: fixture.context) == nil)
     }
 
-    @Test("same-track position-assisted recovery remains session-only")
-    func sameTrackPositionRecoveryDoesNotPersistAlias() async throws {
-        let fixture = try makeFixture()
+    @Test("same-track position-assisted recovery remains session-only with nonqueued rows", arguments: [false, true])
+    func sameTrackPositionRecoveryDoesNotPersistAlias(hasRetiredRow: Bool) async throws {
+        let fixture = try makeFixture(trackCount: hasRetiredRow ? 4 : 3)
         defer { fixture.cleanUp() }
+        if hasRetiredRow { fixture.items[3].evictedAt = .now }
         let duplicates = try (0..<2).map { index in
             try PlaybackTransitionFixture.makeMusicTrack(id: fixture.musicTracks[index].id.rawValue, title: "Duplicate title")
         }

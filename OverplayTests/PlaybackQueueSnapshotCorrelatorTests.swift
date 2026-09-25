@@ -174,15 +174,49 @@ struct PlaybackQueueSnapshotCorrelatorTests {
             PlayerQueueEntrySnapshot(id: "1", musicItemID: "new-a", metadata: members[1].metadata),
             PlayerQueueEntrySnapshot(id: "2", musicItemID: "new-b", metadata: members[2].metadata)
         ]
-        let ordered = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(snapshots: snapshots, members: members, allowPositionMatching: true)
+        let ordered = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(snapshots: snapshots, members: members, allowPositionMatching: true, submittedLocalTrackIDs: members.map(\.localTrackID))
         #expect(ordered.map(\.localTrackID) == ["anchor", "a", "b"])
         #expect(ordered.last?.matchSource == .positionAndMetadata)
         let shuffled = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(snapshots: snapshots, members: members)
         #expect(shuffled.map(\.localTrackID) == ["anchor"])
-        let partial = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(snapshots: Array(snapshots.prefix(2)), members: members, allowPositionMatching: true)
+        let partial = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(snapshots: Array(snapshots.prefix(2)), members: members, allowPositionMatching: true, submittedLocalTrackIDs: members.map(\.localTrackID))
         #expect(partial.map(\.localTrackID) == ["anchor"])
-        let reordered = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(snapshots: Array(snapshots.reversed()), members: members, allowPositionMatching: true)
+        let reordered = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(snapshots: Array(snapshots.reversed()), members: members, allowPositionMatching: true, submittedLocalTrackIDs: members.map(\.localTrackID))
         #expect(reordered.map(\.localTrackID) == ["anchor"])
+    }
+
+    @Test("positional recovery uses the submitted order independently of other playlist rows")
+    func positionProofExcludesNonqueuedRows() {
+        let submittedMembers = [submitted("anchor", title: "Anchor"), submitted("a"), submitted("b")]
+        var nonqueued = submitted("retired")
+        nonqueued.wasSubmitted = false
+        let snapshots = [
+            PlayerQueueEntrySnapshot(id: "0", musicItemID: "known-anchor", metadata: submittedMembers[0].metadata),
+            PlayerQueueEntrySnapshot(id: "1", musicItemID: "new-a", metadata: submittedMembers[1].metadata),
+            PlayerQueueEntrySnapshot(id: "2", musicItemID: "new-b", metadata: submittedMembers[2].metadata)
+        ]
+        let submittedIDs = submittedMembers.map(\.localTrackID)
+        // Neither database order nor a nonqueued metadata duplicate is position evidence.
+        var members = [nonqueued] + submittedMembers.reversed()
+        let recovered = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(
+            snapshots: snapshots, members: members, allowPositionMatching: true,
+            submittedLocalTrackIDs: submittedIDs
+        )
+        #expect(recovered.map(\.localTrackID) == submittedIDs)
+        #expect(recovered.last?.matchSource == .positionAndMetadata)
+        members.removeAll { $0.localTrackID == "b" }
+        let missing = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(
+            snapshots: Array(snapshots.prefix(2)), members: members, allowPositionMatching: true,
+            submittedLocalTrackIDs: submittedIDs
+        )
+        #expect(missing.map(\.localTrackID) == ["anchor"])
+        // Nonqueued known IDs must still block a metadata guess for another row.
+        nonqueued.matchableMusicItemIDs.insert("new-a")
+        let conflicting = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(
+            snapshots: snapshots, members: submittedMembers + [nonqueued], allowPositionMatching: true,
+            submittedLocalTrackIDs: submittedIDs
+        )
+        #expect(conflicting.map(\.localTrackID) == ["anchor", "retired"])
     }
 
     @Test("metadata cannot steal documented IDs or resolve conflicting ID claims")

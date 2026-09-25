@@ -127,7 +127,8 @@ enum PlaybackQueueSnapshotCorrelator {
     static func realizedEntriesInPlayerOrder(
         snapshots: [PlayerQueueEntrySnapshot],
         members: [PendingQueueCorrelation],
-        allowPositionMatching: Bool = false
+        allowPositionMatching: Bool = false,
+        submittedLocalTrackIDs: [String] = []
     ) -> [RealizedPlaybackQueueEntry] {
         var matches: [Int: (PendingQueueCorrelation, PlaybackQueueMatchSource)] = [:]
         var claimed = Set<String>()
@@ -140,10 +141,18 @@ enum PlaybackQueueSnapshotCorrelator {
                   claimed.insert(member.localTrackID).inserted else { continue }
             matches[index] = (member, .identifier)
         }
+        // Playlist membership includes retired and otherwise nonqueued rows.
+        // Only the exact handoff order can prove positions; missing or changed
+        // submitted members must invalidate that proof rather than shorten it.
+        let membersByID = members.firstValueDictionary(keyedBy: \.localTrackID)
+        let submittedMembers = submittedLocalTrackIDs.compactMap { membersByID[$0] }
         let hasIDAnchor = !matches.isEmpty
-        let positionsAgree = snapshots.count == members.count && hasIDAnchor && members.allSatisfy(\.wasSubmitted)
-            && matches.allSatisfy { members[$0.key].localTrackID == $0.value.0.localTrackID }
-            && zip(snapshots, members).allSatisfy { snapshot, member in
+        let positionsAgree = snapshots.count == submittedLocalTrackIDs.count && hasIDAnchor
+            && submittedMembers.count == submittedLocalTrackIDs.count
+            && Set(submittedLocalTrackIDs).count == submittedLocalTrackIDs.count
+            && submittedMembers.allSatisfy(\.wasSubmitted)
+            && matches.allSatisfy { submittedMembers[$0.key].localTrackID == $0.value.0.localTrackID }
+            && zip(snapshots, submittedMembers).allSatisfy { snapshot, member in
                 snapshot.metadata.map { member.metadata?.matches($0) == true } == true
             }
 
@@ -160,8 +169,8 @@ enum PlaybackQueueSnapshotCorrelator {
                 member = unique
                 source = unique.cachedAssociations[id]?.matches(metadata) == true ? .cachedAssociation : .metadata
             } else if allowPositionMatching, positionsAgree,
-                      candidates.contains(where: { $0.localTrackID == members[index].localTrackID }) {
-                member = members[index]
+                      candidates.contains(where: { $0.localTrackID == submittedMembers[index].localTrackID }) {
+                member = submittedMembers[index]
                 source = .positionAndMetadata
             } else {
                 continue
