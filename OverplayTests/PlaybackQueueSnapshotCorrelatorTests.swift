@@ -140,4 +140,104 @@ struct PlaybackQueueSnapshotCorrelatorTests {
 
         #expect(realized.isEmpty)
     }
+    private func submitted(_ local: String, title: String = "Punk Guy", artist: String = "NOFX") -> PendingQueueCorrelation {
+        var value = member(local, "known-" + local)
+        value.wasSubmitted = true
+        value.metadata = .init(title: title, artist: artist, duration: 180)
+        return value
+    }
+
+    @Test("unique title and artist recover unfamiliar IDs even in a partial shuffled queue")
+    func uniqueMetadataRecoversShuffledEntry() {
+        let members = [submitted("a"), submitted("b", title: "Other")]
+        let snapshots = [PlayerQueueEntrySnapshot(id: "new", musicItemID: "unfamiliar", metadata: .init(title: " PUNK   GUY ", artist: "nofx", duration: 181))]
+        let entries = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(snapshots: snapshots, members: members)
+        #expect(entries.map(\.localTrackID) == ["a"])
+        #expect(entries.first?.matchSource == .metadata)
+    }
+
+    @Test("title alone, incompatible duration and unknown metadata are insufficient", arguments: ["artist", "duration", "title", "missing"])
+    func mismatchesAreRejected(field: String) {
+        var metadata = PlaybackTrackMatchMetadata(title: "Punk Guy", artist: "NOFX", duration: 180)
+        if field == "artist" { metadata.artist = "another band" }
+        if field == "duration" { metadata.duration = 240 }
+        if field == "title" { metadata.title = "punk guy (live)" }
+        let snapshots = [PlayerQueueEntrySnapshot(id: "new", musicItemID: "unfamiliar", metadata: field == "missing" ? nil : metadata)]
+        #expect(PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(snapshots: snapshots, members: [submitted("a")]).isEmpty)
+    }
+
+    @Test("duplicates require a complete ordered manifest with an agreeing ID anchor")
+    func duplicateMetadataNeedsPositionProof() {
+        let members = [submitted("anchor", title: "Anchor"), submitted("a"), submitted("b")]
+        let snapshots = [
+            PlayerQueueEntrySnapshot(id: "0", musicItemID: "known-anchor", metadata: members[0].metadata),
+            PlayerQueueEntrySnapshot(id: "1", musicItemID: "new-a", metadata: members[1].metadata),
+            PlayerQueueEntrySnapshot(id: "2", musicItemID: "new-b", metadata: members[2].metadata)
+        ]
+        let ordered = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(snapshots: snapshots, members: members, allowPositionMatching: true, submittedLocalTrackIDs: members.map(\.localTrackID))
+        #expect(ordered.map(\.localTrackID) == ["anchor", "a", "b"])
+        #expect(ordered.last?.matchSource == .positionAndMetadata)
+        let shuffled = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(snapshots: snapshots, members: members)
+        #expect(shuffled.map(\.localTrackID) == ["anchor"])
+        let partial = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(snapshots: Array(snapshots.prefix(2)), members: members, allowPositionMatching: true, submittedLocalTrackIDs: members.map(\.localTrackID))
+        #expect(partial.map(\.localTrackID) == ["anchor"])
+        let reordered = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(snapshots: Array(snapshots.reversed()), members: members, allowPositionMatching: true, submittedLocalTrackIDs: members.map(\.localTrackID))
+        #expect(reordered.map(\.localTrackID) == ["anchor"])
+    }
+
+    @Test("positional recovery uses the submitted order independently of other playlist rows")
+    func positionProofExcludesNonqueuedRows() {
+        let submittedMembers = [submitted("anchor", title: "Anchor"), submitted("a"), submitted("b")]
+        var nonqueued = submitted("retired")
+        nonqueued.wasSubmitted = false
+        let snapshots = [
+            PlayerQueueEntrySnapshot(id: "0", musicItemID: "known-anchor", metadata: submittedMembers[0].metadata),
+            PlayerQueueEntrySnapshot(id: "1", musicItemID: "new-a", metadata: submittedMembers[1].metadata),
+            PlayerQueueEntrySnapshot(id: "2", musicItemID: "new-b", metadata: submittedMembers[2].metadata)
+        ]
+        let submittedIDs = submittedMembers.map(\.localTrackID)
+        // Neither database order nor a nonqueued metadata duplicate is position evidence.
+        var members = [nonqueued] + submittedMembers.reversed()
+        let recovered = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(
+            snapshots: snapshots, members: members, allowPositionMatching: true,
+            submittedLocalTrackIDs: submittedIDs
+        )
+        #expect(recovered.map(\.localTrackID) == submittedIDs)
+        #expect(recovered.last?.matchSource == .positionAndMetadata)
+        members.removeAll { $0.localTrackID == "b" }
+        let missing = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(
+            snapshots: Array(snapshots.prefix(2)), members: members, allowPositionMatching: true,
+            submittedLocalTrackIDs: submittedIDs
+        )
+        #expect(missing.map(\.localTrackID) == ["anchor"])
+        // Nonqueued known IDs must still block a metadata guess for another row.
+        nonqueued.matchableMusicItemIDs.insert("new-a")
+        let conflicting = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(
+            snapshots: snapshots, members: submittedMembers + [nonqueued], allowPositionMatching: true,
+            submittedLocalTrackIDs: submittedIDs
+        )
+        #expect(conflicting.map(\.localTrackID) == ["anchor", "retired"])
+    }
+
+    @Test("metadata cannot steal documented IDs or resolve conflicting ID claims")
+    func documentedIdentityTakesPriority() {
+        var a = submitted("a")
+        let b = submitted("b", title: "Different")
+        let snapshots = [PlayerQueueEntrySnapshot(id: "entry", musicItemID: "known-b", metadata: a.metadata)]
+        #expect(PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(snapshots: snapshots, members: [a, b]).first?.localTrackID == "b")
+        a.matchableMusicItemIDs.insert("known-b")
+        #expect(PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(snapshots: snapshots, members: [a, b]).isEmpty)
+    }
+
+    @Test("cache evidence is rechecked against reported metadata")
+    func cacheMustMatchMetadata() {
+        var a = submitted("a")
+        a.wasSubmitted = false
+        a.cachedAssociations["saved-id"] = a.metadata
+        let matching = PlayerQueueEntrySnapshot(id: "1", musicItemID: "saved-id", metadata: a.metadata)
+        #expect(PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(snapshots: [matching], members: [a]).first?.matchSource == .cachedAssociation)
+        let wrongArtist = PlayerQueueEntrySnapshot(id: "1", musicItemID: "saved-id", metadata: .init(title: "Punk Guy", artist: "Wrong"))
+        #expect(PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(snapshots: [wrongArtist], members: [a]).isEmpty)
+    }
+
 }

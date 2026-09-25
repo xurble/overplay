@@ -98,6 +98,14 @@ final class PlaybackController {
         didSet { updateRetentionLease() }
     }
     @ObservationIgnored private var activePlaylistSnapshotNeedsRebuild = false
+    /// The submitted manifest survives partial MusicKit snapshots and ID reissues.
+    @ObservationIgnored private var submittedQueueMembers: [PendingQueueCorrelation] = []
+    @ObservationIgnored private var submittedPlaylistID: String?
+    @ObservationIgnored private var lastCorrelationSnapshots: [PlayerQueueEntrySnapshot]?
+    @ObservationIgnored private var associationScope: String?
+    @ObservationIgnored private var lastVerifiedAssociationScope: String?
+    @ObservationIgnored private var scopeRefreshGeneration = 0
+    @ObservationIgnored private let loadAssociationScope: @MainActor () async throws -> String
     @ObservationIgnored private var activeQueueEntries: [RealizedPlaybackQueueEntry] = []
     /// Where the current track sits in `activeQueueEntries`, which is
     /// Overplay's local order. A correlation cursor, not a play position: once
@@ -110,11 +118,8 @@ final class PlaybackController {
     /// entry change the player has not hydrated yet is indistinguishable
     /// from the same entry momentarily losing its item.
     @ObservationIgnored private var musicKitNowPlayingEntryID: String?
-    /// Live player-queue entries that had an item and still matched no row
-    /// of the current playlist. Rebuilding reads the whole playlist, and the
-    /// 1 Hz tick would otherwise retry a queue holding foreign entries every
-    /// second. Cleared by any metadata change, which is what could heal the
-    /// membership.
+    /// Hydrated entries still unresolved at the last correlation decision.
+    /// Kept for diagnostics; changed metadata on these entries is retried.
     @ObservationIgnored private var unmappableLiveEntryIDs: Set<String> = []
     @ObservationIgnored private var isPerformingTransition = false
     @ObservationIgnored private var lastLocalPlaybackStateFlushAt: Date?
@@ -181,10 +186,15 @@ final class PlaybackController {
         playerID: String = "main",
         player: any PlaybackPlayer = ApplicationMusicPlaybackPlayer(),
         transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy = .standard,
+        loadAssociationScope: @escaping @MainActor () async throws -> String = {
+            let scope = try await MusicIdentityResolver.liveScope()
+            return PlaybackAssociationStore.scopeKey(account: scope.account, storefront: scope.storefront)
+        },
         sleepForTransitionConfirmation: @escaping @MainActor (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
         }
     ) {
+        self.loadAssociationScope = loadAssociationScope
         self.localPlaybackDefaults = localPlaybackDefaults
         self.playerID = playerID
         self.player = player
@@ -390,8 +400,37 @@ final class PlaybackController {
     /// by the active monitor. Background/system adapters and deterministic
     /// tests can use this without inventing a surface-specific state update.
     func reconcilePlayerState(context: ModelContext) async {
+        await refreshAssociationScope()
         startObservingPlayer(context: context)
         await refresh(context: context)
+    }
+
+    /// Resolve account scope at queue handoff / foreground entry, never on the
+    /// playback timer. Failure disables persistent matching for this session.
+    private func refreshAssociationScope() async {
+        scopeRefreshGeneration &+= 1
+        let generation = scopeRefreshGeneration
+        let scope = try? await loadAssociationScope()
+        guard generation == scopeRefreshGeneration else { return }
+        if let scope {
+            if let previousScope = lastVerifiedAssociationScope, previousScope != scope {
+                submittedQueueMembers = []
+                submittedPlaylistID = nil
+                activeQueueEntries.removeAll { $0.matchSource != .identifier }
+                activeQueueIndex = activeQueueEntries.firstIndex { $0.queueEntryID == player.currentEntry?.id }
+            }
+            if associationScope != scope { lastCorrelationSnapshots = nil }
+            lastVerifiedAssociationScope = scope
+        }
+        // A network/authentication failure disables disk-cache reuse, but is
+        // not evidence that the still-playing submitted queue has changed.
+        associationScope = scope
+    }
+
+    private func rememberSubmittedQueue(_ entries: [PlaybackQueueEntry], playlistID: String) {
+        submittedPlaylistID = playlistID
+        submittedQueueMembers = entries.map(PendingQueueCorrelation.init(entry:))
+        lastCorrelationSnapshots = nil
     }
 
     var isMonitoringPlayback: Bool { monitorTask != nil }
@@ -454,6 +493,9 @@ final class PlaybackController {
     }
 
     func clearLocalStateAfterDatabaseReset() {
+        submittedQueueMembers = []
+        submittedPlaylistID = nil
+        PlaybackAssociationStore.clear(defaults: localPlaybackDefaults)
         NowPlayingMetadataService.resetPublishedState()
         player.pause()
         currentTrack = nil
@@ -897,6 +939,9 @@ final class PlaybackController {
                     + queueCorrelationDiagnosticContext()
             )
         }
+        submittedQueueMembers = []
+        submittedPlaylistID = nil
+        lastCorrelationSnapshots = nil
         activeQueueEntries = []
         activeQueueIndex = nil
         resetAppendedQueueCorrelations()
@@ -931,6 +976,7 @@ final class PlaybackController {
             return
         }
 
+        await refreshAssociationScope()
         await refresh(context: context)
         let outgoing = captureOutgoingPlaybackTransition()
 
@@ -953,6 +999,7 @@ final class PlaybackController {
                     // listening evidence above before stopping the old queue.
                     player.pause()
                 }
+                rememberSubmittedQueue(queueEntries, playlistID: playlistID)
                 player.replaceQueue(with: materialization)
                 if enableShuffleBeforePlayback {
                     // The starting entry is random; MusicKit shuffles the
@@ -990,8 +1037,7 @@ final class PlaybackController {
                     currentPlaylistScope = scope
                     updateActiveQueue(realizedEntries: materialization.realizedEntries, startingAt: localTrackID)
                     recorrelateLiveQueueIfNeeded(currentEntry: player.currentEntry, context: context)
-                    guard let currentEntry = player.currentEntry,
-                          activeQueueEntries.contains(where: { $0.queueEntryID == currentEntry.id }) else {
+                    guard player.currentEntry != nil, playerStillHoldsOverplayQueue() else {
                         clearQueueCorrelationAfterDivergedTransition(reason: "initialQueueNotCorrelated")
                         return
                     }
@@ -1250,6 +1296,7 @@ final class PlaybackController {
     }
 
     func currentPlaylistRole(context: ModelContext) -> PlaylistRole? {
+        if player.currentEntry != nil && currentPlaylistItem == nil { return nil }
         if let item = displayedPlaylistItem(context: context),
            let owner = try? PlaylistRepository.playlist(id: item.playlistID, in: context) {
             return owner.role
@@ -1443,6 +1490,8 @@ final class PlaybackController {
         }
         activeQueueIndex = activeQueueEntries.firstIndex { $0.queueEntryID == currentEntryID }
         appendedUncorrelatedEntries.removeAll { result.mapping[$0.localTrackID] != nil }
+        submittedQueueMembers.removeAll { result.mapping[$0.localTrackID] != nil }
+        lastCorrelationSnapshots = nil
         reconcileTrackMembership(context: context)
         if let item = currentPlaylistItem, let id = currentTrack?.id {
             syncPlaybackMetadata(for: id, trustedPlaylistItem: item, context: context)
@@ -1757,10 +1806,19 @@ final class PlaybackController {
         if hasUncorrelatedConcretePlayerEntry,
            identity.map({ !isAwaitingAppendCorrelation($0) }) ?? true {
             // A concrete MusicKit entry outside the realized queue is the
-            // authority, but it cannot inherit the outgoing playlist row or
-            // restoration identity. Preserve the resolved item below while
-            // dropping every stale queue-specific correlation first.
-            clearQueueCorrelationAfterDivergedTransition(reason: "unmappedCurrentEntry", identity: identity)
+            // authority, but it cannot inherit the outgoing playlist row.
+            // Retain recognized neighbours only while this entry is actually
+            // present in that queue.
+            if playerStillHoldsOverplayQueue(),
+               player.queueEntrySnapshots.contains(where: { $0.id == currentPlayerEntry?.id }) {
+                // One unresolved entry cannot erase a recognized queue. The
+                // outgoing session was evaluated above; no row may inherit it.
+                activeQueueIndex = nil
+                currentPlaylistItem = nil
+                activeSession = nil
+            } else {
+                clearQueueCorrelationAfterDivergedTransition(reason: "unmappedCurrentEntry", identity: identity)
+            }
         }
 
         if didChangeTrack, let identity {
@@ -1906,33 +1964,15 @@ final class PlaybackController {
         newLocalTrackID: String?,
         context: ModelContext
     ) -> Bool {
-        let didChange = PlaybackIdentityFallbackPolicy.identityDidChange(
+        // Alias learning belongs exclusively to recordTrustedRuntimeAlias,
+        // where the realized entry's evidence source is still available.
+        PlaybackIdentityFallbackPolicy.identityDidChange(
             oldMusicItemID: oldTrackID,
             oldLocalTrackID: oldLocalTrackID,
             newMusicItemID: newTrackID,
             newLocalTrackID: newLocalTrackID,
             currentTrackKnownMusicItemIDs: self.currentTrackKnownMusicItemIDs(context: context)
         )
-
-        if !didChange,
-           let oldTrackID,
-           let newTrackID,
-           oldTrackID != newTrackID,
-           let currentPlaylistID,
-           let localTrackID = oldLocalTrackID
-               ?? currentPlaylistItem?.trackID.uuidString
-               ?? activeQueueCurrentLocalTrackID {
-            // Remember the other-domain ID so future scoped lookups resolve
-            // it directly instead of re-deriving the correspondence.
-            PlaybackIdentityStore.recordAlias(
-                newTrackID,
-                playerID: playerID,
-                musicPlaylistID: currentPlaylistID,
-                localTrackID: localTrackID
-            )
-        }
-
-        return didChange
     }
 
     private func currentTrackKnownMusicItemIDs(context: ModelContext) -> Set<String> {
@@ -2051,7 +2091,9 @@ final class PlaybackController {
         fallbackLocalTrackID: String? = nil
     ) {
         elapsedSeconds = observedElapsedSeconds ?? player.playbackTime
-        prepareCurrentPlaylistItemForEvaluation(context: context)
+        // Callers capture this fallback before observing the incoming entry.
+        // The live queue cursor may already point at that next track; never
+        // use it to supply attribution missing from the outgoing session.
 
         do {
             let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
@@ -2065,8 +2107,6 @@ final class PlaybackController {
                 naturalCompletion: naturalCompletion,
                 context: context,
                 fallbackLocalTrackID: fallbackLocalTrackID
-                    ?? currentPlaylistItem?.trackID.uuidString
-                    ?? activeQueueCurrentLocalTrackID
             )
             applyEvaluationOutcome(outcome, context: context)
         } catch {
@@ -2155,15 +2195,6 @@ final class PlaybackController {
         }
 
         return outcome.session.trackID == currentTrack?.id
-    }
-
-    private func prepareCurrentPlaylistItemForEvaluation(context: ModelContext) {
-        guard currentPlaylistItem == nil else { return }
-
-        if let localTrackID = activeQueueCurrentLocalTrackID,
-           let item = try? playlistItem(localTrackID: localTrackID, context: context) {
-            currentPlaylistItem = item
-        }
     }
 
     private func currentPlaylist(in context: ModelContext) throws -> PlaylistRecord? {
@@ -2268,7 +2299,7 @@ final class PlaybackController {
         for realizedEntry: RealizedPlaybackQueueEntry,
         context: ModelContext
     ) {
-        guard let currentPlaylistID else { return }
+        guard let currentPlaylistID, realizedEntry.matchSource == .identifier else { return }
         if let trackID = UUID(uuidString: realizedEntry.localTrackID),
            knownMusicItemIDs(forLocalTrackID: trackID, context: context).contains(musicItemID) {
             return
@@ -2521,7 +2552,7 @@ final class PlaybackController {
     private func liveQueueSnapshots(currentEntry: MusicPlayer.Queue.Entry?) -> [PlayerQueueEntrySnapshot] {
         var snapshots = player.queueEntrySnapshots
         if let currentEntry, let item = player.currentEntryItem {
-            let currentSnapshot = PlayerQueueEntrySnapshot(id: currentEntry.id, musicItemID: item.id.rawValue)
+            let currentSnapshot = PlayerQueueEntrySnapshot(entry: currentEntry, item: item)
             if let index = snapshots.firstIndex(where: { $0.id == currentEntry.id }) {
                 snapshots[index] = currentSnapshot
             } else {
@@ -2555,14 +2586,13 @@ final class PlaybackController {
     ///   `isAwaitingOwnQueueHydration` true, and so keeps the outgoing
     ///   session alive to be credited once the current entry resolves.
     ///
-    /// A hydrated current entry that is not a member of the current playlist
-    /// is refused, so a genuine external takeover still reads as divergence.
+    /// An unknown current entry stays unattributed while other recognized
+    /// members preserve the queue; a wholly foreign queue still diverges.
     private func recorrelateLiveQueueIfNeeded(
         currentEntry: MusicPlayer.Queue.Entry?,
         context: ModelContext
     ) {
-        guard let currentPlaylistID,
-              appendedUncorrelatedEntries.isEmpty || !playerStillHoldsOverplayQueue() else {
+        guard let currentPlaylistID else {
             return
         }
 
@@ -2571,9 +2601,10 @@ final class PlaybackController {
         let mappableEntryIDs = snapshots.filter { snapshot in
             snapshot.musicItemID != nil
                 && !mappedEntryIDs.contains(snapshot.id)
-                && !unmappableLiveEntryIDs.contains(snapshot.id)
         }
-        guard !mappableEntryIDs.isEmpty else { return }
+        let hasMetadataAssociations = activeQueueEntries.contains { $0.matchSource != .identifier }
+        guard (!mappableEntryIDs.isEmpty || hasMetadataAssociations), snapshots != lastCorrelationSnapshots else { return }
+        lastCorrelationSnapshots = snapshots
         let members: [PendingQueueCorrelation]
         do {
             members = try currentPlaylistQueueMembers(playlistID: currentPlaylistID, context: context)
@@ -2589,13 +2620,14 @@ final class PlaybackController {
 
         let realizedEntries = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(
             snapshots: snapshots,
-            members: members
+            members: members,
+            allowPositionMatching: player.shuffleMode == .off && snapshots.count == player.queueEntrySnapshots.count,
+            submittedLocalTrackIDs: submittedPlaylistID == currentPlaylistID
+                ? submittedQueueMembers.map(\.localTrackID) : []
         )
         let realizedEntryIDs = Set(realizedEntries.map(\.queueEntryID))
-        // Remember what could be read and still did not belong, so a queue
-        // holding foreign entries does not re-read the whole playlist on
-        // every tick. Anything that has not hydrated is left out: it has not
-        // been judged yet.
+        // Report hydrated entries that remain unresolved. Retry decisions use
+        // the entire snapshot, so later metadata on the same entry ID can heal.
         unmappableLiveEntryIDs = Set(
             snapshots
                 .filter { $0.musicItemID != nil && !realizedEntryIDs.contains($0.id) }
@@ -2609,33 +2641,54 @@ final class PlaybackController {
         let currentRealized = realizedEntries.first { $0.queueEntryID == currentEntry?.id }
         let currentMatch: String
         if let currentRealized {
-            currentMatch = membersByLocalID[currentRealized.localTrackID]?
-                .runtimeAliasMusicItemIDs.contains(currentRealized.queuedMusicItemID) == true
-                ? "runtimeAlias" : "persistedID"
+            currentMatch = currentRealized.matchSource == .identifier
+                ? (membersByLocalID[currentRealized.localTrackID]?
+                    .runtimeAliasMusicItemIDs.contains(currentRealized.queuedMusicItemID) == true
+                    ? "runtimeAlias" : "persistedID")
+                : currentRealized.matchSource.rawValue
         } else if currentEntry == nil {
             currentMatch = "noCurrentEntry"
         } else {
             currentMatch = player.currentEntryItem == nil ? "unhydrated" : "unmatched"
         }
+        let currentSnapshotIndex = snapshots.firstIndex { $0.id == currentEntry?.id }
+        let currentMetadata = currentSnapshotIndex.flatMap { snapshots[$0].metadata }
+        let submittedIndex = currentRealized.flatMap { realized in
+            submittedQueueMembers.firstIndex { $0.localTrackID == realized.localTrackID }
+        }
+        let metadataCandidateCount = currentMetadata.map { metadata in
+            members.filter { $0.metadata?.matches(metadata) == true }.count
+        } ?? 0
         let diagnosticDetail = "matched=\(realizedEntries.count) unmatched=\(unmappableLiveEntryIDs.count) "
             + "runtimeAliasMatches=\(runtimeAliasMatches) currentMatch=\(currentMatch) "
+            + "metadataMatches=\(realizedEntries.filter { $0.matchSource == .metadata }.count) "
+            + "cacheMatches=\(realizedEntries.filter { $0.matchSource == .cachedAssociation }.count) "
+            + "positionMatches=\(realizedEntries.filter { $0.matchSource == .positionAndMetadata }.count) "
+            + "submitted=\(submittedQueueMembers.count) cacheScope=\(associationScope == nil ? "unavailable" : "verified") "
+            + "queueIndex=\(currentSnapshotIndex.map(String.init) ?? "nil") submittedIndex=\(submittedIndex.map(String.init) ?? "nil") "
+            + "metadataCandidates=\(metadataCandidateCount) title=\(currentMetadata?.title ?? "nil") artist=\(currentMetadata?.artist ?? "nil") "
             + "matchedLocal=\(currentRealized?.localTrackID ?? "nil") "
             + queueCorrelationDiagnosticContext()
 
-        // Nothing in the player's queue belongs to this playlist, or the
-        // entry it is actually playing does not. Either way this is not
-        // Overplay's queue to adopt.
+        // A wholly foreign queue is a takeover. One unresolved entry among
+        // recognized members is retained for later hydration instead.
         guard !realizedEntries.isEmpty else {
             recordQueueCorrelationDecision(.queueCorrelationRejected, detail: "reason=noPlaylistMatches " + diagnosticDetail)
+            // Failed revalidation must also revoke an existing metadata match,
+            // even if MusicKit kept the same entry ID while changing its item.
+            if hasMetadataAssociations {
+                activeQueueEntries.removeAll { $0.matchSource != .identifier }
+                activeQueueIndex = activeQueueEntries.firstIndex { $0.queueEntryID == currentEntry?.id }
+            }
             return
         }
         if let currentEntry,
            player.currentEntryItem != nil,
            !realizedEntryIDs.contains(currentEntry.id) {
-            recordQueueCorrelationDecision(.queueCorrelationRejected, detail: "reason=currentEntryUnmatched " + diagnosticDetail)
-            return
+            recordQueueCorrelationDecision(.queueCorrelationRejected, detail: "reason=currentEntryUnmatched retainingQueue=true " + diagnosticDetail)
         }
-        guard realizedEntryIDs != mappedEntryIDs else { return }
+        cacheValidatedAssociations(realizedEntries, snapshots: snapshots, members: members, playlistID: currentPlaylistID)
+        guard realizedEntries != activeQueueEntries else { return }
 
         // Keep the cursor on the outgoing track when the current entry has
         // not hydraded far enough to place it. It is a correlation cursor,
@@ -2664,7 +2717,8 @@ final class PlaybackController {
         TrackMetadataDiagnostics.log(
             "queue correlation rebuilt from the live player queue entries=\(realizedEntries.count) live=\(snapshots.count) index=\(index.map(String.init) ?? "nil") unmappable=\(unmappableLiveEntryIDs.count)"
         )
-        resetAppendedQueueCorrelations()
+        let correlatedLocalIDs = Set(realizedEntries.map(\.localTrackID))
+        appendedUncorrelatedEntries.removeAll { correlatedLocalIDs.contains($0.localTrackID) }
         activeQueueEntries = realizedEntries
         activeQueueIndex = index
     }
@@ -2690,17 +2744,48 @@ final class PlaybackController {
         context: ModelContext
     ) throws -> [PendingQueueCorrelation] {
         let inputs = try PlaybackQueueOrchestrator.playlistInputs(for: playlistID, in: context)
-        let members: [PendingQueueCorrelation] = inputs.items.compactMap { item in
+        let submitted = submittedPlaylistID == playlistID ? submittedQueueMembers : []
+        let submittedByID = submitted.firstValueDictionary(keyedBy: \.localTrackID)
+        var members: [PendingQueueCorrelation] = inputs.items.compactMap { item in
             guard let track = inputs.tracksByID[item.trackID] else { return nil }
+            let localID = item.trackID.uuidString
+            let localMetadata = PlaybackTrackMatchMetadata(
+                title: track.title, artist: track.artistName, duration: track.durationSeconds
+            )
+            let original = submittedByID[localID]
             let musicItemIDs = PlaybackQueueBuilder.musicItemIDs(for: track)
-            guard let queuedMusicItemID = musicItemIDs.first else { return nil }
-
-            return PendingQueueCorrelation(
+            guard let queuedMusicItemID = original?.queuedMusicItemID ?? musicItemIDs.first else { return nil }
+            var member = PendingQueueCorrelation(
                 playlistItemID: item.id,
-                localTrackID: item.trackID.uuidString,
+                localTrackID: localID,
                 queuedMusicItemID: queuedMusicItemID,
                 matchableMusicItemIDs: Set(musicItemIDs)
             )
+            member.metadata = localMetadata
+            if let original, original.playlistItemID == item.id {
+                // The exact submitted IDs remain evidence even if sync edits
+                // display metadata. New metadata guesses need both to agree.
+                member.matchableMusicItemIDs.formUnion(original.matchableMusicItemIDs)
+                member.wasSubmitted = original.metadata?.matches(localMetadata) == true
+            }
+            return member
+        }
+        // Position is evidence only for the exact submission, not database order.
+        var order: [String: Int] = [:]
+        for (index, member) in submitted.enumerated() where order[member.localTrackID] == nil {
+            order[member.localTrackID] = index
+        }
+        members.sort { (order[$0.localTrackID] ?? Int.max) < (order[$1.localTrackID] ?? Int.max) }
+        if let associationScope {
+            let associations = PlaybackAssociationStore.validated(
+                scope: associationScope, playerID: playerID, playlistID: playlistID,
+                members: members, defaults: localPlaybackDefaults
+            )
+            for index in members.indices {
+                for association in associations where association.localTrackID == members[index].localTrackID {
+                    members[index].cachedAssociations[association.musicItemID] = association.reportedMetadata
+                }
+            }
         }
 
         // Entry IDs can change after MusicKit reports a different song ID
@@ -2729,6 +2814,23 @@ final class PlaybackController {
             member.runtimeAliasMusicItemIDs = Set(uniqueAliases).subtracting(member.matchableMusicItemIDs)
             member.matchableMusicItemIDs.formUnion(uniqueAliases)
             return member
+        }
+    }
+
+    private func cacheValidatedAssociations(
+        _ entries: [RealizedPlaybackQueueEntry], snapshots: [PlayerQueueEntrySnapshot],
+        members: [PendingQueueCorrelation], playlistID: String
+    ) {
+        guard let associationScope else { return }
+        for entry in entries where entry.matchSource == .metadata {
+            guard let member = members.first(where: { $0.localTrackID == entry.localTrackID }),
+                  let localMetadata = member.metadata,
+                  let reportedMetadata = snapshots.first(where: { $0.id == entry.queueEntryID })?.metadata else { continue }
+            PlaybackAssociationStore.record(.init(
+                scope: associationScope, playerID: playerID, playlistID: playlistID,
+                localTrackID: entry.localTrackID, musicItemID: entry.queuedMusicItemID,
+                localMetadata: localMetadata, reportedMetadata: reportedMetadata, learnedAt: .now
+            ), defaults: localPlaybackDefaults)
         }
     }
 
@@ -2975,6 +3077,7 @@ final class PlaybackController {
             !retainedIDs.contains($0.localTrackID) && $0.queueEntryID != currentEntryID
         }
         var removedIDs = Set(removedEntries.map(\.queueEntryID))
+        var removedLocalIDs = Set(removedEntries.map(\.localTrackID))
         let correlatedIDs = Set(activeQueueEntries.map(\.queueEntryID))
         // A rehydrating queue may not yet have local correlations. Only prune
         // entries whose concrete MusicKit identity resolves to our local track.
@@ -2984,10 +3087,13 @@ final class PlaybackController {
                let track = try? TrackRecordRepository.track(musicItemID: musicID, in: context),
                !retainedIDs.contains(track.id.uuidString) {
                 removedIDs.insert(entry.id)
+                removedLocalIDs.insert(track.id.uuidString)
             }
         }
         guard !removedIDs.isEmpty else { return }
         player.removeQueueEntries(withIDs: removedIDs)
+        submittedQueueMembers.removeAll { removedLocalIDs.contains($0.localTrackID) }
+        lastCorrelationSnapshots = nil
         activeQueueEntries.removeAll { removedIDs.contains($0.queueEntryID) }
         appendedUncorrelatedEntries.removeAll { !retainedIDs.contains($0.localTrackID) }
         activeQueueIndex = activeQueueEntries.firstIndex { $0.queueEntryID == currentEntryID }
@@ -3007,6 +3113,7 @@ final class PlaybackController {
         knownMusicItemIDsCache = nil
         unresolvableMusicItemIDs.removeAll()
         unmappableLiveEntryIDs.removeAll()
+        lastCorrelationSnapshots = nil
         playbackItemMetadataVersion += 1
     }
 
@@ -3048,6 +3155,11 @@ final class PlaybackController {
         guard let currentPlaylistID else {
             return
         }
+        // Preserve the last usable restore point while a live entry remains
+        // unknown instead of replacing it with an unattributed song ID.
+        if let entry = player.currentEntry,
+           !activeQueueEntries.contains(where: { $0.queueEntryID == entry.id }),
+           explicitLocalTrackID == nil, currentPlaylistItem == nil { return }
 
         let now = Date()
         let localTrackID = explicitLocalTrackID
@@ -3117,6 +3229,7 @@ final class PlaybackController {
             entries,
             startingAt: outgoing.localTrackID
         )
+        rememberSubmittedQueue(entries, playlistID: currentPlaylistID)
         player.replaceQueue(with: materialization)
         player.playbackTime = outgoing.elapsedSeconds
         if outgoing.wasPlaying {
@@ -3551,6 +3664,16 @@ final class PlaybackController {
             }
             activeQueueEntries[index].playlistItemID = item.id
         }
+        if submittedPlaylistID == previousMusicPlaylistID {
+            submittedPlaylistID = bucket.musicPlaylistID
+            submittedQueueMembers = submittedQueueMembers.compactMap { member in
+                guard let trackID = UUID(uuidString: member.localTrackID), let item = itemsByTrackID[trackID] else { return nil }
+                var member = member
+                member.playlistItemID = item.id
+                return member
+            }
+            lastCorrelationSnapshots = nil
+        }
         for index in appendedUncorrelatedEntries.indices {
             guard let trackID = UUID(uuidString: appendedUncorrelatedEntries[index].localTrackID),
                   let item = itemsByTrackID[trackID] else {
@@ -3642,9 +3765,17 @@ final class PlaybackController {
             // Apple Music ID domain, or before their items hydrate. Anything
             // unmatched is retried, never dropped — reaching an uncorrelated
             // entry reads as divergence and tears playback down.
-            appendedUncorrelatedEntries.append(
-                contentsOf: entries.map(PendingQueueCorrelation.init(entry:))
-            )
+            let pending = entries.map(PendingQueueCorrelation.init(entry:))
+            appendedUncorrelatedEntries.append(contentsOf: pending)
+            // Restoration can adopt a live queue without a known submission.
+            // Retain evidence for this append without inventing its prefix.
+            if submittedPlaylistID != playlistID {
+                submittedQueueMembers = []
+                submittedPlaylistID = playlistID
+            }
+            let submittedIDs = Set(submittedQueueMembers.map(\.localTrackID))
+            submittedQueueMembers.append(contentsOf: pending.filter { !submittedIDs.contains($0.localTrackID) })
+            lastCorrelationSnapshots = nil
             correlateAppendedEntries()
         } catch {
             statusMessage = "Added tracks locally, but updating the live queue failed: \(error.localizedDescription)"

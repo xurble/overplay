@@ -700,6 +700,31 @@ Starting playback:
   the active playlist projection from the same SwiftData records and local
   order used to build the queue.
 
+Queue identity recovery:
+
+- Retain the exact submitted tracks independently of MusicKit's incrementally
+  hydrated queue. Reissued entry IDs and partial snapshots must not discard
+  that manifest.
+- Match known song IDs first. An unfamiliar ID may match a unique submitted
+  title and artist, with duration corroboration. Position can disambiguate only
+  a complete, unshuffled queue whose metadata and known-ID anchors agree with
+  the submitted order. Ambiguous entries stay unattributed.
+- Persist uniquely validated MusicKit song ID-to-local-track associations in a
+  device-local playback cache, scoped to player, playlist, account fingerprint,
+  and storefront. Recheck metadata, current membership and identity conflicts
+  before reuse; expire evidence after 90 days and bound the cache to 2,048
+  associations. Position-only disambiguation is never persisted. Unavailable
+  account scope disables persistent matching without invalidating the submitted
+  live queue.
+- These associations do not establish canonical library identity or merge
+  tracks. They must not enter the general alias/deduplication graph.
+- An unresolved current item within a recognized queue keeps its MusicKit
+  display but no outgoing track's local counts or actions. Preserve the rest of
+  the queue and the last valid restore point while hydration can recover it.
+  A current entry outside that queue or a wholly foreign queue still diverges.
+- Activity reports include submission and live counts, matching method,
+  metadata candidate counts, title/artist, and queue/submission indices.
+
 Shuffle and repeat behavior:
 
 - MusicKit owns both. Overplay reads `shuffleMode` and `repeatMode` and writes

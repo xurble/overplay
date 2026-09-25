@@ -200,7 +200,7 @@ final class MusicIdentityResolver {
         let provider = MusicDataRequest.tokenProvider
         let developer = try await provider.developerToken(options: [])
         let user = try await provider.userToken(for: developer, options: [])
-        // Never persist or log a token. Only an in-memory fingerprint scopes cache entries.
+        // Never persist or log a token. Only its fingerprint is used to scope caches.
         let account = SHA256.hash(data: Data(user.utf8)).map { String(format: "%02x", $0) }.joined()
         return Scope(storefront: try await MusicDataRequest.currentCountryCode, account: account)
     }
