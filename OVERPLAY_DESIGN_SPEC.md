@@ -58,6 +58,7 @@ Music's global play count or skip count.
 | `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, playlist selection, and MusicKit diagnostics. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
 | `SURFACE-001` | Every playback action exposed by SwiftUI, CarPlay, Lock Screen, Control Center, or a headset/media transport has identical semantics and runs through the shared playback controller. A surface may expose fewer actions, but it must not implement a different version of an action. | Confirmed product requirement (2026-08-31); `Overplay/Services/RemoteCommandService.swift`, `Overplay/CarPlaySupport/CarPlayCoordinator.swift` |
 | `SURFACE-002` | A playback action or player-observed transition on any surface must reconcile and publish one authoritative playback snapshot to every other surface. Current-track identity, queue context, play state, position, outgoing-track evaluation, active-playlist projection, restore state, and system now-playing metadata must not diverge. | Confirmed product requirement (2026-08-31); `Overplay/Services/PlaybackController.swift`, `Overplay/Services/NowPlayingMetadataService.swift` |
+| `SURFACE-003` | Equivalent iOS/iPadOS and CarPlay actions use one shared action decision, including queue reuse/replacement, resume/restart, accounting, and failure handling. Matching final metadata does not excuse different commands or audible transitions. | Confirmed product requirement (2026-09-25); `Overplay/Services/PlaybackController.swift`, `OverplayTests/PlaybackTransitionTests.swift` |
 
 ## Platform
 
@@ -896,6 +897,32 @@ through the same reconciliation path that updates:
 - `MPNowPlayingInfoCenter` metadata and remote command state.
 - Local playback state used for restore.
 
+### Action routing and playlist-selection parity
+
+Equivalent user intents on iPhone, iPad, and CarPlay must enter the same shared
+controller/use-case action. Calling different lower-level methods on the same
+controller does not satisfy this requirement if each surface decides how to
+execute the action. Queue reuse, replacement, resume/restart, outgoing-session
+accounting, and error/fallback decisions belong to the shared action.
+
+Playlist-row selection has the following contract on every surface:
+
+- For the matching live playlist and playback scope, select an available track
+  inside the existing queue, preserving its identity and order.
+- Selecting the current track does not restart it; if paused, it resumes at the
+  current position.
+- When a new queue is required, start at the selected track without audibly
+  playing track 1 or another unintended track during the handoff.
+- A failed or unconfirmed jump must use shared failure handling. A surface must
+  not independently turn that failure into a fresh playlist start.
+- Publish the confirmed selection, queue context, outgoing-track evaluation,
+  and restore/now-playing state through the shared reconciliation path.
+
+Surface-specific differences may concern presentation, navigation, or which
+controls a platform exposes. Different behavior for the same supported action
+requires an explicit product requirement in this specification. An existing
+iOS/CarPlay divergence is a defect, not precedent for a platform exception.
+
 ### State convergence contract
 
 Each controller-initiated action must publish a reconciled shared playback
@@ -945,6 +972,14 @@ duplicate history, attribute an event to the wrong track, or leave surfaces on
 different tracks.
 
 ### Acceptance gate
+
+Every action change must trace equivalent iOS/iPadOS and CarPlay adapters to
+the shared user-action entry point. Regression tests must exercise that entry
+point, including relevant playing/paused, playlist/scope, and failure cases;
+tests of a lower-level helper alone cannot establish parity if an adapter can
+bypass it. Check both the command behavior and the resulting shared state.
+Use injected player boundaries for automated tests; live MusicKit audio checks
+require a physical device rather than a simulator.
 
 For each supported action, validation must originate the action separately
 from SwiftUI, CarPlay, and `MPRemoteCommandCenter` (covering Lock Screen,
@@ -1070,6 +1105,9 @@ Show:
 - Move to Triage and Move to One True Playlist for retired tracks.
 - Search/add action scoped to that playlist.
 
+Playlist-row taps follow the shared **Action routing and playlist-selection
+parity** contract, including live-queue reuse and resume without restart.
+
 Platform notes:
 
 - iPad currently reuses the adaptive list in split-view detail.
@@ -1124,10 +1162,9 @@ Show:
 - Direct Promote button when the current track belongs to the triage bucket.
 - An Up Next button that returns to the root menu.
 
-Selecting a track never restarts the track that is already playing. When its
-playlist is already the live queue, selection skips to that track inside the
-existing queue so the order after it survives; otherwise it builds a fresh
-queue starting from that track. The root menu offers no manual refresh: every
+Track selection follows the shared **Action routing and playlist-selection
+parity** contract used by iOS/iPadOS; CarPlay does not choose its own jump,
+restart, or queue-replacement strategy. The root menu offers no manual refresh: every
 list updates in place from shared playback state and from library changes made
 on the phone. A playback action that fails must report that failure rather than
 presenting Now Playing as though it succeeded.

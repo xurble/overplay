@@ -359,37 +359,10 @@ final class CarPlayCoordinator: NSObject {
             }
 
             let settings = try SettingsRepository.settings(in: modelContext)
-            let intent = CarPlayNavigationPolicy.trackIntent(
-                isCurrentTrack: isCurrentTrack(summary, in: playlist),
-                isInLiveQueue: playbackController.currentQueueContains(playlist: playlist, scope: scope)
-            )
-
-            switch intent {
-            case .showPlayer:
-                if !playbackController.isPlaying {
-                    await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-                        await playbackController.play(context: modelContext)
-                    }
-                }
-            case .skipInLiveQueue:
-                let didSkip = await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-                    await playbackController.playTrackInCurrentQueue(
-                        localTrackID: trackID.uuidString,
-                        settings: settings,
-                        context: modelContext
-                    )
-                }
-                if !didSkip {
-                    await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-                        await playbackController.playPlaylist(
-                            playlist, startingAt: track, scope: scope, settings: settings, context: modelContext
-                        )
-                    }
-                }
-            case .startPlaylist:
-                await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-                        await playbackController.playPlaylist(playlist, startingAt: track, scope: scope, settings: settings, context: modelContext)
-                    }
+            await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+                await playbackController.playPlaylist(
+                    playlist, startingAt: track, scope: scope, settings: settings, context: modelContext
+                )
             }
 
             refreshAfterTrackAction()

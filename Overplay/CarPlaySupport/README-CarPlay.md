@@ -14,8 +14,8 @@ entitlement, and `Config/Info.plist` declares a CarPlay scene using
   list UI.
 - `CarPlayPlaylistSectionFactory` builds the shared Shuffle and Play action
   and track sections for all three playlist screens.
-- `CarPlayNavigationPolicy` decides what track rows do, free of CarPlay types
-  so the rules are testable.
+- `PlaybackController` owns the shared playlist-row action used by both
+  CarPlay and iPhone/iPad, including resume, queue reuse, and replacement.
 - `AppRuntime.shared` provides the shared model container, playback controller,
   authorization service, and remote command service used by both phone UI and
   CarPlay.
@@ -39,18 +39,16 @@ It remains available when that playlist is already playing, matching the phone's
 Shuffle and Play button. Empty lists show the action
 disabled. Shuffle and repeat also remain available as Now Playing controls.
 
-Tapping a track routes through `CarPlayNavigationPolicy.trackIntent`:
+Tapping any track calls the same `PlaybackController.playPlaylist(_:startingAt:scope:settings:context:)`
+action as the iPhone/iPad playlist UI. The shared action decides whether to
+resume the current track, jump inside the matching live queue, or build a new
+queue. CarPlay only presents and navigates; it has no separate track-selection
+policy or fallback strategy.
 
-- The live track opens Now Playing and is never restarted.
-- A track in the playlist that is already the live queue is skipped to inside
-  that queue, so the order after it survives.
-- Anything else builds a fresh queue from that track.
-
-Playback and in-queue skips all run through `PlaybackController`, so
-the same behavior is available to the phone UI and the system transports. The
-controller reports these failures by returning `false` and setting
-`statusMessage` rather than throwing, so CarPlay checks the result and shows an
-alert instead of navigating to a player that is not playing what was asked for.
+The controller preserves the live queue for an in-queue selection and pauses
+before a required replacement. It evaluates the outgoing session and publishes
+the selected track through the same reconciliation path used by other playback
+surfaces. Command failures remain in shared playback state and `statusMessage`.
 
 There is no manual refresh. Visible lists are rebuilt from two triggers: the
 playback observation below, and a `ModelContext.didSave` observation that
@@ -73,9 +71,9 @@ point of hearing it again. Its Up Next button returns to the root menu.
 
 The app target builds and unit tests cover CarPlay playlist summary ordering,
 playable counts, Shuffle and Play placement and scope forwarding, empty-list
-behavior, template refresh targeting, track navigation rules in
-`CarPlayNavigationPolicy`, Now Playing action policy, and the shared in-queue
-skip and playback-mode paths in `PlaybackController`. The initial physical-device
+behavior, template refresh targeting, Now Playing action policy, and shared
+playlist-row selection, in-queue skip, and playback-mode paths in
+`PlaybackController`. The initial physical-device
 acceptance pass was completed on 2026-09-08. Repeat the affected hardware checks
 after every CarPlay, playback, queue-correlation, remote-command, or MusicKit-mode
 change.

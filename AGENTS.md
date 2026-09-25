@@ -151,6 +151,34 @@ How:
 -   Keep surface-specific code limited to platform APIs, view/template
     construction, navigation, presentation, and adapter glue.
 
+Behavioral parity is mandatory:
+
+-   Treat equivalent user actions on iPhone, iPad, and CarPlay as the same
+    product operation. Presentation, navigation, and available controls may
+    differ; playback, queue handling, accounting, persistence, and failure
+    behavior must not differ because of the initiating surface.
+-   Put the complete action decision in one shared controller/use-case entry
+    point. Merely calling different methods on the same controller is not
+    sufficient: adapters must not independently choose between jumping within
+    a queue, rebuilding it, resuming, restarting, or falling back after failure.
+-   In particular, playlist-row selection must use the same shared action on
+    iOS/iPadOS and CarPlay. A track in the matching live playlist and scope is
+    selected in place; the current track resumes without restarting. A required
+    queue replacement starts at the selected track without playing a fragment
+    of another track. These rules are not CarPlay-only behavior.
+-   Before changing an action, inspect every adapter that exposes it. Fix a
+    discovered divergence in the shared action and route all equivalent callers
+    through it; do not add a second surface-specific fix.
+-   Add regression coverage through the shared user-action entry point, not
+    only a lower-level helper that one surface might bypass. Check adapter
+    routing and cover relevant playing/paused, queue/scope, and failure cases.
+    Shared-state convergence alone is insufficient if the commands or audible
+    transitions differ between surfaces.
+-   A behavioral difference requires an explicit product requirement in
+    `OVERPLAY_DESIGN_SPEC.md`. Do not infer permission for different behavior
+    from platform-specific UI code or from an existing divergence; treat that
+    divergence as a defect.
+
 Playback engine changes:
 
 -   Treat every playback engine change as a cross-surface change. A fix that

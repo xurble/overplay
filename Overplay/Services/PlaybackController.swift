@@ -631,6 +631,13 @@ final class PlaybackController {
         settings: OverplaySettings,
         context: ModelContext
     ) async {
+        // All playlist surfaces use an in-place jump when this queue is live.
+        // Replacing it for a row tap can briefly play its first entry during
+        // MusicKit's handoff, and discards the player's existing queue identity.
+        if currentQueueContains(playlist: playlist, scope: scope),
+           await playTrackInCurrentQueue(localTrackID: track.id.uuidString, settings: settings, context: context) {
+            return
+        }
         await startPlaylistPlayback(playlist, startingAt: track, scope: scope, settings: settings, context: context)
     }
 
@@ -1024,12 +1031,10 @@ final class PlaybackController {
             expectedEntryIDs: expectedEntryIDs,
             waitForQueueHydration: true,
             command: {
-                if enableShuffleBeforePlayback {
-                    // Shuffle and Play is an explicit fresh start on every
-                    // surface, even for the current playlist. Capture outgoing
-                    // listening evidence above before stopping the old queue.
-                    player.pause()
-                }
+                // Stop audio before every queue handoff, including a row tap
+                // outside the live queue. Outgoing listening evidence was
+                // captured above, before pausing changes the player's status.
+                player.pause()
                 rememberSubmittedQueue(queueEntries, playlistID: playlistID)
                 player.replaceQueue(with: materialization)
                 if enableShuffleBeforePlayback {
