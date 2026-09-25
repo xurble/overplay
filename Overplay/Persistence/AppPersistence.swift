@@ -19,6 +19,7 @@ enum AppPersistence {
             PlaylistRecord.self,
             TrackRecord.self,
             PlaylistItemRecord.self,
+            ApplePlayCountRecord.self,
             HistoryEvent.self
         ])
     }

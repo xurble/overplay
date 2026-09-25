@@ -152,8 +152,8 @@ struct CarPlayLibrarySnapshotTests {
 
         #expect(tracks.map(\.title) == ["Mr Brightside", "Somebody Told Me"])
         #expect(tracks == sharedTracks)
-        #expect(tracks.first?.detailText == "The Killers - 0 plays / 0 skips")
-        #expect(tracks.last?.detailText == "The Killers - 0 plays / 2 skips")
+        #expect(tracks.first?.detailText == "The Killers - 0/— plays · 0 skips")
+        #expect(tracks.last?.detailText == "The Killers - 0/— plays · 2 skips")
     }
 
     @Test("bucket track summaries include contributor provenance")
@@ -183,7 +183,7 @@ struct CarPlayLibrarySnapshotTests {
         )
 
         #expect(summaries.first?.provenanceText == "From Weekly")
-        #expect(summaries.first?.detailText == "Artist - From Weekly - 0 plays / 0 skips")
+        #expect(summaries.first?.detailText == "Artist - From Weekly - 0/— plays · 0 skips")
     }
 
     @Test func trackSummariesFollowStoredShuffleOrder() throws {

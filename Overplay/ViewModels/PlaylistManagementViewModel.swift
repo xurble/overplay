@@ -121,6 +121,7 @@ final class PlaylistManagementViewModel {
                     artworkURLString: track.artworkURLTemplate,
                     skipCount: item.skipCount,
                     playthroughCount: item.playthroughCount,
+                    applePlayCount: item.applePlayCount,
                     provenanceText: TrackSummaryPresentation.provenanceText(
                         sourceMusicPlaylistIDs: item.sourceMusicPlaylistIDs,
                         playlistRole: playlist.role,
@@ -184,6 +185,7 @@ final class PlaylistManagementViewModel {
                     artworkURLString: row.artworkURLString,
                     skipCount: row.skipCount,
                     playthroughCount: row.playthroughCount,
+                    applePlayCount: row.applePlayCount,
                     provenanceText: TrackSummaryPresentation.provenanceText(
                         sourceMusicPlaylistIDs: persistedItemsByID[row.id]?.sourceMusicPlaylistIDs
                             ?? row.sourceMusicPlaylistIDs,

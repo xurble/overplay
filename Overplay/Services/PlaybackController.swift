@@ -73,6 +73,9 @@ final class PlaybackController {
     private(set) var playbackModeVersion = 0
 
     @ObservationIgnored private let player: any PlaybackPlayer
+    @ObservationIgnored private let refreshUnknownApplePlayCount: (@MainActor (UUID, ModelContext) async -> Int)?
+    @ObservationIgnored private var appleCountLookupTask: Task<Void, Never>?
+    @ObservationIgnored private var appleCountLookupTrackID: UUID?
     @ObservationIgnored private let transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy
     @ObservationIgnored private let sleepForTransitionConfirmation: @MainActor (Duration) async -> Void
     private enum RefreshTrigger: Hashable {
@@ -180,6 +183,7 @@ final class PlaybackController {
         localPlaybackDefaults: UserDefaults = .standard,
         playerID: String = "main",
         player: any PlaybackPlayer = ApplicationMusicPlaybackPlayer(),
+        refreshUnknownApplePlayCount: (@MainActor (UUID, ModelContext) async -> Int)? = nil,
         transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy = .standard,
         sleepForTransitionConfirmation: @escaping @MainActor (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
@@ -188,6 +192,7 @@ final class PlaybackController {
         self.localPlaybackDefaults = localPlaybackDefaults
         self.playerID = playerID
         self.player = player
+        self.refreshUnknownApplePlayCount = refreshUnknownApplePlayCount
         self.transitionConfirmationPolicy = transitionConfirmationPolicy
         self.sleepForTransitionConfirmation = sleepForTransitionConfirmation
     }
@@ -275,6 +280,29 @@ final class PlaybackController {
     var displayedPlaythroughCount: Int {
         _ = playbackItemMetadataVersion
         return currentPlaylistItem?.playthroughCount ?? currentTrack?.playthroughCount ?? 0
+    }
+
+    var displayedApplePlayCount: Int? {
+        _ = playbackItemMetadataVersion
+        return currentPlaylistItem?.applePlayCount ?? currentTrack?.applePlayCount
+    }
+
+    func displayedApplePlayCount(context: ModelContext) -> Int? {
+        _ = playbackItemMetadataVersion
+        return displayedPlaylistItem(context: context)?.applePlayCount ?? currentTrack?.applePlayCount
+    }
+
+    func refreshPlayCountMetadata(context: ModelContext) {
+        // A foreground or CarPlay refresh may have written in another context.
+        // Adopt its fresh row even if the item's persistent identity is equal.
+        if let itemID = currentPlaylistItem?.id {
+            currentPlaylistItem = try? PlaylistItemRepository.item(id: itemID, in: context)
+        }
+        bumpPlaybackItemMetadataVersion()
+        if let musicItemID = currentTrack?.id {
+            syncPlaybackMetadata(for: musicItemID, trustedPlaylistItem: currentPlaylistItem, context: context)
+        }
+        rebuildActivePlaylistSnapshot(context: context)
     }
 
     func displayedPlaythroughCount(context: ModelContext) -> Int {
@@ -398,6 +426,9 @@ final class PlaybackController {
 
     /// Explicit teardown; idle suspension only stops the timer.
     func stopMonitoring() {
+        appleCountLookupTask?.cancel()
+        appleCountLookupTask = nil
+        appleCountLookupTrackID = nil
         monitorTask?.cancel()
         monitorTask = nil
         monitorIdleSince = nil
@@ -1841,6 +1872,7 @@ final class PlaybackController {
         }
 
         logPlaybackRefreshIfNeeded(identity: identity)
+        prioritizeUnknownApplePlayCount(context: context)
         publishNowPlayingMetadata(isPlaying: isPlaying)
         if currentPlaylistID == nil {
             activePlaylistSnapshot = nil
@@ -1862,6 +1894,27 @@ final class PlaybackController {
             hasCurrentEntry: player.currentEntry != nil,
             playbackTime: currentPlaybackTime
         )
+    }
+
+    private func prioritizeUnknownApplePlayCount(context: ModelContext) {
+        guard isPlaying, let item = currentPlaylistItem, item.applePlayCount == nil,
+              !isRunningTests || refreshUnknownApplePlayCount != nil else { return }
+        let trackID = item.trackID
+        guard appleCountLookupTrackID != trackID || appleCountLookupTask == nil else { return }
+        appleCountLookupTask?.cancel()
+        appleCountLookupTrackID = trackID
+        appleCountLookupTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let changed: Int
+            if let refreshUnknownApplePlayCount {
+                changed = await refreshUnknownApplePlayCount(trackID, context)
+            } else {
+                changed = await ApplePlayCountSyncService.shared.refreshCurrentTrack(trackID, in: context)
+            }
+            guard !Task.isCancelled else { return }
+            if changed > 0 { refreshPlayCountMetadata(context: context) }
+            appleCountLookupTask = nil
+        }
     }
 
     private func applyResolvedPlaybackIdentity(_ identity: CurrentPlaybackIdentity, context: ModelContext) {

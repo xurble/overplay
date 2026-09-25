@@ -34,6 +34,7 @@ enum NowPlayingPresentationFactory {
             playthroughThresholdPercentage: settings.playthroughThresholdPercentage,
             skipCount: playbackController.displayedSkipCount,
             playthroughCount: playbackController.displayedPlaythroughCount,
+            applePlayCount: playbackController.displayedApplePlayCount,
             isEvicted: playbackController.displayedIsEvicted
         )
     }
@@ -73,6 +74,7 @@ enum NowPlayingPresentationFactory {
             playthroughThresholdPercentage: settings.playthroughThresholdPercentage,
             skipCount: displayedSkipCount,
             playthroughCount: playbackController.displayedPlaythroughCount(context: context),
+            applePlayCount: playbackController.displayedApplePlayCount(context: context),
             isEvicted: playbackController.displayedIsEvicted(context: context)
         )
     }

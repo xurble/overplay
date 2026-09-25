@@ -10,6 +10,31 @@ import Testing
 @MainActor
 @Suite("Player-confirmed playback transitions", .serialized)
 struct PlaybackTransitionTests {
+    @Test("App and externally advanced playback prioritize unknown Apple counts")
+    func prioritizesPlayingTrackCount() async throws {
+        var lookedUp: [UUID] = []
+        let fixture = try makeFixture(refreshUnknownApplePlayCount: { id, context in
+            lookedUp.append(id)
+            if let item = try? PlaylistItemRepository.allItems(in: context).first(where: { $0.trackID == id }) {
+                item.applePlayCountState = ApplePlayCountState(initialCount: 2, originID: item.id)
+                try? context.save()
+            }
+            return 1
+        })
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let deadline = ContinuousClock.now + .seconds(2)
+        while lookedUp.isEmpty && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(lookedUp == [fixture.tracks[0].id])
+        #expect(fixture.controller.displayedApplePlayCount == 2)
+        fixture.player.advanceExternally()
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        while lookedUp.count < 2 && ContinuousClock.now < deadline { await Task.yield() }
+        #expect(lookedUp == [fixture.tracks[0].id, fixture.tracks[1].id])
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(lookedUp.count == 2)
+    }
+
     @Test("Shuffle and Play restarts the queue and publishes shuffle on", arguments: [PlaylistPlaybackScope.active, .retired], [false, true])
     func shuffleAndPlayRestartsCurrentPlaylist(scope: PlaylistPlaybackScope, shuffleInitiallyEnabled: Bool) async throws {
         let fixture = try makeFixture()
@@ -2873,7 +2898,8 @@ private struct PlaybackTransitionFixture {
 @MainActor
 private func makeFixture(
     maximumObservationCount: Int = 5,
-    trackCount: Int = 3
+    trackCount: Int = 3,
+    refreshUnknownApplePlayCount: (@MainActor (UUID, ModelContext) async -> Int)? = nil
 ) throws -> PlaybackTransitionFixture {
     let container = try OverplayTestSupport.makeModelContainer()
     let context = container.mainContext
@@ -2897,6 +2923,7 @@ private func makeFixture(
         localPlaybackDefaults: playbackDefaults.defaults,
         playerID: playerID,
         player: player,
+        refreshUnknownApplePlayCount: refreshUnknownApplePlayCount,
         transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy(
             maximumObservationCount: maximumObservationCount,
             observationInterval: .zero

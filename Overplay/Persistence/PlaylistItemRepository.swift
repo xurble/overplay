@@ -34,10 +34,15 @@ enum PlaylistItemRepository {
 
     static func resetAllStats(in context: ModelContext) throws {
         let items = try allItems(in: context)
+        let resetAt = Date.now
+        let resetID = UUID().uuidString
         for item in items {
             item.hasRecordedActivity = item.hasListeningHistory
             item.skipCount = 0
             item.playthroughCount = 0
+            var appleState = item.applePlayCountState ?? ApplePlayCountState(initialCount: 0, originID: item.id)
+            appleState.reset(at: resetAt, id: resetID)
+            item.applePlayCountState = appleState
             item.lastPlayedAt = nil
             item.lastSkippedAt = nil
             item.evictedAt = nil
@@ -319,6 +324,14 @@ enum PlaylistItemRepository {
         }
 
         keeper.entryProvenance = PlaylistEntryProvenance.merging(keeper.entryProvenance + duplicate.entryProvenance)
+        if keeper.applePlayCountState != nil || duplicate.applePlayCountState != nil {
+            var appleState = keeper.applePlayCountState ?? ApplePlayCountState(initialCount: keeper.playthroughCount, originID: keeper.id)
+            appleState.merge(duplicate.applePlayCountState ?? ApplePlayCountState(initialCount: duplicate.playthroughCount, originID: duplicate.id))
+            keeper.applePlayCountState = appleState
+        }
+        if let context = keeper.modelContext {
+            ApplePlayCountRepository.link(donorID: duplicate.id, keeperID: keeper.id, in: context)
+        }
         keeper.skipCount += duplicate.skipCount
         keeper.playthroughCount += duplicate.playthroughCount
         keeper.isExplicitlyKept = keeper.isExplicitlyKept || duplicate.isExplicitlyKept

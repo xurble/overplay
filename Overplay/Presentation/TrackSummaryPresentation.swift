@@ -10,6 +10,7 @@ struct TrackSummaryPresentation: Equatable, Identifiable, Sendable {
     var artworkURLString: String?
     let skipCount: Int
     var playthroughCount: Int = 0
+    var applePlayCount: Int? = nil
     var provenanceText: String? = nil
     var isPlayable: Bool = true
     var isRetired: Bool = false
@@ -28,7 +29,7 @@ struct TrackSummaryPresentation: Equatable, Identifiable, Sendable {
     }
 
     var playSkipMetricLabel: String {
-        "\(Self.pluralized(playthroughCount, singular: "play")) / \(Self.pluralized(skipCount, singular: "skip"))"
+        PlayCountPresentation.metric(overplay: playthroughCount, apple: applePlayCount, skips: skipCount)
     }
 
     var detailText: String {

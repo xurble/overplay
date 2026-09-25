@@ -17,6 +17,7 @@ final class PeriodicPlaylistSyncService {
     let interPlaylistDelay: Duration
 
     @ObservationIgnored private var syncTask: Task<Void, Never>?
+    @ObservationIgnored private var playCountTask: Task<Void, Never>?
     @ObservationIgnored private let syncPlaylist: @MainActor (PlaylistRecord, ModelContext) async throws -> PlaylistSyncSummary
     @ObservationIgnored private let mergeDuplicateTrackIdentities: @MainActor (ModelContext) async throws -> Void
 
@@ -53,6 +54,13 @@ final class PeriodicPlaylistSyncService {
     ) {
         guard syncTask == nil else { return }
 
+        playCountTask = Task(priority: .background) { @MainActor in
+            while !Task.isCancelled {
+                await ApplePlayCountSyncService.shared.refresh(in: context, playbackController: playbackController)
+                try? await Task.sleep(for: .seconds(60))
+            }
+        }
+
         syncTask = Task(priority: .background) { @MainActor [weak self] in
             guard let self else { return }
 
@@ -71,6 +79,8 @@ final class PeriodicPlaylistSyncService {
     func stop() {
         syncTask?.cancel()
         syncTask = nil
+        playCountTask?.cancel()
+        playCountTask = nil
     }
 
     func syncLinkedPlaylists(
@@ -136,6 +146,9 @@ final class PeriodicPlaylistSyncService {
         if didMutateRecords {
             try? await mergeDuplicateTrackIdentities(context)
         }
+        // Also refresh when playlist contents were unchanged: listening does
+        // not necessarily change a playlist's modification date.
+        await ApplePlayCountSyncService.shared.refresh(in: context, playbackController: playbackController)
     }
 
     /// Catch-up ordering: the playlist the user is listening to first, then

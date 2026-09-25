@@ -66,6 +66,7 @@ struct PlaylistPresentationBuilder {
                 artworkURLString: track.artworkURLTemplate,
                 skipCount: item.skipCount,
                 playthroughCount: item.playthroughCount,
+                applePlayCount: item.applePlayCount,
                 provenanceText: TrackSummaryPresentation.provenanceText(
                     sourceMusicPlaylistIDs: item.sourceMusicPlaylistIDs,
                     playlistRole: playlistRole,

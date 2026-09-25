@@ -22,6 +22,7 @@ enum DuplicateTrackService {
         var aliases: [String]
         var equivalents: [String]
         var plays: Int
+        var applePlays: Int? = nil
         var skips: Int
         var keys: Set<String> {
             var values = Set(([catalogID, libraryID].compactMap { $0 } + aliases).map { "id:" + $0 })
@@ -72,7 +73,7 @@ enum DuplicateTrackService {
                              album: track.albumTitle, destination: destination, playlistID: item.playlistID,
                              locationChangedAt: item.locationChangedAt, catalogID: track.catalogID,
                              libraryID: track.libraryID, isrc: track.isrc, aliases: track.identityAliases,
-                             equivalents: track.equivalentCatalogIDs, plays: item.playthroughCount, skips: item.skipCount)
+                             equivalents: track.equivalentCatalogIDs, plays: item.playthroughCount, applePlays: item.applePlayCount, skips: item.skipCount)
         }.sorted { $0.id.uuidString < $1.id.uuidString }
     }
 
