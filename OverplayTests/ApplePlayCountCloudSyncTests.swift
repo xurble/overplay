@@ -128,6 +128,24 @@ struct ApplePlayCountCloudSyncTests {
         #expect(ApplePlayCountState.joined([a, a]) == ApplePlayCountState.joined([a]))
     }
 
+    @Test("A late aggregate keeps coverage paired with its chosen initialization credit")
+    func aggregateCoverageFollowsCredit() throws {
+        let a = UUID()
+        let b = UUID()
+        let earlier = state(origin: a)
+        let donor = ApplePlayCountState(initialCount: 4, originID: b, musicItemIDs: ["i.other"])
+        var aggregate = ApplePlayCountState(initialCount: 1, originID: a, musicItemIDs: ["i.song"])
+        aggregate.merge(donor)
+        aggregate.prepareFirstObservation(initialCount: 5, originID: a, musicItemID: "i.song")
+        aggregate.observe(musicItemID: "i.song", count: 10, at: start.addingTimeInterval(1))
+        var joined = try #require(ApplePlayCountState.joined([aggregate, earlier, donor]))
+        joined.advance()
+        #expect(joined.count == 5)
+        joined.observe(musicItemID: "i.song", count: 11, at: start.addingTimeInterval(2))
+        #expect(joined.count == 6)
+        #expect(ApplePlayCountState.joined([aggregate, earlier, donor]) == ApplePlayCountState.joined([donor, earlier, aggregate]))
+    }
+
     @Test("Shared aliases seed once even when CloudKit created separate local track rows")
     func aliasCreditDeduplication() throws {
         var a = state(origin: UUID(), seed: 2, baseline: 10, latest: 12)

@@ -362,6 +362,19 @@ enum PlaylistItemRepository {
             identityAliases: track.map { PlaybackQueueBuilder.musicItemIDs(for: $0) } ?? [])
     }
 
+    /// Capture original identities before automatic deduplication absorbs
+    /// TrackRecords or repoints items to the canonical record.
+    static func preserveAppleCountIdentity(for track: TrackRecord, in context: ModelContext) throws {
+        let libraryIDs = track.libraryID.map { MusicTrackIdentity.isLibraryID($0) ? [$0] : [] } ?? []
+        let aliases = PlaybackQueueBuilder.musicItemIDs(for: track)
+        for item in try items(forTrackIDs: [track.id], in: context) {
+            let previous = item.applePlayCountState
+            var state = previous ?? ApplePlayCountState(initialCount: item.playthroughCount, originID: item.id)
+            state.retainUnobservedIdentity(originID: item.id, musicItemIDs: libraryIDs, aliases: aliases)
+            if state != previous { item.applePlayCountState = state }
+        }
+    }
+
     private static func adoptEvictionState(
         from donor: PlaylistItemRecord,
         into keeper: PlaylistItemRecord

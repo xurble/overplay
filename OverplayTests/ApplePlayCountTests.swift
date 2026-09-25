@@ -192,6 +192,71 @@ struct ApplePlayCountTests {
         #expect(keeper.applePlayCount == (counter == "i.song" ? 4 : 5))
     }
 
+    @Test("Automatic deduplication captures each original library identity before repointing",
+          arguments: [false, true], [false, true])
+    func automaticMixedIdentityMerge(distinctCounters: Bool, initializedCanonical: Bool) async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let canonical = try fixture(context, libraryID: "i.song", plays: initializedCanonical ? 1 : 4)
+        let donor = try fixture(context, libraryID: distinctCounters ? "i.other" : "i.song", plays: initializedCanonical ? 4 : 1)
+        let canonicalTrack = try #require(try TrackRecordRepository.track(id: canonical.trackID, in: context))
+        let donorTrack = try #require(try TrackRecordRepository.track(id: donor.trackID, in: context))
+        canonicalTrack.createdAt = date
+        donorTrack.createdAt = date.addingTimeInterval(1)
+        let initialized = initializedCanonical ? canonical : donor
+        let initializedID = initializedCanonical || !distinctCounters ? "i.song" : "i.other"
+        let unknown = initializedCanonical ? donor : canonical
+        let unknownID = unknown.id
+        let unknownLibraryID = initializedCanonical && distinctCounters ? "i.other" : "i.song"
+        var first = observation(initializedID, count: 10)
+        first.matchedTrackID = initialized.trackID
+        try ApplePlayCountSyncService.apply([first], startedAt: date, in: context)
+        let defaults = PlaybackTestDefaults()
+        defer { defaults.cleanUp() }
+        try await TrackIdentityMergeService.mergeDuplicates(in: context, defaults: defaults.defaults)
+        let item = try #require(try PlaylistItemRepository.allItems(in: context).first)
+        #expect(try PlaylistItemRepository.allItems(in: context).count == 1)
+        #expect(item.applePlayCount == (distinctCounters ? 5 : 4))
+        try ApplePlayCountSyncService.apply([observation("i.song", count: 10), observation("i.other", count: 10)], startedAt: date, in: context)
+        #expect(item.applePlayCount == (distinctCounters ? 5 : 4))
+        var late = ApplePlayCountState(initialCount: 4, originID: unknownID)
+        late.observe(musicItemID: unknownLibraryID, count: 10, at: date)
+        context.insert(ApplePlayCountRecord(itemID: unknownID, state: late, deviceID: "late-device"))
+        try context.save()
+        try ApplePlayCountSyncService.apply([observation(initializedID, count: 11)], startedAt: date, in: context)
+        #expect(item.applePlayCount == (distinctCounters ? 6 : 5))
+    }
+
+    @Test("First discovery after an unobserved merge seeds the combined current count",
+          arguments: [false, true], [false, true])
+    func firstDiscoveryAfterMerge(resetFirst: Bool, distinctCounters: Bool) async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        _ = try fixture(context, plays: 1)
+        _ = try fixture(context, libraryID: distinctCounters ? "i.other" : "i.song", plays: 2)
+        if resetFirst { try PlaylistItemRepository.resetAllStats(in: context) }
+        let defaults = PlaybackTestDefaults()
+        defer { defaults.cleanUp() }
+        try await TrackIdentityMergeService.mergeDuplicates(in: context, defaults: defaults.defaults)
+        let item = try #require(try PlaylistItemRepository.allItems(in: context).first)
+        #expect(item.applePlayCount == nil)
+        item.playthroughCount += 3
+        let expected = resetFirst ? 3 : 6
+        let prior = try context.fetch(FetchDescriptor<ApplePlayCountRecord>())
+            .compactMap { record in record.state.map { (record.itemID, $0) } }
+        let observedAt = Date.now
+        try ApplePlayCountSyncService.apply([observation(count: 10)], startedAt: observedAt, in: context)
+        #expect(item.applePlayCount == expected)
+        // Old same-epoch seed snapshots must not add their covered credits again.
+        for (id, state) in prior { context.insert(ApplePlayCountRecord(itemID: id, state: state, deviceID: "late-copy")) }
+        try context.save()
+        try ApplePlayCountSyncService.apply([observation(count: 11), observation("i.other", count: 20)], startedAt: observedAt, in: context)
+        #expect(item.applePlayCount == expected + 1)
+        try context.save()
+        let fresh = ModelContext(container)
+        #expect(try PlaylistItemRepository.item(id: item.id, in: fresh)?.applePlayCount == expected + 1)
+    }
+
     @Test("Reset rebases the comparison and rejects a request started before reset")
     func resetCounts() throws {
         let container = try OverplayTestSupport.makeModelContainer()

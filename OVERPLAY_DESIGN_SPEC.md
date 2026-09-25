@@ -560,6 +560,11 @@ Mixed-initialization merges bind unobserved initial credits to known library IDs
 before publishing the floor. Credits with unresolved identity are not assumed
 independent: their addition waits for an observation whose aliases bind the seed.
 The join still preserves the maximum existing floor while identity is unresolved.
+Automatic deduplication captures each original seed identity before absorbing
+TrackRecords or repointing items. First observation of a wholly unobserved merged
+item seeds its combined current Overplay count and records covered origin IDs.
+Coverage remains paired with the selected initialization credit during joins;
+late original seed snapshots cannot add the covered credits a second time.
 
 The display reads the highest published count in the current reset version.
 A calculation can only raise that floor, including when late initialization

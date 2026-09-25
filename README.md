@@ -61,6 +61,9 @@ access, including late observations for merged tracks.
 An alias without an observed count uses its known library identity to bind its
 starting credit. If that identity is still unknown, its credit is withheld from
 the sum until later evidence resolves it; already-published floors remain intact.
+Automatic deduplication captures these identities before repointing tracks. If
+no merged item has an observed counter yet, the first reading seeds the combined
+current Overplay count once and records which earlier credits it covers.
 
 Reset All Local Overplay Stats is the explicit exception: it starts a new reset
 version and rebases known counters without changing Apple's own counts. Late

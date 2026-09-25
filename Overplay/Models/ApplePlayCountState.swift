@@ -10,6 +10,9 @@ nonisolated struct ApplePlayCountState: Codable, Equatable, Sendable {
         var firstObservedAt: Date = .distantFuture
         var baselineID: String = ""
         var identityAliases: [String]? = nil
+        /// A first observation after an unobserved merge seeds the combined
+        /// Overplay total once, including these earlier origin credits.
+        var coveredOriginIDs: [UUID]? = nil
     }
 
     struct Counter: Codable, Equatable, Sendable {
@@ -60,9 +63,21 @@ nonisolated struct ApplePlayCountState: Codable, Equatable, Sendable {
         advance()
     }
 
-    mutating func prepareFirstObservation(initialCount: Int, originID: UUID) {
-        guard counters.isEmpty, seeds.count == 1, seeds[0].id == originID else { return }
-        seeds[0].count = max(seeds[0].count, initialCount)
+    mutating func prepareFirstObservation(initialCount: Int, originID: UUID, musicItemID: String) {
+        guard counters.isEmpty else { return }
+        let origins = Set(seeds.flatMap { [$0.id] + ($0.coveredOriginIDs ?? []) })
+        let seed = Seed(id: originID, count: max(count, initialCount), musicItemIDs: [musicItemID],
+                        coveredOriginIDs: origins.sorted { $0.uuidString < $1.uuidString })
+        seeds.removeAll { $0.id == originID }
+        seeds.append(seed)
+        seeds.sort { $0.id.uuidString < $1.id.uuidString }
+    }
+
+    mutating func retainUnobservedIdentity(originID: UUID, musicItemIDs: [String], aliases: [String]) {
+        guard let index = seeds.firstIndex(where: { $0.id == originID }), seeds[index].baselineID.isEmpty else { return }
+        if seeds[index].musicItemIDs.isEmpty { seeds[index].musicItemIDs = musicItemIDs }
+        let allAliases = Array(Set((seeds[index].identityAliases ?? []) + aliases)).sorted()
+        seeds[index].identityAliases = allAliases.isEmpty ? nil : allAliases
     }
 
     /// Explicit track merges and reconciliation calculate once after joining
@@ -101,6 +116,9 @@ nonisolated struct ApplePlayCountState: Codable, Equatable, Sendable {
                     canonical.musicItemIDs = Array(Set(existing.musicItemIDs + seed.musicItemIDs)).sorted()
                     let aliases = Array(Set((existing.identityAliases ?? []) + (seed.identityAliases ?? []))).sorted()
                     canonical.identityAliases = aliases.isEmpty ? nil : aliases
+                    // Coverage belongs to the selected initialization credit,
+                    // just like its baseline. Unioning a later aggregate's
+                    // coverage into an earlier credit would hide donor credit.
                     seeds[seed.id] = canonical
                 } else { seeds[seed.id] = seed }
             }
@@ -121,14 +139,16 @@ nonisolated struct ApplePlayCountState: Codable, Equatable, Sendable {
     private var initialCredit: Int {
         // Credits with a shared library identity are alternative initializations
         // of one counter, not independent plays. Distinct counters retain theirs.
-        var groups: [(ids: Set<String>, credit: Int)] = []
+        var groups: [(ids: Set<String>, origins: Set<UUID>, credit: Int)] = []
         // Unknown identities must not be assumed independent. Their published
         // individual floor is already preserved by the join; defer addition
         // until evidence binds them to a concrete counter.
         for seed in seeds where !seed.musicItemIDs.isEmpty {
-            var group = (ids: Set(seed.musicItemIDs), credit: seed.count)
-            for index in groups.indices.reversed() where !groups[index].ids.isDisjoint(with: group.ids) {
+            var group = (ids: Set(seed.musicItemIDs), origins: Set([seed.id] + (seed.coveredOriginIDs ?? [])), credit: seed.count)
+            for index in groups.indices.reversed() where !groups[index].ids.isDisjoint(with: group.ids)
+                || !groups[index].origins.isDisjoint(with: group.origins) {
                 group.ids.formUnion(groups[index].ids)
+                group.origins.formUnion(groups[index].origins)
                 group.credit = max(group.credit, groups[index].credit)
                 groups.remove(at: index)
             }

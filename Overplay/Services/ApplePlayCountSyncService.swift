@@ -208,7 +208,8 @@ final class ApplePlayCountSyncService {
             for observation in matched {
                 guard let count = observation.snapshot.playCount, count >= 0 else { continue }
                 if state == nil { state = ApplePlayCountState(initialCount: item.playthroughCount, originID: item.id) }
-                state?.prepareFirstObservation(initialCount: item.playthroughCount, originID: item.id)
+                state?.prepareFirstObservation(initialCount: item.playthroughCount, originID: item.id,
+                                               musicItemID: observation.snapshot.musicItemID)
                 state?.observe(musicItemID: observation.snapshot.musicItemID, count: count, at: startedAt,
                                aliases: observation.aliases)
             }

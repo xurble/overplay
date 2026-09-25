@@ -39,6 +39,10 @@ enum TrackIdentityMergeService {
             let ordered = group.sorted(by: canonicalPrecedes)
             let canonical = ordered[0]
 
+            for track in ordered {
+                try PlaylistItemRepository.preserveAppleCountIdentity(for: track, in: context)
+            }
+
             for duplicate in ordered.dropFirst() {
                 absorb(duplicate, into: canonical)
                 try repointItems(from: duplicate, to: canonical, in: context)
