@@ -1964,33 +1964,15 @@ final class PlaybackController {
         newLocalTrackID: String?,
         context: ModelContext
     ) -> Bool {
-        let didChange = PlaybackIdentityFallbackPolicy.identityDidChange(
+        // Alias learning belongs exclusively to recordTrustedRuntimeAlias,
+        // where the realized entry's evidence source is still available.
+        PlaybackIdentityFallbackPolicy.identityDidChange(
             oldMusicItemID: oldTrackID,
             oldLocalTrackID: oldLocalTrackID,
             newMusicItemID: newTrackID,
             newLocalTrackID: newLocalTrackID,
             currentTrackKnownMusicItemIDs: self.currentTrackKnownMusicItemIDs(context: context)
         )
-
-        if !didChange,
-           let oldTrackID,
-           let newTrackID,
-           oldTrackID != newTrackID,
-           let currentPlaylistID,
-           let localTrackID = oldLocalTrackID
-               ?? currentPlaylistItem?.trackID.uuidString
-               ?? activeQueueCurrentLocalTrackID {
-            // Remember the other-domain ID so future scoped lookups resolve
-            // it directly instead of re-deriving the correspondence.
-            PlaybackIdentityStore.recordAlias(
-                newTrackID,
-                playerID: playerID,
-                musicPlaylistID: currentPlaylistID,
-                localTrackID: localTrackID
-            )
-        }
-
-        return didChange
     }
 
     private func currentTrackKnownMusicItemIDs(context: ModelContext) -> Set<String> {
@@ -2109,7 +2091,9 @@ final class PlaybackController {
         fallbackLocalTrackID: String? = nil
     ) {
         elapsedSeconds = observedElapsedSeconds ?? player.playbackTime
-        prepareCurrentPlaylistItemForEvaluation(context: context)
+        // Callers capture this fallback before observing the incoming entry.
+        // The live queue cursor may already point at that next track; never
+        // use it to supply attribution missing from the outgoing session.
 
         do {
             let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
@@ -2123,8 +2107,6 @@ final class PlaybackController {
                 naturalCompletion: naturalCompletion,
                 context: context,
                 fallbackLocalTrackID: fallbackLocalTrackID
-                    ?? currentPlaylistItem?.trackID.uuidString
-                    ?? activeQueueCurrentLocalTrackID
             )
             applyEvaluationOutcome(outcome, context: context)
         } catch {
@@ -2213,15 +2195,6 @@ final class PlaybackController {
         }
 
         return outcome.session.trackID == currentTrack?.id
-    }
-
-    private func prepareCurrentPlaylistItemForEvaluation(context: ModelContext) {
-        guard currentPlaylistItem == nil else { return }
-
-        if let localTrackID = activeQueueCurrentLocalTrackID,
-           let item = try? playlistItem(localTrackID: localTrackID, context: context) {
-            currentPlaylistItem = item
-        }
     }
 
     private func currentPlaylist(in context: ModelContext) throws -> PlaylistRecord? {

@@ -2045,6 +2045,100 @@ struct PlaybackTransitionTests {
         }
     }
 
+    @Test("unattributed outgoing playback cannot credit the next recognized row", arguments: [false, true])
+    func unattributedSessionDoesNotCreditIncomingTrack(explicitSkip: Bool) async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        fixture.settings.minimumSkipListeningSeconds = 5
+        try await fixture.start(at: 0)
+        let unknown = try PlaybackTransitionFixture.makeMusicTrack(id: "unattributed", title: "Not a submitted track")
+        fixture.player.reissueEntryIDs(
+            for: [fixture.musicTracks[0], unknown, fixture.musicTracks[2]], currentIndex: 1
+        )
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(fixture.controller.currentPlaylistItem == nil)
+        fixture.player.playbackTime = 179
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(fixture.items.allSatisfy { $0.playthroughCount == 0 && $0.skipCount == 0 })
+        let priorHistoryIDs = Set(try fixture.history().map(\.id))
+        if explicitSkip {
+            await fixture.controller.next(settings: fixture.settings, context: fixture.context)
+        } else {
+            fixture.player.advanceExternally()
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+        }
+        #expect(fixture.controller.currentPlaylistItem?.id == fixture.items[2].id)
+        #expect(fixture.items.allSatisfy { $0.playthroughCount == 0 && $0.skipCount == 0 })
+        #expect(Set(try fixture.history().map(\.id)) == priorHistoryIDs)
+        // The incoming session must still count its own subsequent playback.
+        fixture.player.playbackTime = 180
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(fixture.items[2].playthroughCount == 1)
+        let newEvents = try fixture.history().filter { !priorHistoryIDs.contains($0.id) }
+        #expect(newEvents.count == 1)
+        #expect(newEvents.first?.trackID == fixture.items[2].trackID)
+        #expect(newEvents.first?.eventType == .playthrough)
+    }
+
+    @Test("same-track metadata recovery cannot enter the general alias store", arguments: ["metadata", "scope"])
+    func sameTrackRecoveryKeepsScopedEvidence(invalidation: String) async throws {
+        let scopeProbe = AssociationScopeProbe()
+        let fixture = try makeFixture(loadAssociationScope: {
+            scopeProbe.changed ? "changed-account" : "test-account-storefront"
+        })
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.shuffleMode = .songs
+        let replacement = try PlaybackTransitionFixture.makeMusicTrack(id: "reissued-current", title: "main 0")
+        let ids = fixture.player.reissueEntryIDs(
+            for: [replacement, fixture.musicTracks[1], fixture.musicTracks[2]], currentIndex: 0
+        )
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(fixture.controller.currentPlaylistItem?.id == fixture.items[0].id)
+        #expect(fixture.playbackDefaults.defaults.data(forKey: PlaybackAssociationStore.key) != nil)
+        #expect(!PlaybackIdentityStore.state(playerID: fixture.playerID, musicPlaylistID: fixture.playlist.musicPlaylistID)
+            .aliasesByLocalTrackID.values.contains { $0.contains("reissued-current") })
+        if invalidation == "scope" {
+            scopeProbe.changed = true
+        } else {
+            let changed = try PlaybackTransitionFixture.makeMusicTrack(id: "reissued-current", title: "Different recording")
+            fixture.player.reportedItemOverrides[ids[0]] = MusicPlayer.Queue.Entry(changed).item
+        }
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(fixture.controller.currentPlaylistItem == nil)
+        #expect(fixture.controller.nowPlayingDisplayLocalTrackID == nil)
+        #expect(fixture.controller.currentPlaylistRole(context: fixture.context) == nil)
+    }
+
+    @Test("same-track position-assisted recovery remains session-only")
+    func sameTrackPositionRecoveryDoesNotPersistAlias() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        let duplicates = try (0..<2).map { index in
+            try PlaybackTransitionFixture.makeMusicTrack(id: fixture.musicTracks[index].id.rawValue, title: "Duplicate title")
+        }
+        for index in 0..<2 {
+            fixture.tracks[index].title = "Duplicate title"
+            fixture.tracks[index].musicKitPlaybackData = try JSONEncoder().encode(duplicates[index])
+        }
+        try fixture.context.save()
+        try await fixture.start(at: 0)
+        let replacement = try PlaybackTransitionFixture.makeMusicTrack(id: "position-current", title: "Duplicate title")
+        let queue = [replacement, duplicates[1], fixture.musicTracks[2]]
+        fixture.player.reissueEntryIDs(for: queue, currentIndex: 0)
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(fixture.controller.currentPlaylistItem?.id == fixture.items[0].id)
+        #expect(fixture.playbackDefaults.defaults.data(forKey: PlaybackAssociationStore.key) == nil)
+        #expect(!PlaybackIdentityStore.state(playerID: fixture.playerID, musicPlaylistID: fixture.playlist.musicPlaylistID)
+            .aliasesByLocalTrackID.values.contains { $0.contains("position-current") })
+        fixture.player.shuffleMode = .songs
+        fixture.player.reissueEntryIDs(for: queue, currentIndex: 0)
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(fixture.controller.currentPlaylistItem == nil)
+        #expect(fixture.controller.nowPlayingDisplayLocalTrackID == nil)
+    }
+
     @Test("an unresolved item does not discard the rest of the submitted queue")
     func unknownEntryPreservesQueueForLaterMetadataHydration() async throws {
         let fixture = try makeFixture()
