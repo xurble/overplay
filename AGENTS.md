@@ -306,19 +306,30 @@ and describe what verification was performed instead.
 
 ## MusicKit Verification
 
-MusicKit does not provide meaningful live playback behavior in the simulator
-used by server-side agents. Simulator UI or integration tests that depend on
-live MusicKit authorization, library access, queues, or playback are therefore
-not required for this project and should not be treated as a completion gate.
+Run live playback and MusicKit integration checks using Xcode's **My Mac
+(Designed for iPad)** destination by default. This runs the iPad app on Apple
+silicon; it is distinct from a native macOS build and the iOS simulator.
 
-For MusicKit changes, agents should instead:
+Use the iOS simulator only for checks that specifically need iOS, such as
+iPhone/iPad layout, navigation, or platform-specific UI. Do not use simulator
+playback as evidence that live MusicKit authorization, library access, queues,
+or playback work, or make those simulator checks a completion gate.
+
+For MusicKit changes, agents should:
 
 -   Cover pure logic and injected boundaries with focused unit tests where
     practical
 -   Verify that the affected targets compile or build
--   Report any behavior that still requires physical-device validation
+-   Exercise relevant live playback behavior on My Mac (Designed for iPad),
+    including queue actions and shared-state updates where affected
+-   Verify that signing, MusicKit authorization, and Apple Music account access
+    work in that destination before relying on its results. If unavailable,
+    report the blocker and the unverified behavior; do not substitute simulator
+    playback checks
+-   Report any behavior that still requires physical iPhone/iPad or CarPlay
+    validation, such as iOS background execution or system playback surfaces
 
-Physical-device MusicKit testing is optional unless the user explicitly
+Physical iPhone/iPad MusicKit testing is optional unless the user explicitly
 requests it and a suitable device is available.
 
 ------------------------------------------------------------------------
