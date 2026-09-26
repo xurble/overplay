@@ -31,6 +31,44 @@ final class PlaylistRecord {
     /// import (initial or an already-running refresh). Scoped to this link, and discarded on unlink/re-link;
     /// these are not retired items or permanent per-song tombstones.
     var triageExcludedTrackIDs: [String] = []
+    /// Saved template and generated arrangement; artwork pixels are cached locally.
+    var collageLayoutRawValue: String = "pile"
+    var collageStrokeRawValue: String = "none"
+    var retiredCollageLayoutRawValue: String = "pile"
+    var retiredCollageStrokeRawValue: String = "none"
+    var collageSnapshotData: Data?
+    var retiredCollageSnapshotData: Data?
+
+    func collageLayout(for scope: PlaylistPlaybackScope) -> PlaylistCollageLayout {
+        PlaylistCollageLayout(rawValue: scope == .active ? collageLayoutRawValue : retiredCollageLayoutRawValue) ?? .pile
+    }
+
+    func collageStroke(for scope: PlaylistPlaybackScope) -> PlaylistCollageStroke {
+        PlaylistCollageStroke(rawValue: scope == .active ? collageStrokeRawValue : retiredCollageStrokeRawValue) ?? .none
+    }
+
+    func setCollageTemplate(layout: PlaylistCollageLayout, stroke: PlaylistCollageStroke, for scope: PlaylistPlaybackScope) {
+        switch scope {
+        case .active:
+            collageLayoutRawValue = layout.rawValue
+            collageStrokeRawValue = stroke.rawValue
+        case .retired:
+            retiredCollageLayoutRawValue = layout.rawValue
+            retiredCollageStrokeRawValue = stroke.rawValue
+        }
+    }
+
+    func collageSnapshotData(for scope: PlaylistPlaybackScope) -> Data? {
+        scope == .active ? collageSnapshotData : retiredCollageSnapshotData
+    }
+
+    func setCollageSnapshotData(_ data: Data?, for scope: PlaylistPlaybackScope) {
+        switch scope {
+        case .active: collageSnapshotData = data
+        case .retired: retiredCollageSnapshotData = data
+        }
+    }
+
     var sortOrder: Int = 0
     var createdAt: Date = Date()
     var updatedAt: Date = Date()

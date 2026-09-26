@@ -99,7 +99,7 @@ final class PlaylistManagementViewModel {
         }
 
         let visibleItems = visibleItems(for: playlist, playlistItems: playlistItems, scope: scope)
-        let orderedItems = PlaylistDisplayOrder.orderedItems(visibleItems, state: playbackOrderState, scope: scope)
+        let orderedItems = PlaylistDisplayOrder.orderedItems(visibleItems, scope: scope)
         let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
         let span = PerformanceSpan(.playlistPresentation)
         defer { span.finish(magnitude: Double(orderedItems.count)) }
@@ -233,7 +233,6 @@ final class PlaylistManagementViewModel {
     ) -> [PlaylistItemRecord] {
         PlaylistDisplayOrder.orderedItems(
             visibleItems(for: playlist, playlistItems: playlistItems, scope: .active),
-            state: playbackOrderState,
             scope: .active
         )
     }

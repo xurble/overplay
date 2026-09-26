@@ -63,6 +63,8 @@ private struct PlaylistManagementContentView: View {
         List {
             Section {
                 VStack(alignment: .leading, spacing: 14) {
+                    PlaylistCollageView(playlist: playlist, scope: selectedScope)
+
                     VStack(alignment: .leading, spacing: 8) {
                         Label(detail.playlist.roleTitle, systemImage: detail.playlist.iconIntent.systemImage)
                             .font(.caption.weight(.semibold))
@@ -422,5 +424,6 @@ private struct PlaylistManagementContentView: View {
         )
     }
     .environment(PlaybackController())
+    .environment(PlaylistArtworkPresentation())
     .modelContainer(fixture.container)
 }

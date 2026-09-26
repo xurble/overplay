@@ -3,21 +3,22 @@ import SwiftUI
 struct PlaylistHomeRowView: View {
     var title: String
     var detail: String
-    var artworkURLString: String?
-    var playlistID: String?
+    var playlist: PlaylistRecord? = nil
+    var scope: PlaylistPlaybackScope = .active
     var systemImage: String?
     var badgeTint: Color?
 
     var body: some View {
         HStack(spacing: 12) {
             ZStack(alignment: .bottomTrailing) {
-                ArtworkView(
-                    urlString: artworkURLString,
-                    pixelSize: 128,
-                    playlistID: playlistID,
-                    cornerRadius: 8
-                )
-                .frame(width: 48, height: 48)
+                Group {
+                    if let playlist {
+                        PlaylistCollageThumbnailView(playlist: playlist, scope: scope)
+                    } else {
+                        ArtworkView(pixelSize: 128, cornerRadius: 0)
+                    }
+                }
+                .frame(width: 96, height: 96)
 
                 if let systemImage, let badgeTint {
                     Image(systemName: systemImage)
@@ -35,10 +36,10 @@ struct PlaylistHomeRowView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            .padding(.vertical, 12)
 
             Spacer()
         }
-        .padding(.vertical, 6)
     }
 }
 
@@ -46,8 +47,6 @@ struct PlaylistHomeRowView: View {
     PlaylistHomeRowView(
         title: "Overplay",
         detail: "12 tracks",
-        artworkURLString: nil,
-        playlistID: "preview-playlist",
         systemImage: "play.fill",
         badgeTint: .green
     )

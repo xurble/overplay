@@ -4,31 +4,25 @@ import Testing
 
 @Suite("Playlist display order")
 struct PlaylistDisplayOrderTests {
-    @Test("uses stored local order before created fallback order")
-    func usesStoredLocalOrderBeforeCreatedFallbackOrder() {
-        let playlistID = UUID()
-        let items = [
-            PlaylistItemRecord(playlistID: playlistID, trackID: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, sortOrder: 0),
-            PlaylistItemRecord(playlistID: playlistID, trackID: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!, sortOrder: 1),
-            PlaylistItemRecord(playlistID: playlistID, trackID: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!, sortOrder: 2),
-            PlaylistItemRecord(playlistID: playlistID, trackID: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!, sortOrder: 3)
-        ]
-        let state = PlaybackOrderState(
-            playerID: "main",
-            musicPlaylistID: "playlist-1",
-            orderedTrackIDs: [
-                "00000000-0000-0000-0000-000000000003",
-                "00000000-0000-0000-0000-000000000001"
-            ]
-        )
+    @Test func newestAddsAndMovesComeFirstRegardlessOfCounts() {
+        let old = PlaylistItemRecord(playlistID: UUID(), trackID: UUID(), playthroughCount: 900,
+                                     createdAt: Date(timeIntervalSince1970: 1))
+        let recent = PlaylistItemRecord(playlistID: old.playlistID, trackID: UUID(),
+                                        createdAt: Date(timeIntervalSince1970: 2))
+        #expect(PlaylistDisplayOrder.orderedItems([old, recent]).map(\.id) == [recent.id, old.id])
+        old.locationChangedAt = Date(timeIntervalSince1970: 3)
+        #expect(PlaylistDisplayOrder.orderedItems([old, recent]).map(\.id) == [old.id, recent.id])
+    }
 
-        let orderedIDs = PlaylistDisplayOrder.orderedItems(items, state: state).map(\.trackID.uuidString)
-
-        #expect(orderedIDs == [
-            "00000000-0000-0000-0000-000000000003",
-            "00000000-0000-0000-0000-000000000001",
-            "00000000-0000-0000-0000-000000000002",
-            "00000000-0000-0000-0000-000000000004"
-        ])
+    @Test func retiredUsesRetirementDateWithStableTies() {
+        let first = PlaylistItemRecord(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+            playlistID: UUID(), trackID: UUID(), evictedAt: Date(timeIntervalSince1970: 10),
+            createdAt: Date(timeIntervalSince1970: 50))
+        let second = PlaylistItemRecord(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+            playlistID: first.playlistID, trackID: UUID(), evictedAt: Date(timeIntervalSince1970: 20),
+            createdAt: Date(timeIntervalSince1970: 1))
+        #expect(PlaylistDisplayOrder.orderedItems([first, second], scope: .retired).map(\.id) == [second.id, first.id])
+        first.evictedAt = second.evictedAt
+        #expect(PlaylistDisplayOrder.orderedItems([second, first], scope: .retired).map(\.id) == [first.id, second.id])
     }
 }

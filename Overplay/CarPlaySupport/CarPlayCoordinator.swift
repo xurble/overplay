@@ -75,6 +75,8 @@ final class CarPlayCoordinator: NSObject {
     private var modelContext: ModelContext?
     private var refreshTask: Task<Void, Never>?
     private var artworkTask: Task<Void, Never>?
+    private var playlistArtworkTask: Task<Void, Never>?
+    private var playlistArtworkRows: [(UUID, PlaylistPlaybackScope, CPListItem)] = []
     private var libraryRefreshTask: Task<Void, Never>?
     private var playbackObservationGeneration = 0
     private var lastNowPlayingButtonSignature: CarPlayNowPlayingButtonSignature?
@@ -127,6 +129,9 @@ final class CarPlayCoordinator: NSObject {
     }
 
     func disconnect() {
+        playlistArtworkTask?.cancel()
+        playlistArtworkTask = nil
+        playlistArtworkRows = []
         libraryRefreshTask?.cancel()
         libraryRefreshTask = nil
         artworkTask?.cancel()
@@ -168,6 +173,9 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func makeRootSections() -> [CPListSection] {
+        playlistArtworkTask?.cancel()
+        playlistArtworkRows = []
+        defer { loadPlaylistArtwork() }
         guard modelContext != nil else {
             return [
                 CPListSection(items: [disabledItem(title: "Overplay is starting", detail: "Try again in a moment.")])
@@ -219,6 +227,7 @@ final class CarPlayCoordinator: NSObject {
 
     private func playlistItem(for summary: PlaylistSummaryPresentation) -> CPListItem {
         let item = CPListItem(text: summary.title, detailText: summary.playableTrackCountLabel)
+        playlistArtworkRows.append((summary.id, summary.playbackScope, item))
         item.accessoryType = .disclosureIndicator
         item.isPlaying = isCurrentPlaylist(summary)
         item.handler = { [weak self] _, completion in
@@ -228,6 +237,21 @@ final class CarPlayCoordinator: NSObject {
             }
         }
         return item
+    }
+
+    private func loadPlaylistArtwork() {
+        guard let modelContext else { return }
+        let rows = playlistArtworkRows
+        playlistArtworkTask = Task {
+            for (id, scope, item) in rows {
+                guard !Task.isCancelled else { return }
+                guard let playlist = try? PlaylistRepository.playlist(id: id, in: modelContext),
+                      let snapshot = try? PlaylistCollageService.snapshot(for: playlist, in: modelContext, scope: scope) else { continue }
+                let image = await PlaylistCollageService.shared.image(for: snapshot, playlistID: playlist.musicPlaylistID, scope: scope)
+                guard !Task.isCancelled else { return }
+                item.setImage(image.map { UIImage(cgImage: $0) })
+            }
+        }
     }
 
     private func trackItem(
@@ -679,6 +703,10 @@ final class CarPlayCoordinator: NSObject {
         if listTemplate === rootListTemplate {
             CarPlayListTemplateUpdater.update(listTemplate, sections: makeRootSections())
             return
+        }
+
+        if let rootListTemplate {
+            CarPlayListTemplateUpdater.update(rootListTemplate, sections: makeRootSections())
         }
 
         guard listTemplate === visiblePlaylistTemplate,

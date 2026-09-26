@@ -78,7 +78,7 @@ struct PlaylistPresentationBuilderTests {
         #expect(summary.artworkURLString == "https://example.com/art.jpg")
     }
 
-    @Test("track summaries include playable tracks in created order with history")
+    @Test("track summaries include playable tracks in newest-added order with history")
     func trackSummaries() {
         let playlistID = UUID()
         let firstTrack = TrackRecord(title: "First", artistName: "Artist", albumTitle: "Album")
@@ -110,21 +110,21 @@ struct PlaylistPresentationBuilderTests {
         let summaries = builder(items: items, tracks: [firstTrack, secondTrack, evictedTrack])
             .trackSummaries(forPlaylistID: playlistID)
 
-        #expect(summaries.map(\.title) == ["First", "Second"])
-        #expect(summaries.first?.subtitle == "Artist - Album")
-        #expect(summaries.last?.skipCountLabel == "2 skips")
+        #expect(summaries.map(\.title) == ["Second", "First"])
+        #expect(summaries.last?.subtitle == "Artist - Album")
+        #expect(summaries.first?.skipCountLabel == "2 skips")
     }
 
-    @Test("track summaries follow stored shuffle order")
-    func trackSummariesFollowStoredShuffleOrder() {
+    @Test("track summaries ignore stored shuffle order")
+    func trackSummariesIgnoreStoredShuffleOrder() {
         let playlistID = UUID()
         let firstTrack = TrackRecord(title: "First", artistName: "Artist")
         let secondTrack = TrackRecord(title: "Second", artistName: "Artist")
         let thirdTrack = TrackRecord(title: "Third", artistName: "Artist")
         let items = [
-            PlaylistItemRecord(playlistID: playlistID, trackID: firstTrack.id, sortOrder: 1),
-            PlaylistItemRecord(playlistID: playlistID, trackID: secondTrack.id, sortOrder: 2),
-            PlaylistItemRecord(playlistID: playlistID, trackID: thirdTrack.id, sortOrder: 3)
+            PlaylistItemRecord(playlistID: playlistID, trackID: firstTrack.id, sortOrder: 1, createdAt: Date(timeIntervalSince1970: 1)),
+            PlaylistItemRecord(playlistID: playlistID, trackID: secondTrack.id, sortOrder: 2, createdAt: Date(timeIntervalSince1970: 2)),
+            PlaylistItemRecord(playlistID: playlistID, trackID: thirdTrack.id, sortOrder: 3, createdAt: Date(timeIntervalSince1970: 3))
         ]
 
         let summaries = builder(items: items, tracks: [firstTrack, secondTrack, thirdTrack])
@@ -141,7 +141,7 @@ struct PlaylistPresentationBuilderTests {
                 )
             )
 
-        #expect(summaries.map(\.title) == ["Third", "First", "Second"])
+        #expect(summaries.map(\.title) == ["Third", "Second", "First"])
     }
 
     @Test("empty builder returns empty presentation state")

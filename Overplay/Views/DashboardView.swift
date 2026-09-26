@@ -20,6 +20,7 @@ struct DashboardView: View {
                     } label: {
                         playlistHomeRow(for: oneTruePlaylist)
                     }
+                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                 } else {
                     NavigationLink {
                         PlaylistSelectionView()
@@ -27,12 +28,11 @@ struct DashboardView: View {
                         PlaylistHomeRowView(
                             title: "Link One True Playlist",
                             detail: "Choose the main playlist Overplay manages.",
-                            artworkURLString: nil,
-                            playlistID: nil,
                             systemImage: "arrow.up.circle",
                             badgeTint: .pink
                         )
                     }
+                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                 }
             }
 
@@ -43,6 +43,7 @@ struct DashboardView: View {
                     } label: {
                         playlistHomeRow(for: triageBucket)
                     }
+                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                 }
 
                 NavigationLink {
@@ -63,10 +64,11 @@ struct DashboardView: View {
                         PlaylistHomeRowView(
                             title: "Retired",
                             detail: "\(playlistItems.filter { $0.evictedAt != nil }.count) tracks · Revisit songs you put aside",
-                            artworkURLString: nil, playlistID: nil,
+                            playlist: triageBucket, scope: .retired,
                             systemImage: "archivebox.fill", badgeTint: .secondary
                         )
                     }
+                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                 }
             }
         }
@@ -93,8 +95,7 @@ struct DashboardView: View {
         return PlaylistHomeRowView(
             title: playlist.name,
             detail: summary.dashboardDetailText,
-            artworkURLString: summary.artworkURLString,
-            playlistID: playlist.musicPlaylistID,
+            playlist: playlist,
             systemImage: summary.iconIntent.systemImage,
             badgeTint: badgeTint(for: summary, role: playlist.role)
         )

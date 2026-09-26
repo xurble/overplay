@@ -5,8 +5,8 @@ import Testing
 @MainActor
 @Suite("Active playlist snapshot")
 struct ActivePlaylistSnapshotTests {
-    @Test("builds ordered rows from local playback order without mutating sort order")
-    func buildsOrderedRowsFromLocalPlaybackOrder() {
+    @Test("builds chronological rows independently of playback order")
+    func buildsChronologicalRowsIndependentlyOfPlaybackOrder() {
         let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main")
         let firstTrack = TrackRecord(
             catalogID: "catalog-first",
@@ -40,7 +40,7 @@ struct ActivePlaylistSnapshotTests {
         let state = PlaybackOrderState(
             playerID: "player",
             musicPlaylistID: playlist.musicPlaylistID,
-            orderedTrackIDs: [secondTrack.id.uuidString, firstTrack.id.uuidString]
+            orderedTrackIDs: [firstTrack.id.uuidString, secondTrack.id.uuidString]
         )
 
         let snapshot = ActivePlaylistSnapshot(

@@ -18,6 +18,7 @@ struct ActivePlaylistSnapshot: Equatable, Sendable {
         var sourceMusicPlaylistIDs: [String]
         var isEvicted: Bool
         var isCurrent: Bool
+        var displayDate: Date = .distantPast
 
         var isPlayable: Bool {
             !isEvicted
@@ -44,7 +45,6 @@ struct ActivePlaylistSnapshot: Equatable, Sendable {
         let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
         let orderedItems = PlaylistDisplayOrder.orderedItems(
             items.filter { $0.playlistID == playlist.id },
-            state: playbackOrderState,
             scope: playbackScope
         )
 
@@ -78,7 +78,8 @@ struct ActivePlaylistSnapshot: Equatable, Sendable {
                         currentPlaylistItemID: currentPlaylistItemID,
                         currentLocalTrackID: currentLocalTrackID,
                         currentMusicItemID: currentMusicItemID
-                    )
+                    ),
+                    displayDate: PlaylistDisplayOrder.recencyDate(for: item, scope: playbackScope)
                 )
             }
         }
@@ -97,7 +98,8 @@ struct ActivePlaylistSnapshot: Equatable, Sendable {
 
         var row = rows[index]
         guard row.playlistID == item.playlistID,
-              row.isEvicted == (item.evictedAt != nil) else {
+              row.isEvicted == (item.evictedAt != nil),
+              row.displayDate == PlaylistDisplayOrder.recencyDate(for: item, scope: playbackScope) else {
             return nil
         }
 

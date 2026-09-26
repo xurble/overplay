@@ -13,8 +13,8 @@ struct PlaylistManagementViewModelTests {
         #expect(viewModel.playButtonTitle == "Shuffle and Play")
     }
 
-    @Test("ordered items filters by playlist and follows playback mode state")
-    func orderedItemsFilterAndFollowPlaybackState() {
+    @Test("ordered items filter by playlist and ignore playback mode state")
+    func orderedItemsFilterAndIgnorePlaybackState() {
         let viewModel = PlaylistManagementViewModel()
         let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main")
         let otherPlaylist = PlaylistRecord(musicPlaylistID: "other", name: "Other")
@@ -27,7 +27,7 @@ struct PlaylistManagementViewModelTests {
         let state = PlaybackOrderState(
             playerID: "player",
             musicPlaylistID: playlist.musicPlaylistID,
-            orderedTrackIDs: [secondTrack.id.uuidString, firstTrack.id.uuidString]
+            orderedTrackIDs: [firstTrack.id.uuidString, secondTrack.id.uuidString]
         )
 
         let orderedItems = viewModel.orderedItems(
@@ -290,7 +290,7 @@ struct PlaylistManagementViewModelTests {
         #expect(detail.playlist.isCurrentPlaybackPlaylist)
     }
 
-    @Test("scope mismatch ignores active snapshot and uses selected persisted order")
+    @Test("scope mismatch ignores active snapshot and sorts by retirement date")
     func scopeMismatchIgnoresActiveSnapshotAndUsesSelectedPersistedOrder() {
         let viewModel = PlaylistManagementViewModel()
         let playlist = PlaylistRecord(musicPlaylistID: "main", name: "Main", role: .oneTruePlaylist)

@@ -133,9 +133,9 @@ struct PlaylistSelectionView: View {
                     urlString: representativeArtworkURL(for: playlist),
                     pixelSize: 128,
                     playlistID: playlist.musicPlaylistID,
-                    cornerRadius: 8
+                    cornerRadius: 0
                 )
-                .frame(width: 48, height: 48)
+                .frame(width: 72, height: 72)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(playlist.name)

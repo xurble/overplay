@@ -11,6 +11,7 @@ struct AppRouter: View {
 
     @Query(sort: \OverplaySettings.createdAt) private var settingsRecords: [OverplaySettings]
     @State private var playerSheetDetent: PresentationDetent = .height(96)
+    @State private var artworkPresentation = PlaylistArtworkPresentation()
     @State private var startupViewModel = AppStartupViewModel()
 
     private let playerSheetCollapsedHeight = MiniPlayerLayout.collapsedHeight
@@ -32,6 +33,7 @@ struct AppRouter: View {
                 }
             }
         }
+        .environment(artworkPresentation)
         .sheet(isPresented: playerSheetPresentation) {
             if let settings {
                 PlayerSheetView(settings: settings, collapsedHeight: playerSheetCollapsedHeight)
@@ -41,6 +43,12 @@ struct AppRouter: View {
                     .presentationBackgroundInteraction(.enabled(upThrough: .height(playerSheetCollapsedHeight)))
                     .presentationContentInteraction(.resizes)
                     .interactiveDismissDisabled()
+                    // Present above the persistent player, so dismissal reveals it.
+                    .sheet(item: $artworkPresentation.request) { request in
+                        PlaylistCollageSettingsView(layout: request.layout, stroke: request.stroke) { layout, stroke in
+                            artworkPresentation.apply(layout: layout, stroke: stroke)
+                        }
+                    }
             } else {
                 EmptyView()
             }

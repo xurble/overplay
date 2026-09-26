@@ -48,13 +48,10 @@ enum PlaybackQueueOrchestrator {
     ) throws -> [PlaybackQueueEntry] {
         let inputs = try playlistInputs(for: playlistID, in: context)
         let scopedItems = inputs.items.filter { scope.includes($0) }
-        let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: scopedItems, scope: scope)
-        let orderedTrackIDs = PlaybackOrderCoordinator.orderedTrackIDs(
-            orderTracks: orderTracks,
-            playerID: playerID,
-            playlistID: scope.playbackOrderPlaylistID(for: playlistID),
-            retainedTrackID: retainedTrackID ?? startingTrackID
-        )
+        // Always submit the chronological base order. MusicKit shuffles that
+        // queue during playback and restores this order when shuffle is off.
+        let orderedTrackIDs = PlaylistDisplayOrder.orderedItems(scopedItems, scope: scope)
+            .map { $0.trackID.uuidString }
 
         let musicTracksByLocalID = PlaybackQueueCoordinator.musicTracksByLocalID(
             tracks,
@@ -87,13 +84,10 @@ enum PlaybackQueueOrchestrator {
     ) throws -> [PlaybackQueueEntry] {
         let inputs = try playlistInputs(for: playlistID, in: context)
         let scopedItems = inputs.items.filter { scope.includes($0) }
-        let orderTracks = PlaybackQueueBuilder.playbackOrderTracks(items: scopedItems, scope: scope)
-        let orderedTrackIDs = PlaybackOrderCoordinator.orderedTrackIDs(
-            orderTracks: orderTracks,
-            playerID: playerID,
-            playlistID: scope.playbackOrderPlaylistID(for: playlistID),
-            retainedTrackID: retainedTrackID ?? startingTrackID
-        )
+        // Always submit the chronological base order. MusicKit shuffles that
+        // queue during playback and restores this order when shuffle is off.
+        let orderedTrackIDs = PlaylistDisplayOrder.orderedItems(scopedItems, scope: scope)
+            .map { $0.trackID.uuidString }
 
         return PlaybackQueueCoordinator.cachedEntries(
             orderedTrackIDs: orderedTrackIDs,

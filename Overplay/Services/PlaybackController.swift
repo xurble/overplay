@@ -836,10 +836,13 @@ final class PlaybackController {
         return activeQueueEntries[activeQueueIndex]
     }
 
+    private var shouldCheckChronologicalQueueOrder = true
+
     private func updateActiveQueue(realizedEntries: [RealizedPlaybackQueueEntry], startingAt localTrackID: String?) {
         let state = PlaybackQueueCoordinator.activeQueueState(entries: realizedEntries, startingAt: localTrackID)
         resetAppendedQueueCorrelations()
         activeQueueEntries = state.entries
+        shouldCheckChronologicalQueueOrder = true
         activeQueueIndex = state.index
     }
 
@@ -1753,6 +1756,38 @@ final class PlaybackController {
             playbackTime: tick.playbackTime,
             advancesTimedPolicies: advancesTimedPolicies
         )
+        await reconcileChronologicalQueueIfNeeded(context: context)
+    }
+
+    /// Membership changes, restored queues, and system shuffle changes all pass
+    /// here. Keep the current song, progress, play intent and listening session.
+    private func reconcileChronologicalQueueIfNeeded(context: ModelContext) async {
+        guard shouldCheckChronologicalQueueOrder, player.shuffleMode == .off,
+              !isPerformingTransition, isQueueCorrelationComplete,
+              let snapshot = activePlaylistSnapshot,
+              snapshot.musicPlaylistID == currentPlaylistID,
+              snapshot.playbackScope == currentPlaylistScope,
+              activeQueueCurrentLocalTrackID != nil, player.currentEntry != nil else { return }
+        let liveIDs = activeQueueEntries.map(\.localTrackID)
+        let liveSet = Set(liveIDs)
+        let desiredIDs = snapshot.rows.filter { currentPlaylistScope == .retired ? $0.isEvicted : !$0.isEvicted }
+            .map(\.localTrackID).filter { liveSet.contains($0) }
+        // Do not replace an incompletely mapped or currently retiring queue.
+        guard Set(desiredIDs) == liveSet else { return }
+        shouldCheckChronologicalQueueOrder = false
+        guard desiredIDs != liveIDs else { return }
+        let outgoing = captureOutgoingPlaybackTransition()
+        let result = await performPlayerConfirmedTransition(
+            outgoingEntryID: outgoing.entryID,
+            command: { await restorePlayerQueueAfterUnconfirmedTransition(outgoing, context: context) },
+            onObservedTransition: { _ in }
+        )
+        switch result {
+        case .confirmed, .diverged:
+            _ = refreshPlayerSnapshot(context: context, advancesTimedPolicies: false)
+        case .failed, .timedOut, .rejected:
+            statusMessage = "Could not restore chronological playback order. Select a track to retry."
+        }
     }
 
     private func refreshPlayerSnapshot(
@@ -2648,6 +2683,7 @@ final class PlaybackController {
             contentsOf: realizedEntries.filter { adopted.contains($0.localTrackID) }
         )
         appendedUncorrelatedEntries.removeFirst(leadingRun.count)
+        shouldCheckChronologicalQueueOrder = true
     }
 
     private func updateLivePlayerEntryState(hasEntry: Bool) {
@@ -2830,6 +2866,7 @@ final class PlaybackController {
         let correlatedLocalIDs = Set(realizedEntries.map(\.localTrackID))
         appendedUncorrelatedEntries.removeAll { correlatedLocalIDs.contains($0.localTrackID) }
         activeQueueEntries = realizedEntries
+        shouldCheckChronologicalQueueOrder = true
         activeQueueIndex = index
     }
 
@@ -3065,6 +3102,7 @@ final class PlaybackController {
                 + "effectiveRepeat=\(previousRepeat.map(String.init(describing:)) ?? "nil")->\(repeatMode)"
         )
         if effectiveModeChanged {
+            shouldCheckChronologicalQueueOrder = true
             playbackModeVersion += 1
         }
     }
@@ -3931,6 +3969,7 @@ final class PlaybackController {
                 return
             }
             activePlaylistSnapshot = candidate
+            shouldCheckChronologicalQueueOrder = true
         } catch {
             statusMessage = "Playback is active, but refreshing the visible playlist failed: \(error.localizedDescription)"
         }

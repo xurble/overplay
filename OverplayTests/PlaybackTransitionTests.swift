@@ -1634,6 +1634,62 @@ struct PlaybackTransitionTests {
         #expect(try fixture.history().isEmpty)
     }
 
+    @Test("chronological UI and unshuffled playback stay aligned through shuffle, movement and retirement")
+    func chronologicalDisplayAndPlaybackAcrossSurfaces() async throws {
+        let fixture = try makeFixture(trackCount: 4)
+        defer { fixture.cleanUp() }
+        for (index, date) in [20, 40, 10, 30].enumerated() {
+            fixture.items[index].createdAt = Date(timeIntervalSince1970: Double(date))
+        }
+        try fixture.context.save()
+        try await fixture.start(at: 0)
+        let expected = [1, 3, 0, 2]
+        func musicIDs(_ indices: [Int]) -> [String] { indices.map { fixture.musicTracks[$0].id.rawValue } }
+        func rowIDs(_ indices: [Int]) -> [UUID] { indices.map { fixture.items[$0].id } }
+        #expect(fixture.playlist.role == .oneTruePlaylist)
+        #expect(fixture.player.queueEntrySnapshots.compactMap(\.musicItemID) == musicIDs(expected))
+        #expect(fixture.controller.activePlaylistSnapshot?.rows.map(\.id) == rowIDs(expected))
+
+        await fixture.controller.setShuffleEnabled(true, context: fixture.context)
+        fixture.player.reissueEntryIDs(for: [2, 0, 1, 3].map { fixture.musicTracks[$0] }, currentIndex: 1)
+        fixture.player.playbackTime = 17
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        let shuffledSnapshot = try #require(fixture.controller.activePlaylistSnapshot)
+        #expect(shuffledSnapshot.rows.map(\.id) == rowIDs(expected))
+        #expect(CarPlayLibrarySnapshot.trackSummaries(from: shuffledSnapshot).map(\.id) == rowIDs(expected))
+        #expect(PlaylistPresentationBuilder(playlists: [fixture.playlist], items: fixture.items, tracks: fixture.tracks)
+            .trackSummaries(forPlaylistID: fixture.playlist.id).map(\.id) == rowIDs(expected))
+
+        // Also covers shuffle switched off by an external/system surface.
+        fixture.player.shuffleMode = .off
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(fixture.player.queueEntrySnapshots.compactMap(\.musicItemID) == musicIDs(expected))
+        #expect(fixture.player.currentEntry?.item?.id == fixture.musicTracks[0].id)
+        #expect(fixture.player.playbackTime == 17)
+        #expect(fixture.player.playbackStatus == .playing)
+        #expect(fixture.items[0].skipCount == 0)
+
+        fixture.player.pause()
+        fixture.items[0].locationChangedAt = Date(timeIntervalSince1970: 100)
+        fixture.controller.reconcileStoredOrder(for: fixture.playlist, context: fixture.context)
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(fixture.player.queueEntrySnapshots.compactMap(\.musicItemID) == musicIDs([0, 1, 3, 2]))
+        #expect(fixture.player.playbackStatus == .paused)
+        #expect(fixture.player.playbackTime == 17)
+
+        fixture.playlist.role = .triageBucket
+        for (index, date) in [40, 10, 30, 20].enumerated() {
+            fixture.items[index].evictedAt = Date(timeIntervalSince1970: Double(date))
+        }
+        try fixture.context.save()
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[0], scope: .retired,
+                                               settings: fixture.settings, context: fixture.context)
+        #expect(fixture.player.queueEntrySnapshots.compactMap(\.musicItemID) == musicIDs([0, 2, 3, 1]))
+        let retired = try #require(fixture.controller.activePlaylistSnapshot)
+        #expect(CarPlayLibrarySnapshot.trackSummaries(from: retired).map(\.id) == rowIDs([0, 2, 3, 1]))
+        #expect(fixture.items.allSatisfy { $0.skipCount == 0 })
+    }
+
     @Test("shuffle is a mode change, not a reorder and restart")
     func shuffleIsAModeChangeNotAReorderAndRestart() async throws {
         let fixture = try makeFixture()
@@ -1690,7 +1746,11 @@ struct PlaybackTransitionTests {
         #expect(PlaybackOrderStore.state(
             playerID: fixture.playerID, musicPlaylistID: playlistID
         ).orderedTrackIDs == storedOrder)
-        #expect(fixture.player.queueEntrySnapshots.map(\.musicItemID) == fixture.musicTracks.reversed().map { $0.id.rawValue })
+        let expectedIDs = PlaylistDisplayOrder.orderedItems(fixture.items, scope: scope).map { $0.trackID.uuidString }
+        let expectedMusicIDs = expectedIDs.compactMap { localID in
+            fixture.tracks.firstIndex { $0.id.uuidString == localID }.map { fixture.musicTracks[$0].id.rawValue }
+        }
+        #expect(fixture.player.queueEntrySnapshots.map(\.musicItemID) == expectedMusicIDs)
         #expect(fixture.player.requestedStartingEntryID != nil)
         #expect(fixture.player.currentEntry?.id == fixture.player.requestedStartingEntryID)
         #expect(fixture.player.shuffleMode == .songs)
@@ -3349,12 +3409,12 @@ private struct PlaybackTransitionFixture {
                 artistName: musicTrack.artistName,
                 durationSeconds: 180,
                 musicKitPlaybackData: try JSONEncoder().encode(musicTrack),
-                createdAt: Date(timeIntervalSince1970: TimeInterval(index))
+                createdAt: Date(timeIntervalSince1970: -TimeInterval(index))
             )
             let item = PlaylistItemRecord(
                 playlistID: playlist.id,
                 trackID: track.id,
-                createdAt: Date(timeIntervalSince1970: TimeInterval(index))
+                createdAt: Date(timeIntervalSince1970: -TimeInterval(index))
             )
             context.insert(track)
             context.insert(item)

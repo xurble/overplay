@@ -50,9 +50,7 @@ struct PlaylistPresentationBuilder {
     ) -> [TrackSummaryPresentation] {
         let playlistRole = playlists.first { $0.id == playlistID }?.role
         let scopedItems = itemsForPlaylist(playlistID).filter { scope.includes($0) }
-        let orderedItems = playbackOrderState.map {
-            PlaylistDisplayOrder.orderedItems(scopedItems, state: $0, scope: scope)
-        } ?? scopedItems.sorted(by: areItemsInPlaylistOrder)
+        let orderedItems = PlaylistDisplayOrder.orderedItems(scopedItems, scope: scope)
 
         let span = PerformanceSpan(.playlistPresentation)
         defer { span.finish(magnitude: Double(orderedItems.count), detail: "shared track summaries") }
@@ -113,7 +111,4 @@ struct PlaylistPresentationBuilder {
         items.filter { $0.playlistID == playlistID }
     }
 
-    private func areItemsInPlaylistOrder(_ left: PlaylistItemRecord, _ right: PlaylistItemRecord) -> Bool {
-        return left.createdAt < right.createdAt
-    }
 }

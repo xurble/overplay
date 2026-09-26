@@ -725,13 +725,12 @@ interfering with each other's playback.
 
 ## Playback Order, Shuffle, and Repeat
 
-Overplay owns the local playlist order used for display and initial queue
-hand-off. SwiftData tracks playlist membership, track metadata, play/skip
-history, and retirement state; it does not store that local order or Apple
-Music's live shuffled sequence. Local order is disposable and keyed by player,
-Apple Music playlist, and playlist scope. Each linked playlist has separate
-**Active** and **Retired** local orders. There is no separate unshuffled order
-to restore during playback.
+Overplay derives display order and the unshuffled base queue from SwiftData
+membership timestamps: newest-added first, or newest-retired first for Retired.
+SwiftData also tracks metadata and play/skip history, but does not store Apple
+Music's live shuffled sequence. The device-local queue-order cache is disposable
+and keyed by player, Apple Music playlist, and Active/Retired scope; it does not
+determine display order or the unshuffled base queue.
 
 > **Direction change (2026-09-07): shuffle and repeat belong to MusicKit.**
 >
@@ -748,7 +747,7 @@ to restore during playback.
 MusicKit receives the complete playback order for the selected scope in one
 queue, because it can only shuffle or repeat what it holds. Overplay owns
 queue *contents* — which tracks, filtered by local retirement — and MusicKit
-owns the order they play in. This keeps skip tracking,
+owns the shuffled sequence and repeat behavior. This keeps skip tracking,
 retirement filtering, playlist display order, CarPlay, system controls, and
 remote commands aligned to the same source of truth.
 
@@ -758,7 +757,7 @@ stable playlist item IDs, local track IDs, display metadata, artwork source,
 skip and playthrough counts, retired/playable state, and current-row
 state. Playlist views use this projection only when it matches the displayed
 current playlist and selected Active/Retired scope; otherwise they fall back to
-SwiftData records ordered by the selected scope's local order state.
+SwiftData records ordered by recency in the selected scope.
 
 Local order state:
 
@@ -767,25 +766,26 @@ Local order state:
   scope. Active order contains active playable items. Retired order contains
   retired items.
 - Treat old sort-order, shuffle-mode, and repeat-mode state as disposable.
-- Playlist display order should mirror the current local playback order for
-  that player, playlist, and scope. The UI should reconcile and persist missing
-  IDs into that scope order instead of showing raw SwiftData query order.
+- Every playlist, including One True Playlist, displays newest-added first.
+  Use the last move into the collection when present, otherwise creation time.
+  Retired displays newest-retired first using retirement time. Equal dates use
+  stable item IDs. Playback queue observations and shuffle never reorder rows.
 - A playlist must not contain duplicate songs. Sync, manual add, and promotion
   should reuse or reactivate the existing playlist item for a song instead of
   creating a duplicate.
 
 Starting playback:
 
-- Starting a playlist sends the complete local order for the selected scope to
-  MusicKit in one queue (`PLAY-005`), because MusicKit can only shuffle or
-  repeat what it holds.
+- Starting a playlist sends the complete chronological display order for the
+  selected scope to MusicKit in one queue (`PLAY-005`). Unshuffled playback
+  follows that order; MusicKit can shuffle or repeat the complete queue.
 - If the user starts at a specific track, MusicKit starts at that track within
   the full queue, so the tracks before it remain available to Previous.
-- If no track is requested, playback starts at the first track in local order.
+- If no track is requested, playback starts at the first track in display order.
 - MusicKit and Overplay UI should be reconciled immediately after queue setup so
   every surface agrees on the current track and queue position.
 - After queue setup succeeds, the playback controller materializes or refreshes
-  the active playlist projection from the same SwiftData records and local
+  the active playlist projection from the same SwiftData records and recency
   order used to build the queue.
 
 Queue identity recovery:
@@ -828,26 +828,27 @@ Shuffle and repeat behavior:
 - A shuffle or repeat change from any surface — Lock Screen, Control Center,
   CarPlay, Siri, the app — is authoritative, and every other surface reflects
   it because they all read the same player state.
-- Local order remains the playlist's display order and the order handed to
-  MusicKit. It is no longer a playback *sequence* once shuffle is on, so the
-  upcoming order is not knowable and no surface claims otherwise.
+- The chronological display order is the unshuffled base queue. Shuffle affects
+  playback only. If a restored or changed live queue is out of order when shuffle
+  is off, the shared controller restores chronological order while retaining the
+  current track, progress, play/pause intent, and listening session. Incomplete
+  queue hydration is allowed to finish before attempting this repair.
 
 Additions, retirements, and restores:
 
 - Playlist additions from MusicKit sync, SwiftData sync, manual add, or
-  promotion append to the end of the current Active local order.
+  promotion appear at their chronological position, newest first.
 - If the changed playlist is currently playing, playable additions are
-  appended to the live MusicKit queue without restarting playback. The player
+  appended to the live MusicKit queue. Once correlated, an unshuffled queue is
+  reconciled to display order while preserving the current playback position. The player
   creates those entries, so they are correlated back to local rows on Apple
   Music item ID and retried until they resolve — an appended entry that never
   correlates would read as queue divergence.
 - If the changed playlist is currently playing, refresh the active playlist
   projection immediately after the durable SwiftData/local-order mutation so
   visible rows do not wait for SwiftData query invalidation.
-- Retiring a track removes it from Active order and appends it to the bottom of
-  Retired order.
-- Restoring a track removes it from Retired order and appends it to the bottom
-  of Active order.
+- Retiring a track removes it from Active and places it first in Retired.
+- Restoring a track removes it from Retired and places it first in Active.
 - Membership changes prune no-longer-eligible native queue entries in place,
   preserving MusicKit shuffle/repeat and position. The current entry remains
   until transport advances. Current-track movement settles its outgoing session
@@ -1103,7 +1104,7 @@ Show:
 - Separate top-level OTP, Triage and Retired destinations, with no per-playlist
   Active/Retired picker.
 - Active tracks ordered by the device-local Active playback order.
-- Retired tracks ordered by the device-local Retired playback order and
+- Retired tracks ordered by most recent retirement and
   playable as a playlist context from iOS.
 - Skip and playthrough counts.
 - Retirement state.
@@ -1159,7 +1160,7 @@ Show:
   a driver to disambiguate.
 - The triage bucket in a separate section, opening the same track
   list.
-- Tracks in their current local order, and nothing else in the list.
+- Tracks in newest-added or newest-retired display order, independent of shuffle.
 - Global Retired as its own root destination, playable directly from CarPlay.
 - Current track title, artist, album, and artwork where CarPlay templates
   support it.
@@ -1277,9 +1278,9 @@ window through the standard app settings command as well as in-app navigation.
 ### PlaybackController
 
 - Own Apple Music playback.
-- Build full app-owned MusicKit queues from the current local playlist order.
-- Own local playback order as the playlist's display order and the order
-  handed to MusicKit. Shuffle, repeat and the playlist wrap belong to MusicKit.
+- Build full app-owned MusicKit queues from chronological playlist display order.
+- Keep display order independent of shuffle and reconcile unshuffled playback to
+  that order. Shuffle, repeat and the playlist wrap belong to MusicKit.
 - Track play sessions.
 - Publish current playback state.
 - Forward transitions to shared playback evaluation and track action services.
@@ -1631,3 +1632,44 @@ when remote removal fails or the playlist is incoming-only.
 
 New identity fields use optional/default values in the existing SwiftData model;
 no historical migration layer is introduced under the pre-release data policy.
+
+
+## Generated playlist artwork
+
+Artwork settings are presented above the persistent player sheet. Saving,
+cancelling, or dismissing settings reveals the mini player without interrupting
+playback.
+
+Each playlist saves its own artwork template: Pile (default), 3 × 3 grid, or
+8 × 8 grid, with None (default), Black, or White borders. Border width is 1.5%
+of the individual cover side length. The square artwork appears above playback
+controls in playlist detail, as a thumbnail in the root playlist menu, and beside
+that playlist in the CarPlay playlist list. Root playlist-row artwork is 96 × 96
+points with square corners and no vertical row insets, filling the row height.
+Linked-playlist artwork remains 72 × 72 points, matching track-row artwork.
+Long-press offers Settings and Regenerate; Settings saves layout and border choices.
+
+Covers are grouped by artwork URL. Active Overplay/One True Playlist artwork
+ranks by summed Overplay playthrough counts across songs sharing a cover.
+Triage and other playlists rank by newest addition/movement time; Retired always
+ranks by newest retirement time. Equal ranks are randomized during generation.
+Grids select the highest-ranked 9 or 64 distinct covers, repeat only to fill
+empty cells, and shuffle the cell order. Pile draws from lowest to highest rank,
+placing the most-played OTP cover or newest Triage/Retired cover on top, over a
+repeating lower-ranked background that fills the canvas and extends past its edges.
+This artwork ranking does not change track-list or unshuffled playback order.
+Foreground covers have random side lengths of 30–60% of the canvas, rotations of
+−3° to +3°, and random positions whose rotated corners stay inside the canvas.
+The top cover is always 50%, centred, and slightly rotated. Borderless Pile covers
+have a subtle black drop shadow (24% opacity, blur 1.2% of the cover side, downward
+offset 0.6%). Grids and covers with black or white borders have no drop shadow.
+
+The arrangement is persisted and the completed 1024 × 1024 image is cached as PNG,
+shared by SwiftUI and CarPlay. It stays stable for 24 hours, refreshing on the next
+view afterward, on changed settings, or on manual regeneration. Cache eviction
+re-renders the saved arrangement. Unavailable artwork does not become a permanent
+completed cache entry. Empty playlists show a placeholder and can generate as soon
+as artwork arrives. Retired views use only retired tracks, with a separate saved
+arrangement and PNG cache from active Triage. Layout, borders, regeneration, and
+daily refresh are independent for active Triage and Retired. Each defaults to Pile
+with no border; changing either template does not regenerate the other collage.
