@@ -5,6 +5,48 @@ import Testing
 
 @MainActor
 struct DuplicateTrackServiceTests {
+    @Test func confirmationRetainsReviewedSelectionAfterDismissal() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        var candidates = try fixture(context)
+        candidates[0].title = "good 4 u"
+        candidates[1].title = "good 4 u"
+        candidates[0].album = "SOUR"
+        candidates[1].album = "SOUR (Video Version)"
+        var presented = DuplicateMergeRequest(candidates: candidates, selectedIDs: Set(candidates.map(\.id)))
+        let reviewed = try #require(presented)
+        #expect(reviewed.candidates == candidates)
+        #expect(reviewed.suggestedDestination == .triage)
+        presented = nil // Sheet dismissal must not clear the submitted selection.
+        let result = try DuplicateTrackService.merge(reviewed.candidates,
+            destination: reviewed.suggestedDestination, in: context)
+        #expect(try TrackRecordRepository.allTracks(in: context).map(\.id) == [result.trackID])
+    }
+
+    @Test func confirmationRequiresTwoSelectedTracksFromItsGroup() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let candidates = try fixture(container.mainContext)
+        #expect(DuplicateMergeRequest(candidates: candidates, selectedIDs: []) == nil)
+        #expect(DuplicateMergeRequest(candidates: candidates, selectedIDs: [candidates[0].id, UUID()]) == nil)
+        let request = try #require(DuplicateMergeRequest(candidates: candidates,
+            selectedIDs: Set(candidates.map(\.id) + [UUID()])))
+        #expect(request.candidates == candidates)
+    }
+
+    @Test func subsequentConfirmationUsesFreshSelectionAndDestination() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let candidates = try fixture(container.mainContext)
+        let first = try #require(DuplicateMergeRequest(candidates: candidates, selectedIDs: Set(candidates.map(\.id))))
+        var nextCandidates = candidates
+        nextCandidates[0].destination = .otp
+        let next = try #require(DuplicateMergeRequest(candidates: nextCandidates,
+            selectedIDs: Set(nextCandidates.map(\.id))))
+        #expect(next.id != first.id)
+        #expect(first.suggestedDestination == .triage)
+        #expect(next.suggestedDestination == nil)
+        #expect(next.candidates == nextCandidates)
+    }
+
     func fixture(_ context: ModelContext, mixed: Bool = false) throws -> [DuplicateTrackService.Candidate] {
         let bucket = try PlaylistRepository.triageBucket(in: context)
         let otp = PlaylistRecord(musicPlaylistID: "otp", name: "OTP", role: .oneTruePlaylist)

@@ -6,11 +6,9 @@ struct DuplicateTracksView: View {
     @Environment(PlaybackController.self) private var playbackController
     @State private var groups: [DuplicateTrackService.Group] = []
     @State private var selected = Set<UUID>()
-    @State private var destination: DuplicateTrackService.Destination?
-    @State private var pending: [DuplicateTrackService.Candidate] = []
+    @State private var mergeRequest: DuplicateMergeRequest?
     @State private var busy = false
     @State private var message: String?
-    @State private var showConfirmation = false
     @State private var scanTask: Task<Void, Never>?
 
     var body: some View {
@@ -41,48 +39,18 @@ struct DuplicateTracksView: View {
                         .disabled(busy)
                     }
                     Button("Review Selected Merge") {
-                        pending = group.candidates.filter { selected.contains($0.id) }
-                        destination = Set(pending.map(\.destination)).count == 1 ? pending.first?.destination : nil
-                        showConfirmation = true
+                        mergeRequest = DuplicateMergeRequest(candidates: group.candidates, selectedIDs: selected)
                     }
                     .disabled(busy || group.candidates.filter { selected.contains($0.id) }.count < 2)
                 } header: { Text("Possible duplicates") }
             }
         }
         .navigationTitle("Find Duplicates")
-        .sheet(isPresented: $showConfirmation) {
-            NavigationStack {
-                Form {
-                    Section {
-                        Text("Merge \(pending.count) tracks into one?")
-                        Text("Overplay plays and skips will be added together. Shared Apple Music counter increases will be counted once. History and source playlists will be preserved.")
-                        if Set(pending.map(\.destination)).count > 1 {
-                            Picker("Keep in", selection: $destination) {
-                                Text("Choose a collection").tag(Optional<DuplicateTrackService.Destination>.none)
-                                ForEach(DuplicateTrackService.Destination.allCases) { value in
-                                    Text(value.rawValue).tag(Optional(value))
-                                }
-                            }
-                        } else if let destination { Text("Keep in \(destination.rawValue)") }
-                    }
-                    Section {
-                        ForEach(pending) { candidate in
-                            LabeledContent(candidate.title, value: candidate.album ?? candidate.artist)
-                        }
-                    }
-                }
-                .navigationTitle("Confirm Merge")
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showConfirmation = false } }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Merge") {
-                            showConfirmation = false
-                            Task { await merge() }
-                        }.disabled(destination == nil)
-                    }
-                }
+        .sheet(item: $mergeRequest) { request in
+            DuplicateMergeConfirmationView(request: request) { destination in
+                mergeRequest = nil
+                Task { await merge(request, destination: destination) }
             }
-            .frame(minWidth: 320, minHeight: 350)
         }
         .onDisappear { scanTask?.cancel() }
     }
@@ -103,11 +71,11 @@ struct DuplicateTracksView: View {
         }
     }
 
-    private func merge() async {
+    private func merge(_ request: DuplicateMergeRequest, destination: DuplicateTrackService.Destination) async {
         busy = true
         defer { busy = false }
         do {
-            message = try await playbackController.mergeDuplicateTracks(pending, destination: destination, context: context)
+            message = try await playbackController.mergeDuplicateTracks(request.candidates, destination: destination, context: context)
             groups = try DuplicateTrackService.groups(DuplicateTrackService.candidates(in: context))
             selected.removeAll()
         } catch { message = error.localizedDescription }
