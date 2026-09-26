@@ -9,7 +9,7 @@ struct AlbumArtworkThemeStoreTests {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let store = AlbumArtworkThemeStore(directoryURL: directory, maxEntries: 100)
+        let store = AlbumArtworkThemeStore(directoryURL: directory, maxEntries: 100, saveDelay: .seconds(60))
         let key = AlbumArtworkThemeStore.cacheKey(
             normalizedArtworkURL: "musicKit://artwork/example/{w}x{h}",
             artworkPixelSize: 128,
@@ -34,6 +34,8 @@ struct AlbumArtworkThemeStoreTests {
             date: Date(timeIntervalSince1970: 10)
         )
 
+        #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("themes.json").path))
+        await store.flushPendingSave()
         let reloadedStore = AlbumArtworkThemeStore(directoryURL: directory, maxEntries: 100)
         let cachedTheme = await reloadedStore.theme(for: key, accessedAt: Date(timeIntervalSince1970: 20))
         let record = await reloadedStore.record(for: key)
@@ -68,7 +70,7 @@ struct AlbumArtworkThemeStoreTests {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        let store = AlbumArtworkThemeStore(directoryURL: directory, maxEntries: 100)
+        let store = AlbumArtworkThemeStore(directoryURL: directory, maxEntries: 100, saveDelay: .seconds(60))
         let key = AlbumArtworkThemeStore.cacheKey(
             normalizedArtworkURL: "musicKit://artwork/example/{w}x{h}",
             artworkPixelSize: 128,

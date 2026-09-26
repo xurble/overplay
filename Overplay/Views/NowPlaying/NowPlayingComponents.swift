@@ -5,10 +5,12 @@ struct NowPlayingArtworkView: View {
     var urlString: String?
     var playlistID: String?
     var cornerRadius: CGFloat = 18
+    var pixelSize: Int = 512
 
     var body: some View {
         ArtworkView(
             urlString: urlString,
+            pixelSize: pixelSize,
             playlistID: playlistID,
             cornerRadius: cornerRadius
         )

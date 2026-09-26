@@ -17,28 +17,49 @@ nonisolated struct ApplePlayCountLibraryEntry: Sendable {
 }
 
 nonisolated enum ApplePlayCountMatcher {
-    static func matches(_ target: ApplePlayCountMatchTrack,
-                        in library: [ApplePlayCountLibraryEntry],
-                        allowRecordingCode: Bool = true) -> [MusicLibraryPlaybackObservation] {
-        let aliases = Set(target.aliases.filter { !$0.isEmpty })
-        let direct = library.filter { !aliases.isDisjoint(with: $0.track.aliases) }
-        if !direct.isEmpty { return direct.map(\.observation) }
+    struct Index: Sendable {
+        private struct MetadataKey: Hashable, Sendable {
+            var title: String
+            var artist: String
+            var album: String
+        }
+        private let library: [ApplePlayCountLibraryEntry]
+        private var aliases: [String: Set<Int>] = [:]
+        private var recordings: [String: [Int]] = [:]
+        private var metadata: [MetadataKey: [Int]] = [:]
 
-        if allowRecordingCode, let isrc = normalized(target.isrc) {
-            let recordings = library.filter { normalized($0.track.isrc) == isrc }
-            if !recordings.isEmpty {
-                return unique(recordings.filter { durationAgrees(target.duration, $0.track.duration, required: false) })
+        init(_ library: [ApplePlayCountLibraryEntry]) {
+            self.library = library
+            for (index, entry) in library.enumerated() {
+                for alias in entry.track.aliases where !alias.isEmpty { aliases[alias, default: []].insert(index) }
+                if let isrc = normalized(entry.track.isrc) { recordings[isrc, default: []].append(index) }
+                if let key = Self.key(entry.track) { metadata[key, default: []].append(index) }
             }
         }
 
-        guard let title = normalized(target.title), let artist = normalized(target.artist),
-              let album = normalized(target.album) else { return [] }
-        return unique(library.filter {
-            normalized($0.track.title) == title && normalized($0.track.artist) == artist
-                && normalized($0.track.album) == album
-                && durationAgrees(target.duration, $0.track.duration, required: true)
-                && !conflictingISRC(target.isrc, $0.track.isrc)
-        })
+        func matches(_ target: ApplePlayCountMatchTrack, allowRecordingCode: Bool = true) -> [MusicLibraryPlaybackObservation] {
+            let direct = target.aliases.reduce(into: Set<Int>()) { $0.formUnion(aliases[$1] ?? []) }.sorted()
+            if !direct.isEmpty { return direct.map { library[$0].observation } }
+            if allowRecordingCode, let isrc = normalized(target.isrc), let candidates = recordings[isrc], !candidates.isEmpty {
+                return unique(candidates.map { library[$0] }.filter { durationAgrees(target.duration, $0.track.duration, required: false) })
+            }
+            guard let key = Self.key(target) else { return [] }
+            return unique((metadata[key] ?? []).map { library[$0] }.filter {
+                durationAgrees(target.duration, $0.track.duration, required: true)
+                    && !conflictingISRC(target.isrc, $0.track.isrc)
+            })
+        }
+
+        private static func key(_ track: ApplePlayCountMatchTrack) -> MetadataKey? {
+            guard let title = normalized(track.title), let artist = normalized(track.artist), let album = normalized(track.album) else { return nil }
+            return MetadataKey(title: title, artist: artist, album: album)
+        }
+    }
+
+    static func matches(_ target: ApplePlayCountMatchTrack,
+                        in library: [ApplePlayCountLibraryEntry],
+                        allowRecordingCode: Bool = true) -> [MusicLibraryPlaybackObservation] {
+        Index(library).matches(target, allowRecordingCode: allowRecordingCode)
     }
 
     private static func unique(_ entries: [ApplePlayCountLibraryEntry]) -> [MusicLibraryPlaybackObservation] {

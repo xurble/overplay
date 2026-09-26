@@ -275,10 +275,10 @@ struct NewModelRepositoryTests {
             artworkURLTemplate: "https://example.com/changed.jpg",
             durationSeconds: 230
         )
-        let unchangedArtwork = try TrackRecordRepository.upsert(changedArtworkSnapshot, in: context)
+        let refreshedArtwork = try TrackRecordRepository.upsert(changedArtworkSnapshot, in: context)
 
-        #expect(unchangedArtwork.artworkURLTemplate == "https://example.com/artwork.jpg")
-        #expect(unchangedArtwork.durationSeconds == 230)
+        #expect(refreshedArtwork.artworkURLTemplate == "https://example.com/changed.jpg")
+        #expect(refreshedArtwork.durationSeconds == 230)
     }
 
     @Test("catalog manual add and library sync collapse to one track record")

@@ -4,17 +4,15 @@ struct PlaylistTrackRowView: View {
     var summary: TrackSummaryPresentation
     var playlistID: String
     var isCurrent: Bool
-    var loadsArtworkImmediately = true
 
     var body: some View {
         HStack(spacing: 12) {
             ZStack(alignment: .bottomTrailing) {
                 ArtworkView(
                     urlString: summary.artworkURLString,
-                    pixelSize: 144,
+                    pixelSize: 128,
                     playlistID: playlistID,
-                    cornerRadius: 0,
-                    loadsImmediately: loadsArtworkImmediately
+                    cornerRadius: 0
                 )
                 .frame(width: 72, height: 72)
 
@@ -67,8 +65,7 @@ struct PlaylistTrackRowView: View {
             isPlayable: true
         ),
         playlistID: "preview-playlist",
-        isCurrent: true,
-        loadsArtworkImmediately: true
+        isCurrent: true
     )
     .padding()
 }

@@ -295,16 +295,23 @@ and can be redownloaded from their source URL. A local JSON manifest tracks each
 cached file's cache key, source URL, requested size, associated playlist IDs,
 last access date, and byte size.
 
-Artwork loading must not block playlist rendering or playback. Playlist and
-track lists show placeholders immediately, then load cached or downloaded art in
-the background. When playback needs current-track artwork that is not cached,
-the player requests it at high priority and caches the result without delaying
-queue setup, playback, or skip/playthrough evaluation.
+Artwork loading must not block playlist rendering or playback. Store actual
+128-pixel thumbnails for rows, the mini player and CarPlay, and 512-pixel variants
+for expanded artwork and recognition (longest edge, preserving aspect ratio).
+The expanded player shows available 128 artwork while 512 loads. Lists may use
+cached images and load missing artwork while scrolling. CarPlay track rows show
+artwork with the playing indicator beside it.
 
-The cache has a default 250 MB budget. When it exceeds that budget, eviction
-starts with artwork associated only with least-recently-used playlists, then
-least-recently-accessed files within those groups. Artwork associated with the
-currently playing playlist is preserved during the artwork cache eviction pass.
+Decoded images share a 24 MiB cost budget across playlists. Source downloads and
+image processing are bounded and coalesced. Artwork failures cool down for 60
+seconds. The disk cache has a default 250 MiB budget, including a 32 MiB recent
+512-pixel budget. The current playlist's 128 thumbnails are protected; requested
+files and protected thumbnails may exceed the nominal budget. Visible access
+updates eviction recency. Theme recognition runs on player demand rather than
+warming every changed song after sync; theme writes are batched.
+
+See `PERFORMANCE_IMPLEMENTATION_2026-09-25.md` for the cache policy, measurement
+operations and remaining playback latency investigations.
 
 ## Sync Behaviour
 

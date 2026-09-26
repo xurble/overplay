@@ -74,6 +74,8 @@ final class CarPlayCoordinator: NSObject {
     private weak var runtime: AppRuntime?
     private var modelContext: ModelContext?
     private var refreshTask: Task<Void, Never>?
+    private var artworkTask: Task<Void, Never>?
+    private var libraryRefreshTask: Task<Void, Never>?
     private var playbackObservationGeneration = 0
     private var lastNowPlayingButtonSignature: CarPlayNowPlayingButtonSignature?
     private var visiblePlaylistID: UUID?
@@ -125,6 +127,10 @@ final class CarPlayCoordinator: NSObject {
     }
 
     func disconnect() {
+        libraryRefreshTask?.cancel()
+        libraryRefreshTask = nil
+        artworkTask?.cancel()
+        artworkTask = nil
         refreshTask?.cancel()
         refreshTask = nil
         stopPlaybackObservation()
@@ -153,6 +159,7 @@ final class CarPlayCoordinator: NSObject {
 
     private func setRootTemplate(animated: Bool) {
         guard let interfaceController else { return }
+        artworkTask?.cancel()
         visiblePlaylistID = nil
         visiblePlaylistTemplate = nil
         let template = CPListTemplate(title: "Overplay", sections: makeRootSections())
@@ -228,8 +235,11 @@ final class CarPlayCoordinator: NSObject {
         playlist: PlaylistRecord,
         scope: PlaylistPlaybackScope = .active
     ) -> CPListItem {
-        let item = CPListItem(text: summary.title, detailText: summary.detailText)
-        item.isPlaying = isCurrentTrack(summary, in: playlist)
+        let cachedImage = ArtworkImagePipeline.shared.cachedImage(for: summary.artworkURLString, size: 128)
+        let item = CarPlayPlaylistSectionFactory.trackItem(
+            title: summary.title, detail: summary.detailText,
+            image: cachedImage.map { UIImage(cgImage: $0) },
+            isPlaying: isCurrentTrack(summary, in: playlist))
         item.handler = { [weak self] _, completion in
             Task { @MainActor in
                 await self?.play(summary, in: playlist, scope: scope)
@@ -330,8 +340,23 @@ final class CarPlayCoordinator: NSObject {
             )
         }
 
+        let items = tracks.map { trackItem($0, playlist: playlist, scope: scope) }
+        artworkTask?.cancel()
+        let playlistID = playlist.musicPlaylistID
+        // CarPlay has no row visibility callback. Walk in display order with one
+        // outstanding request; never enqueue a task for every track at once.
+        artworkTask = Task {
+            // The shuffle action consumes one of CarPlay's displayed items.
+            for (track, item) in zip(tracks, items).prefix(max(0, CPListTemplate.maximumItemCount - 1)) {
+                guard !Task.isCancelled else { return }
+                let image = await ArtworkImagePipeline.shared.image(
+                    for: track.artworkURLString, size: 128, playlistID: playlistID, priority: .utility)
+                guard !Task.isCancelled else { return }
+                if let image { item.setImage(UIImage(cgImage: image)) }
+            }
+        }
         return CarPlayPlaylistSectionFactory.sections(
-            trackItems: tracks.map { trackItem($0, playlist: playlist, scope: scope) },
+            trackItems: items,
             scope: scope
         ) { [weak self] scope in
             await self?.shuffleAndPlay(playlist, scope: scope)
@@ -414,6 +439,16 @@ final class CarPlayCoordinator: NSObject {
     /// SwiftData, which the playback observation cannot see. Without this the
     /// root menu could stay stale until playback changed or CarPlay reconnected
     /// — which is what the manual Refresh button used to paper over.
+    private func scheduleLibraryRefresh() {
+        guard libraryRefreshTask == nil else { return }
+        libraryRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(100))
+            guard !Task.isCancelled, let self else { return }
+            self.libraryRefreshTask = nil
+            self.refreshLibraryLists()
+        }
+    }
+
     private func startLibraryChangeObservation() {
         stopLibraryChangeObservation()
         libraryChangeObserver = NotificationCenter.default.addObserver(
@@ -423,7 +458,7 @@ final class CarPlayCoordinator: NSObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.updateNowPlayingButtons()
-                self?.refreshLibraryLists()
+                self?.scheduleLibraryRefresh()
             }
         }
     }
@@ -465,7 +500,7 @@ final class CarPlayCoordinator: NSObject {
             Task { @MainActor [weak self] in
                 guard let self, generation == self.playbackObservationGeneration else { return }
                 self.updateNowPlayingButtons()
-                self.refreshLibraryLists()
+                self.scheduleLibraryRefresh()
                 self.presentDeliveryStallAlertIfNeeded()
                 self.observePlaybackController(generation: generation)
             }

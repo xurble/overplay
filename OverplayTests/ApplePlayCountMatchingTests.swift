@@ -63,6 +63,24 @@ struct ApplePlayCountMatchingTests {
         return (track, item)
     }
 
+    @Test("back-to-back bulk refreshes are throttled without blocking current-track discovery")
+    func bulkRefreshCooldown() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let (track, _) = try fixture(context)
+        var queries = 0
+        let service = ApplePlayCountSyncService(minimumRefreshInterval: 60,
+            fetchRecentlyPlayed: { [] }, fetchPlaylist: { _ in [] }, fetchLibrary: { _ in [] }, fetch: { _ in
+                queries += 1
+                return []
+            })
+        _ = await service.refresh(in: context)
+        _ = await service.refresh(in: context)
+        #expect(queries == 1)
+        _ = await service.refreshCurrentTrack(track.id, in: context)
+        #expect(queries == 2)
+    }
+
     @Test("Discovered counters seed existing plays, persist their ID, and refresh directly next time")
     func discoveryAndRefresh() async throws {
         let container = try OverplayTestSupport.makeModelContainer()

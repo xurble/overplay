@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 struct ActivePlaylistSnapshot: Equatable, Sendable {
     struct Row: Equatable, Identifiable, Sendable {
@@ -50,34 +51,36 @@ struct ActivePlaylistSnapshot: Equatable, Sendable {
         self.playlistID = playlist.id
         self.musicPlaylistID = playlist.musicPlaylistID
         self.playbackScope = playbackScope
-        self.rows = orderedItems.compactMap { item in
-            guard let track = tracksByID[item.trackID] else { return nil }
-            let localTrackID = item.trackID.uuidString
-            let musicItemIDs = PlaybackQueueBuilder.musicItemIDs(for: track)
-            return Row(
-                id: item.id,
-                playlistID: item.playlistID,
-                trackID: item.trackID,
-                localTrackID: localTrackID,
-                musicItemIDs: musicItemIDs,
-                title: track.title,
-                artistName: track.artistName,
-                albumTitle: track.albumTitle,
-                artworkURLString: track.artworkURLTemplate,
-                skipCount: item.skipCount,
-                playthroughCount: item.playthroughCount,
-                applePlayCount: item.applePlayCount,
-                sourceMusicPlaylistIDs: item.sourceMusicPlaylistIDs,
-                isEvicted: item.evictedAt != nil,
-                isCurrent: Self.rowIsCurrent(
-                    item: item,
-                    track: track,
+        self.rows = ApplePlayCountRepository.withSnapshot(for: orderedItems, in: orderedItems.first?.modelContext) {
+            orderedItems.compactMap { item in
+                guard let track = tracksByID[item.trackID] else { return nil }
+                let localTrackID = item.trackID.uuidString
+                let musicItemIDs = PlaybackQueueBuilder.musicItemIDs(for: track)
+                return Row(
+                    id: item.id,
+                    playlistID: item.playlistID,
+                    trackID: item.trackID,
                     localTrackID: localTrackID,
-                    currentPlaylistItemID: currentPlaylistItemID,
-                    currentLocalTrackID: currentLocalTrackID,
-                    currentMusicItemID: currentMusicItemID
+                    musicItemIDs: musicItemIDs,
+                    title: track.title,
+                    artistName: track.artistName,
+                    albumTitle: track.albumTitle,
+                    artworkURLString: track.artworkURLTemplate,
+                    skipCount: item.skipCount,
+                    playthroughCount: item.playthroughCount,
+                    applePlayCount: item.applePlayCount,
+                    sourceMusicPlaylistIDs: item.sourceMusicPlaylistIDs,
+                    isEvicted: item.evictedAt != nil,
+                    isCurrent: Self.rowIsCurrent(
+                        item: item,
+                        track: track,
+                        localTrackID: localTrackID,
+                        currentPlaylistItemID: currentPlaylistItemID,
+                        currentLocalTrackID: currentLocalTrackID,
+                        currentMusicItemID: currentMusicItemID
+                    )
                 )
-            )
+            }
         }
         self.updatedAt = updatedAt
     }

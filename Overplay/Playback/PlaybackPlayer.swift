@@ -142,7 +142,11 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
                 throw PlaybackQueueEntryError.entryNotInQueue
             }
 
+            let assignment = PerformanceSpan(.playerEntryAssignment)
             player.queue.currentEntry = entry
+            assignment.finish(magnitude: Double(player.queue.entries.count))
+            let play = PerformanceSpan(.playerSelectionPlay)
+            defer { play.finish() }
             try await player.play()
         }
     }

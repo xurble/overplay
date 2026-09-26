@@ -19,7 +19,7 @@ protocol AlbumArtworkThemeProviding: Sendable {
 actor AlbumArtworkThemeProvider: AlbumArtworkThemeProviding {
     static let shared = AlbumArtworkThemeProvider(store: AlbumArtworkThemeStore.shared)
 
-    nonisolated static let artworkPixelSize = 128
+    nonisolated static let artworkPixelSize = 512
 
     private let store: AlbumArtworkThemeStore
     private var inFlightTasks: [String: Task<AlbumArtworkTheme, Never>] = [:]
@@ -209,6 +209,8 @@ actor AlbumArtworkThemeProvider: AlbumArtworkThemeProviding {
             return cachedRecord?.theme ?? .fallback
         }
 
+        let span = PerformanceSpan(.artworkThemeGeneration)
+        defer { span.finish() }
         let options = AlbumArtworkThemeBuilder.Options(
             requiresIncreasedContrast: requiresIncreasedContrast
         )

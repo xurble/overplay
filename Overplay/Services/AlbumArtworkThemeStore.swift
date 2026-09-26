@@ -23,15 +23,18 @@ actor AlbumArtworkThemeStore {
     private let directoryURL: URL
     private let fileURL: URL
     private let maxEntries: Int
+    private let saveDelay: Duration
     private var cacheFile: AlbumArtworkThemeCacheFile?
+    private var saveTask: Task<Void, Never>?
 
-    init(directoryURL: URL?, maxEntries: Int = 10_000) {
+    init(directoryURL: URL?, maxEntries: Int = 10_000, saveDelay: Duration = .seconds(1)) {
         let directoryURL = directoryURL ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Overplay", isDirectory: true)
             .appendingPathComponent("ArtworkThemeCache", isDirectory: true)
         self.directoryURL = directoryURL
         self.fileURL = directoryURL.appendingPathComponent("themes.json")
         self.maxEntries = maxEntries
+        self.saveDelay = saveDelay
     }
 
     nonisolated static func cacheKey(
@@ -106,11 +109,28 @@ actor AlbumArtworkThemeStore {
                 lastAccessedAt: date
             )
             prune(&cacheFile)
-            try save(cacheFile)
             self.cacheFile = cacheFile
+            scheduleSave()
         } catch {
             AlbumArtworkThemeDiagnostics.log("theme store write failed: \(error.localizedDescription)")
         }
+    }
+
+    private func scheduleSave() {
+        guard saveTask == nil else { return }
+        saveTask = Task {
+            try? await Task.sleep(for: saveDelay)
+            guard !Task.isCancelled else { return }
+            flushPendingSave()
+        }
+    }
+
+    func flushPendingSave() {
+        saveTask?.cancel()
+        saveTask = nil
+        guard let cacheFile else { return }
+        do { try save(cacheFile) }
+        catch { AlbumArtworkThemeDiagnostics.log("theme store write failed: \(error.localizedDescription)") }
     }
 
     private func loadCacheFile() throws -> AlbumArtworkThemeCacheFile {
@@ -131,6 +151,8 @@ actor AlbumArtworkThemeStore {
     }
 
     private func save(_ cacheFile: AlbumArtworkThemeCacheFile) throws {
+        let span = PerformanceSpan(.artworkThemePersistence)
+        defer { span.finish(magnitude: Double(cacheFile.records.count)) }
         try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         let data = try JSONEncoder().encode(cacheFile)
         try data.write(to: fileURL, options: [.atomic])

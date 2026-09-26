@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import Testing
 @testable import Overplay
 
@@ -31,7 +32,7 @@ struct ArtworkCacheServiceTests {
         let sourceURL = "https://example.com/artwork.jpg"
         let service = ArtworkCacheService(
             rootDirectory: rootDirectory,
-            downloader: { _ in Data("cached-artwork".utf8) }
+            downloader: { _ in artworkTestData() }
         )
 
         let firstURL = try #require(await service.artworkFileURL(
@@ -54,10 +55,10 @@ struct ArtworkCacheServiceTests {
             accessedAt: Date(timeIntervalSince1970: 200)
         ))
 
-        #expect(firstManifest.entries.count == 1)
+        #expect(firstManifest.entries.count == 2)
         #expect(FileManager.default.fileExists(atPath: firstURL.path))
         #expect(cachedURL == firstURL)
-        #expect(try Data(contentsOf: cachedURL) == Data("cached-artwork".utf8))
+        #expect(try artworkDimensions(at: cachedURL) == [512, 256])
     }
 
     @Test("read only cached lookup reuses file without updating access metadata")
@@ -69,7 +70,7 @@ struct ArtworkCacheServiceTests {
         let accessedAt = Date(timeIntervalSince1970: 100)
         let service = ArtworkCacheService(
             rootDirectory: rootDirectory,
-            downloader: { _ in Data("cached-artwork".utf8) }
+            downloader: { _ in artworkTestData() }
         )
 
         let firstURL = try #require(await service.artworkFileURL(
@@ -92,7 +93,7 @@ struct ArtworkCacheServiceTests {
         let entry = try #require(manifest.entries.values.first)
 
         #expect(cachedURL == firstURL)
-        #expect(try Data(contentsOf: cachedURL) == Data("cached-artwork".utf8))
+        #expect(try artworkDimensions(at: cachedURL) == [512, 256])
         #expect(entry.lastAccessedAt == accessedAt)
         #expect(manifest.playlistUsage["playlist-1"] == accessedAt)
     }
@@ -108,7 +109,7 @@ struct ArtworkCacheServiceTests {
             rootDirectory: rootDirectory,
             maxCacheBytes: 10,
             downloader: { url in
-                Data(repeating: url.lastPathComponent == "old.jpg" ? UInt8(1) : UInt8(2), count: 8)
+                artworkTestData()
             }
         )
 
@@ -142,7 +143,7 @@ struct ArtworkCacheServiceTests {
         let service = ArtworkCacheService(
             rootDirectory: rootDirectory,
             maxCacheBytes: 10,
-            downloader: { _ in Data(repeating: 1, count: 8) }
+            downloader: { _ in artworkTestData() }
         )
 
         let staleURL = try #require(await service.artworkFileURL(
@@ -194,7 +195,7 @@ struct ArtworkCacheServiceTests {
         let service = ArtworkCacheService(
             rootDirectory: rootDirectory,
             manifestSaveDelay: .seconds(60),
-            downloader: { _ in Data("cached-artwork".utf8) }
+            downloader: { _ in artworkTestData() }
         )
         let manifestURL = rootDirectory.appendingPathComponent("manifest.json")
 
@@ -213,7 +214,7 @@ struct ArtworkCacheServiceTests {
             ArtworkCacheManifest.self,
             from: Data(contentsOf: manifestURL)
         )
-        #expect(persisted.entries.count == 1)
+        #expect(persisted.entries.count == 2)
     }
 
     @Test("orphaned disk files are re-adopted without downloading")
@@ -225,7 +226,7 @@ struct ArtworkCacheServiceTests {
         let key = ArtworkCacheService.cacheKey(sourceURL: sourceURL, pixelSize: 512)
         try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
         let orphanURL = rootDirectory.appendingPathComponent("\(key).jpg")
-        try Data("orphaned-artwork".utf8).write(to: orphanURL)
+        try artworkTestData().write(to: orphanURL)
 
         let service = ArtworkCacheService(
             rootDirectory: rootDirectory,
@@ -240,8 +241,8 @@ struct ArtworkCacheServiceTests {
         let manifest = try await service.manifestSnapshot()
 
         #expect(adoptedURL == orphanURL)
-        #expect(try Data(contentsOf: adoptedURL) == Data("orphaned-artwork".utf8))
-        #expect(manifest.entries[key]?.byteSize == Data("orphaned-artwork".utf8).count)
+        #expect(try Data(contentsOf: adoptedURL) == artworkTestData())
+        #expect(manifest.entries[key]?.byteSize == artworkTestData().count)
         #expect(manifest.entries[key]?.associatedPlaylistIDs.contains("playlist-1") == true)
         #expect(manifest.playlistUsage["playlist-1"] != nil)
     }
@@ -255,7 +256,7 @@ struct ArtworkCacheServiceTests {
         let key = ArtworkCacheService.cacheKey(sourceURL: sourceURL, pixelSize: 512)
         try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
         let orphanURL = rootDirectory.appendingPathComponent("\(key).jpg")
-        try Data("orphaned-artwork".utf8).write(to: orphanURL)
+        try artworkTestData().write(to: orphanURL)
 
         let service = ArtworkCacheService(
             rootDirectory: rootDirectory,
@@ -284,7 +285,7 @@ struct ArtworkCacheServiceTests {
                 if url.lastPathComponent == "slow.jpg" {
                     await gate.wait()
                 }
-                return Data(url.lastPathComponent.utf8)
+                return artworkTestData()
             }
         )
 
@@ -308,11 +309,63 @@ struct ArtworkCacheServiceTests {
         let slowURL = try #require(await slowRequest)
 
         let manifest = try await service.manifestSnapshot()
-        #expect(manifest.entries.count == 2)
+        #expect(manifest.entries.count == 4)
         #expect(FileManager.default.fileExists(atPath: fastURL.path))
         #expect(FileManager.default.fileExists(atPath: slowURL.path))
         #expect(await service.cachedArtworkFileURL(for: "https://example.com/fast.jpg", pixelSize: 512) == fastURL)
         #expect(await service.cachedArtworkFileURL(for: "https://example.com/slow.jpg", pixelSize: 512) == slowURL)
+    }
+
+    @Test("one download creates real bounded representations and shares albums across playlists")
+    func realSizesAndSharedDownload() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let counter = ArtworkDownloadCounter()
+        let service = ArtworkCacheService(rootDirectory: directory, downloader: { _ in
+            await counter.increment()
+            return artworkTestData()
+        })
+        async let small = service.artworkFileURL(for: "https://example.com/shared.jpg", pixelSize: 128, playlistID: "one")
+        async let large = service.artworkFileURL(for: "https://example.com/shared.jpg", pixelSize: 512, playlistID: "two")
+        let (smallResult, largeResult) = await (small, large)
+        let smallURL = try #require(smallResult)
+        let largeURL = try #require(largeResult)
+        #expect(try artworkDimensions(at: smallURL) == [128, 64])
+        #expect(try artworkDimensions(at: largeURL) == [512, 256])
+        #expect(await counter.value == 1)
+        let entries = try await service.manifestSnapshot().entries.values
+        #expect(entries.allSatisfy { $0.associatedPlaylistIDs == ["one", "two"] })
+        await service.flushPendingManifestSave()
+    }
+
+    @Test("failed artwork requests are cooled down instead of retried for every row")
+    func failureCooldown() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let counter = ArtworkDownloadCounter()
+        let service = ArtworkCacheService(rootDirectory: directory, downloader: { _ in
+            await counter.increment()
+            throw URLError(.notConnectedToInternet)
+        })
+        for _ in 0..<10 {
+            #expect(await service.artworkFileURL(for: "https://example.com/missing.jpg", pixelSize: 128) == nil)
+        }
+        #expect(await counter.value == 1)
+    }
+
+    @Test("thumbnail can be regenerated from cached large artwork offline")
+    func regenerateThumbnail() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let service = ArtworkCacheService(rootDirectory: directory, downloader: { _ in artworkTestData() })
+        _ = await service.artworkFileURL(for: "https://example.com/album.jpg", pixelSize: 512)
+        let small = try #require(await service.cachedArtworkFileURL(for: "https://example.com/album.jpg", pixelSize: 128))
+        try FileManager.default.removeItem(at: small)
+        await service.flushPendingManifestSave()
+        let offline = ArtworkCacheService(rootDirectory: directory, downloader: { _ in throw URLError(.notConnectedToInternet) })
+        let regenerated = try #require(await offline.artworkFileURL(for: "https://example.com/album.jpg", pixelSize: 128))
+        #expect(try artworkDimensions(at: regenerated) == [128, 64])
+        await offline.flushPendingManifestSave()
     }
 
     private func temporaryDirectory() -> URL {

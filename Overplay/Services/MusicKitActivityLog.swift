@@ -246,6 +246,7 @@ nonisolated final class MusicKitActivityLog: Sendable {
         let oldestRetainedMinute = minute - retainedMinutes
         let maximumEvents = maximumEvents
         let shouldList = !event.operation.isHighFrequency || event.didFail || !event.notes.isEmpty
+            || (event.operation.category == .performance && (event.durationMilliseconds ?? 0) >= 100)
 
         state.withLock { storage in
             if storage.snapshot.observationStartedAt == nil {
@@ -277,6 +278,15 @@ nonisolated final class MusicKitActivityLog: Sendable {
                         maximumMagnitude: event.magnitude
                     )
                 )
+            }
+
+            if let duration = event.durationMilliseconds,
+               let index = storage.snapshot.tallies.lastIndex(where: {
+                   $0.minute == minute && $0.operation == event.operation
+               }) {
+                storage.snapshot.tallies[index].timedCount = (storage.snapshot.tallies[index].timedCount ?? 0) + 1
+                storage.snapshot.tallies[index].totalDurationMilliseconds = (storage.snapshot.tallies[index].totalDurationMilliseconds ?? 0) + duration
+                storage.snapshot.tallies[index].maximumDurationMilliseconds = max(storage.snapshot.tallies[index].maximumDurationMilliseconds ?? 0, duration)
             }
 
             // Pruning is an O(n) pass, so do it once per minute rather than

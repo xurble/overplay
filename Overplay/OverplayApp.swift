@@ -71,6 +71,8 @@ struct OverplayApp: App {
             // Persist recorded Apple Music activity now: an incident that
             // ends in a device reboot must not lose the run-up to it.
             MusicKitActivityLog.shared.flush()
+            await ArtworkCacheService.shared.flushPendingManifestSave()
+            await AlbumArtworkThemeStore.shared.flushPendingSave()
         }
 
         guard let context = AppRuntime.shared.makeModelContext() else { return }

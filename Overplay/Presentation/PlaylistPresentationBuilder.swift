@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 struct PlaylistPresentationBuilder {
     private let playlists: [PlaylistRecord]
@@ -53,28 +54,32 @@ struct PlaylistPresentationBuilder {
             PlaylistDisplayOrder.orderedItems(scopedItems, state: $0, scope: scope)
         } ?? scopedItems.sorted(by: areItemsInPlaylistOrder)
 
-        return orderedItems.compactMap { item in
-            guard let track = tracksByID[item.trackID] else { return nil }
+        let span = PerformanceSpan(.playlistPresentation)
+        defer { span.finish(magnitude: Double(orderedItems.count), detail: "shared track summaries") }
+        return ApplePlayCountRepository.withSnapshot(for: orderedItems, in: orderedItems.first?.modelContext) {
+            orderedItems.compactMap { item in
+                guard let track = tracksByID[item.trackID] else { return nil }
 
-            return TrackSummaryPresentation(
-                id: item.id,
-                playlistID: item.playlistID,
-                trackID: track.id,
-                title: track.title,
-                artistName: track.artistName,
-                albumTitle: track.albumTitle,
-                artworkURLString: track.artworkURLTemplate,
-                skipCount: item.skipCount,
-                playthroughCount: item.playthroughCount,
-                applePlayCount: item.applePlayCount,
-                provenanceText: TrackSummaryPresentation.provenanceText(
-                    sourceMusicPlaylistIDs: item.sourceMusicPlaylistIDs,
-                    playlistRole: playlistRole,
-                    sourcePlaylists: playlists
-                ),
-                isPlayable: scope == .retired || item.isPlayable,
-                isRetired: item.evictedAt != nil
-            )
+                return TrackSummaryPresentation(
+                    id: item.id,
+                    playlistID: item.playlistID,
+                    trackID: track.id,
+                    title: track.title,
+                    artistName: track.artistName,
+                    albumTitle: track.albumTitle,
+                    artworkURLString: track.artworkURLTemplate,
+                    skipCount: item.skipCount,
+                    playthroughCount: item.playthroughCount,
+                    applePlayCount: item.applePlayCount,
+                    provenanceText: TrackSummaryPresentation.provenanceText(
+                        sourceMusicPlaylistIDs: item.sourceMusicPlaylistIDs,
+                        playlistRole: playlistRole,
+                        sourcePlaylists: playlists
+                    ),
+                    isPlayable: scope == .retired || item.isPlayable,
+                    isRetired: item.evictedAt != nil
+                )
+            }
         }
     }
 

@@ -32,7 +32,8 @@ struct MiniPlayerLozengeView: View {
             NowPlayingArtworkView(
                 urlString: playbackController.nowPlayingDisplayTrack?.artworkURLTemplate,
                 playlistID: playbackController.currentPlaylistID,
-                cornerRadius: 10
+                cornerRadius: 10,
+                pixelSize: 128
             )
             .frame(width: 50, height: 50)
 

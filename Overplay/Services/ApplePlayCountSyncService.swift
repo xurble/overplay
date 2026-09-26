@@ -6,7 +6,7 @@ import SwiftData
 /// from their remote playlist. Apple counts are independent of playlist edits.
 @MainActor
 final class ApplePlayCountSyncService {
-    static let shared = ApplePlayCountSyncService()
+    static let shared = ApplePlayCountSyncService(minimumRefreshInterval: 15)
 
     private let fetch: ([String]) async throws -> [MusicLibraryPlaybackObservation]
     private let saveChanges: (ModelContext) throws -> Void
@@ -15,6 +15,10 @@ final class ApplePlayCountSyncService {
     private let fetchRecentlyPlayed: () async throws -> [MusicLibraryPlaybackObservation]
     private let logRecentLookup: (String) -> Void
     private var isRefreshing = false
+    private let minimumRefreshInterval: TimeInterval
+    private var lastRefreshAt: Date?
+    private var playlistInFlight: [String: Task<(Date, [MusicLibraryPlaybackObservation]), Error>] = [:]
+    private var playlistAttempts: [String: Date] = [:]
     private var lastDiscoveryAt: Date?
     private var priorityInFlight = Set<UUID>()
     private var priorityAttempts: [UUID: Date] = [:]
@@ -22,7 +26,7 @@ final class ApplePlayCountSyncService {
     private var recentResult: (date: Date, observations: [MusicLibraryPlaybackObservation])?
     private var recentAttemptAt: Date?
 
-    init(saveChanges: @escaping (ModelContext) throws -> Void = { try $0.save() },
+    init(minimumRefreshInterval: TimeInterval = 0, saveChanges: @escaping (ModelContext) throws -> Void = { try $0.save() },
          fetchRecentlyPlayed: @escaping () async throws -> [MusicLibraryPlaybackObservation] = {
         guard MusicAuthorization.currentStatus == .authorized else { return [] }
         return try await MusicKitLibraryPlaybackHistoryFetcher().recentlyPlayedObservations()
@@ -42,6 +46,7 @@ final class ApplePlayCountSyncService {
         guard MusicAuthorization.currentStatus == .authorized else { return [] }
         return try await MusicKitLibraryPlaybackHistoryFetcher().observations(for: ids)
     }) {
+        self.minimumRefreshInterval = minimumRefreshInterval
         self.fetch = fetch
         self.saveChanges = saveChanges
         self.fetchLibrary = fetchLibrary
@@ -52,7 +57,13 @@ final class ApplePlayCountSyncService {
 
     @discardableResult
     func refresh(in context: ModelContext, playbackController: PlaybackController? = nil) async -> Int {
-        guard !isRefreshing else { return 0 }
+        guard !isRefreshing, lastRefreshAt.map({ Date.now.timeIntervalSince($0) >= minimumRefreshInterval }) ?? true else {
+            MusicKitActivityLog.shared.record(.playCountRefreshSkipped)
+            return 0
+        }
+        lastRefreshAt = .now
+        let span = PerformanceSpan(.playCountRefresh)
+        defer { span.finish() }
         isRefreshing = true
         defer { isRefreshing = false }
         let startedAt = Date.now
@@ -61,10 +72,10 @@ final class ApplePlayCountSyncService {
             let tracks = try TrackRecordRepository.allTracks(in: context)
             let items = try PlaylistItemRepository.allItems(in: context)
             let retainedIDs = Set(items.map(\.trackID))
-            let ids = Set(tracks.filter { retainedIDs.contains($0.id) }
-                .flatMap { PlaybackQueueBuilder.musicItemIDs(for: $0) })
-                .union(items.flatMap { $0.applePlayCountState?.counters.filter { !$0.isAlternativeCount }.map(\.musicItemID) ?? [] })
-                .sorted()
+            let ids = ApplePlayCountRepository.withSnapshot(for: items, in: context) {
+                Set(tracks.filter { retainedIDs.contains($0.id) }.flatMap { PlaybackQueueBuilder.musicItemIDs(for: $0) })
+                    .union(items.flatMap { $0.applePlayCountState?.counters.filter { !$0.isAlternativeCount }.map(\.musicItemID) ?? [] }).sorted()
+            }
             var observations: [MusicLibraryPlaybackObservation] = []
             for start in stride(from: 0, to: ids.count, by: 100) {
                 try Task.checkCancellation()
@@ -78,10 +89,13 @@ final class ApplePlayCountSyncService {
                 do {
                     let library = try await fetchLibrary(nil)
                     try Task.checkCancellation()
+                    let discoverySpan = PerformanceSpan(.playCountDiscovery)
+                    defer { discoverySpan.finish(magnitude: Double(unresolved.count), detail: "library entries=\(library.count)") }
+                    let index = await Task.detached(priority: .utility) { ApplePlayCountMatcher.Index(library) }.value
                     var discovered: [MusicLibraryPlaybackObservation] = []
                     for track in unresolved {
                         try Task.checkCancellation()
-                        discovered += Self.discover(track, in: library)
+                        discovered += Self.discover(track, index: index)
                         // Let playback and its priority lookup run between
                         // matches even for a large retained library.
                         await Task.yield()
@@ -145,11 +159,12 @@ final class ApplePlayCountSyncService {
     private func refreshRecentCounts(in context: ModelContext, startedAt: Date, trackID: UUID? = nil) async -> Int {
         guard !Task.isCancelled else { return 0 }
         do {
-            let items = try PlaylistItemRepository.allItems(in: context).filter { item in
-                (trackID == nil || item.trackID == trackID)
-                    && (item.applePlayCount == nil || item.applePlayCountState?.counters.contains {
-                        $0.isRecentlyPlayedCount == true
-                    } == true)
+            let candidates = try PlaylistItemRepository.allItems(in: context)
+            let items = ApplePlayCountRepository.withSnapshot(for: candidates, in: context) {
+                candidates.filter { item in
+                    (trackID == nil || item.trackID == trackID)
+                        && (item.applePlayCount == nil || item.applePlayCountState?.counters.contains { $0.isRecentlyPlayedCount == true } == true)
+                }
             }
             let ids = Set(items.map(\.trackID))
             guard !ids.isEmpty else { return 0 }
@@ -205,10 +220,13 @@ final class ApplePlayCountSyncService {
         guard !Task.isCancelled else { return 0 }
         var changed = 0
         do {
-            let items = try PlaylistItemRepository.allItems(in: context).filter { item in
-                guard trackID == nil || item.trackID == trackID else { return false }
-                let counters = item.applePlayCountState?.counters ?? []
-                return counters.isEmpty || counters.contains { $0.isAlternativeCount }
+            let candidates = try PlaylistItemRepository.allItems(in: context)
+            let items = ApplePlayCountRepository.withSnapshot(for: candidates, in: context) {
+                candidates.filter { item in
+                    guard trackID == nil || item.trackID == trackID else { return false }
+                    let counters = item.applePlayCountState?.counters ?? []
+                    return counters.isEmpty || counters.contains { $0.isAlternativeCount }
+                }
             }
             let playlists = try PlaylistRepository.allPlaylists(in: context).firstValueDictionary(keyedBy: \.id)
             let ids = Set(items.flatMap { item in
@@ -218,16 +236,10 @@ final class ApplePlayCountSyncService {
             for id in ids {
                 try Task.checkCancellation()
                 do {
-                    let observations: [MusicLibraryPlaybackObservation]
-                    if let cached = playlistResults[id], startedAt.timeIntervalSince(cached.date) < 60 {
-                        // Never replay an observation captured before a stats reset.
-                        changed += try persist(cached.observations, startedAt: cached.date, in: context)
-                        continue
-                    }
-                    observations = try await fetchPlaylist(id)
+                    guard let result = try await playlistObservations(id, startedAt: startedAt) else { continue }
                     try Task.checkCancellation()
-                    playlistResults[id] = (startedAt, observations)
-                    changed += try persist(observations, startedAt: startedAt, in: context)
+                    let observations = result.1
+                    changed += try persist(observations, startedAt: result.0, in: context)
                     TrackMetadataDiagnostics.log("Playlist Apple play counts: \(id), \(observations.count) songs, \(observations.filter { $0.snapshot.playCount != nil }.count) counts")
                 } catch {
                     if Task.isCancelled { break }
@@ -240,18 +252,41 @@ final class ApplePlayCountSyncService {
         return changed
     }
 
+    private func playlistObservations(_ id: String, startedAt: Date) async throws -> (Date, [MusicLibraryPlaybackObservation])? {
+        if let cached = playlistResults[id], startedAt.timeIntervalSince(cached.date) < 60 {
+            return (cached.date, cached.observations)
+        }
+        if let task = playlistInFlight[id] { return try await task.value }
+        if let attempted = playlistAttempts[id], startedAt.timeIntervalSince(attempted) < 60 { return nil }
+        playlistAttempts[id] = startedAt
+        let task = Task { (startedAt, try await fetchPlaylist(id)) }
+        playlistInFlight[id] = task
+        defer { playlistInFlight[id] = nil }
+        let result = try await task.value
+        playlistResults[id] = (result.0, result.1)
+        return result
+    }
+
     private func unresolvedTracks(in context: ModelContext) throws -> [TrackRecord] {
-        let ids = Set(try PlaylistItemRepository.allItems(in: context).filter { $0.applePlayCount == nil }.map(\.trackID))
+        let items = try PlaylistItemRepository.allItems(in: context)
+        let ids = ApplePlayCountRepository.withSnapshot(for: items, in: context) {
+            Set(items.filter { $0.applePlayCount == nil }.map(\.trackID))
+        }
         return try TrackRecordRepository.allTracks(in: context).filter { ids.contains($0.id) }
     }
 
     private static func discover(_ track: TrackRecord, in library: [ApplePlayCountLibraryEntry],
                                  allowRecordingCode: Bool = true) -> [MusicLibraryPlaybackObservation] {
+        discover(track, index: ApplePlayCountMatcher.Index(library), allowRecordingCode: allowRecordingCode)
+    }
+
+    private static func discover(_ track: TrackRecord, index: ApplePlayCountMatcher.Index,
+                                 allowRecordingCode: Bool = true) -> [MusicLibraryPlaybackObservation] {
         guard !track.isDeleted else { return [] }
         let target = ApplePlayCountMatchTrack(aliases: PlaybackQueueBuilder.musicItemIDs(for: track),
             title: track.title, artist: track.artistName, album: track.albumTitle,
             duration: track.durationSeconds, isrc: track.isrc)
-        return ApplePlayCountMatcher.matches(target, in: library, allowRecordingCode: allowRecordingCode).map {
+        return index.matches(target, allowRecordingCode: allowRecordingCode).map {
             var observation = $0
             observation.matchedTrackID = track.id
             observation.aliases = Array(Set(observation.aliases + target.aliases)).sorted()
@@ -300,6 +335,16 @@ final class ApplePlayCountSyncService {
     @discardableResult
     static func apply(_ observations: [MusicLibraryPlaybackObservation], startedAt: Date,
                       in context: ModelContext) throws -> Int {
+        let items = try PlaylistItemRepository.allItems(in: context)
+        let span = PerformanceSpan(.playCountApply)
+        defer { span.finish(magnitude: Double(items.count)) }
+        return try ApplePlayCountRepository.withSnapshot(for: items, in: context) {
+            try applyUsingSnapshot(observations, startedAt: startedAt, items: items, in: context)
+        }
+    }
+
+    private static func applyUsingSnapshot(_ observations: [MusicLibraryPlaybackObservation], startedAt: Date,
+                                          items: [PlaylistItemRecord], in context: ModelContext) throws -> Int {
         // Resolve identities again after the await: merges and new aliases may
         // have changed ownership while the library request was outstanding.
         let tracks = try TrackRecordRepository.allTracks(in: context).firstValueDictionary(keyedBy: \.id)
@@ -334,10 +379,10 @@ final class ApplePlayCountSyncService {
             }
         }
         var changed = 0
-        for item in try PlaylistItemRepository.allItems(in: context) {
-            guard let track = tracks[item.trackID],
-                  item.applePlayCountResetAt.map({ $0 <= startedAt }) ?? true else { continue }
+        for item in items {
+            guard let track = tracks[item.trackID] else { continue }
             let previous = item.applePlayCountState
+            guard previous.map({ $0.resetID.isEmpty || $0.resetAt <= startedAt }) ?? true else { continue }
             let aliases = Set(PlaybackQueueBuilder.musicItemIDs(for: track)
                 + (previous?.counters.map(\.musicItemID) ?? []))
             var state = previous

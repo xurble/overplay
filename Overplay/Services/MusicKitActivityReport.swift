@@ -50,6 +50,9 @@ nonisolated enum MusicKitActivityReport {
         var total: Int
         var failures: Int
         var maximumMagnitude: Double?
+        var timedCount: Int = 0
+        var totalDurationMilliseconds: Double = 0
+        var maximumDurationMilliseconds: Double = 0
     }
 
     enum FailureClassification: String, Equatable, Sendable {
@@ -164,7 +167,7 @@ nonisolated enum MusicKitActivityReport {
         return Summary(
             generatedAt: now,
             observationStartedAt: snapshot.observationStartedAt,
-            totalCalls: rates.reduce(0) { $0 + $1.total },
+            totalCalls: rates.filter { $0.operation.category != .performance }.reduce(0) { $0 + $1.total },
             rates: rates,
             failures: failures,
             concerns: concerns(
@@ -201,6 +204,9 @@ nonisolated enum MusicKitActivityReport {
             if age < 60 { rate.lastHour += tally.count }
             rate.total += tally.count
             rate.failures += tally.failureCount
+            rate.timedCount += tally.timedCount ?? 0
+            rate.totalDurationMilliseconds += tally.totalDurationMilliseconds ?? 0
+            rate.maximumDurationMilliseconds = max(rate.maximumDurationMilliseconds, tally.maximumDurationMilliseconds ?? 0)
             if let magnitude = tally.maximumMagnitude {
                 rate.maximumMagnitude = max(rate.maximumMagnitude ?? magnitude, magnitude)
             }
@@ -498,7 +504,9 @@ nonisolated enum MusicKitActivityReport {
         )
 
         for operation in MusicKitActivityOperation.allCases {
-            guard let timed = timedByOperation[operation],
+            // Local slow samples are threshold-selected, unlike API events;
+            // comparing their halves would manufacture a degradation signal.
+            guard operation.category != .performance, let timed = timedByOperation[operation],
                   timed.count >= latencyMinimumSamplesPerSide * 2 else {
                 continue
             }
@@ -608,6 +616,10 @@ nonisolated enum MusicKitActivityReport {
                         + "\(rate.lastMinute) / \(rate.lastFiveMinutes) / \(rate.lastHour) / \(rate.total)"
                     if rate.failures > 0 {
                         line += ", \(rate.failures) failed"
+                    }
+                    if rate.timedCount > 0 {
+                        line += String(format: " timed=%d avg=%.1fms max=%.1fms", rate.timedCount,
+                                       rate.totalDurationMilliseconds / Double(rate.timedCount), rate.maximumDurationMilliseconds)
                     }
                     if let maximum = rate.maximumMagnitude {
                         line += ", max size \(Int(maximum))"

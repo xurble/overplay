@@ -4,6 +4,13 @@ import UIKit
 /// Shared layout for One True Playlist, Triage, and Retired track lists.
 @MainActor
 enum CarPlayPlaylistSectionFactory {
+    static func trackItem(title: String, detail: String?, image: UIImage?, isPlaying: Bool) -> CPListItem {
+        let item = CPListItem(text: title, detailText: detail, image: image)
+        item.isPlaying = isPlaying
+        item.playingIndicatorLocation = .trailing
+        return item
+    }
+
     static func sections(
         trackItems: [CPListItem],
         scope: PlaylistPlaybackScope,

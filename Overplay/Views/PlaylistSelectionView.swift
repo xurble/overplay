@@ -131,7 +131,7 @@ struct PlaylistSelectionView: View {
             HStack(alignment: .top) {
                 ArtworkView(
                     urlString: representativeArtworkURL(for: playlist),
-                    pixelSize: 96,
+                    pixelSize: 128,
                     playlistID: playlist.musicPlaylistID,
                     cornerRadius: 8
                 )

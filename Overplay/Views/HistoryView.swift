@@ -139,7 +139,7 @@ private struct HistoryEventRowView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            ArtworkView(urlString: row.artworkURLTemplate, pixelSize: 144, cornerRadius: 0)
+            ArtworkView(urlString: row.artworkURLTemplate, pixelSize: 128, cornerRadius: 0)
                 .frame(width: 72, height: 72)
 
             VStack(alignment: .leading, spacing: 6) {

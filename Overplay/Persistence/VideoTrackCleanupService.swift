@@ -28,11 +28,15 @@ enum VideoTrackCleanupService {
     @discardableResult
     static func removeVideos(
         knownVideoIDs: Set<String> = [],
+        inspectPlaybackData: Bool = true,
         in context: ModelContext,
         defaults: UserDefaults = .standard
     ) throws -> Int {
+        let span = PerformanceSpan(.videoCleanup)
+        defer { span.finish(detail: inspectPlaybackData ? "full scan" : "known IDs") }
+        guard inspectPlaybackData || !knownVideoIDs.isEmpty else { return 0 }
         let videos = try TrackRecordRepository.allTracks(in: context).filter { track in
-            VideoTrackPolicy.isVideo(playbackData: track.musicKitPlaybackData)
+            (inspectPlaybackData && VideoTrackPolicy.isVideo(playbackData: track.musicKitPlaybackData))
                 || !knownVideoIDs.isDisjoint(with:
                     [track.catalogID, track.libraryID].compactMap { $0 } + track.identityAliases)
         }

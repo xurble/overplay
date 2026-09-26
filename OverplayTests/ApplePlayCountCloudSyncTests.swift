@@ -50,6 +50,47 @@ struct ApplePlayCountCloudSyncTests {
         try destination.save()
     }
 
+    @Test("scoped evidence agrees with live reads, sees appends, and does not retain stale state")
+    func scopedEvidence() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let first = try item(in: context, id: UUID())
+        let second = try item(in: context, id: UUID(), libraryID: "i.other")
+        let initial = state(origin: first.id, latest: 13)
+        ApplePlayCountRepository.append(initial, for: first.id, in: context)
+        let expectedCount = first.applePlayCount
+        let expectedState = first.applePlayCountState
+        ApplePlayCountRepository.withSnapshot(for: [first], in: context) {
+            #expect(first.applePlayCount == expectedCount)
+            #expect(first.applePlayCountState == expectedState)
+            #expect(second.applePlayCount == nil)
+            let newer = state(origin: first.id, latest: 16)
+            ApplePlayCountRepository.append(newer, for: first.id, in: context)
+            #expect(first.applePlayCount == 7)
+            ApplePlayCountRepository.withSnapshot(for: [second], in: context) {
+                ApplePlayCountRepository.append(state(origin: second.id, latest: 12), for: second.id, in: context)
+                #expect(second.applePlayCount == 3)
+            }
+            #expect(second.applePlayCount == 3)
+        }
+        ApplePlayCountRepository.append(state(origin: first.id, latest: 18), for: first.id, in: context)
+        #expect(first.applePlayCount == 9)
+    }
+
+    @Test("new donor links invalidate scoped evidence, including unloaded lineage")
+    func scopedEvidenceLink() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let keeper = try item(in: context, id: UUID())
+        let donor = try item(in: context, id: UUID(), libraryID: "i.donor")
+        ApplePlayCountRepository.append(state(origin: donor.id, latest: 13), for: donor.id, in: context)
+        ApplePlayCountRepository.withSnapshot(for: [keeper], in: context) {
+            #expect(keeper.applePlayCountState == nil)
+            ApplePlayCountRepository.link(donorID: donor.id, keeperID: keeper.id, in: context)
+            #expect(keeper.applePlayCountState == donor.applePlayCountState)
+        }
+    }
+
     @Test("Different device totals converge to the highest value, never their sum", arguments: [false, true])
     func differentTotals(reverse: Bool) throws {
         let phone = try OverplayTestSupport.makeModelContainer()

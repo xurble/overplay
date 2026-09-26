@@ -53,8 +53,22 @@ final class PlaybackController {
     var elapsedSeconds: Double = 0
     var durationSeconds: Double?
     var isPlaying = false
-    var currentPlaylistID: String?
+    var currentPlaylistID: String? {
+        didSet {
+            guard currentPlaylistID != oldValue else { return }
+            let playlistID = currentPlaylistID
+            Task { await ArtworkCacheService.shared.protectPlaylist(playlistID) }
+        }
+    }
     var currentPlaylistScope: PlaylistPlaybackScope = .active
+    private struct CurrentRowUpdateKey: Equatable {
+        var revision: Date
+        var playlistID: UUID
+        var itemID: UUID?
+        var localID: String?
+        var musicID: String?
+    }
+    private var lastCurrentRowUpdateKey: CurrentRowUpdateKey?
     var activePlaylistSnapshot: ActivePlaylistSnapshot?
     var statusMessage: String?
     /// True while streaming delivery is failing (a frozen mid-track stream
@@ -303,16 +317,20 @@ final class PlaybackController {
     }
 
     func refreshPlayCountMetadata(context: ModelContext) {
+        let previousSnapshot = activePlaylistSnapshot
+        let previousVersion = playbackItemMetadataVersion
         // A foreground or CarPlay refresh may have written in another context.
         // Adopt its fresh row even if the item's persistent identity is equal.
         if let itemID = currentPlaylistItem?.id {
             currentPlaylistItem = try? PlaylistItemRepository.item(id: itemID, in: context)
         }
-        bumpPlaybackItemMetadataVersion()
         if let musicItemID = currentTrack?.id {
             syncPlaybackMetadata(for: musicItemID, trustedPlaylistItem: currentPlaylistItem, context: context)
         }
         rebuildActivePlaylistSnapshot(context: context)
+        if previousSnapshot != activePlaylistSnapshot, previousVersion == playbackItemMetadataVersion {
+            bumpPlaybackItemMetadataVersion()
+        }
     }
 
     func displayedPlaythroughCount(context: ModelContext) -> Int {
@@ -436,6 +454,8 @@ final class PlaybackController {
     /// Resolve account scope at queue handoff / foreground entry, never on the
     /// playback timer. Failure disables persistent matching for this session.
     private func refreshAssociationScope() async {
+        let span = PerformanceSpan(.playbackScopeResolution)
+        defer { span.finish() }
         scopeRefreshGeneration &+= 1
         let generation = scopeRefreshGeneration
         let scope = try? await loadAssociationScope()
@@ -631,6 +651,19 @@ final class PlaybackController {
         settings: OverplaySettings,
         context: ModelContext
     ) async {
+        await PerformanceSpan.$correlationID.withValue(UUID().uuidString) {
+            await selectPlaylistTrack(playlist, track: track, scope: scope, settings: settings, context: context)
+        }
+    }
+
+    private func selectPlaylistTrack(_ playlist: PlaylistRecord, track: TrackRecord,
+                                     scope: PlaylistPlaybackScope, settings: OverplaySettings, context: ModelContext) async {
+        let span = PerformanceSpan(.playbackSelection)
+        defer { span.finish() }
+        let reason = currentPlaylistID != playlist.musicPlaylistID ? "playlistMismatch"
+            : currentPlaylistScope != scope ? "scopeMismatch"
+            : activeQueueEntries.isEmpty ? "mappingEmpty" : "inQueueAttempt"
+        MusicKitActivityLog.shared.record(.playbackSelectionPath, detail: "\(PerformanceSpan.correlationID ?? "") \(reason)")
         // All playlist surfaces use an in-place jump when this queue is live.
         // Replacing it for a row tap can briefly play its first entry during
         // MusicKit's handoff, and discards the player's existing queue identity.
@@ -668,6 +701,7 @@ final class PlaybackController {
         // letting the caller build a fresh queue.
         await refresh(context: context)
         guard let target = activeQueueEntries.first(where: { $0.localTrackID == localTrackID }) else {
+            MusicKitActivityLog.shared.record(.playbackSelectionPath, detail: "\(PerformanceSpan.correlationID ?? "") targetMissingAfterReconciliation")
             return false
         }
 
@@ -712,6 +746,7 @@ final class PlaybackController {
             // The queue moved under us between reconciliation and the jump —
             // hand back to the caller rather than reporting a stall.
             guard (error as? PlaybackQueueEntryError) != .entryNotInQueue else {
+                MusicKitActivityLog.shared.record(.playbackSelectionPath, detail: "\(PerformanceSpan.correlationID ?? "") entryMissingInPlayer")
                 return false
             }
             reportDeliveryFailure(message: musicPlaybackFailureMessage(for: error))
@@ -734,13 +769,18 @@ final class PlaybackController {
     ) async {
         do {
             var startingTrackID = trackRecord?.id.uuidString
-            let queueEntries = try PlaybackQueueOrchestrator.orderedCachedQueueEntries(
+            let preparation = PerformanceSpan(.playbackQueuePreparation)
+            let queueEntries: [PlaybackQueueEntry]
+            do {
+                defer { preparation.finish() }
+                queueEntries = try PlaybackQueueOrchestrator.orderedCachedQueueEntries(
                 for: playlist.musicPlaylistID,
                 playerID: playerID,
                 startingTrackID: startingTrackID,
                 scope: scope,
                 in: context
-            )
+                )
+            }
             if shuffleBeforePlayback {
                 // Pick the initial song without changing the stored/displayed
                 // order. MusicKit owns the subsequent shuffled playback order.
@@ -885,6 +925,8 @@ final class PlaybackController {
             return .failed(error)
         }
 
+        let confirmation = PerformanceSpan(.playbackConfirmation)
+        defer { confirmation.finish() }
         let observationCount = max(transitionConfirmationPolicy.maximumObservationCount, 1)
         for observationIndex in 0..<observationCount {
             let currentEntry = player.currentEntry
@@ -1717,6 +1759,8 @@ final class PlaybackController {
         context: ModelContext,
         advancesTimedPolicies: Bool
     ) -> PlaybackDeliveryStallPolicy.Tick? {
+        let span = PerformanceSpan(.playbackSnapshot)
+        defer { span.finish(magnitude: Double(activeQueueEntries.count)) }
         // A user transition is mid-flight: reconciling identity now would
         // race the pending skip. Track time and play state only.
         if isPerformingTransition {
@@ -2888,16 +2932,20 @@ final class PlaybackController {
         members: [PendingQueueCorrelation], playlistID: String
     ) {
         guard let associationScope else { return }
+        var associations: [PlaybackAssociationStore.Association] = []
+        let membersByID = members.firstValueDictionary(keyedBy: \.localTrackID)
+        let snapshotsByID = snapshots.firstValueDictionary(keyedBy: \.id)
         for entry in entries where entry.matchSource == .metadata {
-            guard let member = members.first(where: { $0.localTrackID == entry.localTrackID }),
+            guard let member = membersByID[entry.localTrackID],
                   let localMetadata = member.metadata,
-                  let reportedMetadata = snapshots.first(where: { $0.id == entry.queueEntryID })?.metadata else { continue }
-            PlaybackAssociationStore.record(.init(
+                  let reportedMetadata = snapshotsByID[entry.queueEntryID]?.metadata else { continue }
+            associations.append(.init(
                 scope: associationScope, playerID: playerID, playlistID: playlistID,
                 localTrackID: entry.localTrackID, musicItemID: entry.queuedMusicItemID,
                 localMetadata: localMetadata, reportedMetadata: reportedMetadata, learnedAt: .now
-            ), defaults: localPlaybackDefaults)
+            ))
         }
+        PlaybackAssociationStore.record(associations, defaults: localPlaybackDefaults)
     }
 
     /// Only sampled for a queue decision, never for ordinary playback ticks.
@@ -3196,7 +3244,7 @@ final class PlaybackController {
                 pixelSize: 512,
                 playlistID: playlistID,
                 priority: .userInitiated,
-                protectedPlaylistID: playlistID
+                protectedPlaylistID: nil
             )
         }
     }
@@ -3849,6 +3897,8 @@ final class PlaybackController {
     }
 
     private func rebuildActivePlaylistSnapshot(context: ModelContext) {
+        let span = PerformanceSpan(.playlistSnapshotBuild)
+        defer { span.finish(magnitude: Double(activePlaylistSnapshot?.rows.count ?? 0)) }
         pruneRemovedQueueEntries(context: context)
         guard let currentPlaylistID,
               let playlist = try? currentPlaylist(in: context) else {
@@ -3860,7 +3910,7 @@ final class PlaybackController {
         do {
             let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
             let tracks = try TrackRecordRepository.tracks(ids: items.map(\.trackID), in: context)
-            activePlaylistSnapshot = ActivePlaylistSnapshot(
+            let candidate = ActivePlaylistSnapshot(
                 playlist: playlist,
                 items: items,
                 tracks: tracks,
@@ -3874,6 +3924,13 @@ final class PlaybackController {
                 currentMusicItemID: nowPlayingDisplayTrack?.id ?? currentTrack?.id
             )
             activePlaylistSnapshotNeedsRebuild = false
+            if let previous = activePlaylistSnapshot,
+               previous.playlistID == candidate.playlistID, previous.musicPlaylistID == candidate.musicPlaylistID,
+               previous.playbackScope == candidate.playbackScope, previous.rows == candidate.rows {
+                MusicKitActivityLog.shared.record(.playlistSnapshotUnchanged)
+                return
+            }
+            activePlaylistSnapshot = candidate
         } catch {
             statusMessage = "Playback is active, but refreshing the visible playlist failed: \(error.localizedDescription)"
         }
@@ -3885,6 +3942,11 @@ final class PlaybackController {
             return
         }
 
+        let key = CurrentRowUpdateKey(revision: activePlaylistSnapshot.updatedAt,
+            playlistID: activePlaylistSnapshot.playlistID, itemID: currentPlaylistItem?.id,
+            localID: nowPlayingDisplayLocalTrackID, musicID: nowPlayingDisplayTrack?.id ?? currentTrack?.id)
+        guard key != lastCurrentRowUpdateKey else { return }
+        lastCurrentRowUpdateKey = key
         let updatedSnapshot = activePlaylistSnapshot.updatingCurrentRow(
             currentPlaylistItemID: currentPlaylistItem?.id,
             currentLocalTrackID: nowPlayingDisplayLocalTrackID,

@@ -33,7 +33,8 @@ final class PeriodicPlaylistSyncService {
                 playlist,
                 in: context,
                 runIdentityMerge: false,
-                skipWhenRemoteUnchanged: true
+                skipWhenRemoteUnchanged: true,
+                runVideoCleanup: false
             )
         },
         mergeDuplicateTrackIdentities: @escaping @MainActor (ModelContext) async throws -> Void = { context in

@@ -70,6 +70,35 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     case playCountLookupResult
 
 
+    // Local performance work; distinct from Apple Music API calls.
+    case artworkMemoryHit
+    case artworkDiskHit
+    case artworkDecode
+    case artworkWorkWait
+    case artworkCacheWrite
+    case artworkRequestCoalesced
+    case artworkRetrySkipped
+    case playCountRefresh
+    case playCountApply
+    case playCountEvidenceRead
+    case playCountRefreshSkipped
+    case playCountDiscovery
+    case playbackSelection
+    case playbackSelectionPath
+    case playbackQueuePreparation
+    case playbackScopeResolution
+    case playbackSnapshot
+    case playbackConfirmation
+    case playerEntryAssignment
+    case playerSelectionPlay
+    case playlistSnapshotBuild
+    case playlistSnapshotUnchanged
+    case playlistPresentation
+    case playbackAssociationWrite
+    case artworkThemeGeneration
+    case artworkThemePersistence
+    case videoCleanup
+
     // System media surfaces.
     case nowPlayingInfoWrite
     case nowPlayingInfoWriteWhilePaused
@@ -90,6 +119,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case systemMediaSurface
         case asset
         case playbackDecision
+        case performance
 
         var title: String {
             switch self {
@@ -99,12 +129,15 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
             case .systemMediaSurface: "System media surfaces"
             case .asset: "Artwork downloads"
             case .playbackDecision: "Overplay playback decisions"
+            case .performance: "Local performance"
             }
         }
     }
 
     var category: Category {
         switch self {
+        case .artworkMemoryHit, .artworkDiskHit, .artworkDecode, .artworkWorkWait, .artworkCacheWrite, .artworkRequestCoalesced, .artworkRetrySkipped, .playCountRefresh, .playCountApply, .playCountEvidenceRead, .playCountRefreshSkipped, .playCountDiscovery, .playbackSelection, .playbackSelectionPath, .playbackQueuePreparation, .playbackScopeResolution, .playbackSnapshot, .playbackConfirmation, .playerEntryAssignment, .playerSelectionPlay, .playlistSnapshotBuild, .playlistSnapshotUnchanged, .playlistPresentation, .playbackAssociationWrite, .artworkThemeGeneration, .artworkThemePersistence, .videoCleanup:
+            .performance
         case .libraryPlaylistEnumeration, .libraryPlaylistLookup, .playlistTrackFetch,
              .catalogSearch, .catalogResourceFetch, .libraryTrackQuery, .recentlyPlayedQuery, .subscriptionCheck,
              .authorizationRequest:
@@ -132,6 +165,34 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
 
     var title: String {
         switch self {
+        case .artworkMemoryHit: "Artwork memory hit"
+        case .artworkDiskHit: "Artwork disk hit"
+        case .artworkDecode: "Artwork decode"
+        case .artworkWorkWait: "Artwork work wait"
+        case .artworkCacheWrite: "Artwork cache write"
+        case .artworkRequestCoalesced: "Artwork request coalesced"
+        case .artworkRetrySkipped: "Artwork retry skipped"
+        case .playCountRefresh: "Play count refresh"
+        case .playCountApply: "Play count apply"
+        case .playCountEvidenceRead: "Play count evidence read"
+        case .playCountRefreshSkipped: "Play count refresh skipped"
+        case .playCountDiscovery: "Play count discovery"
+        case .playbackSelection: "Playback selection"
+        case .playbackSelectionPath: "Playback selection path"
+        case .playbackQueuePreparation: "Playback queue preparation"
+        case .playbackScopeResolution: "Playback scope resolution"
+        case .playbackSnapshot: "Playback snapshot"
+        case .playbackConfirmation: "Playback confirmation"
+        case .playerEntryAssignment: "Player entry assignment"
+        case .playerSelectionPlay: "Player selection play"
+        case .playlistSnapshotBuild: "Playlist snapshot build"
+        case .playlistSnapshotUnchanged: "Playlist snapshot unchanged"
+        case .playlistPresentation: "Playlist presentation"
+        case .playbackAssociationWrite: "Playback association write"
+        case .artworkThemeGeneration: "Artwork theme generation"
+        case .artworkThemePersistence: "Artwork theme persistence"
+        case .videoCleanup: "Video cleanup"
+
         case .libraryPlaylistEnumeration: "Library playlist enumeration"
         case .libraryPlaylistLookup: "Library playlist lookup by id"
         case .playlistTrackFetch: "Playlist track fetch"
@@ -185,7 +246,11 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     /// 1 Hz monitor writes and per-track artwork fetches. They are always
     /// counted, but only listed individually when they fail or carry a note.
     var isHighFrequency: Bool {
-        switch self {
+        if category == .performance {
+            return self != .playbackSelection && self != .playbackSelectionPath
+                && self != .playbackScopeResolution && self != .playbackConfirmation
+        }
+        return switch self {
         case .nowPlayingInfoWrite, .nowPlayingInfoWriteWhilePaused, .nowPlayingInfoClear,
              .playerModeReset, .playerModeResetSkipped, .artworkDownload,
              .playbackQueueInvalidation, .playbackStateInvalidation, .playbackObservationCoalesced,
@@ -297,6 +362,9 @@ nonisolated struct MusicKitActivityTally: Codable, Equatable, Sendable {
     var count: Int
     var failureCount: Int
     var maximumMagnitude: Double?
+    var timedCount: Int? = nil
+    var totalDurationMilliseconds: Double? = nil
+    var maximumDurationMilliseconds: Double? = nil
 
     static func minuteIndex(for date: Date) -> Int {
         Int((date.timeIntervalSince1970 / 60).rounded(.down))

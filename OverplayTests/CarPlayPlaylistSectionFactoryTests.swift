@@ -1,10 +1,25 @@
 import CarPlay
+import UIKit
 import Testing
 @testable import Overplay
 
 @MainActor
 @Suite("CarPlay playlist sections")
 struct CarPlayPlaylistSectionFactoryTests {
+    @Test("track artwork and trailing now-playing indicator coexist")
+    func artworkAndIndicator() throws {
+        let image = try #require(UIImage(data: artworkTestData()))
+        let item = CarPlayPlaylistSectionFactory.trackItem(title: "Song", detail: "Artist", image: image, isPlaying: true)
+        #expect(item.image != nil)
+        #expect(item.isPlaying)
+        #expect(item.playingIndicatorLocation == .trailing)
+        let missing = CarPlayPlaylistSectionFactory.trackItem(title: "Other", detail: nil, image: nil, isPlaying: false)
+        #expect(missing.image == nil)
+        missing.setImage(image)
+        #expect(missing.image != nil)
+        #expect(!missing.isPlaying)
+    }
+
     @Test("Shuffle and Play precedes the unchanged track rows", arguments: [PlaylistPlaybackScope.active, .retired])
     func shuffleComesFirst(scope: PlaylistPlaybackScope) throws {
         let tracks = [CPListItem(text: "First", detailText: nil), CPListItem(text: "Second", detailText: nil)]

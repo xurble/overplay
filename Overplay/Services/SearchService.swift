@@ -52,7 +52,7 @@ final class SearchService {
                     title: $0.title,
                     artistName: $0.artistName,
                     albumTitle: $0.albumTitle,
-                    artworkURL: $0.artwork?.url(width: 160, height: 160)?.absoluteString
+                    artworkURL: $0.artwork?.url(width: 512, height: 512)?.absoluteString
                 )
             }
             message = results.isEmpty ? "No songs found." : nil

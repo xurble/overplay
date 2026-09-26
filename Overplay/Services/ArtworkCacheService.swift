@@ -1,5 +1,7 @@
 import CryptoKit
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 nonisolated struct ArtworkCacheEntry: Codable, Equatable, Sendable {
     var cacheKey: String
@@ -9,6 +11,7 @@ nonisolated struct ArtworkCacheEntry: Codable, Equatable, Sendable {
     var lastAccessedAt: Date
     var byteSize: Int
     var fileName: String
+    var representationVersion: Int? = 2
 }
 
 nonisolated struct ArtworkCacheManifest: Codable, Equatable, Sendable {
@@ -26,13 +29,21 @@ actor ArtworkCacheService {
     private let manifestSaveDelay: Duration
     private let downloader: @Sendable (URL) async throws -> Data
     private var manifest: ArtworkCacheManifest?
-    private var inFlightDownloads: [String: Task<Data, Error>] = [:]
+    private var inFlightDownloads: [String: Task<[Int: Data], Error>] = [:]
+    private let downloadGate = ArtworkWorkGate(limit: 4)
+    private let processingGate = ArtworkWorkGate(limit: 2)
+    private var failedUntil: [String: Date] = [:]
+    private let failureRetryInterval: TimeInterval
+    private var protectedPlaylistID: String?
+    private let maxLargeCacheBytes: Int
     private var manifestSaveTask: Task<Void, Never>?
 
     init(
         rootDirectory: URL? = nil,
         maxCacheBytes: Int = ArtworkCacheService.defaultMaxCacheBytes,
         manifestSaveDelay: Duration = .seconds(1),
+        maxLargeCacheBytes: Int = 32 * 1024 * 1024,
+        failureRetryInterval: TimeInterval = 60,
         downloader: @escaping @Sendable (URL) async throws -> Data = ArtworkCacheService.download
     ) {
         let rootDirectory = rootDirectory ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -41,15 +52,21 @@ actor ArtworkCacheService {
         self.rootDirectory = rootDirectory
         self.manifestURL = rootDirectory.appendingPathComponent("manifest.json")
         self.maxCacheBytes = maxCacheBytes
+        self.maxLargeCacheBytes = maxLargeCacheBytes
+        self.failureRetryInterval = failureRetryInterval
         self.manifestSaveDelay = manifestSaveDelay
         self.downloader = downloader
     }
 
     static func cacheKey(sourceURL: String, pixelSize: Int) -> String {
-        let normalizedValue = "\(normalizedSourceURL(sourceURL))|\(pixelSize)"
+        let normalizedValue = "v2|\(normalizedSourceURL(sourceURL))|\(sizeBucket(pixelSize))"
         let digest = SHA256.hash(data: Data(normalizedValue.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
     }
+
+    nonisolated static func sizeBucket(_ size: Int) -> Int { size <= 128 ? 128 : 512 }
+
+    func protectPlaylist(_ playlistID: String?) { protectedPlaylistID = playlistID }
 
     static func normalizedSourceURL(_ sourceURL: String) -> String {
         sourceURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -63,6 +80,8 @@ actor ArtworkCacheService {
         accessedAt: Date = .now,
         protectedPlaylistID: String? = nil
     ) async -> URL? {
+        let pixelSize = Self.sizeBucket(pixelSize)
+        if let protectedPlaylistID { self.protectedPlaylistID = protectedPlaylistID }
         guard let sourceURL else { return nil }
         let normalizedSourceURL = Self.normalizedSourceURL(sourceURL)
         guard !normalizedSourceURL.isEmpty, let remoteURL = URL(string: normalizedSourceURL) else {
@@ -75,6 +94,7 @@ actor ArtworkCacheService {
 
             if let cachedURL = try refreshedCachedFileURL(key: key, playlistID: playlistID, accessedAt: accessedAt) {
                 scheduleManifestSave()
+                MusicKitActivityLog.shared.record(.artworkDiskHit, magnitude: Double(pixelSize))
                 return cachedURL
             }
 
@@ -89,31 +109,19 @@ actor ArtworkCacheService {
                 return fileURL(for: adopted)
             }
 
-            let data = try await downloadedData(for: remoteURL, cacheKey: key, priority: priority)
-            // The download suspended this actor, so other requests may have
-            // mutated the manifest meanwhile. Re-check fresh actor state.
-            if let cachedURL = try refreshedCachedFileURL(key: key, playlistID: playlistID, accessedAt: accessedAt) {
-                scheduleManifestSave()
-                return cachedURL
+            let variants = try await downloadedVariants(for: remoteURL, priority: priority)
+            // Another waiter may have persisted these while this actor suspended.
+            for size in [128, 512] {
+                let variantKey = Self.cacheKey(sourceURL: normalizedSourceURL, pixelSize: size)
+                if try refreshedCachedFileURL(key: variantKey, playlistID: playlistID, accessedAt: accessedAt) != nil { continue }
+                guard let data = variants[size] else { continue }
+                let entry = try writeArtwork(data, sourceURL: normalizedSourceURL, pixelSize: size,
+                    cacheKey: variantKey, playlistID: playlistID, accessedAt: accessedAt)
+                try withManifest { $0.entries[variantKey] = entry }
             }
-
-            let entry = try writeArtwork(
-                data,
-                sourceURL: normalizedSourceURL,
-                pixelSize: pixelSize,
-                cacheKey: key,
-                playlistID: playlistID,
-                accessedAt: accessedAt
-            )
-            try withManifest { manifest in
-                manifest.entries[key] = entry
-                if let playlistID {
-                    manifest.playlistUsage[playlistID] = accessedAt
-                }
-            }
-            try enforceCacheLimit(protectedPlaylistID: protectedPlaylistID)
+            try enforceCacheLimit(protectedPlaylistID: self.protectedPlaylistID, requestedKey: key)
             scheduleManifestSave()
-            return fileURL(for: entry)
+            return try refreshedCachedFileURL(key: key, playlistID: playlistID, accessedAt: accessedAt)
         } catch {
             return nil
         }
@@ -122,7 +130,8 @@ actor ArtworkCacheService {
     func cachedArtworkFileURL(
         for sourceURL: String?,
         pixelSize: Int
-    ) async -> URL? {
+    ) -> URL? {
+        let pixelSize = Self.sizeBucket(pixelSize)
         guard let sourceURL else { return nil }
         let normalizedSourceURL = Self.normalizedSourceURL(sourceURL)
         guard !normalizedSourceURL.isEmpty, URL(string: normalizedSourceURL) != nil else {
@@ -229,17 +238,82 @@ actor ArtworkCacheService {
         return data
     }
 
-    private func downloadedData(for url: URL, cacheKey: String, priority: TaskPriority) async throws -> Data {
-        if let inFlightDownload = inFlightDownloads[cacheKey] {
-            return try await inFlightDownload.value
+    private func downloadedVariants(for url: URL, priority: TaskPriority) async throws -> [Int: Data] {
+        let key = url.absoluteString
+        if let task = inFlightDownloads[key] {
+            MusicKitActivityLog.shared.record(.artworkRequestCoalesced)
+            return try await task.value
         }
+        if let deadline = failedUntil[key], deadline > .now {
+            MusicKitActivityLog.shared.record(.artworkRetrySkipped)
+            throw URLError(.resourceUnavailable)
+        }
+        let largeFile = cachedArtworkFileURL(for: key, pixelSize: 512)
+        let task = Task(priority: priority) {
+            let wait = PerformanceSpan(.artworkWorkWait)
+            await downloadGate.acquire(priority: priority)
+            wait.finish(detail: "download")
+            let data: Data
+            do {
+                if let largeFile {
+                    data = try await Task.detached(priority: priority) { try Data(contentsOf: largeFile) }.value
+                } else {
+                    data = try await downloader(url)
+                }
+            } catch {
+                await downloadGate.release()
+                throw error
+            }
+            await processingGate.acquire(priority: priority)
+            let result = await Task.detached(priority: priority) {
+                Result { try Self.makeVariants(data) }
+            }.value
+            await processingGate.release()
+            await downloadGate.release()
+            return try result.get()
+        }
+        inFlightDownloads[key] = task
+        defer { inFlightDownloads[key] = nil }
+        do {
+            let result = try await task.value
+            failedUntil[key] = nil
+            return result
+        } catch {
+            failedUntil = failedUntil.filter { $0.value > .now }
+            failedUntil[key] = Date.now.addingTimeInterval(failureRetryInterval)
+            throw error
+        }
+    }
 
-        let downloadTask = Task(priority: priority) {
-            try await downloader(url)
+    nonisolated static func makeVariants(_ data: Data) throws -> [Int: Data] {
+        let span = PerformanceSpan(.artworkDecode)
+        defer { span.finish(magnitude: Double(data.count), detail: "disk variants 128/512") }
+        guard let source = CGImageSourceCreateWithData(data as CFData,
+            [kCGImageSourceShouldCache: false] as CFDictionary) else { throw URLError(.cannotDecodeContentData) }
+        var variants: [Int: Data] = [:]
+        for size in [128, 512] {
+            let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: size]
+            guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+                throw URLError(.cannotDecodeContentData)
+            }
+            let output = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil) else {
+                throw URLError(.cannotDecodeContentData)
+            }
+            CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
+            guard CGImageDestinationFinalize(destination) else { throw URLError(.cannotDecodeContentData) }
+            variants[size] = output as Data
         }
-        inFlightDownloads[cacheKey] = downloadTask
-        defer { inFlightDownloads[cacheKey] = nil }
-        return try await downloadTask.value
+        return variants
+    }
+
+    /// Record visible usage without reloading the bytes. Disk writes remain batched.
+    func recordAccess(for sourceURL: String, pixelSize: Int, playlistID: String?) {
+        let key = Self.cacheKey(sourceURL: sourceURL, pixelSize: pixelSize)
+        _ = try? refreshedCachedFileURL(key: key, playlistID: playlistID, accessedAt: .now)
+        scheduleManifestSave()
     }
 
     /// All manifest mutations flow through this synchronous helper so a
@@ -350,6 +424,8 @@ actor ArtworkCacheService {
         playlistID: String?,
         accessedAt: Date
     ) throws -> ArtworkCacheEntry {
+        let span = PerformanceSpan(.artworkCacheWrite)
+        defer { span.finish(magnitude: Double(data.count)) }
         let fileName = "\(cacheKey).\(fileExtension(for: sourceURL))"
         let url = rootDirectory.appendingPathComponent(fileName)
         try data.write(to: url, options: [.atomic])
@@ -370,29 +446,33 @@ actor ArtworkCacheService {
         )
     }
 
-    private func enforceCacheLimit(protectedPlaylistID: String?) throws {
+    private func enforceCacheLimit(protectedPlaylistID: String?, requestedKey: String) throws {
         try withManifest { manifest in
             var totalBytes = manifest.entries.values.reduce(0) { $0 + $1.byteSize }
-            guard totalBytes > maxCacheBytes else { return }
+            var largeBytes = manifest.entries.values.filter { $0.pixelSize == 512 }.reduce(0) { $0 + $1.byteSize }
+            guard totalBytes > maxCacheBytes || largeBytes > maxLargeCacheBytes else { return }
 
             let entriesToEvict = manifest.entries.values
                 .filter { entry in
-                    guard let protectedPlaylistID else { return true }
+                    guard entry.cacheKey != requestedKey else { return false }
+                    // Protect playlist thumbnails. Large artwork has its own bounded LRU.
+                    guard entry.pixelSize == 128, let protectedPlaylistID else { return true }
                     return !entry.associatedPlaylistIDs.contains(protectedPlaylistID)
                 }
                 .sorted { left, right in
-                    let leftUsage = mostRecentPlaylistUsage(for: left, manifest: manifest)
-                    let rightUsage = mostRecentPlaylistUsage(for: right, manifest: manifest)
+                    let leftUsage = left.pixelSize == 512 ? left.lastAccessedAt : mostRecentPlaylistUsage(for: left, manifest: manifest)
+                    let rightUsage = right.pixelSize == 512 ? right.lastAccessedAt : mostRecentPlaylistUsage(for: right, manifest: manifest)
                     if leftUsage != rightUsage {
                         return leftUsage < rightUsage
                     }
                     return left.lastAccessedAt < right.lastAccessedAt
                 }
 
-            for entry in entriesToEvict where totalBytes > maxCacheBytes {
+            for entry in entriesToEvict where totalBytes > maxCacheBytes || (entry.pixelSize == 512 && largeBytes > maxLargeCacheBytes) {
                 try? FileManager.default.removeItem(at: fileURL(for: entry))
                 manifest.entries[entry.cacheKey] = nil
                 totalBytes -= entry.byteSize
+                if entry.pixelSize == 512 { largeBytes -= entry.byteSize }
             }
         }
     }
@@ -408,11 +488,7 @@ actor ArtworkCacheService {
             .max() ?? entry.lastAccessedAt
     }
 
-    private func fileExtension(for sourceURL: String) -> String {
-        guard let url = URL(string: sourceURL) else { return "img" }
-        let ext = url.pathExtension.lowercased()
-        return ext.isEmpty ? "img" : ext
-    }
+    private func fileExtension(for sourceURL: String) -> String { "jpg" }
 
     private func fileURL(for entry: ArtworkCacheEntry) -> URL {
         rootDirectory.appendingPathComponent(entry.fileName)
@@ -434,7 +510,12 @@ actor ArtworkCacheService {
         }
 
         let data = try Data(contentsOf: manifestURL)
-        let manifest = try JSONDecoder().decode(ArtworkCacheManifest.self, from: data)
+        var manifest = try JSONDecoder().decode(ArtworkCacheManifest.self, from: data)
+        // Old entries only labelled their size; their bytes were unbounded sources.
+        for entry in manifest.entries.values where entry.representationVersion != 2 {
+            try? FileManager.default.removeItem(at: fileURL(for: entry))
+            manifest.entries[entry.cacheKey] = nil
+        }
         self.manifest = manifest
         return manifest
     }

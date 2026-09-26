@@ -1,70 +1,10 @@
-import ImageIO
 import SwiftUI
-
-private struct DecodedArtworkImage: @unchecked Sendable {
-    var image: CGImage
-
-    nonisolated init(image: CGImage) {
-        self.image = image
-    }
-}
-
-private actor DecodedArtworkImageCache {
-    static let shared = DecodedArtworkImageCache()
-
-    private let maxImageCount = 300
-    private var images: [String: DecodedArtworkImage] = [:]
-    private var keysInAccessOrder: [String] = []
-
-    func image(for key: String) -> DecodedArtworkImage? {
-        guard let image = images[key] else { return nil }
-        markAccessed(key)
-        return image
-    }
-
-    func store(_ image: DecodedArtworkImage, for key: String) {
-        images[key] = image
-        markAccessed(key)
-
-        while keysInAccessOrder.count > maxImageCount {
-            let expiredKey = keysInAccessOrder.removeFirst()
-            images[expiredKey] = nil
-        }
-    }
-
-    private func markAccessed(_ key: String) {
-        keysInAccessOrder.removeAll { $0 == key }
-        keysInAccessOrder.append(key)
-    }
-}
-
-nonisolated private func decodedArtworkImage(contentsOf url: URL, maxPixelSize: Int) -> DecodedArtworkImage? {
-    let sourceOptions: [CFString: Any] = [
-        kCGImageSourceShouldCache: false
-    ]
-    guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions as CFDictionary) else {
-        return nil
-    }
-
-    let thumbnailOptions: [CFString: Any] = [
-        kCGImageSourceCreateThumbnailFromImageAlways: true,
-        kCGImageSourceCreateThumbnailWithTransform: true,
-        kCGImageSourceShouldCacheImmediately: true,
-        kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
-    ]
-    guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) else {
-        return nil
-    }
-
-    return DecodedArtworkImage(image: image)
-}
 
 struct ArtworkView: View {
     var urlString: String?
     var pixelSize: Int = 512
     var playlistID: String?
     var cornerRadius: CGFloat = 22
-    var loadsImmediately = true
 
     @State private var image: CGImage?
     @State private var loadedCacheIdentity: String?
@@ -78,14 +18,18 @@ struct ArtworkView: View {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(.white.opacity(0.18), lineWidth: 1)
             }
-            .task(id: loadIdentity) {
+            .onDisappear {
+                image = nil
+                loadedCacheIdentity = nil
+            }
+            .task(id: cacheIdentity) {
                 await loadArtwork()
             }
     }
 
     private var artworkContent: some View {
         Group {
-            if let image {
+            if let image = displayedImage {
                 Image(decorative: image, scale: 1)
                     .resizable()
                     .scaledToFill()
@@ -109,60 +53,38 @@ struct ArtworkView: View {
     }
 
     private var cacheIdentity: String {
-        "\(urlString ?? "")|\(pixelSize)|\(playlistID ?? "")"
+        "\(urlString ?? "")|\(ArtworkCacheService.sizeBucket(pixelSize))"
     }
 
-    private var loadIdentity: String {
-        "\(cacheIdentity)|\(loadsImmediately)"
+    private var displayedImage: CGImage? {
+        if loadedCacheIdentity == cacheIdentity, let image { return image }
+        return ArtworkImagePipeline.shared.cachedImage(for: urlString, size: pixelSize)
+            ?? ArtworkImagePipeline.shared.cachedImage(for: urlString, size: 128)
     }
 
     private func loadArtwork() async {
-        guard loadsImmediately else { return }
-
-        let cacheIdentity = cacheIdentity
-        if let cachedImage = await DecodedArtworkImageCache.shared.image(for: cacheIdentity) {
-            await MainActor.run {
-                image = cachedImage.image
-                loadedCacheIdentity = cacheIdentity
-            }
-            return
+        let identity = cacheIdentity
+        if loadedCacheIdentity != identity {
+            image = nil
+            loadedCacheIdentity = identity
         }
-
-        await MainActor.run {
-            if loadedCacheIdentity != cacheIdentity {
-                image = nil
-                loadedCacheIdentity = cacheIdentity
-            }
+        let pipeline = ArtworkImagePipeline.shared
+        if let ready = pipeline.cachedImage(for: urlString, size: pixelSize) {
+            image = ready
+            loadedCacheIdentity = identity
+        } else if ArtworkCacheService.sizeBucket(pixelSize) == 512 {
+            // Keep a useful thumbnail visible throughout the large-image request.
+            let thumbnail = await pipeline.image(for: urlString, size: 128, playlistID: playlistID)
+            guard !Task.isCancelled, identity == cacheIdentity else { return }
+            image = thumbnail
+            loadedCacheIdentity = identity
         }
-        guard let urlString else { return }
-
-        let fileURL: URL?
-        if let cachedFileURL = await ArtworkCacheService.shared.cachedArtworkFileURL(
-            for: urlString,
-            pixelSize: pixelSize
-        ) {
-            fileURL = cachedFileURL
-        } else {
-            fileURL = await ArtworkCacheService.shared.artworkFileURL(
-                for: urlString,
-                pixelSize: pixelSize,
-                playlistID: playlistID
-            )
-        }
-        guard !Task.isCancelled, let fileURL else { return }
-
-        let pixelSize = pixelSize
-        let loadedImage = await Task.detached(priority: .utility) {
-            decodedArtworkImage(contentsOf: fileURL, maxPixelSize: pixelSize)
-        }.value
-        guard !Task.isCancelled, let loadedImage else { return }
-
-        await DecodedArtworkImageCache.shared.store(loadedImage, for: cacheIdentity)
-        await MainActor.run {
-            image = loadedImage.image
-            loadedCacheIdentity = cacheIdentity
-        }
+        let result = await pipeline.image(for: urlString, size: pixelSize, playlistID: playlistID)
+        guard !Task.isCancelled, identity == cacheIdentity else { return }
+        if let result { image = result }
+        loadedCacheIdentity = identity
     }
+
 }
 
 #Preview {

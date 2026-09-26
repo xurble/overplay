@@ -173,7 +173,7 @@ enum TrackRecordRepository {
         assign(artistName, to: \.artistName, on: track, didChange: &didChange, artworkThemeInputsChanged: &artworkThemeInputsChanged)
         assign(albumTitle, to: \.albumTitle, on: track, didChange: &didChange, artworkThemeInputsChanged: &artworkThemeInputsChanged)
 
-        if track.artworkURLTemplate == nil, let artworkURLTemplate {
+        if let artworkURLTemplate {
             assign(artworkURLTemplate, to: \.artworkURLTemplate, on: track, didChange: &didChange, artworkThemeInputsChanged: &artworkThemeInputsChanged)
         }
 

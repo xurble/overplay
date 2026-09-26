@@ -34,7 +34,6 @@ private struct PlaylistManagementContentView: View {
 
     @State private var viewModel = PlaylistManagementViewModel()
     @State private var tracks: [TrackRecord] = []
-    @State private var isScrolling = false
     let selectedScope: PlaylistPlaybackScope
     // Memoized row build: body re-runs for reasons that don't change the
     // rows (scroll phase, messages), and rebuilding every presentation
@@ -149,9 +148,6 @@ private struct PlaylistManagementContentView: View {
         }
         .listStyle(.plain)
         .miniPlayerScrollContentInset()
-        .onScrollPhaseChange { _, phase in
-            isScrolling = phase.isScrolling
-        }
         .navigationTitle(selectedScope == .retired ? "Retired" : playlist.name)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: playlist.musicPlaylistID) {
@@ -235,32 +231,54 @@ private struct PlaylistManagementContentView: View {
         )
     }
 
-    private var playlistTrackIDsKey: String {
-        playlistItems
-            .map {
-                "\($0.trackID.uuidString):\($0.updatedAt.timeIntervalSinceReferenceDate):\($0.evictedAt?.timeIntervalSinceReferenceDate ?? 0):\($0.sourceMusicPlaylistIDs.joined(separator: ","))"
-            }
-            .sorted()
-            .joined(separator: "|")
+    private var playlistTrackIDsKey: Set<UUID> { Set(playlistItems.map(\.trackID)) }
+
+    private struct ItemRevision: Equatable {
+        var id: UUID
+        var updatedAt: Date
+        var evictedAt: Date?
+        var sources: [String]
+    }
+    private struct SourceRevision: Equatable {
+        var id: UUID
+        var musicID: String
+        var name: String
+        var role: String
+    }
+    private struct TrackRevision: Equatable {
+        var id: UUID
+        var updatedAt: Date
+        var title: String
+        var artist: String
+        var album: String?
+        var artwork: String?
+    }
+    private struct DetailRevision: Equatable {
+        var playlistID: UUID
+        var playlistUpdatedAt: Date
+        var scope: PlaylistPlaybackScope
+        var items: [ItemRevision]
+        var sources: [SourceRevision]
+        var tracks: [TrackRevision]
+        var metadataVersion: Int
+        var modeVersion: Int
+        var currentPlaylist: String?
+        var currentTrack: String?
+        var snapshotDate: Date?
     }
 
-    /// Every input the row models are derived from. Reading the observable
-    /// controller versions here (from body) also keeps observation firing
-    /// when counters, order, or the current track change.
-    private var detailPresentationKey: String {
-        [
-            playlist.id.uuidString,
-            selectedScope.rawValue,
-            String(playlistItems.count),
-            playlistTrackIDsKey,
-            linkedPlaylists.map { "\($0.musicPlaylistID):\($0.name)" }.joined(separator: "|"),
-            String(tracks.count),
-            String(playbackController.playbackItemMetadataVersion),
-            String(playbackController.playbackModeVersion),
-            playbackController.currentPlaylistID ?? "none",
-            playbackController.nowPlayingDisplayLocalTrackID ?? "none",
-            playbackController.activePlaylistSnapshot.map { "\($0.updatedAt.timeIntervalSinceReferenceDate)" } ?? "none"
-        ].joined(separator: "-")
+    /// Typed revisions avoid sorting and formatting a playlist-sized string on
+    /// every body evaluation. Counter changes rebuild rows without refetching tracks.
+    private var detailPresentationKey: DetailRevision {
+        DetailRevision(playlistID: playlist.id, playlistUpdatedAt: playlist.updatedAt, scope: selectedScope,
+            items: playlistItems.map { ItemRevision(id: $0.id, updatedAt: $0.updatedAt, evictedAt: $0.evictedAt, sources: $0.sourceMusicPlaylistIDs) },
+            sources: linkedPlaylists.map { SourceRevision(id: $0.id, musicID: $0.musicPlaylistID, name: $0.name, role: $0.roleRawValue) },
+            tracks: tracks.map { TrackRevision(id: $0.id, updatedAt: $0.updatedAt, title: $0.title, artist: $0.artistName, album: $0.albumTitle, artwork: $0.artworkURLTemplate) },
+            metadataVersion: playbackController.playbackItemMetadataVersion,
+            modeVersion: playbackController.playbackModeVersion,
+            currentPlaylist: playbackController.currentPlaylistID,
+            currentTrack: playbackController.nowPlayingDisplayLocalTrackID,
+            snapshotDate: playbackController.activePlaylistSnapshot?.updatedAt)
     }
 
     private func reloadPlaylistTracks() {
@@ -289,8 +307,7 @@ private struct PlaylistManagementContentView: View {
             PlaylistTrackRowView(
                 summary: row.summary,
                 playlistID: playlist.musicPlaylistID,
-                isCurrent: row.isCurrent,
-                loadsArtworkImmediately: !isScrolling
+                isCurrent: row.isCurrent
             )
         }
         .buttonStyle(.plain)

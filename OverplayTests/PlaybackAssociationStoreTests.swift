@@ -4,6 +4,24 @@ import Testing
 
 @Suite("Validated playback ID associations")
 struct PlaybackAssociationStoreTests {
+    @Test("batch learning preserves sequential conflict handling and avoids duplicate records")
+    func batchLearning() throws {
+        let suite = "association-batch-" + UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let metadata = PlaybackTrackMatchMetadata(title: "Song", artist: "Artist")
+        let first = PlaybackAssociationStore.Association(scope: "scope", playerID: "player", playlistID: "list",
+            localTrackID: "first", musicItemID: "returned", localMetadata: metadata, reportedMetadata: metadata, learnedAt: .now)
+        var conflicting = first
+        conflicting.localTrackID = "other"
+        PlaybackAssociationStore.record([first, first], defaults: defaults)
+        let firstData = try #require(defaults.data(forKey: PlaybackAssociationStore.key))
+        #expect(try JSONDecoder().decode([PlaybackAssociationStore.Association].self, from: firstData).count == 1)
+        PlaybackAssociationStore.record([first, conflicting], defaults: defaults)
+        let conflictData = try #require(defaults.data(forKey: PlaybackAssociationStore.key))
+        #expect(try JSONDecoder().decode([PlaybackAssociationStore.Association].self, from: conflictData).isEmpty)
+    }
+
     @Test("association survives reload but is isolated by account, storefront, player and playlist")
     func persistAndScope() throws {
         let suite = "associations-" + UUID().uuidString

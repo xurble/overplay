@@ -13,7 +13,7 @@ struct PlaylistHomeRowView: View {
             ZStack(alignment: .bottomTrailing) {
                 ArtworkView(
                     urlString: artworkURLString,
-                    pixelSize: 96,
+                    pixelSize: 128,
                     playlistID: playlistID,
                     cornerRadius: 8
                 )

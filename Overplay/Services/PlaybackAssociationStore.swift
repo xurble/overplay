@@ -48,23 +48,31 @@ enum PlaybackAssociationStore {
     }
 
     static func record(_ association: Association, defaults: UserDefaults) {
-        var records = load(defaults)
-        let existing = records.filter {
-            $0.scope == association.scope && $0.playerID == association.playerID
-                && $0.playlistID == association.playlistID && $0.musicItemID == association.musicItemID
-        }
-        // Never replace a competing owner with a newer guess.
-        guard existing.allSatisfy({ $0.localTrackID == association.localTrackID }) else {
+        record([association], defaults: defaults)
+    }
+
+    static func record(_ associations: [Association], defaults: UserDefaults) {
+        guard !associations.isEmpty else { return }
+        let previous = load(defaults)
+        var records = previous
+        for association in associations {
+            let existing = records.filter {
+                $0.scope == association.scope && $0.playerID == association.playerID
+                    && $0.playlistID == association.playlistID && $0.musicItemID == association.musicItemID
+            }
+            // Keep the same competing-owner rejection as the single-record path.
+            guard existing.allSatisfy({ $0.localTrackID == association.localTrackID }) else {
+                records.removeAll { existing.contains($0) }
+                continue
+            }
+            if existing.contains(where: {
+                $0.localMetadata == association.localMetadata && $0.reportedMetadata == association.reportedMetadata
+            }) { continue }
             records.removeAll { existing.contains($0) }
-            save(records, defaults: defaults)
-            return
+            records.append(association)
+            if records.count > 2048 { records.removeFirst(records.count - 2048) }
         }
-        if existing.contains(where: {
-            $0.localMetadata == association.localMetadata && $0.reportedMetadata == association.reportedMetadata
-        }) { return }
-        records.removeAll { existing.contains($0) }
-        records.append(association)
-        save(Array(records.suffix(2048)), defaults: defaults)
+        if records != previous { save(records, defaults: defaults) }
     }
 
     static func clear(defaults: UserDefaults) { defaults.removeObject(forKey: key) }
@@ -76,6 +84,8 @@ enum PlaybackAssociationStore {
     }
 
     private static func save(_ records: [Association], defaults: UserDefaults) {
+        let span = PerformanceSpan(.playbackAssociationWrite)
+        defer { span.finish(magnitude: Double(records.count)) }
         guard let data = try? JSONEncoder().encode(records) else { return }
         defaults.set(data, forKey: key)
     }

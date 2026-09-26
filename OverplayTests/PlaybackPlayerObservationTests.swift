@@ -151,7 +151,9 @@ private final class ObservationSource {
 
 @MainActor
 private func eventually(_ predicate: () -> Bool) async throws {
-    let deadline = ContinuousClock.now + .seconds(2)
+    // Hundreds of MainActor tests share the executor in the full suite. This
+    // is a delivery/correctness assertion, not a two-second performance SLA.
+    let deadline = ContinuousClock.now + .seconds(10)
     while !predicate(), ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(1))
     }

@@ -26,6 +26,25 @@ struct MusicKitActivityLogTests {
         #expect(snapshot.events.map(\.operation) == [.playbackPeriodicStateChange, .playbackQueueObservationRebound])
     }
 
+    @Test("performance timings survive aggregation without inflating API call totals")
+    func performanceTimings() throws {
+        let log = makeLog()
+        log.record(.artworkDecode, duration: .milliseconds(10))
+        log.record(.artworkDecode, duration: .milliseconds(30))
+        log.record(.catalogSearch)
+        let snapshot = log.snapshot()
+        let tally = try #require(snapshot.tallies.first { $0.operation == .artworkDecode })
+        #expect(tally.timedCount == 2)
+        #expect(tally.totalDurationMilliseconds == 40)
+        #expect(tally.maximumDurationMilliseconds == 30)
+        #expect(!snapshot.events.contains { $0.operation == .artworkDecode })
+        let reloaded = try JSONDecoder().decode(MusicKitActivitySnapshot.self, from: JSONEncoder().encode(snapshot))
+        let rate = try #require(MusicKitActivityReport.operationRates(for: reloaded.tallies, now: .now).first { $0.operation == .artworkDecode })
+        #expect(rate.timedCount == 2)
+        #expect(rate.totalDurationMilliseconds == 40)
+        #expect(MusicKitActivityReport.summary(for: reloaded, now: .now).totalCalls == 1)
+    }
+
     // MARK: - Recording
 
     @Test("a recorded call is tallied into its own minute bucket")

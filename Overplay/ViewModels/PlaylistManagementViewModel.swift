@@ -101,47 +101,51 @@ final class PlaylistManagementViewModel {
         let visibleItems = visibleItems(for: playlist, playlistItems: playlistItems, scope: scope)
         let orderedItems = PlaylistDisplayOrder.orderedItems(visibleItems, state: playbackOrderState, scope: scope)
         let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
-        let rows = orderedItems.compactMap { item -> TrackRowPresentation? in
-            guard let track = tracksByID[item.trackID] else { return nil }
-            let isPlayableInScope = scope == .retired || item.isPlayable
+        let span = PerformanceSpan(.playlistPresentation)
+        defer { span.finish(magnitude: Double(orderedItems.count)) }
+        let rows = ApplePlayCountRepository.withSnapshot(for: orderedItems, in: orderedItems.first?.modelContext) {
+            orderedItems.compactMap { item -> TrackRowPresentation? in
+                guard let track = tracksByID[item.trackID] else { return nil }
+                let isPlayableInScope = scope == .retired || item.isPlayable
 
-            return TrackRowPresentation(
-                id: item.id,
-                item: item,
-                track: track,
-                trackID: track.id,
-                localTrackID: item.trackID.uuidString,
-                summary: TrackSummaryPresentation(
+                return TrackRowPresentation(
                     id: item.id,
-                    playlistID: item.playlistID,
+                    item: item,
+                    track: track,
                     trackID: track.id,
-                    title: track.title,
-                    artistName: track.artistName,
-                    albumTitle: track.albumTitle,
-                    artworkURLString: track.artworkURLTemplate,
-                    skipCount: item.skipCount,
-                    playthroughCount: item.playthroughCount,
-                    applePlayCount: item.applePlayCount,
-                    provenanceText: TrackSummaryPresentation.provenanceText(
-                        sourceMusicPlaylistIDs: item.sourceMusicPlaylistIDs,
-                        playlistRole: playlist.role,
-                        sourcePlaylists: sourcePlaylists
+                    localTrackID: item.trackID.uuidString,
+                    summary: TrackSummaryPresentation(
+                        id: item.id,
+                        playlistID: item.playlistID,
+                        trackID: track.id,
+                        title: track.title,
+                        artistName: track.artistName,
+                        albumTitle: track.albumTitle,
+                        artworkURLString: track.artworkURLTemplate,
+                        skipCount: item.skipCount,
+                        playthroughCount: item.playthroughCount,
+                        applePlayCount: item.applePlayCount,
+                        provenanceText: TrackSummaryPresentation.provenanceText(
+                            sourceMusicPlaylistIDs: item.sourceMusicPlaylistIDs,
+                            playlistRole: playlist.role,
+                            sourcePlaylists: sourcePlaylists
+                        ),
+                        isPlayable: isPlayableInScope,
+                        isRetired: item.evictedAt != nil
+                    ),
+                    isCurrent: isCurrentItem(
+                        item,
+                        track: track,
+                        playlist: playlist,
+                        currentPlaylistID: currentPlaylistID,
+                        currentPlaylistItem: currentPlaylistItem,
+                        currentLocalTrackID: currentLocalTrackID,
+                        currentTrack: currentTrack
                     ),
                     isPlayable: isPlayableInScope,
                     isRetired: item.evictedAt != nil
-                ),
-                isCurrent: isCurrentItem(
-                    item,
-                    track: track,
-                    playlist: playlist,
-                    currentPlaylistID: currentPlaylistID,
-                    currentPlaylistItem: currentPlaylistItem,
-                    currentLocalTrackID: currentLocalTrackID,
-                    currentTrack: currentTrack
-                ),
-                isPlayable: isPlayableInScope,
-                isRetired: item.evictedAt != nil
-            )
+                )
+            }
         }
         let builder = PlaylistPresentationBuilder(
             playlists: [playlist],

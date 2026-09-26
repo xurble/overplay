@@ -141,9 +141,10 @@ struct PlaylistSyncService {
         _ playlistRecord: PlaylistRecord,
         in context: ModelContext,
         runIdentityMerge: Bool = true,
-        skipWhenRemoteUnchanged: Bool = false
+        skipWhenRemoteUnchanged: Bool = false,
+        runVideoCleanup: Bool = true
     ) async throws -> PlaylistSyncSummary {
-        try VideoTrackCleanupService.removeVideos(in: context)
+        if runVideoCleanup { try VideoTrackCleanupService.removeVideos(in: context) }
         guard playlistRecord.isActive else {
             return inactivePlaylistSummary()
         }
@@ -181,7 +182,7 @@ struct PlaylistSyncService {
             return inactivePlaylistSummary(skippedCount: fetchResult.snapshots.count)
         }
 
-        try VideoTrackCleanupService.removeVideos(knownVideoIDs: fetchResult.videoMusicItemIDs, in: context)
+        try VideoTrackCleanupService.removeVideos(knownVideoIDs: fetchResult.videoMusicItemIDs, inspectPlaybackData: false, in: context)
 
         guard fetchResult.didFetchTracks else {
             // Nothing was fetched because nothing changed. Record the visit
@@ -220,7 +221,6 @@ struct PlaylistSyncService {
             await ApplePlayCountSyncService.shared.refresh(in: context, playbackController: AppRuntime.shared.playbackController)
         }
         logSyncSummary(summary, playlistRecord: playlistRecord)
-        warmUpArtworkThemes(for: summary.artworkWarmupSnapshots)
         return summary
     }
 
@@ -263,7 +263,8 @@ struct PlaylistSyncService {
                     source,
                     in: context,
                     runIdentityMerge: false,
-                    skipWhenRemoteUnchanged: skipWhenRemoteUnchanged
+                    skipWhenRemoteUnchanged: skipWhenRemoteUnchanged,
+                    runVideoCleanup: false
                 )
                 combinedSummary.fetchedCount += summary.fetchedCount
                 combinedSummary.insertedCount += summary.insertedCount
@@ -298,6 +299,7 @@ struct PlaylistSyncService {
     }
 
     func syncAllLinkedPlaylists(in context: ModelContext) async throws -> Int {
+        try VideoTrackCleanupService.removeVideos(in: context)
         // The triage bucket is active and linked but has no Apple Music
         // playlist to fetch — it is fed by its contributing sources.
         let playlists = try PlaylistRepository.activePlaylists(in: context)
@@ -306,7 +308,7 @@ struct PlaylistSyncService {
         var didMutateRecords = false
 
         for playlist in playlists {
-            let summary = try await syncPlaylist(playlist, in: context, runIdentityMerge: false)
+            let summary = try await syncPlaylist(playlist, in: context, runIdentityMerge: false, runVideoCleanup: false)
             syncedCount += summary.fetchedCount
             didMutateRecords = didMutateRecords || summary.didMutateRecords
         }
@@ -386,7 +388,6 @@ struct PlaylistSyncService {
         )
         try context.save()
         logSyncSummary(summary, playlistRecord: record)
-        warmUpArtworkThemes(for: summary.artworkWarmupSnapshots)
         return record
     }
 
@@ -885,10 +886,4 @@ struct PlaylistSyncService {
         try await AppleMusicPlaylistTrackLoader.loadTracks(for: playlist)
     }
 
-    private func warmUpArtworkThemes(for snapshots: [TrackSnapshot]) {
-        let tracks = snapshots.map(AlbumArtworkThemeWarmupTrack.init(snapshot:))
-        Task(priority: .background) {
-            await AlbumArtworkThemeWarmupService.shared.enqueue(tracks)
-        }
-    }
 }

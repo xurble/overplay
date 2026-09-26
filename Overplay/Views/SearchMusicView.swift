@@ -46,7 +46,7 @@ struct SearchMusicView: View {
 
             ForEach(viewModel.searchService.results) { result in
                 HStack(spacing: 12) {
-                    ArtworkView(urlString: result.artworkURL, pixelSize: 144, cornerRadius: 0)
+                    ArtworkView(urlString: result.artworkURL, pixelSize: 128, cornerRadius: 0)
                         .frame(width: 72, height: 72)
 
                     VStack(alignment: .leading, spacing: 4) {
