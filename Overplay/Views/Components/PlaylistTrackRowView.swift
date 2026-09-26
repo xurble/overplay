@@ -26,28 +26,37 @@ struct PlaylistTrackRowView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(summary.title)
+                TrackRowText(candidates: TrackTextVariants.candidates(for: summary.title))
                     .font(.headline)
                     .foregroundStyle(summary.isPlayable ? .primary : .secondary)
-                Text(summary.subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(alignment: .top, spacing: 8) {
+                    TrackRowText(
+                        candidates: TrackTextVariants.candidates(
+                            for: [summary.artistName, summary.albumTitle].compactMap { value in
+                                guard let value, !value.isEmpty else { return nil }
+                                return value
+                            },
+                            separator: " - "
+                        ),
+                        lineLimit: 2
+                    )
+                    Text(summary.playSkipMetricLabel)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                        .help("Plays: Overplay / Apple Music")
+                        .accessibilityLabel(PlayCountPresentation.accessibilityLabel(
+                            overplay: summary.playthroughCount, apple: summary.applePlayCount, skips: summary.skipCount
+                        ))
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
                 if let provenanceText = summary.provenanceText {
                     Text(provenanceText)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
+                        .lineLimit(1)
                 }
             }
-
-            Spacer()
-
-            Text(summary.playSkipMetricLabel)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .help("Plays: Overplay / Apple Music")
-                .accessibilityLabel(PlayCountPresentation.accessibilityLabel(
-                    overplay: summary.playthroughCount, apple: summary.applePlayCount, skips: summary.skipCount
-                ))
         }
         .contentShape(Rectangle())
     }
