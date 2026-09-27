@@ -4,18 +4,30 @@ import Foundation
 @MainActor
 protocol MusicLibraryPlaylistFetching {
     func fetchAllPlaylists(pageLimit: Int) async throws -> [Playlist]
+    func fetchLibraryLinks() async throws -> [RemotePlaylistLink]
 
     /// Fetches one library playlist by its library ID.
     ///
     /// Resolving a known playlist does not need the whole library: this is a
     /// single filtered request instead of paging every playlist the user
-    /// owns. Returns nil when no playlist carries that ID, which is the
-    /// signal for the caller to fall back to name-based ID healing.
+    /// owns. A missing ID is an error boundary, never permission to relink by name.
     func fetchPlaylist(id playlistID: String) async throws -> Playlist?
+}
+
+extension MusicLibraryPlaylistFetching {
+    func fetchLibraryLinks() async throws -> [RemotePlaylistLink] {
+        try await fetchAllPlaylists(pageLimit: 100).map {
+            RemotePlaylistLink(id: $0.id.rawValue, name: $0.name, trackCount: $0.tracks?.count, source: .appleMusic)
+        }
+    }
 }
 
 @MainActor
 struct MusicKitLibraryPlaylistFetcher: MusicLibraryPlaylistFetching {
+    func fetchLibraryLinks() async throws -> [RemotePlaylistLink] {
+        try await AppleMusicLibraryPlaylistResources.fetchAll()
+    }
+
     func fetchAllPlaylists(pageLimit: Int = 100) async throws -> [Playlist] {
         try await MusicLibraryPagination.collect {
             var request = MusicLibraryRequest<Playlist>()

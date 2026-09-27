@@ -20,7 +20,7 @@ struct PlaybackIdentityState: Codable, Equatable, Sendable {
 }
 
 enum PlaybackIdentityStore {
-    private static let key = "overplay.playbackIdentityStates.v1"
+    private static let key = "overplay.v2.playbackIdentityStates.v1"
     private static let maximumAliasesPerTrack = 16
 
     static func state(

@@ -6,6 +6,15 @@ import Testing
 @MainActor
 @Suite("CarPlay now playing button signature", .serialized)
 struct CarPlayNowPlayingButtonSignatureTests {
+    @Test func unresolvedTrackRetainsLayoutOnlyWithinItsPlaylist() {
+        let known = CarPlayNowPlayingButtonSignature(hasCurrentTrack: true, playlistRole: .triageBucket, isEvicted: true)
+        let unresolved = CarPlayNowPlayingButtonSignature(hasCurrentTrack: true, playlistRole: nil, isEvicted: false)
+        #expect(unresolved.resolvingLayout(previous: known, samePlaylist: true) == known)
+        #expect(unresolved.resolvingLayout(previous: known, samePlaylist: false) == unresolved)
+        let resolved = CarPlayNowPlayingButtonSignature(hasCurrentTrack: true, playlistRole: .oneTruePlaylist, isEvicted: false)
+        #expect(resolved.resolvingLayout(previous: known, samePlaylist: true) == resolved)
+    }
+
     @Test("changes when retired presentation state changes")
     func changesWithRetiredPresentation() throws {
         let container = try OverplayTestSupport.makeModelContainer()

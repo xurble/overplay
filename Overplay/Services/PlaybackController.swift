@@ -85,6 +85,10 @@ final class PlaybackController {
     private(set) var hasLivePlayerEntry = false
     private(set) var playbackItemMetadataVersion = 0
     private(set) var playbackModeVersion = 0
+    private(set) var playbackModes = PlaybackModeState()
+    @ObservationIgnored private var pendingShuffleMode: MusicPlayer.ShuffleMode?
+    @ObservationIgnored private var pendingRepeatMode: MusicPlayer.RepeatMode?
+    @ObservationIgnored private var pauseGeneration = 0
 
     @ObservationIgnored private let player: any PlaybackPlayer
     @ObservationIgnored private let refreshUnknownApplePlayCount: (@MainActor (UUID, ModelContext) async -> Int)?
@@ -104,10 +108,29 @@ final class PlaybackController {
         }
     }
 
+    /// Cheap evidence that the last reconciled identity still owns this sample.
+    /// This never enumerates the player's queue or resolves local records.
+    private struct PlayerReconciliationState: Equatable {
+        var entryID: String?
+        var musicItemID: String?
+        var status: MusicPlayer.PlaybackStatus
+        var shuffle: MusicPlayer.ShuffleMode?
+        var repeatMode: MusicPlayer.RepeatMode?
+
+        var diagnosticDescription: String {
+            "entry=\(entryID ?? "nil") status=\(status) shuffle=\(String(describing: shuffle)) repeat=\(String(describing: repeatMode))"
+        }
+    }
+
+    static let periodicReconciliationInterval: Duration = .seconds(60)
+
     @ObservationIgnored private var observationGeneration = 0
     @ObservationIgnored private var isObservingPlayer = false
     @ObservationIgnored private var deferredObservationContext: ModelContext?
-    @ObservationIgnored private var lastReconciledPlayerSignature: String?
+    @ObservationIgnored private var lastReconciledPlayerState: PlayerReconciliationState?
+    @ObservationIgnored private var lastPlayerReconciliationAt: ContinuousClock.Instant?
+    @ObservationIgnored private var needsUnresolvedEntryObservation = false
+    @ObservationIgnored private var canSampleSessionProgress = false
     @ObservationIgnored private var monitorTask: Task<Void, Never>?
     @ObservationIgnored private var warmUpTask: Task<Void, Never>?
     @ObservationIgnored private let retentionLease = TrackRetentionPolicy.makePlaybackLease()
@@ -177,13 +200,12 @@ final class PlaybackController {
     /// True while the user's last playback command was play-like. Gates
     /// stall auto-recovery so it can never auto-play after an intended stop.
     @ObservationIgnored private var playbackIntended = false
-    @ObservationIgnored private var monitorIdleSince: Date?
     /// The settings row is a live singleton model object, so a cached
     /// reference reflects value changes; it only needs replacing after a
     /// database reset deletes the row.
     @ObservationIgnored private var cachedSettings: OverplaySettings?
     /// Known music item IDs of the current track, cached per local track ID
-    /// — the 1 Hz refresh consults these once or twice per tick.
+    /// — full reconciliation can consult these more than once.
     @ObservationIgnored private var knownMusicItemIDsCache: (localTrackID: UUID, ids: Set<String>)?
     /// Music item IDs that failed to resolve to a local track — each miss
     /// costs a full TrackRecord scan, so misses are remembered until the
@@ -231,7 +253,15 @@ final class PlaybackController {
             return musicKitNowPlayingTrack
         }
 
-        return musicKitNowPlayingTrack ?? currentTrack
+        guard var displayed = musicKitNowPlayingTrack else { return currentTrack }
+        // Keep the actual player-reported track authoritative. Once it is
+        // reconciled to the same song, use the portable artwork used by rows
+        // and persisted metadata instead of a device-only MusicKit URL.
+        if let currentTrack, currentTrack.id == displayed.id,
+           let artwork = PortableArtworkReference.validated(currentTrack.artworkURLTemplate) {
+            displayed.artworkURLTemplate = artwork
+        }
+        return displayed
     }
 
     /// Publishes system Now Playing metadata for the current display track.
@@ -329,7 +359,7 @@ final class PlaybackController {
         }
         rebuildActivePlaylistSnapshot(context: context)
         if previousSnapshot != activePlaylistSnapshot, previousVersion == playbackItemMetadataVersion {
-            bumpPlaybackItemMetadataVersion()
+            bumpPlaybackItemMetadataVersion(invalidateIdentity: false)
         }
     }
 
@@ -350,24 +380,24 @@ final class PlaybackController {
 
     var shuffleEnabled: Bool {
         _ = playbackModeVersion
-        return player.shuffleMode != .off
+        return playbackModes.shuffle == .songs
     }
 
     var repeatMode: MusicPlayer.RepeatMode {
         _ = playbackModeVersion
-        return player.repeatMode
+        return playbackModes.repeatMode ?? .none
     }
 
     var repeatAllEnabled: Bool {
         _ = playbackModeVersion
-        return player.repeatMode == .all
+        return playbackModes.repeatMode == .all
     }
 
     var playbackModeDiagnosticDescription: String {
         "rawShuffle=\(Self.modeDescription(player.reportedShuffleMode)) "
-            + "effectiveShuffle=\(player.shuffleMode) "
+            + "effectiveShuffle=\(Self.modeDescription(playbackModes.shuffle)) "
             + "rawRepeat=\(Self.modeDescription(player.reportedRepeatMode)) "
-            + "effectiveRepeat=\(player.repeatMode)"
+            + "effectiveRepeat=\(Self.modeDescription(playbackModes.repeatMode))"
     }
 
     func playbackOrderState(
@@ -415,11 +445,15 @@ final class PlaybackController {
         let generation = observationGeneration
         player.startObservingChanges { [weak self] changes in
             guard let self, self.isObservingPlayer, self.observationGeneration == generation else { return }
-            await self.refresh(context: context, trigger: .event, detail: changes.map(\.rawValue).sorted().joined(separator: ","))
+            // State publishers can invalidate without changing a value we use.
+            // Queue invalidations still need the full hydration/membership pass.
+            if changes != [.state] || self.isPerformingTransition
+                || self.playerReconciliationState() != self.lastReconciledPlayerState {
+                await self.refresh(context: context, trigger: .event, detail: changes.map(\.rawValue).sorted().joined(separator: ","))
+            }
             // Observation stays installed when the timer goes idle. An external
             // resume must restore elapsed-time sampling too.
-            if self.isObservingPlayer, self.observationGeneration == generation,
-               self.player.playbackStatus == .playing {
+            if self.isObservingPlayer, self.observationGeneration == generation {
                 self.startMonitoring(context: context)
             }
         }
@@ -427,13 +461,13 @@ final class PlaybackController {
 
     func startMonitoring(context: ModelContext) {
         startObservingPlayer(context: context)
+        guard !suspendMonitoringIfIdle() else { return }
         guard monitorTask == nil else { return }
-        monitorIdleSince = nil
         monitorTask = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(1)) } catch { return }
                 guard !Task.isCancelled else { return }
-                await self?.refresh(context: context, trigger: .periodic)
+                await self?.samplePlaybackProgress(context: context)
                 guard !Task.isCancelled else { return }
                 if self?.suspendMonitoringIfIdle() != false {
                     return
@@ -448,7 +482,13 @@ final class PlaybackController {
     func reconcilePlayerState(context: ModelContext) async {
         await refreshAssociationScope()
         startObservingPlayer(context: context)
+        let generation = observationGeneration
         await refresh(context: context)
+        // Foreground reconciliation also recovers a resume whose notification
+        // was missed while the app was suspended.
+        if isObservingPlayer, observationGeneration == generation {
+            startMonitoring(context: context)
+        }
     }
 
     /// Resolve account scope at queue handoff / foreground entry, never on the
@@ -490,7 +530,10 @@ final class PlaybackController {
         appleCountLookupTrackID = nil
         monitorTask?.cancel()
         monitorTask = nil
-        monitorIdleSince = nil
+        lastPlayerReconciliationAt = nil
+        lastReconciledPlayerState = nil
+        canSampleSessionProgress = false
+        needsUnresolvedEntryObservation = false
         isObservingPlayer = false
         observationGeneration += 1
         // Veto recovery already suspended in prepareToPlay when observation
@@ -500,24 +543,21 @@ final class PlaybackController {
         player.stopObservingChanges()
     }
 
-    /// Ticking while playback has been paused/stopped for a long time is
-    /// pure waste — each tick runs SwiftData fetches on the main actor.
-    /// Every play path calls startMonitoring, which resumes the loop.
-    func suspendMonitoringIfIdle(now: Date = .now) -> Bool {
-        monitorIdleSince = PlaybackMonitorIdlePolicy.updatedIdleStart(
-            current: monitorIdleSince,
-            isPlaying: isPlaying,
-            isDeliveryStalled: isDeliveryStalled,
-            now: now
-        )
-        guard PlaybackMonitorIdlePolicy.shouldSuspend(idleSince: monitorIdleSince, now: now) else {
+    /// Stops only the timer. Observations and explicit playback commands remain
+    /// active, including while stopped with a surfaced delivery failure.
+    @discardableResult
+    func suspendMonitoringIfIdle() -> Bool {
+        guard PlaybackMonitorIdlePolicy.shouldSuspend(
+            playbackStatus: player.playbackStatus,
+            isTransitionInFlight: isPerformingTransition
+        ) else {
             return false
         }
-
-        TrackMetadataDiagnostics.log("playback monitor suspended after idle timeout")
+        if monitorTask != nil {
+            TrackMetadataDiagnostics.log("playback sampling suspended while idle")
+        }
         monitorTask?.cancel()
         monitorTask = nil
-        monitorIdleSince = nil
         return true
     }
 
@@ -544,6 +584,9 @@ final class PlaybackController {
     }
 
     func clearLocalStateAfterDatabaseReset() {
+        pendingShuffleMode = nil
+        pendingRepeatMode = nil
+        resetPlaybackModes()
         submittedQueueMembers = []
         submittedPlaylistID = nil
         PlaybackAssociationStore.clear(defaults: localPlaybackDefaults)
@@ -572,7 +615,10 @@ final class PlaybackController {
         cachedSettings = nil
         knownMusicItemIDsCache = nil
         unresolvableMusicItemIDs.removeAll()
-        monitorIdleSince = nil
+        lastPlayerReconciliationAt = nil
+        lastReconciledPlayerState = nil
+        canSampleSessionProgress = false
+        needsUnresolvedEntryObservation = false
         deliveryStallState = PlaybackDeliveryStallPolicy.State()
         deliveryInterruptionGeneration = 0
         unresolvedEntryState = PlaybackUnresolvedEntryPolicy.State()
@@ -772,7 +818,9 @@ final class PlaybackController {
             let preparation = PerformanceSpan(.playbackQueuePreparation)
             let queueEntries: [PlaybackQueueEntry]
             do {
-                defer { preparation.finish() }
+                let inputs = try PlaybackQueueOrchestrator.playlistInputs(for: playlist.musicPlaylistID, in: context)
+                let requiredTracks = inputs.items.filter { scope.includes($0) }.compactMap { inputs.tracksByID[$0.trackID] }
+                try await DevicePlaybackCache.prepare(requiredTracks)
                 queueEntries = try PlaybackQueueOrchestrator.orderedCachedQueueEntries(
                 for: playlist.musicPlaylistID,
                 playerID: playerID,
@@ -780,6 +828,10 @@ final class PlaybackController {
                 scope: scope,
                 in: context
                 )
+                preparation.finish(magnitude: Double(queueEntries.count))
+            } catch {
+                preparation.finish(error: error)
+                throw error
             }
             if shuffleBeforePlayback {
                 // Pick the initial song without changing the stored/displayed
@@ -906,11 +958,18 @@ final class PlaybackController {
             return .rejected
         }
 
+        let startingPauseGeneration = pauseGeneration
         isPerformingTransition = true
         isPlaybackTransitionInFlight = true
         defer {
             isPerformingTransition = false
             isPlaybackTransitionInFlight = false
+            if pauseGeneration != startingPauseGeneration {
+                if player.playbackStatus == .playing { player.pause() }
+                playbackIntended = false
+                isPlaying = false
+            }
+            applyPendingPlaybackModes()
             if let context = deferredObservationContext {
                 deferredObservationContext = nil
                 let generation = observationGeneration
@@ -1030,6 +1089,9 @@ final class PlaybackController {
                     + queueCorrelationDiagnosticContext()
             )
         }
+        pendingShuffleMode = nil
+        pendingRepeatMode = nil
+        resetPlaybackModes()
         submittedQueueMembers = []
         submittedPlaylistID = nil
         lastCorrelationSnapshots = nil
@@ -1089,12 +1151,13 @@ final class PlaybackController {
                 // captured above, before pausing changes the player's status.
                 player.pause()
                 rememberSubmittedQueue(queueEntries, playlistID: playlistID)
+                resetPlaybackModes()
                 player.replaceQueue(with: materialization)
                 if enableShuffleBeforePlayback {
                     // The starting entry is random; MusicKit shuffles the
                     // remaining playback without changing the playlist order.
                     player.shuffleMode = .songs
-                    playbackModeVersion += 1
+                    observePlaybackModeChanges()
                 }
                 try await player.play()
             },
@@ -1169,19 +1232,11 @@ final class PlaybackController {
     }
 
     func togglePlayPause(context: ModelContext) async {
-        do {
-            if player.playbackStatus == .playing {
-                player.pause()
-                playbackIntended = false
-            } else {
-                try await player.play()
-                playbackIntended = true
-                clearDeliveryFailure()
-                startMonitoring(context: context)
-            }
+        if player.playbackStatus == .playing {
+            pause()
             await refresh(context: context)
-        } catch {
-            statusMessage = musicPlaybackFailureMessage(for: error)
+        } else {
+            await play(context: context)
         }
     }
 
@@ -1241,8 +1296,17 @@ final class PlaybackController {
     }
 
     func play(context: ModelContext) async {
+        guard !isPerformingTransition else {
+            statusMessage = PlaybackTransitionError.transitionInProgress.localizedDescription
+            return
+        }
+        let startingPauseGeneration = pauseGeneration
         do {
             try await player.play()
+            guard pauseGeneration == startingPauseGeneration else {
+                if player.playbackStatus == .playing { player.pause() }
+                return
+            }
             playbackIntended = true
             clearDeliveryFailure()
             startMonitoring(context: context)
@@ -1253,10 +1317,12 @@ final class PlaybackController {
     }
 
     func pause() {
+        pauseGeneration += 1
         player.pause()
         playbackIntended = false
         elapsedSeconds = player.playbackTime
         isPlaying = false
+        suspendMonitoringIfIdle()
         if let musicItemID = currentTrack?.id {
             persistLocalPlaybackState(musicItemID: musicItemID, forceFlush: true)
         }
@@ -1349,25 +1415,34 @@ final class PlaybackController {
     }
 
     func toggleShuffle(context: ModelContext) async {
-        await setShuffleEnabled(!shuffleEnabled, context: context)
+        await setShuffleEnabled(!(pendingShuffleMode.map { $0 != .off } ?? shuffleEnabled), context: context)
     }
 
     /// A mode change, not a rebuild. MusicKit shuffles the queue it already
     /// holds, so nothing is reordered, requeued or restarted.
     func setShuffleEnabled(_ isEnabled: Bool, context: ModelContext) async {
-        player.shuffleMode = isEnabled ? .songs : .off
-        playbackModeVersion += 1
+        let mode: MusicPlayer.ShuffleMode = isEnabled ? .songs : .off
+        if isPerformingTransition {
+            pendingShuffleMode = mode
+            return
+        }
+        player.shuffleMode = mode
+        observePlaybackModeChanges()
         await refresh(context: context)
     }
 
     /// Keeps Overplay's repeat control intentionally binary: off or repeat all.
     func toggleRepeatAll(context: ModelContext) async {
-        await setRepeatMode(repeatAllEnabled ? MusicPlayer.RepeatMode.none : .all, context: context)
+        await setRepeatMode((pendingRepeatMode ?? playbackModes.repeatMode) == .all ? MusicPlayer.RepeatMode.none : .all, context: context)
     }
 
     func setRepeatMode(_ mode: MusicPlayer.RepeatMode, context: ModelContext) async {
+        if isPerformingTransition {
+            pendingRepeatMode = mode
+            return
+        }
         player.repeatMode = mode
-        playbackModeVersion += 1
+        observePlaybackModeChanges()
         await refresh(context: context)
     }
 
@@ -1713,11 +1788,68 @@ final class PlaybackController {
         }
     }
 
+    private func playerReconciliationState() -> PlayerReconciliationState {
+        PlayerReconciliationState(
+            entryID: player.currentEntry?.id,
+            musicItemID: player.currentEntryItem?.id.rawValue,
+            status: player.playbackStatus,
+            shuffle: player.reportedShuffleMode,
+            repeatMode: player.reportedRepeatMode
+        )
+    }
+
+    /// The 1 Hz path only samples progress for the identity already reconciled.
+    /// Events own full reconciliation; missed identity/state changes are caught
+    /// before attributing time, with a minute fallback for other missed changes.
+    func samplePlaybackProgress(
+        context: ModelContext,
+        now: ContinuousClock.Instant = .now
+    ) async {
+        defer { suspendMonitoringIfIdle() }
+        if isPerformingTransition {
+            elapsedSeconds = player.playbackTime
+            isPlaying = player.playbackStatus == .playing
+            publishNowPlayingMetadata(isPlaying: isPlaying)
+            return
+        }
+        player.refreshObservationBindings()
+        let state = playerReconciliationState()
+        let fallbackDue = lastPlayerReconciliationAt.map {
+            $0.duration(to: now) >= Self.periodicReconciliationInterval
+        } ?? true
+        if state != lastReconciledPlayerState || fallbackDue || needsUnresolvedEntryObservation {
+            await refresh(context: context, trigger: .periodic, now: now)
+            return
+        }
+
+        elapsedSeconds = player.playbackTime
+        isPlaying = state.status == .playing
+        if canSampleSessionProgress, let session = activeSession {
+            activeSession = PlaybackSessionEvaluationService.updateObservedProgress(
+                session, elapsedSeconds: elapsedSeconds, durationSeconds: durationSeconds
+            )
+            evaluatePlaythroughIfNeeded(context: context)
+            persistLocalPlaybackState(musicItemID: session.trackID, localTrackID: session.localTrackID)
+        }
+        publishNowPlayingMetadata(isPlaying: isPlaying)
+        await trackDeliveryHealth(
+            status: state.status,
+            hasCurrentEntry: state.entryID != nil,
+            playbackTime: elapsedSeconds,
+            advancesTimedPolicies: true
+        )
+        // A local membership edit can dirty order without a player event.
+        // This is a no-op unless that explicit invalidation needs handling.
+        await reconcileChronologicalQueueIfNeeded(context: context)
+    }
+
     private func refresh(
         context: ModelContext,
         trigger: RefreshTrigger = .explicit,
-        detail: String? = nil
+        detail: String? = nil,
+        now: ContinuousClock.Instant = .now
     ) async {
+        defer { suspendMonitoringIfIdle() }
         MusicKitActivityLog.shared.record(trigger.operation, detail: detail)
         player.refreshObservationBindings()
         // Interruption is an immediate veto on an awaited delivery recovery.
@@ -1735,11 +1867,13 @@ final class PlaybackController {
             MusicKitActivityLog.shared.record(.playbackReconciliationDeferred, detail: "transition")
             return
         }
-        let signature = "entry=\(player.currentEntry?.id ?? "nil") status=\(player.playbackStatus) shuffle=\(String(describing: player.reportedShuffleMode)) repeat=\(String(describing: player.reportedRepeatMode))"
-        if trigger == .periodic, let previous = lastReconciledPlayerSignature, previous != signature {
-            MusicKitActivityLog.shared.record(.playbackPeriodicStateChange, detail: "\(previous) -> \(signature)")
+        let state = playerReconciliationState()
+        if trigger == .periodic, let previous = lastReconciledPlayerState, previous != state {
+            MusicKitActivityLog.shared.record(.playbackPeriodicStateChange,
+                detail: "\(previous.diagnosticDescription) -> \(state.diagnosticDescription)")
         }
-        lastReconciledPlayerSignature = signature
+        lastReconciledPlayerState = state
+        lastPlayerReconciliationAt = now
         let advancesTimedPolicies = trigger != .event
         // Identity, accounting, and metadata reconcile without suspension on
         // the main actor. Explicit commands rely on this before capturing their
@@ -1762,7 +1896,7 @@ final class PlaybackController {
     /// Membership changes, restored queues, and system shuffle changes all pass
     /// here. Keep the current song, progress, play intent and listening session.
     private func reconcileChronologicalQueueIfNeeded(context: ModelContext) async {
-        guard shouldCheckChronologicalQueueOrder, player.shuffleMode == .off,
+        guard shouldCheckChronologicalQueueOrder, player.reportedShuffleMode == .off,
               !isPerformingTransition, isQueueCorrelationComplete,
               let snapshot = activePlaylistSnapshot,
               snapshot.musicPlaylistID == currentPlaylistID,
@@ -1796,6 +1930,7 @@ final class PlaybackController {
     ) -> PlaybackDeliveryStallPolicy.Tick? {
         let span = PerformanceSpan(.playbackSnapshot)
         defer { span.finish(magnitude: Double(activeQueueEntries.count)) }
+        canSampleSessionProgress = false
         // A user transition is mid-flight: reconciling identity now would
         // race the pending skip. Track time and play state only.
         if isPerformingTransition {
@@ -1810,6 +1945,9 @@ final class PlaybackController {
         let oldCurrentItemLocalTrackID = currentPlaylistItem?.trackID.uuidString
         let oldActiveQueueLocalTrackID = activeQueueCurrentLocalTrackID
         let currentPlayerEntry = player.currentEntry
+        if hasLivePlayerEntry, currentPlayerEntry == nil, player.playbackStatus == .stopped {
+            resetPlaybackModes()
+        }
         updateLivePlayerEntryState(hasEntry: currentPlayerEntry != nil)
         updateMusicKitNowPlayingTrack(currentEntry: currentPlayerEntry)
         observePlaybackModeChanges()
@@ -1828,6 +1966,7 @@ final class PlaybackController {
             )
         }
         let hasDivergedUnresolvedPlayerEntry = unresolvedEntryState.hasDiverged
+        needsUnresolvedEntryObservation = isUnresolved && !hasDivergedUnresolvedPlayerEntry
         let hasUncorrelatedConcretePlayerEntry = player.currentEntry != nil
             && identity?.isQueueCorrelated == false
         let newTrackID = identity?.musicItemID
@@ -1971,6 +2110,7 @@ final class PlaybackController {
             }
 
             evaluatePlaythroughIfNeeded(context: context)
+            canSampleSessionProgress = currentPlayerEntry != nil
         } else if hasDivergedUnresolvedPlayerEntry {
             // Correlation is gone for good, so this is the last moment
             // anything can say what the outgoing track played. Credit it
@@ -2164,7 +2304,11 @@ final class PlaybackController {
     }
 
     private func evaluatePlaythroughIfNeeded(context: ModelContext) {
-        guard let settings = monitoredSettings(context: context) else { return }
+        // Do not fetch the playlist or resolve its item on every position tick.
+        guard let activeSession, !activeSession.hasEvaluated,
+              let progress = activeSession.progressPercentage,
+              let settings = monitoredSettings(context: context),
+              progress >= settings.playthroughThresholdPercentage else { return }
         do {
             let outcome = try PlaybackSessionEvaluationService.evaluatePlaythroughIfNeeded(
                 session: activeSession,
@@ -2266,7 +2410,7 @@ final class PlaybackController {
         let shouldRefreshActivePlaylist = evaluationOutcomeAffectsActivePlaylist(outcome)
         if let item = outcome.item, shouldApplyToDisplayedPlayback {
             currentPlaylistItem = item
-            bumpPlaybackItemMetadataVersion()
+            bumpPlaybackItemMetadataVersion(invalidateIdentity: false)
         } else if let item = outcome.item {
             TrackMetadataDiagnostics.log(
                 "suppressed stale evaluation outcome trackID=\(outcome.session.trackID) item=\(TrackMetadataDiagnostics.describe(item)) currentItem=\(TrackMetadataDiagnostics.describe(currentPlaylistItem)) currentTrack=\(TrackMetadataDiagnostics.describe(currentTrack))"
@@ -2647,8 +2791,11 @@ final class PlaybackController {
 
         if let track = update.track {
             if currentTrack != track {
+                let identityChanged = currentTrack?.id != track.id
+                    || currentTrack?.title != track.title || currentTrack?.artistName != track.artistName
+                    || currentTrack?.albumTitle != track.albumTitle || currentTrack?.durationSeconds != track.durationSeconds
                 currentTrack = track
-                bumpPlaybackItemMetadataVersion()
+                bumpPlaybackItemMetadataVersion(invalidateIdentity: identityChanged)
             }
         } else if currentTrack?.id != musicItemID {
             currentTrack = nil
@@ -2767,7 +2914,7 @@ final class PlaybackController {
         let realizedEntries = PlaybackQueueSnapshotCorrelator.realizedEntriesInPlayerOrder(
             snapshots: snapshots,
             members: members,
-            allowPositionMatching: player.shuffleMode == .off && snapshots.count == player.queueEntrySnapshots.count,
+            allowPositionMatching: player.reportedShuffleMode == .off && snapshots.count == player.queueEntrySnapshots.count,
             submittedLocalTrackIDs: submittedPlaylistID == currentPlaylistID
                 ? submittedQueueMembers.map(\.localTrackID) : []
         )
@@ -3073,8 +3220,10 @@ final class PlaybackController {
     private func observePlaybackModeChanges() {
         let reportedShuffle = player.reportedShuffleMode
         let reportedRepeat = player.reportedRepeatMode
-        let shuffle = player.shuffleMode
-        let repeatMode = player.repeatMode
+        var reconciled = playbackModes
+        reconciled.observe(shuffle: reportedShuffle, repeatMode: reportedRepeat)
+        let shuffle = reconciled.shuffle
+        let repeatMode = reconciled.repeatMode
         let effectiveModeChanged = shuffle != lastObservedShuffleMode || repeatMode != lastObservedRepeatMode
         let reportedModeChanged = reportedShuffle != lastReportedShuffleMode
             || reportedRepeat != lastReportedRepeatMode
@@ -3092,19 +3241,38 @@ final class PlaybackController {
         lastReportedRepeatMode = reportedRepeat
         lastObservedShuffleMode = shuffle
         lastObservedRepeatMode = repeatMode
+        playbackModes = reconciled
+        if effectiveModeChanged {
+            shouldCheckChronologicalQueueOrder = true
+            playbackModeVersion += 1
+        }
         guard !isFirstObservation else { return }
 
         MusicKitActivityLog.shared.record(
             .playerModeObserved,
             detail: "rawShuffle=\(Self.modeDescription(previousReportedShuffle))->\(Self.modeDescription(reportedShuffle)) "
-                + "effectiveShuffle=\(previousShuffle.map(String.init(describing:)) ?? "nil")->\(shuffle) "
+                + "effectiveShuffle=\(previousShuffle.map(String.init(describing:)) ?? "nil")->\(Self.modeDescription(shuffle)) "
                 + "rawRepeat=\(Self.modeDescription(previousReportedRepeat))->\(Self.modeDescription(reportedRepeat)) "
-                + "effectiveRepeat=\(previousRepeat.map(String.init(describing:)) ?? "nil")->\(repeatMode)"
+                + "effectiveRepeat=\(previousRepeat.map(String.init(describing:)) ?? "nil")->\(Self.modeDescription(repeatMode))"
         )
-        if effectiveModeChanged {
-            shouldCheckChronologicalQueueOrder = true
-            playbackModeVersion += 1
-        }
+    }
+
+    private func applyPendingPlaybackModes() {
+        guard pendingShuffleMode != nil || pendingRepeatMode != nil else { return }
+        defer { pendingShuffleMode = nil; pendingRepeatMode = nil }
+        guard player.currentEntry != nil else { return }
+        if let pendingShuffleMode { player.shuffleMode = pendingShuffleMode }
+        if let pendingRepeatMode { player.repeatMode = pendingRepeatMode }
+        observePlaybackModeChanges()
+    }
+
+    private func resetPlaybackModes() {
+        playbackModes = PlaybackModeState()
+        hasObservedPlaybackModes = false
+        lastObservedShuffleMode = nil
+        lastObservedRepeatMode = nil
+        lastReportedShuffleMode = nil
+        lastReportedRepeatMode = nil
     }
 
     private static func modeDescription<T>(_ mode: T?) -> String {
@@ -3261,12 +3429,13 @@ final class PlaybackController {
         )
     }
 
-    private func bumpPlaybackItemMetadataVersion() {
+    private func bumpPlaybackItemMetadataVersion(invalidateIdentity: Bool = true) {
+        playbackItemMetadataVersion += 1
+        guard invalidateIdentity else { return }
         knownMusicItemIDsCache = nil
         unresolvableMusicItemIDs.removeAll()
         unmappableLiveEntryIDs.removeAll()
         lastCorrelationSnapshots = nil
-        playbackItemMetadataVersion += 1
     }
 
     private func prefetchCurrentArtworkIfNeeded(musicItemID: String, playlistID: String?) {
@@ -3309,9 +3478,9 @@ final class PlaybackController {
         }
         // Preserve the last usable restore point while a live entry remains
         // unknown instead of replacing it with an unattributed song ID.
-        if let entry = player.currentEntry,
-           !activeQueueEntries.contains(where: { $0.queueEntryID == entry.id }),
-           explicitLocalTrackID == nil, currentPlaylistItem == nil { return }
+        if explicitLocalTrackID == nil, currentPlaylistItem == nil,
+           let entry = player.currentEntry,
+           !activeQueueEntries.contains(where: { $0.queueEntryID == entry.id }) { return }
 
         let now = Date()
         let localTrackID = explicitLocalTrackID
@@ -3538,7 +3707,33 @@ final class PlaybackController {
     /// A trusted point-in-time observation of the out-of-process player for
     /// suspended-playback reconciliation. Reads live player state rather
     /// than the cached display, which may be stale during a background wake.
+    /// Continuity accounting needs a current, explicit off report. A retained
+    /// display value is not proof of the order played while suspended.
+    var hasConfirmedChronologicalPlayback: Bool { lastReportedShuffleMode == .off }
+
+    /// Recovery uses the actual, fully correlated player order, never a menu's
+    /// persisted display order. Partial hydration cannot prove continuity.
+    func capturePlaybackOrder(context: ModelContext) -> [PlaybackReconciliationPolicy.OrderedTrack] {
+        let snapshots = player.queueEntrySnapshots
+        guard !snapshots.isEmpty else { return [] }
+        let localIDs = snapshots.compactMap { snapshot in
+            activeQueueEntries.first { $0.queueEntryID == snapshot.id }?.localTrackID
+        }
+        guard localIDs.count == snapshots.count, Set(localIDs).count == localIDs.count else { return [] }
+        let tracks = (try? TrackRecordRepository.tracks(
+            ids: localIDs.compactMap(UUID.init(uuidString:)), in: context
+        )) ?? []
+        let tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
+        return localIDs.map { id in
+            PlaybackReconciliationPolicy.OrderedTrack(
+                localTrackID: id,
+                durationSeconds: UUID(uuidString: id).flatMap { tracksByID[$0]?.durationSeconds }
+            )
+        }
+    }
+
     func capturePlaybackObservation(context: ModelContext) -> PlaybackReconciliationPolicy.Observation? {
+        observePlaybackModeChanges()
         guard let queueEntry = player.currentEntry else { return nil }
         guard let playlistID = currentPlaylistID ?? LocalPlaybackStateStore.load(from: localPlaybackDefaults)?.playlistID else {
             return nil
@@ -3937,7 +4132,6 @@ final class PlaybackController {
     private func rebuildActivePlaylistSnapshot(context: ModelContext) {
         let span = PerformanceSpan(.playlistSnapshotBuild)
         defer { span.finish(magnitude: Double(activePlaylistSnapshot?.rows.count ?? 0)) }
-        pruneRemovedQueueEntries(context: context)
         guard let currentPlaylistID,
               let playlist = try? currentPlaylist(in: context) else {
             activePlaylistSnapshot = nil
@@ -3968,8 +4162,11 @@ final class PlaybackController {
                 MusicKitActivityLog.shared.record(.playlistSnapshotUnchanged)
                 return
             }
+            let membershipOrOrderChanged = activePlaylistSnapshot?.playlistID != candidate.playlistID
+                || activePlaylistSnapshot?.playbackScope != candidate.playbackScope
+                || activePlaylistSnapshot?.rows.map(\.id) != candidate.rows.map(\.id)
             activePlaylistSnapshot = candidate
-            shouldCheckChronologicalQueueOrder = true
+            if membershipOrOrderChanged { shouldCheckChronologicalQueueOrder = true }
         } catch {
             statusMessage = "Playback is active, but refreshing the visible playlist failed: \(error.localizedDescription)"
         }

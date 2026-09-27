@@ -10,6 +10,34 @@ import Testing
 @MainActor
 @Suite("Player-confirmed playback transitions", .serialized)
 struct PlaybackTransitionTests {
+    @Test("mode retention ends when a foreign queue takes over")
+    func foreignQueueDoesNotInheritModes() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        await fixture.controller.setShuffleEnabled(true, context: fixture.context)
+        let external = try fixture.addPlaylist(prefix: "foreign-modes", trackCount: 1)
+        fixture.player.replaceQueueExternally(with: external.musicTracks)
+        fixture.player.reportedShuffleMode = nil
+        fixture.player.reportedRepeatMode = nil
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(fixture.controller.currentPlaylistID == nil)
+        #expect(fixture.controller.playbackModes == PlaybackModeState())
+    }
+
+    @Test("unknown shuffle does not authorize chronological queue replacement")
+    func unknownShuffleDoesNotReorderQueue() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let replacements = fixture.player.replaceQueueCallCount
+        fixture.player.reissueEntryIDs(for: Array(fixture.musicTracks.reversed()), currentIndex: 0)
+        fixture.player.reportedShuffleMode = nil
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(fixture.player.replaceQueueCallCount == replacements)
+        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+    }
+
     @Test("App and externally advanced playback prioritize unknown Apple counts")
     func prioritizesPlayingTrackCount() async throws {
         var lookedUp: [UUID] = []
@@ -289,9 +317,6 @@ struct PlaybackTransitionTests {
         try await fixture.start(at: 0)
         fixture.player.pause()
         await fixture.player.invalidate([.state])
-        let now = Date.now
-        #expect(!fixture.controller.suspendMonitoringIfIdle(now: now))
-        #expect(fixture.controller.suspendMonitoringIfIdle(now: now.addingTimeInterval(600)))
         #expect(!fixture.controller.isMonitoringPlayback)
         try await fixture.player.play()
         await fixture.player.invalidate([.state])
@@ -302,6 +327,144 @@ struct PlaybackTransitionTests {
         await fixture.player.invalidate([.state])
         #expect(fixture.controller.isPlaying)
         #expect(!fixture.controller.isMonitoringPlayback)
+    }
+
+    @Test("startup observes an empty player without periodic reconciliation")
+    func startupMonitoringWaitsForPlayback() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        fixture.controller.startMonitoring(context: fixture.context)
+        #expect(!fixture.controller.isMonitoringPlayback)
+
+        try await fixture.player.play()
+        await fixture.player.invalidate([.state])
+        #expect(fixture.controller.isMonitoringPlayback)
+    }
+
+    @Test("foreground reconciliation restarts sampling after a missed resume event")
+    func explicitReconciliationRestartsSampling() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.controller.pause()
+        #expect(!fixture.controller.isMonitoringPlayback)
+        try await fixture.player.play()
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        #expect(fixture.controller.isPlaying)
+        #expect(fixture.controller.isMonitoringPlayback)
+    }
+
+    @Test("stable progress samples avoid queue scans and preserve listening until the minute fallback")
+    func stableProgressUsesMinuteFallback() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        fixture.settings.minimumSkipListeningSeconds = 50
+        try await fixture.start(at: 0)
+        let start = ContinuousClock.now
+        let reads = fixture.player.queueSnapshotReadCount
+        let revision = fixture.controller.activePlaylistSnapshot?.updatedAt
+        for second in 1...59 {
+            fixture.player.playbackTime = Double(second)
+            await fixture.controller.samplePlaybackProgress(context: fixture.context, now: start + .seconds(second))
+        }
+        #expect(fixture.player.queueSnapshotReadCount == reads)
+        #expect(fixture.controller.elapsedSeconds == 59)
+        #expect(fixture.controller.activePlaylistSnapshot?.updatedAt == revision)
+        #expect(LocalPlaybackStateStore.load(from: fixture.playbackDefaults.defaults)?.elapsedSeconds == 59)
+
+        fixture.player.playbackTime = 60
+        await fixture.controller.samplePlaybackProgress(context: fixture.context, now: start + .seconds(60))
+        #expect(fixture.player.queueSnapshotReadCount > reads)
+        let afterFallback = fixture.player.queueSnapshotReadCount
+        fixture.player.playbackTime = 61
+        await fixture.controller.samplePlaybackProgress(context: fixture.context, now: start + .seconds(61))
+        #expect(fixture.player.queueSnapshotReadCount == afterFallback)
+
+        await fixture.controller.next(settings: fixture.settings, context: fixture.context)
+        #expect(fixture.items[0].skipCount == 1)
+    }
+
+    @Test("a missed track event reconciles before attributing the new position")
+    func progressSamplingCatchesMissedAdvance() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 178
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        fixture.player.playbackTime = 179
+        await fixture.controller.samplePlaybackProgress(context: fixture.context)
+        fixture.player.advanceExternally()
+        await fixture.controller.samplePlaybackProgress(context: fixture.context)
+        #expect(fixture.controller.currentTrack?.id == fixture.musicTracks[1].id.rawValue)
+        #expect(fixture.controller.elapsedSeconds == 0)
+        #expect(fixture.items[0].playthroughCount == 1)
+        #expect(fixture.items[0].skipCount == 0)
+        #expect(try fixture.history().count == 1)
+    }
+
+    @Test("progress sampling credits a playthrough without waiting for full reconciliation")
+    func progressSamplingCreditsPlaythrough() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.playbackTime = 179
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        fixture.player.playbackTime = 180
+        await fixture.controller.samplePlaybackProgress(context: fixture.context)
+        await fixture.controller.samplePlaybackProgress(context: fixture.context)
+        #expect(fixture.items[0].playthroughCount == 1)
+        #expect(try fixture.history().count == 1)
+        #expect(fixture.controller.activePlaylistSnapshot?.rows.first(where: { $0.id == fixture.items[0].id })?.playthroughCount == 1)
+    }
+
+    @Test("progress sampling retains bounded stall recovery")
+    func progressSamplingDetectsStall() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.controller.isNetworkReachable = { true }
+        fixture.player.playbackTime = 10
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        let reads = fixture.player.queueSnapshotReadCount
+        let prepares = fixture.player.prepareToPlayCallCount
+        for _ in 0..<PlaybackDeliveryStallPolicy.frozenPlaybackTickThreshold {
+            await fixture.controller.samplePlaybackProgress(context: fixture.context)
+        }
+        #expect(fixture.controller.isDeliveryStalled)
+        #expect(fixture.player.prepareToPlayCallCount == prepares + 1)
+        #expect(fixture.player.queueSnapshotReadCount == reads)
+    }
+
+    @Test("unchanged state events avoid queue scans while changed modes reconcile immediately")
+    func stateEventsReconcileOnlyChanges() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        let reads = fixture.player.queueSnapshotReadCount
+        for _ in 0..<20 { await fixture.player.invalidate([.state]) }
+        #expect(fixture.player.queueSnapshotReadCount == reads)
+        fixture.player.shuffleMode = .songs
+        await fixture.player.invalidate([.state])
+        #expect(fixture.controller.shuffleEnabled)
+        #expect(fixture.player.queueSnapshotReadCount > reads)
+    }
+
+    @Test("pause and stopped delivery suspend sampling without losing observation")
+    func idleDeliveryStopsSampling() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.controller.pause()
+        #expect(!fixture.controller.isMonitoringPlayback)
+        await fixture.controller.play(context: fixture.context)
+        #expect(fixture.controller.isMonitoringPlayback)
+        fixture.player.playbackTime = 10
+        await fixture.controller.samplePlaybackProgress(context: fixture.context)
+        fixture.player.finishQueueNaturally()
+        await fixture.player.invalidate([.state])
+        #expect(fixture.controller.isDeliveryStalled)
+        #expect(!fixture.controller.isMonitoringPlayback)
+        #expect(fixture.player.observationHandler != nil)
     }
 
     @Test("suspended observation uses the actual incoming track duration before display catches up")
@@ -468,6 +631,86 @@ struct PlaybackTransitionTests {
         ) == .diverged(entryID: "external"))
     }
 
+    @Test("unknown modes preserve both surfaces without publishing or rebuilding a queue")
+    func missingModesAreNotOff() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        await fixture.controller.setShuffleEnabled(true, context: fixture.context)
+        await fixture.controller.setRepeatMode(.all, context: fixture.context)
+        var writes: [RemoteCommandPublication] = []
+        let remote = RemoteCommandService(publish: { writes.append($0) })
+        remote.syncPlaybackState(from: fixture.controller)
+        writes.removeAll()
+        let replacements = fixture.player.replaceQueueCallCount
+        let version = fixture.controller.playbackModeVersion
+        fixture.player.reportedShuffleMode = nil
+        fixture.player.reportedRepeatMode = nil
+        for _ in 0..<5 {
+            fixture.player.playbackTime += 1
+            await fixture.controller.reconcilePlayerState(context: fixture.context)
+            remote.syncPlaybackState(from: fixture.controller)
+        }
+        #expect(fixture.controller.shuffleEnabled)
+        #expect(fixture.controller.repeatAllEnabled)
+        #expect(fixture.controller.playbackModeVersion == version)
+        #expect(writes.isEmpty)
+        #expect(fixture.player.replaceQueueCallCount == replacements)
+        fixture.player.reportedShuffleMode = .off
+        fixture.player.reportedRepeatMode = MusicPlayer.RepeatMode.none
+        await fixture.controller.reconcilePlayerState(context: fixture.context)
+        remote.syncPlaybackState(from: fixture.controller)
+        #expect(!fixture.controller.shuffleEnabled)
+        #expect(!fixture.controller.repeatAllEnabled)
+        #expect(writes == [.shuffle(.off), .repeatMode(.none)])
+    }
+
+    @Test("a skip retains mode availability and defers mode commands until confirmation")
+    func skipDefersModesWithoutAvailabilityPulse() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        var writes: [RemoteCommandPublication] = []
+        let remote = RemoteCommandService(publish: { writes.append($0) })
+        remote.syncPlaybackState(from: fixture.controller)
+        writes.removeAll()
+        fixture.player.blockNextCommand = true
+        let skip = Task { await fixture.controller.next(settings: fixture.settings, context: fixture.context) }
+        while fixture.player.nextCallCount == 0 { await Task.yield() }
+        remote.syncPlaybackState(from: fixture.controller)
+        #expect(fixture.controller.remoteCommandAvailability.canShuffle)
+        #expect(fixture.controller.remoteCommandAvailability.canPause)
+        await fixture.controller.setShuffleEnabled(true, context: fixture.context)
+        await fixture.controller.setRepeatMode(.all, context: fixture.context)
+        #expect(fixture.player.shuffleMode == .off)
+        fixture.player.releaseBlockedNextCommand()
+        await skip.value
+        remote.syncPlaybackState(from: fixture.controller)
+        #expect(fixture.player.shuffleMode == .songs)
+        #expect(fixture.player.repeatMode == .all)
+        #expect(!writes.contains(.availability(.shuffle, false)))
+        #expect(!writes.contains(.availability(.repeatMode, false)))
+        #expect(writes.filter { $0 == .shuffle(.songs) }.count == 1)
+        #expect(writes.filter { $0 == .repeatMode(.all) }.count == 1)
+    }
+
+    @Test("pause during a pending skip remains paused after confirmation")
+    func pauseWinsOverPendingSkip() async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        try await fixture.start(at: 0)
+        fixture.player.blockNextCommand = true
+        let skip = Task { await fixture.controller.next(settings: fixture.settings, context: fixture.context) }
+        while fixture.player.nextCallCount == 0 { await Task.yield() }
+        #expect(fixture.controller.remoteCommandAvailability.canPause)
+        fixture.controller.pause()
+        fixture.player.releaseBlockedNextCommand()
+        await skip.value
+        #expect(fixture.player.playbackStatus == .paused)
+        #expect(!fixture.controller.isPlaying)
+        #expect(!fixture.controller.isPlaybackTransitionInFlight)
+    }
+
     @Test("a mode changed by another surface reaches Overplay")
     func modeChangedByAnotherSurfaceReachesOverplay() async throws {
         let fixture = try makeFixture()
@@ -485,9 +728,8 @@ struct PlaybackTransitionTests {
 
         #expect(fixture.controller.shuffleEnabled)
         #expect(fixture.controller.repeatMode == .all)
-        // The getters read the player directly, so their values are fresh
-        // regardless. What an external change has to do is invalidate the
-        // observation, or no surface redraws.
+        // A confirmed external change updates shared observable mode state
+        // once, so every surface sees the same value.
         #expect(fixture.controller.playbackModeVersion > versionBefore)
 
         let versionAfterNotice = fixture.controller.playbackModeVersion
@@ -497,7 +739,7 @@ struct PlaybackTransitionTests {
         fixture.player.reportedShuffleMode = nil
         await fixture.controller.reconcilePlayerState(context: fixture.context)
 
-        #expect(!fixture.controller.shuffleEnabled)
+        #expect(fixture.controller.shuffleEnabled)
         #expect(fixture.controller.playbackModeDiagnosticDescription.contains("rawShuffle=nil"))
         let nilTransition = try #require(
             MusicKitActivityLog.shared.snapshot().events.last {
@@ -505,7 +747,7 @@ struct PlaybackTransitionTests {
                     && $0.detail?.contains("rawShuffle=songs->nil") == true
             }
         )
-        #expect(nilTransition.detail?.contains("effectiveShuffle=songs->off") == true)
+        #expect(nilTransition.detail?.contains("effectiveShuffle=songs->songs") == true)
     }
 
     @Test("an active interruption never becomes a delivery stall or issues playback commands")
@@ -1506,7 +1748,9 @@ struct PlaybackTransitionTests {
             await Task.yield()
         }
         #expect(fixture.controller.isPlaybackTransitionInFlight)
-        #expect(fixture.controller.remoteCommandAvailability == .unavailable)
+        #expect(!fixture.controller.remoteCommandAvailability.canSkipToNext)
+        #expect(fixture.controller.remoteCommandAvailability.canShuffle)
+        #expect(fixture.controller.remoteCommandAvailability.canPause)
         let second = Task { @MainActor in
             await fixture.controller.next(settings: fixture.settings, context: fixture.context)
         }
@@ -3240,8 +3484,10 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
     /// still in flight, so tests can act on a concurrent surface mid-transition.
     var onPlay: (() async -> Void)?
 
+    private(set) var queueSnapshotReadCount = 0
     var queueEntrySnapshots: [PlayerQueueEntrySnapshot] {
-        entries.map { entry in
+        queueSnapshotReadCount += 1
+        return entries.map { entry in
             let isUnhydrated = withholdsQueueItemIDs || unhydratedEntryIDs.contains(entry.id)
             return PlayerQueueEntrySnapshot(
                 entry: entry,

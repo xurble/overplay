@@ -24,6 +24,19 @@ struct ArtworkCacheServiceTests {
         #expect(firstKey != differentSizeKey)
     }
 
+    @Test func webArtworkTemplatesAreExpandedAtTheDownloadBoundary() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let service = ArtworkCacheService(rootDirectory: directory, downloader: { url in
+            #expect(url.absoluteString == "https://example.com/cover/512x512bb.jpg")
+            return artworkTestData()
+        })
+        let file = await service.artworkFileURL(for: "https://example.com/cover/{w}x{h}bb.jpg", pixelSize: 128)
+        #expect(file != nil)
+        #expect(PortableArtworkReference.requestURL("musicKit://native-artwork") == nil)
+        #expect(PortableArtworkReference.requestURL("https://example.com/{unknown}") == nil)
+    }
+
     @Test("manifest persists and cached file is reused without download")
     func manifestPersistsAndCachedFileIsReusedWithoutDownload() async throws {
         let rootDirectory = temporaryDirectory()

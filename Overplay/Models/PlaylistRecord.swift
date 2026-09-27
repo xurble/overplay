@@ -2,7 +2,7 @@ import Foundation
 import SwiftData
 
 @Model
-final class PlaylistRecord {
+final class LibraryPlaylistV2 {
     /// Reserved `musicPlaylistID` for the triage bucket. The bucket has no
     /// Apple Music playlist, but the playback stack keys identity, mode and
     /// order state on this string, so it needs a stable value that can never
@@ -140,3 +140,6 @@ final class PlaylistRecord {
         self.updatedAt = updatedAt
     }
 }
+
+// Source-level name shared by all playback surfaces; storage identity is V2.
+typealias PlaylistRecord = LibraryPlaylistV2

@@ -36,13 +36,12 @@ struct AppStartupViewModelTests {
         await viewModel.authorizedServicesTask?.value
 
         #expect(viewModel.hasStartedAuthorizedServices)
-        // The triage migration runs before authorization, so nothing reads a
-        // playlist role before the pre-bucket rows have moved.
+        // No persistence-writing services run before library preparation.
         #expect(events == [
+            "authorization",
             "settings",
             "remove-videos",
             "migrate-triage",
-            "authorization",
             "remote",
             "merge",
             "restore",
@@ -104,4 +103,78 @@ struct AppStartupViewModelTests {
         #expect(startCount == 1)
         #expect(stopCount == 1)
     }
+    @Test("failed preparation runs no mutating services and retry starts once")
+    func failedPreparationStopsAllWriters() async {
+        let model = AppStartupViewModel()
+        var events: [String] = []
+        var shouldFail = true
+        let dependencies = AppStartupViewModel.Dependencies {
+            events.append("settings")
+        } migrateTriageBucket: {
+            events.append("migrate")
+        } refreshAuthorization: {
+        } installRemoteCommands: {
+            events.append("commands")
+        } mergeDuplicateTrackIdentities: {
+            events.append("merge")
+        } restoreLocalPlaybackDisplay: {
+            events.append("restore")
+        } startPlaybackMonitoring: {
+            events.append("monitor")
+        } startPeriodicPlaylistSync: {
+            events.append("sync")
+        } stopPeriodicPlaylistSync: {
+        } compactHistory: {
+            events.append("compact")
+        } removeVideoTracks: {
+            events.append("cleanup")
+        } prepareLibrary: {
+            if shouldFail { throw LibraryRestorationService.RestorationError.waitingForCloud }
+        }
+        await model.bootstrap(isReady: true, dependencies: dependencies)
+        await model.authorizedServicesTask?.value
+        #expect(events.isEmpty)
+        #expect(!model.hasStartedAuthorizedServices)
+        #expect(model.libraryPreparationError != nil)
+        shouldFail = false
+        model.retryLibraryPreparation(dependencies: dependencies)
+        model.retryLibraryPreparation(dependencies: dependencies)
+        await model.authorizedServicesTask?.value
+        #expect(events == ["settings", "cleanup", "migrate", "commands", "merge", "restore", "monitor", "sync", "compact"])
+        #expect(model.libraryPreparationError == nil)
+    }
+
+    @Test("authorization loss cancels pending restoration before writers start")
+    func cancellationDuringRestoration() async {
+        let model = AppStartupViewModel()
+        var writes = 0
+        let dependencies = AppStartupViewModel.Dependencies {
+            writes += 1
+        } migrateTriageBucket: {
+            writes += 1
+        } refreshAuthorization: {
+        } installRemoteCommands: {
+            writes += 1
+        } mergeDuplicateTrackIdentities: {
+            writes += 1
+        } restoreLocalPlaybackDisplay: {
+        } startPlaybackMonitoring: {
+            writes += 1
+        } startPeriodicPlaylistSync: {
+            writes += 1
+        } stopPeriodicPlaylistSync: {
+        } compactHistory: {
+            writes += 1
+        } prepareLibrary: {
+            try await Task.sleep(for: .seconds(60))
+        }
+        await model.bootstrap(isReady: true, dependencies: dependencies)
+        let pending = model.authorizedServicesTask
+        model.authorizationReadinessChanged(isReady: false, dependencies: dependencies)
+        await pending?.value
+        #expect(writes == 0)
+        #expect(!model.hasStartedAuthorizedServices)
+        #expect(!model.isPreparingLibrary)
+    }
+
 }

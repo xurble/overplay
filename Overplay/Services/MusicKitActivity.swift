@@ -108,6 +108,11 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     /// from mode publication so a visual reset can be correlated with a track
     /// transition even when MusicKit's shuffle mode never changed.
     case carPlayNowPlayingButtonsUpdate
+    case carPlayRefreshRequested
+    case carPlayListMutation
+    case carPlayArtworkUpdate
+    case carPlayNowPlayingButtonState
+    case remoteCommandPublication
 
     // Artwork asset downloads from Apple's image CDN.
     case artworkDownload
@@ -149,7 +154,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
              .playerModeResetSkipped, .playbackRecoveryAttempt:
             .player
         case .nowPlayingInfoWrite, .nowPlayingInfoWriteWhilePaused, .nowPlayingInfoClear,
-             .remoteCommandReceived, .carPlayNowPlayingButtonsUpdate:
+             .remoteCommandReceived, .carPlayNowPlayingButtonsUpdate, .carPlayRefreshRequested, .carPlayListMutation, .carPlayArtworkUpdate, .carPlayNowPlayingButtonState, .remoteCommandPublication:
             .systemMediaSurface
         case .artworkDownload:
             .asset
@@ -238,6 +243,11 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case .nowPlayingInfoClear: "Now Playing clear"
         case .remoteCommandReceived: "Remote command received"
         case .carPlayNowPlayingButtonsUpdate: "CarPlay Now Playing buttons update"
+        case .carPlayRefreshRequested: "CarPlay refresh requested"
+        case .carPlayListMutation: "CarPlay list mutation"
+        case .carPlayArtworkUpdate: "CarPlay artwork update"
+        case .carPlayNowPlayingButtonState: "CarPlay button availability"
+        case .remoteCommandPublication: "Remote command state publication"
         case .artworkDownload: "Artwork download"
         }
     }

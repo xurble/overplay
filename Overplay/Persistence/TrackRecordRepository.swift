@@ -30,9 +30,9 @@ enum TrackRecordRepository {
         return try context.fetch(descriptor)
     }
 
-    static func track(catalogID: String?, libraryID: String?, in context: ModelContext) throws -> TrackRecord? {
+    static func track(catalogID: String?, libraryID: String?, libraryScope: String = MusicResourceReference.currentLibraryScope, in context: ModelContext) throws -> TrackRecord? {
         if let libraryID {
-            var library = FetchDescriptor<TrackRecord>(predicate: #Predicate { $0.libraryID == libraryID })
+            var library = FetchDescriptor<TrackRecord>(predicate: #Predicate { $0.libraryID == libraryID && $0.libraryScope == libraryScope })
             library.fetchLimit = 1
             library.includePendingChanges = true
             if let exact = try context.fetch(library).first { return exact }
@@ -41,7 +41,7 @@ enum TrackRecordRepository {
         if let catalogID, let libraryID {
             descriptor = FetchDescriptor<TrackRecord>(
                 predicate: #Predicate {
-                    $0.catalogID == catalogID || $0.libraryID == libraryID
+                    $0.catalogID == catalogID || $0.libraryID == libraryID && $0.libraryScope == libraryScope
                 },
                 sortBy: [SortDescriptor(\.title), SortDescriptor(\.artistName)]
             )
@@ -52,7 +52,7 @@ enum TrackRecordRepository {
             )
         } else if let libraryID {
             descriptor = FetchDescriptor<TrackRecord>(
-                predicate: #Predicate { $0.libraryID == libraryID },
+                predicate: #Predicate { $0.libraryID == libraryID && $0.libraryScope == libraryScope },
                 sortBy: [SortDescriptor(\.title), SortDescriptor(\.artistName)]
             )
         } else {
@@ -62,8 +62,9 @@ enum TrackRecordRepository {
         limitedDescriptor.fetchLimit = 1
         limitedDescriptor.includePendingChanges = true
         if let exact = try context.fetch(limitedDescriptor).first { return exact }
-        let identifiers = Set([catalogID, libraryID].compactMap { $0 })
-        return try allTracks(in: context).first { !identifiers.isDisjoint(with: $0.identityAliases) }
+        let references = Set([catalogID.map { MusicResourceReference.catalog($0) },
+                              libraryID.map { MusicResourceReference.library($0, scope: libraryScope) }].compactMap { $0 })
+        return try allTracks(in: context).first { !references.isDisjoint(with: $0.confirmedAliases) }
     }
 
     static func track(musicItemID: String, in context: ModelContext) throws -> TrackRecord? {
@@ -77,7 +78,10 @@ enum TrackRecordRepository {
 
     @discardableResult
     static func upsertWithResult(_ snapshot: TrackSnapshot, in context: ModelContext) throws -> TrackRecordUpsertResult {
-        var identity = snapshot.resolvedIdentity
+        var identity = MusicTrackIdentity.IDs(catalogID: snapshot.catalogID, libraryID: snapshot.libraryID)
+        guard identity.catalogID != nil || identity.libraryID != nil else {
+            throw MusicLibrarySongResolver.ResolutionError.unresolved(snapshot.id)
+        }
         if !snapshot.hasDocumentedIdentity,
            let existing = try track(catalogID: identity.catalogID, libraryID: identity.libraryID, in: context),
            existing.hasDocumentedIdentity {
@@ -150,7 +154,7 @@ enum TrackRecordRepository {
                 title: title,
                 artistName: artistName,
                 albumTitle: albumTitle,
-                artworkURLTemplate: artworkURLTemplate,
+                artworkURLTemplate: PortableArtworkReference.validated(artworkURLTemplate),
                 durationSeconds: durationSeconds,
                 musicKitPlaybackData: musicKitPlaybackData,
                 createdAt: createdAt,
@@ -167,19 +171,32 @@ enum TrackRecordRepository {
         var didChange = false
         var artworkThemeInputsChanged = false
 
-        assignIdentifier(catalogID, to: \.catalogID, on: track, didChange: &didChange)
-        assignIdentifier(libraryID, to: \.libraryID, on: track, didChange: &didChange)
-        assign(title, to: \.title, on: track, didChange: &didChange, artworkThemeInputsChanged: &artworkThemeInputsChanged)
-        assign(artistName, to: \.artistName, on: track, didChange: &didChange, artworkThemeInputsChanged: &artworkThemeInputsChanged)
-        assign(albumTitle, to: \.albumTitle, on: track, didChange: &didChange, artworkThemeInputsChanged: &artworkThemeInputsChanged)
-
-        if let artworkURLTemplate {
-            assign(artworkURLTemplate, to: \.artworkURLTemplate, on: track, didChange: &didChange, artworkThemeInputsChanged: &artworkThemeInputsChanged)
+        var preferredLibraryID = libraryID
+        var acceptsMetadata = true
+        if let oldLibraryID = track.libraryID, let libraryID, oldLibraryID != libraryID,
+           let catalogID, track.catalogID == catalogID {
+            // Two library resources may prove the same catalog recording.
+            // Pick a stable representative, not whichever source fetched last.
+            preferredLibraryID = min(oldLibraryID, libraryID)
+            acceptsMetadata = libraryID == preferredLibraryID
+            let alias = max(oldLibraryID, libraryID)
+            let reference = MusicResourceReference.library(alias, scope: track.libraryScope)
+            if !track.confirmedAliases.contains(reference) {
+                track.confirmedAliases.append(reference)
+                didChange = true
+            }
         }
-
-        assign(durationSeconds, to: \.durationSeconds, on: track, didChange: &didChange)
-        if let musicKitPlaybackData {
-            assign(musicKitPlaybackData, to: \.musicKitPlaybackData, on: track, didChange: &didChange)
+        assignIdentifier(catalogID, to: \.catalogID, on: track, didChange: &didChange)
+        assignIdentifier(preferredLibraryID, to: \.libraryID, on: track, didChange: &didChange)
+        if acceptsMetadata {
+            assign(title, to: \.title, on: track, didChange: &didChange, artworkThemeInputsChanged: &artworkThemeInputsChanged)
+            assign(artistName, to: \.artistName, on: track, didChange: &didChange, artworkThemeInputsChanged: &artworkThemeInputsChanged)
+            assign(albumTitle, to: \.albumTitle, on: track, didChange: &didChange, artworkThemeInputsChanged: &artworkThemeInputsChanged)
+            if let artworkURLTemplate = PortableArtworkReference.validated(artworkURLTemplate) {
+                assign(artworkURLTemplate, to: \.artworkURLTemplate, on: track, didChange: &didChange, artworkThemeInputsChanged: &artworkThemeInputsChanged)
+            }
+            assign(durationSeconds, to: \.durationSeconds, on: track, didChange: &didChange)
+            if let musicKitPlaybackData { track.musicKitPlaybackData = musicKitPlaybackData }
         }
 
         if didChange {
@@ -195,16 +212,19 @@ enum TrackRecordRepository {
 
     @discardableResult
     static func applyIdentity(_ snapshot: TrackSnapshot, to track: TrackRecord) -> Bool {
-        let old: [String?] = [track.catalogID, track.isrc, String(track.hasDocumentedIdentity), track.identityAliases.joined(separator: ","), track.equivalentCatalogIDs.joined(separator: ",")]
-        if let isrc = snapshot.isrc { track.isrc = isrc }
+        var changed = false
+        if let isrc = snapshot.isrc { assign(isrc, to: \.isrc, on: track, didChange: &changed) }
         if snapshot.hasDocumentedIdentity {
-            track.hasDocumentedIdentity = true
+            assign(true, to: \.hasDocumentedIdentity, on: track, didChange: &changed)
             // A documented empty library relationship overrides an opaque hint.
-            if snapshot.libraryID != nil { track.catalogID = snapshot.catalogID }
-            track.equivalentCatalogIDs = snapshot.equivalentCatalogIDs
+            if snapshot.libraryID != nil {
+                assign(snapshot.catalogID, to: \.catalogID, on: track, didChange: &changed)
+            }
+            if snapshot.hasResolvedIdentityCandidates {
+                assign(snapshot.equivalentCatalogIDs, to: \.equivalentCatalogIDs, on: track, didChange: &changed)
+            }
         }
-        track.identityAliases = Array(Set(track.identityAliases + snapshot.identityAliases)).sorted()
-        return old != [track.catalogID, track.isrc, String(track.hasDocumentedIdentity), track.identityAliases.joined(separator: ","), track.equivalentCatalogIDs.joined(separator: ",")]
+        return changed
     }
 
     private static func assign<Value: Equatable>(

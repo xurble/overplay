@@ -42,21 +42,21 @@ struct PlaybackRemoteCommandAvailability: Equatable, Sendable {
         // not covered by either of the others: paused, with correlation lost,
         // Overplay has nothing restorable to describe and nothing is playing,
         // yet the player can still resume, skip, shuffle and repeat.
-        guard !isTransitionInFlight, hasRestorablePlayback || isPlaying || canSkipTracks else {
+        guard hasRestorablePlayback || isPlaying || canSkipTracks else {
             return .unavailable
         }
 
         return PlaybackRemoteCommandAvailability(
-            canPlay: !isPlaying || isDeliveryStalled,
+            canPlay: !isTransitionInFlight && (!isPlaying || isDeliveryStalled),
             // Deliberately not gated on queue correlation: pausing the shared
             // player never needs it.
             canPause: isPlaying && !isDeliveryStalled,
-            canTogglePlayPause: true,
+            canTogglePlayPause: !isTransitionInFlight || isPlaying,
             // Also deliberately not gated on queue correlation: the player
             // skips inside, shuffles and repeats the queue it is holding,
             // whatever Overplay believes about which entry is current.
-            canSkipToNext: canSkipTracks,
-            canSkipToPrevious: canSkipTracks,
+            canSkipToNext: canSkipTracks && !isTransitionInFlight,
+            canSkipToPrevious: canSkipTracks && !isTransitionInFlight,
             canShuffle: canSkipTracks
         )
     }
@@ -74,12 +74,23 @@ final class RemoteCommandService {
     private(set) var context: ModelContext?
     private var targetTokens = [Any]()
     private var playbackStateObservationGeneration = 0
+    private var lastAvailability: PlaybackRemoteCommandAvailability?
+    private var lastModes = PlaybackModeState()
+    private let publish: (RemoteCommandPublication) -> Void
+
+    init(publish: @escaping (RemoteCommandPublication) -> Void = { $0.apply() }) {
+        self.publish = publish
+    }
 
     var registeredTargetCount: Int {
         targetTokens.count
     }
 
     func activate(playbackController: PlaybackController, context: ModelContext) {
+        // Activation is a system-surface lifecycle boundary, including a
+        // CarPlay reconnect. Ordinary context/state updates retain the memo.
+        lastAvailability = nil
+        lastModes = PlaybackModeState()
         update(playbackController: playbackController, context: context)
         guard !isActive else { return }
         isActive = true
@@ -93,7 +104,6 @@ final class RemoteCommandService {
         commandCenter.skipBackwardCommand.isEnabled = false
         commandCenter.seekForwardCommand.isEnabled = false
         commandCenter.seekBackwardCommand.isEnabled = false
-        commandCenter.changeRepeatModeCommand.isEnabled = true
         syncPlaybackState(from: playbackController)
 
         targetTokens.append(commandCenter.playCommand.addTarget { [weak self] _ in
@@ -306,10 +316,7 @@ final class RemoteCommandService {
 
     func syncPlaybackState(from playbackController: PlaybackController) {
         publishAvailability(playbackController.remoteCommandAvailability)
-        publishPlaybackModes(
-            shuffleEnabled: playbackController.shuffleEnabled,
-            repeatMode: playbackController.repeatMode
-        )
+        publishPlaybackModes(playbackController.playbackModes)
     }
 
     @discardableResult
@@ -342,25 +349,31 @@ final class RemoteCommandService {
     }
 
     private func publishAvailability(_ availability: PlaybackRemoteCommandAvailability) {
-        let commandCenter = MPRemoteCommandCenter.shared()
-        commandCenter.playCommand.isEnabled = availability.canPlay
-        commandCenter.pauseCommand.isEnabled = availability.canPause
-        commandCenter.togglePlayPauseCommand.isEnabled = availability.canTogglePlayPause
-        commandCenter.nextTrackCommand.isEnabled = availability.canSkipToNext
-        commandCenter.previousTrackCommand.isEnabled = availability.canSkipToPrevious
-        commandCenter.changeShuffleModeCommand.isEnabled = availability.canShuffle
-        commandCenter.changeRepeatModeCommand.isEnabled = availability.canShuffle
+        let fields: [(RemoteCommandPublication.Command, KeyPath<PlaybackRemoteCommandAvailability, Bool>)] = [
+            (.play, \.canPlay), (.pause, \.canPause), (.toggle, \.canTogglePlayPause),
+            (.next, \.canSkipToNext), (.previous, \.canSkipToPrevious),
+            (.shuffle, \.canShuffle), (.repeatMode, \.canShuffle)
+        ]
+        for (command, key) in fields where lastAvailability?[keyPath: key] != availability[keyPath: key] {
+            publish(.availability(command, availability[keyPath: key]))
+            MusicKitActivityLog.shared.record(.remoteCommandPublication,
+                detail: "availability=\(command) enabled=\(availability[keyPath: key])")
+        }
+        lastAvailability = availability
     }
 
-    private func publishPlaybackModes(shuffleEnabled: Bool, repeatMode: MusicKit.MusicPlayer.RepeatMode) {
-        let commandCenter = MPRemoteCommandCenter.shared()
-        commandCenter.changeShuffleModeCommand.currentShuffleType = RemotePlaybackModeMapper.shuffleType(
-            for: shuffleEnabled
-        )
-        // Was hard-coded to `.all`, which claimed a mode Overplay was not in.
-        commandCenter.changeRepeatModeCommand.currentRepeatType = RemotePlaybackModeMapper.repeatType(
-            for: repeatMode
-        )
+    private func publishPlaybackModes(_ modes: PlaybackModeState) {
+        // Unknown initial state is not an instruction to publish off. During
+        // hydration the controller retains the confirmed session value.
+        if let shuffle = modes.shuffle, lastModes.shuffle != shuffle {
+            publish(.shuffle(shuffle))
+            MusicKitActivityLog.shared.record(.remoteCommandPublication, detail: "shuffle=\(shuffle)")
+        }
+        if let repeatMode = modes.repeatMode, lastModes.repeatMode != repeatMode {
+            publish(.repeatMode(repeatMode))
+            MusicKitActivityLog.shared.record(.remoteCommandPublication, detail: "repeat=\(repeatMode)")
+        }
+        lastModes = modes
     }
 
     @discardableResult
@@ -403,8 +416,7 @@ final class RemoteCommandService {
 
         withObservationTracking {
             _ = playbackController.remoteCommandAvailability
-            _ = playbackController.shuffleEnabled
-            _ = playbackController.repeatMode
+            _ = playbackController.playbackModes
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, generation == self.playbackStateObservationGeneration else { return }

@@ -2,7 +2,7 @@ import Foundation
 import SwiftData
 
 @Model
-final class PlaylistItemRecord {
+final class LibraryMembershipV2 {
     var id: UUID = UUID()
     var playlistID: UUID = UUID()
     var trackID: UUID = UUID()
@@ -175,3 +175,6 @@ final class PlaylistItemRecord {
         return true
     }
 }
+
+// Source-level name shared by all playback surfaces; storage identity is V2.
+typealias PlaylistItemRecord = LibraryMembershipV2

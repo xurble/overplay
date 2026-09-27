@@ -13,6 +13,14 @@ enum AppPersistence {
         case missingCloudKitContainerIdentifier
     }
 
+    static var cloudEnabled: Bool {
+        #if OVERPLAY_DEVELOPMENT
+        false
+        #else
+        true
+        #endif
+    }
+
     static var schema: Schema {
         Schema([
             OverplaySettings.self,
@@ -46,7 +54,7 @@ enum AppPersistence {
             throw ConfigurationError.developmentRequiresSeparateApp
         }
         return ModelConfiguration(
-            "OverplayDevelopment",
+            "OverplayDevelopmentV2",
             schema: schema,
             groupContainer: .none,
             cloudKitDatabase: .none
@@ -61,7 +69,9 @@ enum AppPersistence {
             throw ConfigurationError.missingCloudKitContainerIdentifier
         }
         return ModelConfiguration(
+            "OverplayLibraryV2",
             schema: schema,
+            groupContainer: .none,
             cloudKitDatabase: .private(cloudKitContainerIdentifier)
         )
         #endif

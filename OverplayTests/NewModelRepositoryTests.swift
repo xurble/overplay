@@ -325,7 +325,7 @@ struct NewModelRepositoryTests {
         let librarySnapshot = TrackSnapshot(
             id: "i.abc123",
             catalogID: nil,
-            libraryID: nil,
+            libraryID: "i.abc123",
             playlistEntryID: nil,
             playlistID: "playlist-1",
             title: "Song",

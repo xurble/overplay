@@ -19,9 +19,10 @@ nonisolated struct PerformanceSpan {
         interval = Self.signposter.beginInterval("Overplay work", "\(operation.rawValue, privacy: .public)")
     }
 
-    func finish(magnitude: Double? = nil, detail: String? = nil) {
+    func finish(magnitude: Double? = nil, detail: String? = nil, error: Error? = nil) {
         Self.signposter.endInterval("Overplay work", interval)
         MusicKitActivityLog.shared.record(operation, startedAt: startedAt,
-            duration: started.duration(to: .now), magnitude: magnitude, detail: [traceID, detail].compactMap { $0 }.joined(separator: " "))
+            duration: started.duration(to: .now), magnitude: magnitude,
+            detail: [traceID, detail].compactMap { $0 }.joined(separator: " "), error: error)
     }
 }

@@ -100,4 +100,14 @@ struct AppleMusicPlaylistSourceSyncTests {
             try await sync.fetchLibraryPlaylists()
         }
     }
+    @Test func aMissingPlaylistIDNeverRelinksByName() async throws {
+        let fetcher = StubFetcher()
+        fetcher.playlists = [try Self.makePlaylist(id: "p.other", name: "Overplay")]
+        let sync = AppleMusicPlaylistSourceSync(playlistFetcher: fetcher)
+        await #expect(throws: PlaylistSyncError.self) {
+            try await sync.loadPlaylist(id: "p.original", name: "Overplay")
+        }
+        #expect(fetcher.requestedPageLimits.isEmpty)
+    }
+
 }

@@ -237,7 +237,6 @@ struct TrackPlaybackFactsView: View {
 
 struct PlaybackModeControlsView: View {
     @Environment(\.modelContext) private var modelContext
-    @Environment(AppRuntime.self) private var runtime
     @Environment(PlaybackController.self) private var playbackController
 
     var artworkTheme: AlbumArtworkTheme? = nil
@@ -247,7 +246,6 @@ struct PlaybackModeControlsView: View {
             Button {
                 Task {
                     await playbackController.toggleShuffle(context: modelContext)
-                    runtime.remoteCommandService.syncPlaybackModes(from: playbackController)
                 }
             } label: {
                 Label(controlsPresentation.shuffleTitle, systemImage: controlsPresentation.shuffleSystemImage)
@@ -264,7 +262,6 @@ struct PlaybackModeControlsView: View {
             Button {
                 Task {
                     await playbackController.toggleRepeatAll(context: modelContext)
-                    runtime.remoteCommandService.syncPlaybackModes(from: playbackController)
                 }
             } label: {
                 Label(
@@ -281,6 +278,7 @@ struct PlaybackModeControlsView: View {
                 fallbackStyle: controlsPresentation.isRepeatingAll ? .borderedProminent : .bordered
             )
         }
+        .disabled(!playbackController.remoteCommandAvailability.canShuffle)
     }
 
     private var controlPalette: FullScreenPlayerControlPalette? {

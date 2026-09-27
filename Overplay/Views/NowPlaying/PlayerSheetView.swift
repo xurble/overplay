@@ -49,8 +49,8 @@ struct PlayerSheetView: View {
 
     private var artworkThemeIdentity: String {
         [
-            playbackController.currentTrack?.id ?? "",
-            playbackController.currentTrack?.artworkURLTemplate ?? "",
+            playbackController.nowPlayingDisplayTrack?.id ?? "",
+            playbackController.nowPlayingDisplayTrack?.artworkURLTemplate ?? "",
             playbackController.currentPlaylistID ?? "",
             colorSchemeContrast == .increased ? "increased" : "standard"
         ].joined(separator: "|")
@@ -59,7 +59,7 @@ struct PlayerSheetView: View {
     @MainActor
     private func loadArtworkTheme() async {
         let requestIdentity = artworkThemeIdentity
-        let track = playbackController.currentTrack
+        let track = playbackController.nowPlayingDisplayTrack
         let playlistID = playbackController.currentPlaylistID
         let trackTitle = track?.title
         let artistName = track?.artistName
@@ -102,7 +102,7 @@ struct PlayerSheetView: View {
     @MainActor
     private func applyArtworkTheme(_ theme: AlbumArtworkTheme, source: String) {
         AlbumArtworkThemeDiagnostics.log(
-            "sheet apply \(source): trackID=\(playbackController.currentTrack?.id ?? "nil") title=\(playbackController.currentTrack?.title ?? "nil") fallback=\(theme.isFallback) themeSource=\(theme.source.rawValue) background=\(AlbumArtworkThemeDiagnostics.describe(theme.backgroundRGB)) titleColor=\(AlbumArtworkThemeDiagnostics.describe(theme.trackTitleRGB))"
+            "sheet apply \(source): trackID=\(playbackController.nowPlayingDisplayTrack?.id ?? "nil") title=\(playbackController.nowPlayingDisplayTrack?.title ?? "nil") fallback=\(theme.isFallback) themeSource=\(theme.source.rawValue) background=\(AlbumArtworkThemeDiagnostics.describe(theme.backgroundRGB)) titleColor=\(AlbumArtworkThemeDiagnostics.describe(theme.trackTitleRGB))"
         )
         withAnimation(.easeInOut(duration: 0.35)) {
             artworkTheme = theme

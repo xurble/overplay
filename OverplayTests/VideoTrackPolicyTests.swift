@@ -68,7 +68,7 @@ struct VideoTrackPolicyTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let video = TrackRecord(libraryID: "i.video", title: "Video", artistName: "Artist")
-        video.identityAliases = ["video"]
+        video.confirmedAliases = [.catalog("video")]
         context.insert(video)
         #expect(try VideoTrackCleanupService.removeVideos(knownVideoIDs: ["video"], in: context) == 1)
         #expect(try TrackRecordRepository.allTracks(in: context).isEmpty)

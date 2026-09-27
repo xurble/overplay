@@ -1,0 +1,171 @@
+Read-only MusicKit identity probe
+
+[authorization]
+.authorized
+
+[environment]
+Version 26.5 (Build 25F71); Designed for iPad; 2026-09-27 03:46:02 +0000
+
+[library playlists]
+count=28
+
+[playlist]
+id=-5835012116765604565 name=Overplay
+
+[native playlist lookup]
+id=-5835012116765604565 name=Overplay
+
+[playlist entry]
+entryID=7414371424947601333 position=3 id=7155078121927443764 title=California Stars artist=Wilco album=What's Your 20? Essential Tracks 1994-2014 duration=299.561 isrc=nil artworkScheme=musicKit
+
+[playlist entry]
+entryID=-3036386647380004240 position=30 id=-2540034726386153049 title=All Nighter artist=Elastica album=Elastica duration=93.413 isrc=nil artworkScheme=musicKit
+
+[playlist entry]
+entryID=6434919870159846207 position=78 id=-3140821922437280474 title=Archie, Marry Me artist=Alvvays album=Alvvays duration=196.56 isrc=nil artworkScheme=musicKit
+
+[playlist total]
+102
+
+[shared resolver full playlist]
+library=102 catalog=0 failures=0 duration=0.1896289587020874s
+
+[full playlist web identity verification]
+requestedUnique=101 verified=101 missing=[]
+
+[native song id=i.O1RQbZGuVYYl7v]
+id=i.O1RQbZGuVYYl7v title=Archie, Marry Me artist=Alvvays album=Alvvays duration=196.56 isrc=nil artworkScheme=musicKit
+count=1
+
+[GET https://api.music.apple.com/v1/me/library/songs?ids=i.O1RQbZGuVYYl7v&include=catalog]
+{
+  "data" : [
+    {
+      "attributes" : {
+        "albumName" : "Alvvays",
+        "artistName" : "Alvvays",
+        "durationInMillis" : 196560,
+        "name" : "Archie, Marry Me"
+      },
+      "id" : "i.O1RQbZGuVYYl7v",
+      "relationships" : {
+        "catalog" : {
+          "data" : [
+            {
+              "attributes" : {
+                "albumName" : "Alvvays",
+                "artistName" : "Alvvays",
+                "durationInMillis" : 196560,
+                "isrc" : "US3R41428202",
+                "name" : "Archie, Marry Me"
+              },
+              "id" : "878984806",
+              "type" : "songs"
+            }
+          ]
+        }
+      },
+      "type" : "library-songs"
+    }
+  ]
+}
+
+[native song id=-3140821922437280474]
+id=i.O1RQbZGuVYYl7v title=Archie, Marry Me artist=Alvvays album=Alvvays duration=196.56 isrc=nil artworkScheme=musicKit
+count=1
+
+[GET https://api.music.apple.com/v1/me/library/songs?ids=-3140821922437280474&include=catalog]
+{
+  "data" : [
+
+  ]
+}
+
+[native song id=i.1YBNxGGsqAAPdr]
+id=i.1YBNxGGsqAAPdr title=All Nighter artist=Elastica album=Elastica duration=93.413 isrc=nil artworkScheme=musicKit
+count=1
+
+[GET https://api.music.apple.com/v1/me/library/songs?ids=i.1YBNxGGsqAAPdr&include=catalog]
+{
+  "data" : [
+    {
+      "attributes" : {
+        "albumName" : "Elastica",
+        "artistName" : "Elastica",
+        "durationInMillis" : 93413,
+        "name" : "All Nighter"
+      },
+      "id" : "i.1YBNxGGsqAAPdr",
+      "relationships" : {
+        "catalog" : {
+          "data" : [
+
+          ]
+        }
+      },
+      "type" : "library-songs"
+    }
+  ]
+}
+
+[native song id=-2540034726386153049]
+id=i.1YBNxGGsqAAPdr title=All Nighter artist=Elastica album=Elastica duration=93.413 isrc=nil artworkScheme=musicKit
+count=1
+
+[GET https://api.music.apple.com/v1/me/library/songs?ids=-2540034726386153049&include=catalog]
+{
+  "data" : [
+
+  ]
+}
+
+[native song id=i.1YBNkWOHqAAPdr]
+id=i.1YBNkWOHqAAPdr title=California Stars artist=Wilco album=What's Your 20? Essential Tracks 1994-2014 duration=299.561 isrc=nil artworkScheme=musicKit
+count=1
+
+[GET https://api.music.apple.com/v1/me/library/songs?ids=i.1YBNkWOHqAAPdr&include=catalog]
+{
+  "data" : [
+    {
+      "attributes" : {
+        "albumName" : "What's Your 20? Essential Tracks 1994-2014",
+        "artistName" : "Wilco",
+        "durationInMillis" : 299561,
+        "name" : "California Stars"
+      },
+      "id" : "i.1YBNkWOHqAAPdr",
+      "relationships" : {
+        "catalog" : {
+          "data" : [
+            {
+              "attributes" : {
+                "albumName" : "What's Your 20? Essential Tracks 1994-2014",
+                "artistName" : "Wilco",
+                "durationInMillis" : 299561,
+                "isrc" : "USNO11401061",
+                "name" : "California Stars"
+              },
+              "id" : "925214201",
+              "type" : "songs"
+            }
+          ]
+        }
+      },
+      "type" : "library-songs"
+    }
+  ]
+}
+
+[native song id=7155078121927443764]
+id=i.1YBNkWOHqAAPdr title=California Stars artist=Wilco album=What's Your 20? Essential Tracks 1994-2014 duration=299.561 isrc=nil artworkScheme=musicKit
+count=1
+
+[GET https://api.music.apple.com/v1/me/library/songs?ids=7155078121927443764&include=catalog]
+{
+  "data" : [
+
+  ]
+}
+
+[complete]
+No sync, persistence reads/writes, player, or remote library mutations were performed. Only this report was saved.

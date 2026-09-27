@@ -6,6 +6,22 @@ import Testing
 @MainActor
 @Suite("Playback controller display restore")
 struct PlaybackControllerDisplayRestoreTests {
+
+    @Test("matched player snapshot uses stored artwork without masking an incoming song")
+    func sharedArtworkUsesOnlyTheMatchingTrack() {
+        let controller = PlaybackController()
+        controller.currentTrack = CurrentPlaybackTrack(id: "song", title: "Stored", artistName: "Artist",
+            artworkURLTemplate: "https://example.com/cover/{w}x{h}.jpg")
+        controller.musicKitNowPlayingTrack = CurrentPlaybackTrack(id: "song", title: "Live", artistName: "Artist",
+            artworkURLTemplate: "musicKit://native-artwork")
+        #expect(controller.nowPlayingDisplayTrack?.title == "Live")
+        #expect(controller.nowPlayingDisplayTrack?.artworkURLTemplate == controller.currentTrack?.artworkURLTemplate)
+        controller.musicKitNowPlayingTrack?.id = "incoming"
+        controller.musicKitNowPlayingTrack?.artworkURLTemplate = nil
+        #expect(controller.nowPlayingDisplayTrack?.id == "incoming")
+        #expect(controller.nowPlayingDisplayTrack?.artworkURLTemplate == nil)
+    }
+
     @Test("evaluation outcome matches currently displayed item")
     func evaluationOutcomeMatchesCurrentlyDisplayedItem() {
         let playbackDefaults = PlaybackTestDefaults()

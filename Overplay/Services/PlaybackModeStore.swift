@@ -20,7 +20,7 @@ struct PlaybackOrderState: Codable, Equatable, Sendable {
 }
 
 enum PlaybackOrderStore {
-    private static let key = "overplay.playbackOrderStates.v1"
+    private static let key = "overplay.v2.playbackOrderStates.v1"
 
     static func state(
         playerID: String,

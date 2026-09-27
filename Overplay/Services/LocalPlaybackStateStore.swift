@@ -36,7 +36,7 @@ enum LocalPlaybackStateFlushPolicy {
 }
 
 enum LocalPlaybackStateStore {
-    private static let key = "overplay.localPlaybackState"
+    private static let key = "overplay.v2.localPlaybackState"
 
     static func load(from defaults: UserDefaults = .standard) -> LocalPlaybackState? {
         guard let data = defaults.data(forKey: key) else {

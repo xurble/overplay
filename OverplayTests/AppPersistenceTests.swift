@@ -33,7 +33,7 @@ struct AppPersistenceTests {
         #expect(!configuration.isStoredInMemoryOnly)
         #expect(configuration.cloudKitContainerIdentifier == nil)
         #expect(configuration.groupAppContainerIdentifier == nil)
-        #expect(configuration.name == "OverplayDevelopment")
+        #expect(configuration.name == "OverplayDevelopmentV2")
         #expect(configuration.url != ModelConfiguration(schema: AppPersistence.schema).url)
     }
 
@@ -56,7 +56,8 @@ struct AppPersistenceTests {
         )
         #expect(!configuration.isStoredInMemoryOnly)
         #expect(configuration.cloudKitContainerIdentifier == "iCloud.personal")
-        #expect(configuration.url == ModelConfiguration(schema: AppPersistence.schema).url)
+        #expect(configuration.name == "OverplayLibraryV2")
+        #expect(configuration.url != ModelConfiguration(schema: AppPersistence.schema).url)
     }
 
     @Test func everydayBuildCannotOpenTheDevelopmentApp() {

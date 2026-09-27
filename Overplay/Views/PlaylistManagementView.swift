@@ -87,6 +87,12 @@ private struct PlaylistManagementContentView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .disabled(!detail.rows.contains { $0.isPlayable })
+
+                    if let statusMessage = playbackController.statusMessage {
+                        Text(statusMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .padding(.vertical, 4)
             }
@@ -159,7 +165,8 @@ private struct PlaylistManagementContentView: View {
             reloadPlaylistTracks()
         }
         .task(id: detailPresentationKey) {
-            cachedDetail = detailPresentation
+            let next = detailPresentation
+            if cachedDetail != next { cachedDetail = next }
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -263,7 +270,6 @@ private struct PlaylistManagementContentView: View {
         var sources: [SourceRevision]
         var tracks: [TrackRevision]
         var metadataVersion: Int
-        var modeVersion: Int
         var currentPlaylist: String?
         var currentTrack: String?
         var snapshotDate: Date?
@@ -277,7 +283,6 @@ private struct PlaylistManagementContentView: View {
             sources: linkedPlaylists.map { SourceRevision(id: $0.id, musicID: $0.musicPlaylistID, name: $0.name, role: $0.roleRawValue) },
             tracks: tracks.map { TrackRevision(id: $0.id, updatedAt: $0.updatedAt, title: $0.title, artist: $0.artistName, album: $0.albumTitle, artwork: $0.artworkURLTemplate) },
             metadataVersion: playbackController.playbackItemMetadataVersion,
-            modeVersion: playbackController.playbackModeVersion,
             currentPlaylist: playbackController.currentPlaylistID,
             currentTrack: playbackController.nowPlayingDisplayLocalTrackID,
             snapshotDate: playbackController.activePlaylistSnapshot?.updatedAt)

@@ -46,7 +46,6 @@ struct PlaylistCollageView: View {
         .onChange(of: playlist.collageSnapshotData(for: scope)) { refreshID = UUID() }
         .onChange(of: playlist.collageLayout(for: scope)) { refreshID = UUID() }
         .onChange(of: playlist.collageStroke(for: scope)) { refreshID = UUID() }
-        .onChange(of: playlist.updatedAt) { refreshID = UUID() }
         .onChange(of: scenePhase) { _, phase in if phase == .active { refreshID = UUID() } }
     }
 
@@ -67,15 +66,15 @@ struct PlaylistCollageView: View {
     }
 
     private func load() async {
-        isLoading = true
+        isLoading = image == nil
         errorMessage = nil
         let regenerate = regenerateRequested
         regenerateRequested = false
         do {
-            let snapshot = try PlaylistCollageService.snapshot(for: playlist, in: modelContext, scope: scope, regenerate: regenerate)
+            let snapshot = try PlaylistCollageService.prepareSnapshot(for: playlist, in: modelContext, scope: scope, regenerate: regenerate)
             let rendered = await PlaylistCollageService.shared.image(for: snapshot, playlistID: playlist.musicPlaylistID, scope: scope)
             guard !Task.isCancelled else { return }
-            image = rendered
+            if let rendered { image = rendered }
         } catch {
             guard !Task.isCancelled else { return }
             errorMessage = "Could not save artwork settings: \(error.localizedDescription)"

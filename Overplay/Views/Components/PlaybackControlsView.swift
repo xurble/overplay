@@ -17,7 +17,7 @@ struct PlaybackControlsView: View {
                 Image(systemName: "backward.fill")
             }
             .accessibilityLabel("Previous track")
-            .disabled(!playbackController.canSkipTracks)
+            .disabled(!playbackController.remoteCommandAvailability.canSkipToPrevious)
             .buttonStyle(PlaybackControlButtonStyle(
                 controlSize: controlSize,
                 prominence: .secondary,
@@ -43,7 +43,7 @@ struct PlaybackControlsView: View {
                 Image(systemName: controlsPresentation.skipForwardSystemImage)
             }
             .accessibilityLabel(controlsPresentation.skipForwardAccessibilityLabel)
-            .disabled(!playbackController.canSkipTracks)
+            .disabled(!playbackController.remoteCommandAvailability.canSkipToNext)
             .buttonStyle(PlaybackControlButtonStyle(
                 controlSize: controlSize,
                 prominence: .secondary,
@@ -53,9 +53,12 @@ struct PlaybackControlsView: View {
     }
 
     private var canUsePrimaryPlaybackAction: Bool {
+        if playbackController.isPlaybackTransitionInFlight {
+            return playbackController.remoteCommandAvailability.canPause
+        }
         // The player holding a queue is the cheap, observable case, and it
         // short-circuits the two store lookups below out of every render.
-        playbackController.canSkipTracks
+        return playbackController.canSkipTracks
             || playbackController.canControlPlayback
             || (try? PlaybackTrackResolver.restoredPlaybackTarget(
                 currentPlaylistID: playbackController.currentPlaylistID,

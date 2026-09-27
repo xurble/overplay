@@ -2,6 +2,11 @@ import Foundation
 
 struct TrackSnapshot: Identifiable, Hashable, Sendable {
     var id: String
+    var importIdentityKey: MusicResourceReference? {
+        if let catalogID { return .catalog(catalogID) }
+        if let libraryID { return .library(libraryID) }
+        return nil
+    }
     var catalogID: String?
     var libraryID: String?
     var isrc: String?
@@ -9,6 +14,8 @@ struct TrackSnapshot: Identifiable, Hashable, Sendable {
     var identityAliases: [String] = []
     /// Alternatives are evidence for review, never automatic merge keys.
     var equivalentCatalogIDs: [String] = []
+    /// False means candidate lookup was not performed, not that it found none.
+    var hasResolvedIdentityCandidates: Bool = false
     var hasDocumentedIdentity: Bool = false
     var playlistEntryID: String?
     var remotePosition: Int?

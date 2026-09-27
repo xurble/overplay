@@ -48,6 +48,10 @@ final class CachingMusicLibraryPlaylistFetcher: MusicLibraryPlaylistFetching {
         self.now = now
     }
 
+    func fetchLibraryLinks() async throws -> [RemotePlaylistLink] {
+        try await underlying.fetchLibraryLinks()
+    }
+
     func fetchAllPlaylists(pageLimit: Int) async throws -> [Playlist] {
         if let cached,
            cached.pageLimit == pageLimit,
@@ -74,8 +78,9 @@ final class CachingMusicLibraryPlaylistFetcher: MusicLibraryPlaylistFetching {
         guard !playlistID.isEmpty else { return nil }
 
         // A fresh full enumeration already answers this for free.
-        if let cached, now().timeIntervalSince(cached.fetchedAt) < timeToLive {
-            return cached.playlists.first { $0.id.rawValue == playlistID }
+        if let cached, now().timeIntervalSince(cached.fetchedAt) < timeToLive,
+           let playlist = cached.playlists.first(where: { $0.id.rawValue == playlistID }) {
+            return playlist
         }
 
         if let cachedByID = cachedByID[playlistID],
@@ -95,7 +100,7 @@ final class CachingMusicLibraryPlaylistFetcher: MusicLibraryPlaylistFetching {
 
         let playlist = try await lookup.value
         if let playlist {
-            cachedByID[playlist.id.rawValue] = CachedPlaylist(playlist: playlist, fetchedAt: now())
+            cachedByID[playlistID] = CachedPlaylist(playlist: playlist, fetchedAt: now())
         }
         return playlist
     }

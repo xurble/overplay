@@ -198,7 +198,7 @@ enum DuplicateTrackService {
             context.delete(donor)
         }
         // Also keep the canonical identifiers before future enrichment changes them.
-        track.identityAliases = Array(Set(track.identityAliases + [track.catalogID, track.libraryID].compactMap { $0 })).sorted()
+        track.confirmedAliases = Array(track.identityReferences).sorted { ($0.domain.rawValue, $0.scope, $0.value) < ($1.domain.rawValue, $1.scope, $1.value) }
         if !removals.isEmpty, let otp { item.suppressedOTPMusicPlaylistIDs = Array(Set(item.suppressedOTPMusicPlaylistIDs + [otp.musicPlaylistID])) }
         if Set(selected.map(\.destination)).count > 1 {
             switch destination {

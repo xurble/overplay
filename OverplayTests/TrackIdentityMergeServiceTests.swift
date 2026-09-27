@@ -40,34 +40,18 @@ struct TrackIdentityMergeServiceTests {
         #expect(canonical.musicKitPlaybackData == Data("cached-playback".utf8))
     }
 
-    @Test("a genuine catalog ID heals a legacy mirrored catalog field")
-    func aGenuineCatalogIDHealsALegacyMirroredCatalogField() async throws {
+    @Test("identifier spelling cannot move an identifier into a different domain")
+    func identifierSpellingDoesNotEstablishDomain() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let legacyMirrored = TrackRecord(
-            catalogID: "i.abc123",
-            libraryID: "i.abc123",
-            title: "Song",
-            artistName: "Artist",
-            createdAt: Date(timeIntervalSince1970: 10)
-        )
-        let wellFormed = TrackRecord(
-            catalogID: "1440833098",
-            libraryID: "i.abc123",
-            title: "Song",
-            artistName: "Artist",
-            createdAt: Date(timeIntervalSince1970: 20)
-        )
-        context.insert(legacyMirrored)
-        context.insert(wellFormed)
-
-        try await TrackIdentityMergeService.mergeDuplicates(in: context)
-        let tracks = try TrackRecordRepository.allTracks(in: context)
-
-        #expect(tracks.count == 1)
-        #expect(tracks.first?.id == legacyMirrored.id)
-        #expect(legacyMirrored.catalogID == "1440833098")
-        #expect(legacyMirrored.libraryID == "i.abc123")
+        let catalog = TrackRecord(catalogID: "i.same", title: "Catalog", artistName: "Artist")
+        let library = TrackRecord(libraryID: "i.same", title: "Library", artistName: "Artist")
+        context.insert(catalog)
+        context.insert(library)
+        let summary = try await TrackIdentityMergeService.mergeDuplicates(in: context)
+        #expect(summary.mergedTrackCount == 0)
+        #expect(catalog.catalogID == "i.same")
+        #expect(try TrackRecordRepository.allTracks(in: context).count == 2)
     }
 
     @Test("playlist items repoint to the canonical track and merge stats")

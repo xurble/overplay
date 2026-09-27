@@ -8,6 +8,7 @@ struct SplitAppShell: View {
     var settings: OverplaySettings
 
     @SceneStorage("overplay.splitSelection") private var storedSelection = AppShellDestination.dashboard.storageValue
+    @State private var detailPath = NavigationPath()
 
     var body: some View {
         NavigationSplitView {
@@ -37,7 +38,12 @@ struct SplitAppShell: View {
             .listStyle(.sidebar)
             .navigationTitle("Overplay")
         } detail: {
-            detailView
+            NavigationStack(path: $detailPath) {
+                detailView
+            }
+        }
+        .onChange(of: storedSelection) { _, _ in
+            detailPath = NavigationPath()
         }
     }
 
@@ -123,6 +129,7 @@ struct SplitAppShell: View {
         Binding {
             selectedDestination
         } set: { newSelection in
+            detailPath = NavigationPath()
             storedSelection = (newSelection ?? .dashboard).storageValue
         }
     }

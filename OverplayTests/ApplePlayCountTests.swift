@@ -86,7 +86,7 @@ struct ApplePlayCountTests {
         let item = try fixture(context)
         try ApplePlayCountSyncService.apply([observation(count: 10)], startedAt: date, in: context)
         let track = try #require(try TrackRecordRepository.track(id: item.trackID, in: context))
-        track.identityAliases.append("i.second")
+        track.confirmedAliases.append(.library("i.second"))
         try ApplePlayCountSyncService.apply([observation(count: 12), observation("i.second", count: 100)], startedAt: date, in: context)
         #expect(item.applePlayCount == 3)
         try ApplePlayCountSyncService.apply([observation("i.second", count: 102)], startedAt: date, in: context)

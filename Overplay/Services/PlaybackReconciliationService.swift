@@ -27,12 +27,7 @@ enum PlaybackReconciliationService {
         }
         let threshold = (try? SettingsRepository.settings(in: context))?
             .playthroughThresholdPercentage ?? 90
-        let orderedTracks = orderedTracks(
-            playlistID: observation.playlistID,
-            playerID: playbackController.playerID,
-            scope: playbackController.currentPlaylistScope,
-            context: context
-        )
+        let orderedTracks = playbackController.capturePlaybackOrder(context: context)
         return nextWakeTarget(
             observation: observation,
             orderedTracks: orderedTracks,
@@ -55,18 +50,13 @@ enum PlaybackReconciliationService {
             return Result()
         }
 
-        let tracks = orderedTracks(
-            playlistID: observation.playlistID,
-            playerID: playbackController.playerID,
-            scope: playbackController.currentPlaylistScope,
-            context: context
-        )
+        let tracks = playbackController.capturePlaybackOrder(context: context)
         let result = await reconcileAndCaptureWaypoint(
             observation: observation,
             orderedTracks: tracks,
             context: context,
             captureBeforeFetching: captureBeforeFetching,
-            continuityAllowed: !playbackController.shuffleEnabled,
+            continuityAllowed: playbackController.hasConfirmedChronologicalPlayback,
             musicLibraryFetcher: musicLibraryFetcher,
             activeSessionHasEvaluated: playbackController.activeSessionHasEvaluated,
             saveChanges: saveChanges
@@ -346,34 +336,6 @@ enum PlaybackReconciliationService {
                 localTrackID: track.id.uuidString,
                 musicItemIDs: musicItemIDs,
                 entryObservations: (try? PlaylistItemRepository.item(trackID: track.id, in: context))?.entryProvenance ?? []
-            )
-        }
-    }
-
-    private static func orderedTracks(
-        playlistID: String,
-        playerID: String,
-        scope: PlaylistPlaybackScope,
-        context: ModelContext
-    ) -> [PlaybackReconciliationPolicy.OrderedTrack] {
-        let state = PlaybackOrderStore.state(
-            playerID: playerID,
-            musicPlaylistID: scope.playbackOrderPlaylistID(for: playlistID)
-        )
-        guard !state.orderedTrackIDs.isEmpty else { return [] }
-
-        let trackUUIDs = state.orderedTrackIDs.compactMap(UUID.init(uuidString:))
-        let durationsByID = ((try? TrackRecordRepository.tracks(ids: trackUUIDs, in: context)) ?? [])
-            .firstValueDictionary(keyedBy: \.id)
-            .reduce(into: [String: Double]()) { result, entry in
-                if let duration = entry.value.durationSeconds {
-                    result[entry.key.uuidString] = duration
-                }
-            }
-        return state.orderedTrackIDs.map {
-            PlaybackReconciliationPolicy.OrderedTrack(
-                localTrackID: $0,
-                durationSeconds: durationsByID[$0]
             )
         }
     }

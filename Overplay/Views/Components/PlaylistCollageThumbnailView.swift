@@ -23,15 +23,14 @@ struct PlaylistCollageThumbnailView: View {
         .clipped()
         .accessibilityHidden(true)
         .task(id: refreshID) {
-            guard let snapshot = try? PlaylistCollageService.snapshot(for: playlist, in: modelContext, scope: scope) else { return }
+            guard let snapshot = try? PlaylistCollageService.prepareSnapshot(for: playlist, in: modelContext, scope: scope) else { return }
             let rendered = await PlaylistCollageService.shared.image(for: snapshot, playlistID: playlist.musicPlaylistID, scope: scope)
             guard !Task.isCancelled else { return }
-            image = rendered
+            if let rendered { image = rendered }
         }
         .onChange(of: playlist.collageSnapshotData(for: scope)) { refreshID = UUID() }
         .onChange(of: playlist.collageLayout(for: scope)) { refreshID = UUID() }
         .onChange(of: playlist.collageStroke(for: scope)) { refreshID = UUID() }
-        .onChange(of: playlist.updatedAt) { refreshID = UUID() }
         .onChange(of: scenePhase) { _, phase in if phase == .active { refreshID = UUID() } }
     }
 }

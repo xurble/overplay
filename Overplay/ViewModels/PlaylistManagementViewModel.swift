@@ -5,13 +5,13 @@ import SwiftData
 @MainActor
 @Observable
 final class PlaylistManagementViewModel {
-    struct DetailPresentation {
+    struct DetailPresentation: Equatable {
         var playlist: PlaylistSummaryPresentation
         var summary: DashboardSummary
         var rows: [TrackRowPresentation]
     }
 
-    struct TrackRowPresentation: Identifiable {
+    struct TrackRowPresentation: Identifiable, Equatable {
         var id: UUID
         var item: PlaylistItemRecord?
         var track: TrackRecord?

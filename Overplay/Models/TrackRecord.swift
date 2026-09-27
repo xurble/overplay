@@ -2,13 +2,21 @@ import Foundation
 import SwiftData
 
 @Model
-final class TrackRecord {
+final class LibraryTrackV2 {
     var id: UUID = UUID()
     var catalogID: String?
     var libraryID: String?
     var isrc: String?
     /// Confirmed aliases survive merging and prevent sync from recreating donors.
-    var identityAliases: [String] = []
+    var confirmedAliases: [MusicResourceReference] = []
+    var libraryScope: String = MusicResourceReference.currentLibraryScope
+    var identityAliases: [String] { confirmedAliases.map(\.value) }
+    var identityReferences: Set<MusicResourceReference> {
+        Set(confirmedAliases + [
+            catalogID.map { MusicResourceReference.catalog($0) },
+            libraryID.map { MusicResourceReference.library($0, scope: libraryScope) }
+        ].compactMap { $0 })
+    }
     /// Alternatives are evidence for review, never automatic merge keys.
     var equivalentCatalogIDs: [String] = []
     var hasDocumentedIdentity: Bool = false
@@ -17,7 +25,10 @@ final class TrackRecord {
     var albumTitle: String?
     var artworkURLTemplate: String?
     var durationSeconds: Double?
-    var musicKitPlaybackData: Data?
+    var musicKitPlaybackData: Data? {
+        get { DevicePlaybackCache.shared.data(for: id) }
+        set { DevicePlaybackCache.shared.set(newValue, for: id) }
+    }
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
@@ -47,3 +58,6 @@ final class TrackRecord {
         self.updatedAt = updatedAt
     }
 }
+
+// Source-level name shared by all playback surfaces; storage identity is V2.
+typealias TrackRecord = LibraryTrackV2

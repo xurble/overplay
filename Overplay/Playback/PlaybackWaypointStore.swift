@@ -50,7 +50,7 @@ struct PendingLocalPlaythrough: Codable, Equatable, Sendable {
 }
 
 enum PlaybackWaypointStore {
-    private static let key = "overplay.playbackWaypoint.v1"
+    private static let key = "overplay.v2.playbackWaypoint.v1"
 
     static func load(from defaults: UserDefaults = .standard) -> PlaybackWaypoint? {
         guard let data = defaults.data(forKey: key) else {

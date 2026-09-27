@@ -22,9 +22,8 @@ enum TrackIdentityMergeService {
         }
     }
 
-    /// How many per-track decodes run between yields; the grouping pass
-    /// JSON-decodes every track's playback data, so it must not occupy the
-    /// main actor in one contiguous slice.
+    /// Bound main-actor work while grouping typed references. Playback objects
+    /// never participate in durable identity reconciliation.
     private static let yieldStride = 50
 
     @discardableResult
@@ -85,34 +84,24 @@ enum TrackIdentityMergeService {
 
     private static func duplicateGroups(tracks: [TrackRecord]) async -> [[TrackRecord]] {
         var unionFind = UnionFind(count: tracks.count)
-        var firstIndexByMusicItemID: [String: Int] = [:]
-        var documentedCatalogsByLibrary: [String: Set<String>] = [:]
+        var firstIndexByReference: [MusicResourceReference: Int] = [:]
+        var documentedCatalogs: [MusicResourceReference: Set<String>] = [:]
         for track in tracks where track.hasDocumentedIdentity {
-            if let libraryID = track.libraryID {
-                documentedCatalogsByLibrary[libraryID, default: []].insert(track.catalogID ?? "")
+            if let id = track.libraryID {
+                documentedCatalogs[.library(id, scope: track.libraryScope), default: []].insert(track.catalogID ?? "")
             }
         }
-
         for (index, track) in tracks.enumerated() {
-            if index > 0, index.isMultiple(of: yieldStride) {
-                await Task.yield()
+            if let id = track.libraryID,
+               let documented = documentedCatalogs[.library(id, scope: track.libraryScope)],
+               documented.count > 1 || (!track.hasDocumentedIdentity && !documented.contains(track.catalogID ?? "")) {
+                continue
             }
-            let identifiers = PlaybackQueueBuilder.musicItemIDs(for: track)
-            if let libraryID = track.libraryID, let documented = documentedCatalogsByLibrary[libraryID] {
-                // Reject a conflicting opaque bridge BEFORE unioning groups.
-                // Correcting fields during absorb is too late: the bridge may
-                // already have attached a genuinely unrelated catalog row.
-                let catalogHints = Set(identifiers.filter { !MusicTrackIdentity.isLibraryID($0) })
-                if documented.count > 1 || (!track.hasDocumentedIdentity && !catalogHints.isSubset(of: documented)) {
-                    continue
-                }
-            }
-            for musicItemID in identifiers {
-                if let firstIndex = firstIndexByMusicItemID[musicItemID] {
-                    unionFind.union(firstIndex, index)
-                } else {
-                    firstIndexByMusicItemID[musicItemID] = index
-                }
+            if index > 0, index.isMultiple(of: yieldStride) { await Task.yield() }
+            for reference in track.identityReferences {
+                if let first = firstIndexByReference[reference] {
+                    unionFind.union(first, index)
+                } else { firstIndexByReference[reference] = index }
             }
         }
 
@@ -136,16 +125,30 @@ enum TrackIdentityMergeService {
         let sameLibrary = canonical.libraryID != nil && canonical.libraryID == duplicate.libraryID
         let authoritativeLibrary = !confirmed && sameLibrary && documented != nil
         let acceptedDonorCatalog = authoritativeLibrary ? documentedCatalog : duplicate.catalogID
-        canonical.identityAliases = Array(Set(canonical.identityAliases + duplicate.identityAliases + [acceptedDonorCatalog, duplicate.libraryID].compactMap { $0 })).sorted()
+        let sameCatalog = canonical.catalogID != nil && canonical.catalogID == duplicate.catalogID
+        let adoptsRepresentative = !confirmed && sameCatalog && canonical.libraryScope == duplicate.libraryScope
+            && duplicate.libraryID.map { incoming in canonical.libraryID.map { incoming < $0 } ?? true } == true
+        var aliases = Set(canonical.confirmedAliases + duplicate.confirmedAliases)
+        if adoptsRepresentative, let id = canonical.libraryID { aliases.insert(.library(id, scope: canonical.libraryScope)) }
+        if let id = acceptedDonorCatalog { aliases.insert(.catalog(id)) }
+        if let id = duplicate.libraryID { aliases.insert(.library(id, scope: duplicate.libraryScope)) }
+        canonical.confirmedAliases = aliases.sorted { ($0.domain.rawValue, $0.scope, $0.value) < ($1.domain.rawValue, $1.scope, $1.value) }
         canonical.isrc = canonical.isrc ?? duplicate.isrc
         canonical.equivalentCatalogIDs = Array(Set(canonical.equivalentCatalogIDs + duplicate.equivalentCatalogIDs)).sorted()
         canonical.hasDocumentedIdentity = canonical.hasDocumentedIdentity || duplicate.hasDocumentedIdentity
-        canonical.catalogID = preferredIdentifier(canonical.catalogID, duplicate.catalogID) {
-            !MusicTrackIdentity.isLibraryID($0)
-        }
+        canonical.catalogID = canonical.catalogID ?? duplicate.catalogID
         if authoritativeLibrary { canonical.catalogID = documentedCatalog }
-        canonical.libraryID = preferredIdentifier(canonical.libraryID, duplicate.libraryID) {
-            MusicTrackIdentity.isLibraryID($0)
+        if adoptsRepresentative {
+            canonical.title = duplicate.title
+            canonical.artistName = duplicate.artistName
+            canonical.albumTitle = duplicate.albumTitle
+            canonical.artworkURLTemplate = duplicate.artworkURLTemplate
+            canonical.durationSeconds = duplicate.durationSeconds
+            canonical.musicKitPlaybackData = duplicate.musicKitPlaybackData
+        }
+        if canonical.libraryID == nil || adoptsRepresentative {
+            canonical.libraryID = duplicate.libraryID
+            canonical.libraryScope = duplicate.libraryScope
         }
         if canonical.musicKitPlaybackData == nil {
             canonical.musicKitPlaybackData = duplicate.musicKitPlaybackData
@@ -159,23 +162,6 @@ enum TrackIdentityMergeService {
         if canonical.durationSeconds == nil {
             canonical.durationSeconds = duplicate.durationSeconds
         }
-    }
-
-    /// Prefers a value that belongs to the field's ID domain, so a genuine
-    /// catalog ID can heal a legacy record whose catalog field mirrors a
-    /// library ID.
-    private static func preferredIdentifier(
-        _ current: String?,
-        _ incoming: String?,
-        isWellFormed: (String) -> Bool
-    ) -> String? {
-        if let current, isWellFormed(current) {
-            return current
-        }
-        if let incoming, isWellFormed(incoming) {
-            return incoming
-        }
-        return current ?? incoming
     }
 
     private static func repointItems(

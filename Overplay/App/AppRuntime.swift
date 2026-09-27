@@ -7,6 +7,9 @@ import SwiftData
 final class AppRuntime {
     static let shared = AppRuntime()
 
+    let libraryRestoration = LibraryRestorationService()
+    let startupViewModel = AppStartupViewModel()
+
     let authorizationService = MusicAuthorizationService()
     let playbackController = PlaybackController()
     let remoteCommandService = RemoteCommandService()
@@ -20,21 +23,36 @@ final class AppRuntime {
     func configure(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
         if let cloudImportObserver { NotificationCenter.default.removeObserver(cloudImportObserver) }
+        let cloudStoreIDs = Set(modelContainer.configurations.compactMap { configuration -> String? in
+            guard configuration.cloudKitContainerIdentifier != nil else { return nil }
+            return (try? NSPersistentStoreCoordinator.metadataForPersistentStore(
+                ofType: NSSQLiteStoreType, at: configuration.url, options: nil
+            ))?[NSStoreUUIDKey] as? String
+        })
         cloudImportObserver = NotificationCenter.default.addObserver(
             forName: NSPersistentCloudKitContainer.eventChangedNotification, object: nil, queue: .main
         ) { [weak self] notification in
             guard let event = notification.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
                     as? NSPersistentCloudKitContainer.Event,
-                  event.type == .import, event.endDate != nil, event.succeeded else { return }
+                  cloudStoreIDs.contains(event.storeIdentifier),
+                  event.type == .import, event.endDate != nil else { return }
+            let error = event.succeeded ? nil : (event.error?.localizedDescription ?? "Cloud import failed.")
             Task { @MainActor [weak self] in
-                guard let self, let context = self.makeModelContext() else { return }
+                guard let self else { return }
+                self.libraryRestoration.cloudImportFinished(error: error)
+                guard error == nil, let context = self.makeModelContext() else { return }
                 ApplePlayCountSyncService.shared.reconcile(in: context, playbackController: self.playbackController)
             }
         }
     }
 
+    func startLibraryMaintenance() {
+        guard libraryRestoration.isReady, let modelContainer else { return }
+        PlaylistCollageService.shared.maintainSnapshots(in: modelContainer)
+    }
+
     func makeModelContext() -> ModelContext? {
-        guard let modelContainer else { return nil }
+        guard libraryRestoration.isReady, let modelContainer else { return nil }
         return ModelContext(modelContainer)
     }
 

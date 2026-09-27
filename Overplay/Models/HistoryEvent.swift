@@ -2,7 +2,7 @@ import Foundation
 import SwiftData
 
 @Model
-final class HistoryEvent {
+final class LibraryHistoryV2 {
     var id: UUID = UUID()
     var playlistID: UUID?
     var trackID: UUID?
@@ -67,3 +67,6 @@ final class HistoryEvent {
         self.createdAt = createdAt
     }
 }
+
+// Source-level name shared by all playback surfaces; storage identity is V2.
+typealias HistoryEvent = LibraryHistoryV2

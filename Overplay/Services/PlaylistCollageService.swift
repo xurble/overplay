@@ -10,6 +10,40 @@ final class PlaylistCollageService {
     static let shared = PlaylistCollageService()
     private let images = NSCache<NSUUID, DecodedArtworkImage>()
     private var inFlight: [UUID: Task<CGImage?, Never>] = [:]
+    private var libraryObserver: NSObjectProtocol?
+    private var maintenanceTask: Task<Void, Never>?
+
+    /// The runtime owns composition maintenance. Views render snapshots;
+    /// library changes can prepare newly linked or newly populated playlists
+    /// even when no artwork view is currently being rebuilt.
+    func maintainSnapshots(in container: ModelContainer) {
+        if let libraryObserver { NotificationCenter.default.removeObserver(libraryObserver) }
+        maintenanceTask?.cancel()
+        maintenanceTask = nil
+        libraryObserver = NotificationCenter.default.addObserver(
+            forName: ModelContext.didSave, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard LibraryPresentationChange(notification: notification).affectsArtwork else { return }
+            let containerID = (notification.object as? ModelContext).map { ObjectIdentifier($0.container) }
+            MainActor.assumeIsolated {
+                guard containerID == ObjectIdentifier(container) else { return }
+                self?.scheduleMaintenance(in: container)
+            }
+        }
+        scheduleMaintenance(in: container)
+    }
+
+    private func scheduleMaintenance(in container: ModelContainer) {
+        guard maintenanceTask == nil else { return }
+        maintenanceTask = Task { [weak self] in
+            await Task.yield()
+            guard let self, !Task.isCancelled else { return }
+            // Keep the task registered while saving: its own saves do not
+            // recursively schedule another maintenance pass.
+            defer { self.maintenanceTask = nil }
+            try? Self.prepareSnapshots(in: container.mainContext)
+        }
+    }
 
     private let cacheDirectory: URL
     private let loadImage: @MainActor (String, Int, String) async -> CGImage?
@@ -26,11 +60,25 @@ final class PlaylistCollageService {
         images.totalCostLimit = 24 * 1024 * 1024
     }
 
-    static func snapshot(
+    /// Reading presentation state never writes to SwiftData.
+    static func snapshot(for playlist: PlaylistRecord, scope: PlaylistPlaybackScope = .active) -> PlaylistCollage? {
+        playlist.collageSnapshotData(for: scope).flatMap { try? JSONDecoder().decode(PlaylistCollage.self, from: $0) }
+    }
+
+    /// Called at library/surface lifecycle boundaries, independently of list
+    /// rendering. Repeated saves converge on the same persisted compositions.
+    static func prepareSnapshots(in context: ModelContext) throws {
+        for playlist in try PlaylistRepository.activePlaylists(in: context) where playlist.role.isPlaybackContext {
+            _ = try prepareSnapshot(for: playlist, in: context)
+            if playlist.isTriageBucket { _ = try prepareSnapshot(for: playlist, in: context, scope: .retired) }
+        }
+    }
+
+    static func prepareSnapshot(
         for playlist: PlaylistRecord, in context: ModelContext, scope: PlaylistPlaybackScope = .active,
         regenerate: Bool = false, at date: Date = .now
     ) throws -> PlaylistCollage {
-        // CarPlay holds a separate context whose registered models can be stale.
+        // Background callers may hold a context whose registered models are stale.
         // Resolve every surface through the same main-context record before
         // deciding whether to reuse or regenerate; never overwrite newer settings.
         let sharedContext = context.container.mainContext

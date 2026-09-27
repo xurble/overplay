@@ -14,11 +14,14 @@ final class MusicIdentityResolver {
         var id: String
         var type: String
         var attributes: Attributes?
+        var catalog: [Resource]? = nil
         struct Attributes: Decodable, Equatable, Sendable {
             var isrc: String?
             var name: String?
             var artistName: String?
             var durationInMillis: Double?
+            var artwork: Artwork? = nil
+            struct Artwork: Decodable, Equatable, Sendable { var url: String }
         }
     }
     struct Envelope: Decodable {
@@ -30,7 +33,7 @@ final class MusicIdentityResolver {
             var type: String
             var attributes: Resource.Attributes?
             var relationships: Relationships?
-            var resource: Resource { Resource(id: id, type: type, attributes: attributes) }
+            var resource: Resource { Resource(id: id, type: type, attributes: attributes, catalog: relationships?.catalog?.data) }
         }
         struct Relationships: Decodable { var catalog: Relationship? }
         struct Relationship: Decodable { var data: [Resource]; var next: String? }
@@ -63,6 +66,7 @@ final class MusicIdentityResolver {
     }
 
     func invalidate() {
+        if self === Self.shared { DevicePlaybackCache.shared.removeAll() }
         cache.removeAll()
         for task in inFlight.values { task.cancel() }
         inFlight.removeAll()
@@ -73,7 +77,8 @@ final class MusicIdentityResolver {
     /// Per-resource caches allow overlapping playlists to share batched work.
     /// Memory-only: seven days for successes, one hour for absence/ambiguity;
     /// all entries expire on process exit, account change or storefront change.
-    func enrich(_ snapshots: [TrackSnapshot]) async throws -> [TrackSnapshot] {
+    func enrich(_ snapshots: [TrackSnapshot], includeCandidates: Bool = true) async throws -> [TrackSnapshot] {
+        guard !snapshots.isEmpty else { return [] }
         let current: Scope
         do { current = try await currentScope() }
         catch { invalidate(); throw error }
@@ -82,9 +87,18 @@ final class MusicIdentityResolver {
         let libraryIDs = snapshots.compactMap { $0.resolvedIdentity.libraryID }
         let library = try await lookup(.library, ids: libraryIDs, scope: current, revision: revision)
         var result = snapshots
+        for index in result.indices { result[index].hasResolvedIdentityCandidates = includeCandidates }
         for index in result.indices {
             guard let id = result[index].resolvedIdentity.libraryID else { continue }
-            let resources = library[id] ?? []
+            guard let libraryResources = library[id], libraryResources.count == 1,
+                  let libraryResource = libraryResources.first,
+                  libraryResource.id == id, libraryResource.type == "library-songs",
+                  let resources = libraryResource.catalog else { throw ResolutionError.incompleteResponse }
+            // Library artwork belongs to the library resource, independently
+            // of whether Apple provides a catalog relationship for that song.
+            if let artwork = PortableArtworkReference.validated(libraryResource.attributes?.artwork?.url) {
+                result[index].artworkURLTemplate = artwork
+            }
             result[index].libraryID = id
             result[index].hasDocumentedIdentity = true
             result[index].catalogID = resources.count == 1 ? resources.first?.id : nil
@@ -102,20 +116,33 @@ final class MusicIdentityResolver {
         let catalogIDs = result.compactMap(\.catalogID)
         let catalog = try await lookup(.catalog, ids: catalogIDs, scope: current, revision: revision)
         let missing = catalogIDs.filter { catalog[$0]?.isEmpty != false }
-        let equivalents = try await lookup(.equivalents, ids: missing, scope: current, revision: revision)
+        let equivalents = includeCandidates
+            ? try await lookup(.equivalents, ids: missing, scope: current, revision: revision)
+            : [:]
         for index in result.indices {
             guard let id = result[index].catalogID else { continue }
             result[index].hasDocumentedIdentity = true
-            if let resource = catalog[id]?.first { result[index].isrc = resource.attributes?.isrc ?? result[index].isrc }
+            if let resource = catalog[id]?.first {
+                result[index].isrc = resource.attributes?.isrc ?? result[index].isrc
+                if PortableArtworkReference.validated(result[index].artworkURLTemplate) == nil,
+                   let url = resource.attributes?.artwork?.url {
+                    result[index].artworkURLTemplate = url
+                }
+            }
             result[index].equivalentCatalogIDs = (equivalents[id] ?? []).map(\.id)
         }
         // ISRC is a candidate signal only. Multiple results never become an
         // authoritative identity, even if Apple calls them equivalents.
-        let recordings = try await lookup(.isrc, ids: result.compactMap(\.isrc), scope: current, revision: revision)
+        let recordings = includeCandidates
+            ? try await lookup(.isrc, ids: result.compactMap(\.isrc), scope: current, revision: revision)
+            : [:]
         for index in result.indices {
             if let isrc = result[index].isrc {
                 result[index].equivalentCatalogIDs = Array(Set(result[index].equivalentCatalogIDs + (recordings[isrc] ?? []).map(\.id))).sorted()
             }
+        }
+        for index in result.indices {
+            result[index].artworkURLTemplate = PortableArtworkReference.validated(result[index].artworkURLTemplate)
         }
         guard generation == revision else { throw ResolutionError.scopeChanged }
         return result
@@ -172,7 +199,8 @@ final class MusicIdentityResolver {
         guard batch.allSatisfy({ values[$0] != nil }) else { throw ResolutionError.incompleteResponse }
         for id in batch {
             let resources = values[id]!
-            let ttl: TimeInterval = resources.count == 1 ? 7 * 24 * 3600 : 3600
+            let matches = kind == .library ? (resources.first?.catalog ?? []) : resources
+            let ttl: TimeInterval = matches.count == 1 ? 7 * 24 * 3600 : 3600
             cache[Key(lookup: kind, id: id)] = Cached(resources: resources, expires: now().addingTimeInterval(ttl))
         }
         if cache.count > 20_000 {
@@ -223,10 +251,17 @@ final class MusicIdentityResolver {
         var result = Dictionary(uniqueKeysWithValues: ids.map { ($0, [Resource]()) })
         switch kind {
         case .library:
+            var returnedIDs: Set<String> = []
             for entry in envelope.data where result[entry.id] != nil {
-                guard let relationship = entry.relationships?.catalog, relationship.next == nil else { throw ResolutionError.incompleteResponse }
-                result[entry.id] = relationship.data.filter { $0.type == "songs" }
+                guard entry.type == "library-songs", returnedIDs.insert(entry.id).inserted,
+                      let relationship = entry.relationships?.catalog, relationship.next == nil else { throw ResolutionError.incompleteResponse }
+                var resource = entry.resource
+                resource.catalog = relationship.data.filter { $0.type == "songs" }
+                result[entry.id] = [resource]
             }
+            // An absent resource is unresolved. Only a returned library song
+            // with an explicitly empty relationship proves no catalog match.
+            guard Set(ids).isSubset(of: returnedIDs) else { throw ResolutionError.incompleteResponse }
         case .catalog:
             for entry in envelope.data where result[entry.id] != nil && entry.type == "songs" { result[entry.id] = [entry.resource] }
         case .equivalents:

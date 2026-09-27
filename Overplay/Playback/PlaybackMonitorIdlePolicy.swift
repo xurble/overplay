@@ -1,28 +1,16 @@
-import Foundation
+import MusicKit
 
-/// Decides when the 1 Hz playback monitor should suspend itself. Once
-/// playback has been paused/stopped for the timeout, ticking is pure waste
-/// (each tick runs SwiftData fetches on the main actor). Every play path
-/// calls startMonitoring, which resumes the loop, so suspension is safe.
-/// A delivery stall keeps the monitor alive: its ticks drive the bounded
-/// auto-recovery attempts.
+/// Only moving playback needs elapsed-time samples. Player observation remains
+/// installed while idle and resumes sampling when playback starts externally.
 enum PlaybackMonitorIdlePolicy {
-    static let idleTimeoutSeconds: TimeInterval = 300
-
-    static func updatedIdleStart(
-        current: Date?,
-        isPlaying: Bool,
-        isDeliveryStalled: Bool,
-        now: Date
-    ) -> Date? {
-        if isPlaying || isDeliveryStalled {
-            return nil
+    static func shouldSuspend(
+        playbackStatus: MusicPlayer.PlaybackStatus,
+        isTransitionInFlight: Bool
+    ) -> Bool {
+        guard !isTransitionInFlight else { return false }
+        switch playbackStatus {
+        case .playing, .seekingForward, .seekingBackward: return false
+        default: return true
         }
-        return current ?? now
-    }
-
-    static func shouldSuspend(idleSince: Date?, now: Date) -> Bool {
-        guard let idleSince else { return false }
-        return now.timeIntervalSince(idleSince) >= idleTimeoutSeconds
     }
 }

@@ -8,6 +8,14 @@ struct CarPlayNowPlayingButtonSignature: Equatable {
     var playlistRole: PlaylistRole? = nil
     var isEvicted: Bool
 
+    func resolvingLayout(previous: Self?, samePlaylist: Bool) -> Self {
+        guard samePlaylist, playlistRole == nil, let previous else { return self }
+        var layout = self
+        layout.playlistRole = previous.playlistRole
+        layout.isEvicted = previous.isEvicted
+        return layout
+    }
+
     static func make(
         playbackController: PlaybackController,
         context: ModelContext

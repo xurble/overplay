@@ -103,7 +103,7 @@ struct CarPlayLibrarySnapshotTests {
         #expect(try PlaylistRepository.oneTruePlaylist(in: carPlayContext)?.musicPlaylistID == "triage")
     }
 
-    @Test func trackSummariesIncludePlayableTracksInCreatedOrder() throws {
+    @Test func trackSummariesIncludePlayableTracksNewestFirst() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = ModelContext(container)
 
@@ -150,10 +150,10 @@ struct CarPlayLibrarySnapshotTests {
         )
         .trackSummaries(forPlaylistID: playlist.id)
 
-        #expect(tracks.map(\.title) == ["Mr Brightside", "Somebody Told Me"])
+        #expect(tracks.map(\.title) == ["Somebody Told Me", "Mr Brightside"])
         #expect(tracks == sharedTracks)
-        #expect(tracks.first?.detailText == "The Killers - 0/— plays · 0 skips")
-        #expect(tracks.last?.detailText == "The Killers - 0/— plays · 2 skips")
+        #expect(tracks.first?.detailText == "The Killers - 0/— plays · 2 skips")
+        #expect(tracks.last?.detailText == "The Killers - 0/— plays · 0 skips")
     }
 
     @Test("bucket track summaries include contributor provenance")
@@ -186,7 +186,7 @@ struct CarPlayLibrarySnapshotTests {
         #expect(summaries.first?.detailText == "Artist - From Weekly - 0/— plays · 0 skips")
     }
 
-    @Test func trackSummariesFollowStoredShuffleOrder() throws {
+    @Test func trackSummariesIgnoreStoredShuffleOrder() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = ModelContext(container)
 
@@ -200,9 +200,9 @@ struct CarPlayLibrarySnapshotTests {
         context.insert(secondTrack)
         context.insert(thirdTrack)
 
-        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: firstTrack.id, sortOrder: 1))
-        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: secondTrack.id, sortOrder: 2))
-        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: thirdTrack.id, sortOrder: 3))
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: firstTrack.id, sortOrder: 1, createdAt: Date(timeIntervalSince1970: 10)))
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: secondTrack.id, sortOrder: 2, createdAt: Date(timeIntervalSince1970: 20)))
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: thirdTrack.id, sortOrder: 3, createdAt: Date(timeIntervalSince1970: 30)))
         try context.save()
 
         let tracks = try CarPlayLibrarySnapshot.trackSummaries(
@@ -219,7 +219,7 @@ struct CarPlayLibrarySnapshotTests {
             in: context
         )
 
-        #expect(tracks.map(\.title) == ["Third", "First", "Second"])
+        #expect(tracks.map(\.title) == ["Third", "Second", "First"])
     }
 
     @Test func activeControllerSnapshotPublishesUpdatedRowsWithoutAContextRefetch() throws {

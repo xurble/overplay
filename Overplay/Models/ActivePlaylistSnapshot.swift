@@ -107,6 +107,7 @@ struct ActivePlaylistSnapshot: Equatable, Sendable {
         row.playthroughCount = item.playthroughCount
         row.applePlayCount = item.applePlayCount
 
+        guard row != rows[index] else { return self }
         var snapshot = self
         snapshot.rows[index] = row
         snapshot.updatedAt = .now

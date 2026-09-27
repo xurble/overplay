@@ -3,11 +3,10 @@ import Foundation
 
 /// Splits MusicKit item identifiers into their catalog and library domains.
 ///
-/// Apple Music exposes two ID domains for the same song: catalog IDs
-/// (numeric) and library IDs (prefixed with "i."). Overplay must keep them
-/// distinct, never mirrored, so a song fetched from different sources
-/// (library playlist sync, catalog search, queue entries) collapses to one
-/// local track identity.
+/// This legacy inference is also used for playback hints. Numeric MusicKit
+/// library identifiers exist, so syntax alone does not establish a domain.
+/// Persistent playlist intake resolves through MusicLibrarySongResolver and
+/// verifies the returned web resource before reconciliation instead.
 enum MusicTrackIdentity {
     struct IDs: Equatable, Sendable {
         var catalogID: String?

@@ -131,6 +131,12 @@ navigation state do not sync across devices. This lets current iPhone and iPad
 devices share Overplay data without controlling each other's playback, and the
 planned Mac target must preserve the same separation.
 
+Playlist imports resolve native MusicKit song IDs before matching shared tracks.
+An unresolved ID stops that import instead of creating another copy. Library songs
+without a catalog match remain valid. The live investigation, regression evidence,
+and remaining playlist-ID/artwork work are recorded in
+[the identity probe report](Diagnostics/MusicIdentityProbe/README.md).
+
 ## Project Shape
 
 - Swift 6, SwiftUI
@@ -199,6 +205,19 @@ The developer store requires both `DEBUG` and `OVERPLAY_DEVELOPMENT`; compiling
 the developer flag without `DEBUG` fails. A developer build also refuses to
 open its store without a `.dev` app identifier, and ordinary builds reject
 that reserved suffix instead of connecting the developer app to CloudKit.
+
+## Player sheet startup regression check
+
+Run from Xcode using **My Mac (Designed for iPad)** with Apple Music authorized.
+Confirm startup reaches the dashboard with the collapsed player visible, then
+expand and collapse the player. Both layouts must render without a missing
+`PlaybackController` environment error. `AppRouter` supplies the existing shared
+dependencies directly at the sheet's hosting boundary; do not create a second
+controller for the sheet. Repeat on iPhone/iPad after changing this boundary.
+
+This checks a runtime presentation path that controller unit tests do not host.
+Verify library access and actual playback separately: a visible player and a
+successful subscription check do not prove that MusicKit can prepare its queue.
 
 ## Current Status
 

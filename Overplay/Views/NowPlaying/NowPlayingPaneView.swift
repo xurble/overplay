@@ -62,7 +62,7 @@ struct NowPlayingPaneView: View {
                             await rerunThemeDiagnostics()
                         }
                     }
-                    .disabled(playbackController.currentTrack?.artworkURLTemplate == nil)
+                    .disabled(playbackController.nowPlayingDisplayTrack?.artworkURLTemplate == nil)
                 }
 
                 if let statusMessage = playbackController.statusMessage {
@@ -96,7 +96,7 @@ struct NowPlayingPaneView: View {
 
     @MainActor
     private func rerunThemeDiagnostics() async {
-        let track = playbackController.currentTrack
+        let track = playbackController.nowPlayingDisplayTrack
         guard let artworkURLTemplate = track?.artworkURLTemplate else {
             themeDebugReport = nil
             themeDebugErrorMessage = "Current track has no artwork URL."

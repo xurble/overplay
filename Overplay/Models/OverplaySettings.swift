@@ -2,8 +2,9 @@ import Foundation
 import SwiftData
 
 @Model
-final class OverplaySettings {
+final class LibrarySettingsV2 {
     var id: UUID = UUID()
+    var completedRebuildID: UUID?
     var selectedPlaylistID: String?
     var selectedPlaylistName: String?
     var skipThresholdPercentage: Double = 50
@@ -32,3 +33,6 @@ final class OverplaySettings {
         self.updatedAt = updatedAt
     }
 }
+
+// Source-level name shared by all playback surfaces; storage identity is V2.
+typealias OverplaySettings = LibrarySettingsV2

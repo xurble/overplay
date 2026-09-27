@@ -84,7 +84,7 @@ actor ArtworkCacheService {
         if let protectedPlaylistID { self.protectedPlaylistID = protectedPlaylistID }
         guard let sourceURL else { return nil }
         let normalizedSourceURL = Self.normalizedSourceURL(sourceURL)
-        guard !normalizedSourceURL.isEmpty, let remoteURL = URL(string: normalizedSourceURL) else {
+        guard let remoteURL = PortableArtworkReference.requestURL(normalizedSourceURL) else {
             return nil
         }
 

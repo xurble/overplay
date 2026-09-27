@@ -51,7 +51,9 @@ Music's global play count or skip count.
 | `PLAY-001` | **WITHDRAWN.** Overplay owned queue order, shuffle and repeat. Replaced by `PLAY-004`; no longer implemented. | — |
 | `PLAY-002` | **WITHDRAWN.** The queue was handed over a window at a time. A window cannot be shuffled or repeated by MusicKit, so it could not coexist with `PLAY-004`; device evidence also showed hand-off size was not the cause of the Apple Music failures it was built for. | — |
 | `PLAY-004` | MusicKit owns shuffle and repeat. Overplay reads both modes, writes what a surface asked for, and never reorders or rebuilds the queue to emulate them. | `Overplay/Services/PlaybackController.swift`, `Overplay/Playback/PlaybackPlayer.swift` |
+| `PLAY-006` | Confirmed shuffle/repeat values survive unknown reports within a playback session. Unknown is not off. During a pending transition, pause remains effective and mode requests are deferred; competing transport changes are gated. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/RemoteCommandService.swift` |
 | `PLAY-005` | Overplay hands MusicKit the complete playback order for the selected scope in one queue, because MusicKit can only shuffle or repeat what it holds. | `Overplay/Services/PlaybackController.swift` |
+| `CAR-002` | Presented menus retain row and artwork identity. Only changed visible values are published; section replacement requires structural change. Now Playing and system commands publish only changed state. Presentation reads never mutate playback or persistence. | `Overplay/CarPlaySupport/CarPlayListRenderer.swift`, `Overplay/Services/RemoteCommandService.swift` |
 | `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing. | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
 | `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
 | `HISTORY-001` | History is filterable and paged. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
@@ -262,16 +264,27 @@ should collapse to the existing playlist item for that playlist.
 
 ### Track identity
 
-Apple Music exposes two identifier domains for the same song: catalog IDs and
-library IDs (prefixed with `i.`). Overplay stores them in separate fields and
-never mirrors one into the other. When MusicKit exposes a library track's
-catalog correspondence through its play parameters, sync captures it so the
-two domains link and the same song fetched from search, sync, or the playback
-queue resolves to one local track record.
+Catalog resources, web library resources, and native MusicKit playlist items
+can expose different identifiers for the same song. Persistent playlist intake
+must establish the domain through the request that resolves the item, not ID
+syntax or serialized play parameters. Normal sync and playlist copying share
+one song-resolution boundary: a native library-song lookup resolves the observed
+ID, with an explicit catalog request for songs absent from the library. The web
+library resource and its catalog relationship establish the corresponding shared
+identifiers. Native lookup mappings stay within the import operation; they are
+not persisted as global aliases.
+
+A missing library resource is unresolved identity. It is not equivalent to a
+returned library song with an explicitly empty catalog relationship. Unresolved
+identity stops the fetch before track or membership reconciliation, preserving
+the existing playlist and history. Optional ISRC/equivalent-recording suggestions
+are resolved by duplicate review, not required for import; an unperformed candidate
+lookup must not erase earlier candidate evidence.
 
 Identifier fields are fill-and-heal only: an update may add a missing
 identifier or replace a wrongly-domained legacy value, but a source that sees
-only one domain must never erase the other.
+only one domain must never erase the other. An explicitly returned empty library
+catalog relationship may invalidate an earlier unverified catalog hint.
 
 Duplicate track records describing the same song (legacy mirrored IDs, or
 CloudKit insert races, which cannot enforce unique constraints) are collapsed
@@ -650,14 +663,14 @@ fallback when no track target is available. iOS can reject requests or withhold
 grants, so recovery does not assume per-track wakes.
 
 At background entry, one batch also samples up to 20 following tracks in the
-stored order. At most 41 unresolved baselines (two windows plus the current
+fully correlated live player order. At most 41 unresolved baselines (two windows plus the current
 track) are retained for 24 hours, with original timestamps preserved across
 wakes. Retention favors the current sampled window, including overlapping
 tracks whose earliest unresolved evidence predates the new sample. A qualifying counter advance credits at most one playthrough even if
 its delta exceeds one: only the final play has a dated observation. Expired or
-ambiguous evidence credits nothing. While MusicKit shuffle is enabled, stored
-order is only a candidate-selection heuristic, not proof of traversal;
-wall-clock continuity is disabled. Recovery then covers sampled tracks whose
+ambiguous evidence credits nothing. Recovery does not depend on a menu populating
+the disposable order cache. While MusicKit shuffle is enabled or its current
+report is unknown, wall-clock continuity is disabled. Recovery then covers sampled tracks whose
 library metadata proves a play, plus the current track's position proof.
 Long unattended spans beyond the sampled window, delayed or unavailable metadata,
 and repeated plays can therefore under-count by design.
@@ -944,6 +957,19 @@ query refresh, view recreation, CarPlay template-stack replacement, or a manual
 refresh. SwiftUI and CarPlay presentation state, the active-playlist
 projection, local restore state, and `MPNowPlayingInfoCenter` must be updated
 from the same reconciliation result.
+
+Player queue/state events and explicit user actions drive full reconciliation.
+Unchanged state-only invalidations do not repeat that work. During moving
+playback, a lightweight one-second sample maintains elapsed time, witnessed
+listening, playthrough thresholds, and bounded delivery-stall detection. It
+checks current entry/item identity, status, and modes before attributing time;
+a missed change triggers immediate reconciliation. Stable playback has a
+60-second fallback for other missed invalidations, measured from the latest
+full reconciliation. Unresolved current entries retain the existing bounded
+one-second hydration checks. Paused, stopped, and interrupted players
+do not poll once any in-flight transition has settled; player observation stays
+installed, and an observed resume restarts sampling. Foreground reconciliation
+continues to refresh restored or externally changed state.
 
 Track transitions are ordered operations:
 
@@ -1332,8 +1358,11 @@ window through the standard app settings command as well as in-app navigation.
 
 ## Persisted Data Model
 
-The current SwiftData schema retains these concepts. Pre-release schema changes
-may use a development reset under the repository data policy.
+Generation 2 uses new persistent entity names (`LibraryPlaylistV2`,
+`LibraryTrackV2`, `LibraryMembershipV2`, `LibraryHistoryV2`,
+`LibrarySettingsV2`, `LibraryAppleCountV2`). Existing source-level type names
+below are aliases, not legacy database entities. The configuration-preserving
+cutover protocol is specified in “Datastore generation 2” below.
 
 ### PlaylistRecord
 
@@ -1359,12 +1388,17 @@ may use a development reset under the repository data policy.
 - `albumTitle: String?`
 - `artworkURLTemplate: String?`
 - `durationSeconds: Double?`
-- `musicKitPlaybackData: Data?`
+- `libraryScope: String`
+- `confirmedAliases: [MusicResourceReference]` (domain, scope, resource value)
+- `isrc: String?` and `equivalentCatalogIDs: [String]` (review evidence only)
 - `createdAt: Date`
 - `updatedAt: Date`
 
-Artwork image bytes are intentionally excluded from SwiftData models and
-CloudKit sync.
+Artwork image bytes and native MusicKit playback objects are excluded from
+SwiftData and CloudKit. `musicKitPlaybackData` is a computed process-local cache
+accessor. Queue preparation reloads missing native objects from the typed library
+or catalog endpoint before replacing playback; unavailable songs fail preparation
+rather than silently shortening the queue.
 
 ### Artwork cache manifest
 
@@ -1416,6 +1450,7 @@ Local JSON file only:
 ### OverplaySettings
 
 - `id: UUID`
+- `completedRebuildID: UUID?` (transactional restart receipt)
 - `selectedPlaylistID: String?`
 - `selectedPlaylistName: String?`
 - `skipThresholdPercentage: Double`
@@ -1630,8 +1665,7 @@ order and published metadata without manufacturing a skip. Destination writes us
 the existing Apple Music mutation paths; local OTP suppression remains protective
 when remote removal fails or the playlist is incoming-only.
 
-New identity fields use optional/default values in the existing SwiftData model;
-no historical migration layer is introduced under the pre-release data policy.
+Generation 2 replaces the old record types and does not migrate historical track identities.
 
 
 ## Generated playlist artwork
@@ -1673,3 +1707,122 @@ as artwork arrives. Retired views use only retired tracks, with a separate saved
 arrangement and PNG cache from active Triage. Layout, borders, regeneration, and
 daily refresh are independent for active Triage and Retired. Each defaults to Pile
 with no border; changing either template does not regenerate the other collage.
+
+
+## Datastore generation 2: configuration-preserving rebuild
+
+Decision (September 2026): replace the pre-release store, preserving only the
+active One True Playlist and triage source links, their names, order, and write
+permissions. Reimport songs from Apple Music. Discard old tracks, ownership,
+retirements, counters, history, collage snapshots and playback restoration.
+The cutover must not write to Apple Music. Retain the old store and a verified
+configuration export for recovery; do not migrate its track graph.
+
+The new store uses a distinct store name and distinct persistent entity names.
+Old CloudKit record types must never be interpreted as generation-2 entities.
+CloudKit remains private to the iCloud owner. One dataset represents one Apple
+Music library; a library resource identifier is scoped to that dataset, not to a
+device or an authorization token. A different Apple Music library requires a new
+configuration/rebuild; a missing playlist must fail rather than relink by name.
+Old clients cannot contribute generation-2 track or count records.
+
+Schema:
+
+- LibrarySettingsV2: Overplay settings and the completed rebuild receipt.
+- LibraryPlaylistV2: Overplay UUID, Apple Music playlist reference, display name,
+  role, write permission, link intent and sync bookkeeping. The synthetic Triage
+  bucket has no Apple Music resource. Only configured sources survive cutover.
+- LibraryTrackV2: Overplay UUID; independently typed catalog and library resource
+  references; confirmed aliases carrying their domain and library scope; recording
+  metadata. ISRC and equivalent recordings are review evidence, not identity keys.
+  Equal strings in different resource domains do not identify the same song.
+  When several library resources prove the same catalog identity, retain every
+  binding and choose the lexicographically smallest library ID as the stable
+  representative for metadata and playback reconstruction. Source arrival order
+  must not alternate that representative or rewrite its metadata.
+- LibraryMembershipV2: one travelling ownership/statistics row per track, referring
+  to playlist and track UUIDs. Current source occurrences remain provenance, not
+  additional songs or counters. Overplay wins initial import conflicts; subsequent
+  explicit user moves and retirement retain their existing precedence.
+- LibraryHistoryV2: events referring to Overplay UUIDs, never native MusicKit IDs.
+- LibraryAppleCountV2: append-only count observations and reset/lineage evidence.
+  Existing cumulative Apple counts establish fresh baselines, not Overplay plays.
+
+Native MusicKit objects are rebuildable process-local playback material. They are
+not fields in the synced schema and must never supply automatic merge keys.
+Playback, UI, CarPlay and sync use the same Overplay UUIDs and shared repositories.
+Only HTTP(S) artwork references are portable persisted metadata; native artwork
+handles stay outside the shared graph.
+
+Rebuild protocol: validate a configuration-only export; fetch complete song and
+identity snapshots for every configured source without changing persistence;
+reject unresolved identities, incomplete pages and changed configuration; stage
+all records in a context with autosave disabled; assign one membership per proven
+identity, prioritising Overplay and retaining all contributing source occurrences;
+commit the complete graph and receipt together. A failed fetch publishes no songs.
+A completed receipt makes restart idempotent. No old counters or library lifetime
+counts are copied as Overplay activity. Normal sync starts only after a pending
+rebuild succeeds. A failed rebuild remains retryable and visible as an error.
+
+Validation must cover resource-domain collisions, aliases, native-cache exclusion,
+configuration validation, overlapping source playlists, input-order independence,
+failure before commit, zero initial activity and restart idempotence. Build and
+unit checks precede the authorized live cutover. Verify live roles and counts
+against source snapshots, then restart and repeat sync. CloudKit convergence and
+CarPlay hardware behavior must be reported separately from local test evidence.
+
+
+### Generation 2: first launch on another device
+
+A new local V2 store is not evidence of a new user. Startup must not create
+settings, a triage bucket, or replacement memberships while iCloud restoration
+is pending. The shared runtime owns a restoration gate used by the app,
+CarPlay, background reconciliation, remote commands, and artwork maintenance.
+
+On an unrecognised local store, require a successful import event for that
+store and a usable configuration: exactly one settings record, its selected
+Overplay playlist, a triage bucket, and valid track/playlist references for
+all memberships currently delivered. Do not repair incomplete references or
+choose arbitrarily between competing settings records. A cloud rebuild receipt
+alone does not establish device readiness. CloudKit delivers records
+incrementally; this gate establishes configuration and referential readiness,
+not an atomic snapshot of every cloud record. Later records can still arrive.
+
+After 30 seconds, show a recoverable waiting screen instead of an indefinite
+spinner. Failed imports display their error; Retry rechecks without creating
+records, and later successful imports automatically retry while the app is
+open. A device-local receipt permits subsequent offline launches of the same
+restored configuration. The device that performed the explicit rebuild may
+also establish readiness using its saved configuration export matched to the
+persisted rebuild UUID. Restoring preferences without the corresponding graph
+must not bypass the gate. An explicit database reset creates the new base
+configuration and records its local origin so it can reopen offline.
+
+A genuinely new installation may explicitly create a library only after a
+successful cloud import has left all V2 entities empty. This action explains
+that an existing library should be restored instead and rechecks emptiness
+immediately before saving. It is unavailable when a legacy store exists.
+There is no automatic legacy graph migration, timeout reset, or fallback to
+an empty library on cloud failure. This does not provide distributed locking
+between two devices deliberately creating a new library at the same time.
+
+Distribution verification must distinguish Development and Production
+CloudKit environments. Deploying a schema does not copy private user records
+between them. Verify the appropriate schema and library in the environment
+used by the iPhone build before claiming cross-device restoration works.
+
+
+### Artwork identity and presentation
+
+Library artwork is metadata of the Apple Music library resource; it must be
+preserved even when that song has no unique catalog relationship. A catalog
+match is not a prerequisite for a cover. Persist only portable artwork URLs;
+MusicKit-native artwork handles remain device-local. Missing artwork can be
+refreshed separately from playlist contents without resetting identities,
+memberships or activity. A library upload with no supplied artwork keeps the
+normal placeholder.
+
+The shared now-playing display prefers the actual player-reported track. Once
+it matches the reconciled current song, its cover uses the same portable
+artwork as stored rows. Player artwork and theme use that shared projection;
+an incoming unresolved song must never borrow the outgoing song's artwork.

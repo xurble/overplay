@@ -1,3 +1,4 @@
+import Foundation
 import SwiftData
 import Testing
 @testable import Overplay
@@ -6,7 +7,7 @@ import Testing
 @Suite("Database reset service")
 struct DatabaseResetServiceTests {
     @Test("nuke database deletes persisted app data and recreates default settings")
-    func nukeDatabaseDeletesPersistedAppDataAndRecreatesDefaultSettings() throws {
+    func nukeDatabaseDeletesPersistedAppDataAndRecreatesDefaultSettings() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let playlist = PlaylistRecord(
@@ -40,14 +41,18 @@ struct DatabaseResetServiceTests {
         ))
         try context.save()
 
-        let settings = try DatabaseResetService.nukeDatabase(in: context)
+        let defaults = UserDefaults(suiteName: "DatabaseResetTests.\(UUID())")!
+        let settings = try DatabaseResetService.nukeDatabase(in: context, defaults: defaults)
 
         #expect(settings.selectedPlaylistID == nil)
         #expect(settings.selectedPlaylistName == nil)
         #expect(try context.fetch(FetchDescriptor<OverplaySettings>()).count == 1)
-        #expect(try PlaylistRepository.allPlaylists(in: context).isEmpty)
+        #expect(try PlaylistRepository.allPlaylists(in: context).map(\.role) == [.triageBucket])
         #expect(try TrackRecordRepository.allTracks(in: context).isEmpty)
         #expect(try PlaylistItemRepository.allItems(in: context).isEmpty)
         #expect(try context.fetch(FetchDescriptor<HistoryEvent>()).isEmpty)
+        let nextLaunch = LibraryRestorationService(defaults: defaults)
+        try await nextLaunch.prepare(in: context, hasLegacyStore: true, locallyRebuiltID: nil, attempts: 1)
+        #expect(nextLaunch.isReady)
     }
 }

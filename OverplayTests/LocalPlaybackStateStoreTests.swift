@@ -71,7 +71,7 @@ struct LocalPlaybackStateStoreTests {
         ))
     }
 
-    @Test("loads legacy playback state without local track ID")
+    @Test("replacement store ignores legacy playback restoration")
     func loadsLegacyPlaybackStateWithoutLocalTrackID() throws {
         struct LegacyLocalPlaybackState: Codable {
             var playlistID: String
@@ -96,13 +96,6 @@ struct LocalPlaybackStateStoreTests {
         )
         defaults.set(try JSONEncoder().encode(legacyState), forKey: "overplay.localPlaybackState")
 
-        let loadedState = try #require(LocalPlaybackStateStore.load(from: defaults))
-
-        #expect(loadedState.playlistID == legacyState.playlistID)
-        #expect(loadedState.musicItemID == legacyState.musicItemID)
-        #expect(loadedState.elapsedSeconds == legacyState.elapsedSeconds)
-        #expect(loadedState.wasPlaying == legacyState.wasPlaying)
-        #expect(loadedState.updatedAt == legacyState.updatedAt)
-        #expect(loadedState.localTrackID == nil)
+        #expect(LocalPlaybackStateStore.load(from: defaults) == nil)
     }
 }

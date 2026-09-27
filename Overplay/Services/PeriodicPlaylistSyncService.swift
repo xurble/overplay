@@ -56,6 +56,7 @@ final class PeriodicPlaylistSyncService {
         guard syncTask == nil else { return }
 
         playCountTask = Task(priority: .background) { @MainActor in
+            await LibraryArtworkService.refreshMissingArtwork(in: context, playbackController: playbackController)
             while !Task.isCancelled {
                 await ApplePlayCountSyncService.shared.refresh(in: context, playbackController: playbackController)
                 try? await Task.sleep(for: .seconds(60))
@@ -147,6 +148,7 @@ final class PeriodicPlaylistSyncService {
         if didMutateRecords {
             try? await mergeDuplicateTrackIdentities(context)
         }
+        await LibraryArtworkService.refreshMissingArtwork(in: context, playbackController: playbackController)
         // Also refresh when playlist contents were unchanged: listening does
         // not necessarily change a playlist's modification date.
         await ApplePlayCountSyncService.shared.refresh(in: context, playbackController: playbackController)

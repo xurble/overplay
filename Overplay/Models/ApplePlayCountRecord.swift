@@ -5,8 +5,8 @@ import SwiftData
 /// updating a shared field. No uniqueness constraint or custom CloudKit merge
 /// policy is needed: duplicate delivery is harmless to the state join.
 @Model
-final class ApplePlayCountRecord {
-    #Index<ApplePlayCountRecord>([\.itemID])
+final class LibraryAppleCountV2 {
+    #Index<LibraryAppleCountV2>([\.itemID])
 
     var id: UUID = UUID()
     var itemID: UUID = UUID()
@@ -37,3 +37,6 @@ final class ApplePlayCountRecord {
 
     var state: ApplePlayCountState? { try? JSONDecoder().decode(ApplePlayCountState.self, from: stateData) }
 }
+
+// Source-level name shared by all playback surfaces; storage identity is V2.
+typealias ApplePlayCountRecord = LibraryAppleCountV2

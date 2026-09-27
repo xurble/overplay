@@ -338,6 +338,15 @@ struct PlaylistSyncService {
             sourceTracks = []
         }
 
+        // Resolve before the remote creation and before changing local roles.
+        // An incomplete identity response must not leave a half-imported copy.
+        var snapshots = try await AppleMusicPlaylistTrackLoader.resolvedSongSnapshots(
+            from: sourceTracks, playlistID: sourcePlaylistID ?? ""
+        )
+        if !snapshots.isEmpty {
+            snapshots = try await MusicIdentityResolver.shared.enrich(snapshots, includeCandidates: false)
+        }
+
         let createdPlaylist = try await MusicKitActivityLog.shared.measure(
             .libraryPlaylistCreate,
             magnitude: Double(sourceTracks.count)
@@ -356,30 +365,14 @@ struct PlaylistSyncService {
             }
         }
         CachingMusicLibraryPlaylistFetcher.shared.invalidate()
-        let libraryPlaylists = try await fetchAppleMusicLibraryPlaylists()
-        let canonicalID = PlaylistLibraryIDResolver.resolvedMusicPlaylistID(
-            storedID: createdPlaylist.id.rawValue,
-            name: createdPlaylist.name,
-            libraryPlaylists: libraryPlaylists.map { .init(id: $0.id, name: $0.name) }
-        ) ?? createdPlaylist.id.rawValue
-
-        if canonicalID != createdPlaylist.id.rawValue {
-            Self.logger.warning(
-                "createPlaylist returned \(createdPlaylist.id.rawValue, privacy: .public), but library reports \(canonicalID, privacy: .public) for '\(createdPlaylist.name, privacy: .public)'"
-            )
-        }
-
-        let appleMusicPlaylist = AppleMusicPlaylist(
-            id: canonicalID,
-            name: createdPlaylist.name,
-            trackCount: sourceTracks.count
-        )
+        let canonical = try await appleMusicSource.canonicalLink(for: createdPlaylist)
+        let appleMusicPlaylist = AppleMusicPlaylist(id: canonical.id, name: canonical.name, trackCount: sourceTracks.count)
         let record = try PlaylistRepository.setOneTruePlaylist(
             appleMusicPlaylist,
             writePolicy: .managed,
             in: context
         )
-        let snapshots = AppleMusicPlaylistTrackLoader.songSnapshots(from: sourceTracks, playlistID: record.musicPlaylistID)
+        for index in snapshots.indices { snapshots[index].playlistID = record.musicPlaylistID }
         let summary = try await reconcile(
             snapshots: snapshots,
             playlistRecord: record,
@@ -414,8 +407,8 @@ struct PlaylistSyncService {
         defer { Self.endSourceRead(sourceReadID) }
         var summary = PlaylistSyncSummary(fetchedCount: snapshots.count, skippedCount: rejectedCount)
         let reconciliationLinkDate = playlistRecord.triageLinkedAt
-        var seenRemoteTrackKeys = Set<String>()
-        let snapshotsByRemoteKey = Dictionary(grouping: snapshots) { $0.catalogID ?? $0.libraryID ?? $0.id }
+        var seenRemoteTrackKeys = Set<MusicResourceReference?>()
+        let snapshotsByRemoteKey = Dictionary(grouping: snapshots) { $0.importIdentityKey }
         var observationsByTrackID: [UUID: [PlaylistEntryProvenance]] = [:]
         // A contributing playlist keeps its own sync bookkeeping but does not
         // own items: everything it contributes lands in the shared bucket, so
@@ -479,7 +472,7 @@ struct PlaylistSyncService {
                     }
                 }
             }
-            let remoteTrackKey = snapshot.catalogID ?? snapshot.libraryID ?? snapshot.id
+            let remoteTrackKey = snapshot.importIdentityKey
             guard seenRemoteTrackKeys.insert(remoteTrackKey).inserted else {
                 summary.skippedCount += 1
                 continue

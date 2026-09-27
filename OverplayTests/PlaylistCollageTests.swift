@@ -8,6 +8,21 @@ import Testing
 @Suite("Playlist collage")
 @MainActor
 struct PlaylistCollageTests {
+    @Test func presentationReadDoesNotCreateOrSaveArtwork() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(musicPlaylistID: "pure-read", name: "Main")
+        context.insert(playlist)
+        try context.save()
+        for _ in 0..<10 { #expect(PlaylistCollageService.snapshot(for: playlist) == nil) }
+        #expect(!context.hasChanges)
+        let prepared = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context)
+        for _ in 0..<10 { #expect(PlaylistCollageService.snapshot(for: playlist) == prepared) }
+        #expect(!context.hasChanges)
+        #expect(try PlaylistCollageService.prepareSnapshot(for: playlist, in: context) == prepared)
+        #expect(!context.hasChanges)
+    }
+
     private func covers(_ count: Int) -> [PlaylistCollage.Cover] {
         (0..<count).map { .init(url: "cover-\($0)", latestDate: Date(timeIntervalSince1970: Double($0))) }
     }
@@ -31,7 +46,7 @@ struct PlaylistCollageTests {
 
     @Test func artworkRankingFollowsPlaylistRoleAndScope() throws {
         let container = try ModelContainer(for: PlaylistRecord.self, PlaylistItemRecord.self, TrackRecord.self,
-                                           configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+                                           configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
         let context = container.mainContext
         let playlist = PlaylistRecord(musicPlaylistID: "otp", name: "Overplay", role: .oneTruePlaylist)
         context.insert(playlist)
@@ -41,22 +56,22 @@ struct PlaylistCollageTests {
             context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: track.id,
                 playthroughCount: 80 - index, createdAt: Date(timeIntervalSince1970: Double(index))))
         }
-        let pile = try PlaylistCollageService.snapshot(for: playlist, in: context)
+        let pile = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context)
         #expect(pile.placements.last?.url == "cover-0")
         for (layout, count) in [(PlaylistCollageLayout.grid3, 9), (.grid8, 64)] {
             playlist.setCollageTemplate(layout: layout, stroke: .none, for: .active)
-            let grid = try PlaylistCollageService.snapshot(for: playlist, in: context)
+            let grid = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context)
             #expect(Set(grid.placements.map(\.url)) == Set((0..<count).map { "cover-\($0)" }))
         }
         playlist.setCollageTemplate(layout: .pile, stroke: .none, for: .active)
         playlist.role = .triageBucket
-        let triage = try PlaylistCollageService.snapshot(for: playlist, in: context, regenerate: true)
+        let triage = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context, regenerate: true)
         #expect(triage.placements.last?.url == "cover-79")
         playlist.role = .oneTruePlaylist
         for item in try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context) {
             item.evictedAt = item.createdAt
         }
-        let retired = try PlaylistCollageService.snapshot(for: playlist, in: context, scope: .retired)
+        let retired = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context, scope: .retired)
         #expect(retired.placements.last?.url == "cover-79")
     }
 
@@ -129,36 +144,36 @@ struct PlaylistCollageTests {
 
     @Test func sharedSnapshotStaysStableAndRegeneratesOnDemand() throws {
         let container = try ModelContainer(for: PlaylistRecord.self, PlaylistItemRecord.self, TrackRecord.self,
-                                           configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+                                           configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
         let context = container.mainContext
         let playlist = PlaylistRecord(musicPlaylistID: "p", name: "Playlist")
         let track = TrackRecord(title: "Song", artistName: "Artist", artworkURLTemplate: "cover")
         let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id)
         context.insert(playlist); context.insert(track); context.insert(item)
         let date = Date(timeIntervalSince1970: 1234)
-        let first = try PlaylistCollageService.snapshot(for: playlist, in: context, at: date)
+        let first = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context, at: date)
         let carPlayContext = ModelContext(container)
         let carPlayPlaylist = try #require(try PlaylistRepository.playlist(id: playlist.id, in: carPlayContext))
-        #expect(try PlaylistCollageService.snapshot(for: carPlayPlaylist, in: carPlayContext, at: date) == first)
+        #expect(try PlaylistCollageService.prepareSnapshot(for: carPlayPlaylist, in: carPlayContext, at: date) == first)
         item.playthroughCount = 99
-        let same = try PlaylistCollageService.snapshot(for: playlist, in: context, at: date.addingTimeInterval(1))
+        let same = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context, at: date.addingTimeInterval(1))
         #expect(same == first)
-        let manual = try PlaylistCollageService.snapshot(for: playlist, in: context, regenerate: true, at: date)
+        let manual = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context, regenerate: true, at: date)
         #expect(manual.id != first.id)
-        let daily = try PlaylistCollageService.snapshot(for: playlist, in: context, at: date.addingTimeInterval(86_400))
+        let daily = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context, at: date.addingTimeInterval(86_400))
         #expect(daily.id != manual.id)
         playlist.collageLayoutRawValue = "grid3"
         playlist.collageStrokeRawValue = "white"
-        let changed = try PlaylistCollageService.snapshot(for: playlist, in: context, at: date.addingTimeInterval(86_401))
+        let changed = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context, at: date.addingTimeInterval(86_401))
         #expect(changed.layout == .grid3 && changed.stroke == .white)
         #expect(changed.placements.count == 9)
-        let otherConsumer = try PlaylistCollageService.snapshot(for: carPlayPlaylist, in: carPlayContext,
+        let otherConsumer = try PlaylistCollageService.prepareSnapshot(for: carPlayPlaylist, in: carPlayContext,
                                                                at: date.addingTimeInterval(86_401))
         #expect(otherConsumer == changed)
     }
     @Test func retiredSnapshotUsesRetiredTracksAndRefreshesIndependently() throws {
         let container = try ModelContainer(for: PlaylistRecord.self, PlaylistItemRecord.self, TrackRecord.self,
-                                           configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+                                           configurations: ModelConfiguration(isStoredInMemoryOnly: true, cloudKitDatabase: .none))
         let context = container.mainContext
         let playlist = PlaylistRecord(musicPlaylistID: "triage", name: "Triage", role: .triageBucket)
         let activeTrack = TrackRecord(title: "Active", artistName: "Artist", artworkURLTemplate: "active-cover")
@@ -170,39 +185,39 @@ struct PlaylistCollageTests {
         context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: retiredTrack.id,
                                           playthroughCount: 1, evictedAt: .now))
         let date = Date.now
-        let active = try PlaylistCollageService.snapshot(for: playlist, in: context, at: date)
-        let retired = try PlaylistCollageService.snapshot(for: playlist, in: context, scope: .retired, at: date)
+        let active = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context, at: date)
+        let retired = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context, scope: .retired, at: date)
         #expect(Set(active.placements.map(\.url)) == ["active-cover"])
         #expect(Set(retired.placements.map(\.url)) == ["retired-cover"])
         #expect(active.id != retired.id)
-        let refreshed = try PlaylistCollageService.snapshot(for: playlist, in: context, scope: .retired,
+        let refreshed = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context, scope: .retired,
                                                            regenerate: true, at: date)
         #expect(refreshed.id != retired.id)
-        #expect(try PlaylistCollageService.snapshot(for: playlist, in: context, at: date) == active)
-        _ = try PlaylistCollageService.snapshot(for: playlist, in: context, regenerate: true, at: date)
+        #expect(try PlaylistCollageService.prepareSnapshot(for: playlist, in: context, at: date) == active)
+        _ = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context, regenerate: true, at: date)
         let carPlayContext = ModelContext(container)
         let otherPlaylist = try #require(try PlaylistRepository.playlist(id: playlist.id, in: carPlayContext))
-        #expect(try PlaylistCollageService.snapshot(for: otherPlaylist, in: carPlayContext, scope: .retired,
+        #expect(try PlaylistCollageService.prepareSnapshot(for: otherPlaylist, in: carPlayContext, scope: .retired,
                                                   at: date) == refreshed)
 
         playlist.setCollageTemplate(layout: .grid3, stroke: .none, for: .active)
         playlist.setCollageTemplate(layout: .grid3, stroke: .white, for: .retired)
-        _ = try PlaylistCollageService.snapshot(for: playlist, in: context, at: date)
-        let retiredGrid = try PlaylistCollageService.snapshot(for: playlist, in: context, scope: .retired, at: date)
+        _ = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context, at: date)
+        let retiredGrid = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context, scope: .retired, at: date)
         playlist.setCollageTemplate(layout: .grid8, stroke: .black, for: .active)
-        let activeGrid = try PlaylistCollageService.snapshot(for: playlist, in: context, at: date)
+        let activeGrid = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context, at: date)
         #expect(activeGrid.layout == .grid8 && activeGrid.stroke == .black)
         #expect(activeGrid.placements.count == 64)
         #expect(playlist.collageLayout(for: .retired) == .grid3)
         #expect(playlist.collageStroke(for: .retired) == .white)
-        #expect(try PlaylistCollageService.snapshot(for: otherPlaylist, in: carPlayContext, scope: .retired,
+        #expect(try PlaylistCollageService.prepareSnapshot(for: otherPlaylist, in: carPlayContext, scope: .retired,
                                                   at: date) == retiredGrid)
 
         playlist.setCollageTemplate(layout: .pile, stroke: .none, for: .retired)
-        let retiredPile = try PlaylistCollageService.snapshot(for: playlist, in: context, scope: .retired, at: date)
+        let retiredPile = try PlaylistCollageService.prepareSnapshot(for: playlist, in: context, scope: .retired, at: date)
         #expect(retiredPile.layout == .pile && retiredPile.stroke == .none)
         #expect(retiredPile.id != retiredGrid.id)
-        #expect(try PlaylistCollageService.snapshot(for: otherPlaylist, in: carPlayContext, at: date) == activeGrid)
+        #expect(try PlaylistCollageService.prepareSnapshot(for: otherPlaylist, in: carPlayContext, at: date) == activeGrid)
         let reopenedContext = ModelContext(container)
         let reopened = try #require(try PlaylistRepository.playlist(id: playlist.id, in: reopenedContext))
         #expect(reopened.collageLayout(for: .active) == .grid8)

@@ -1,4 +1,5 @@
 import MediaPlayer
+import MusicKit
 import SwiftData
 import Testing
 @testable import Overplay
@@ -6,6 +7,50 @@ import Testing
 @MainActor
 @Suite("Remote command service", .serialized)
 struct RemoteCommandServiceTests {
+    @Test("unchanged reconciliations do not write any remote-command properties")
+    func unchangedStateIsNotRepublished() {
+        let defaults = PlaybackTestDefaults()
+        defer { defaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: defaults.defaults)
+        var writes: [RemoteCommandPublication] = []
+        let service = RemoteCommandService(publish: { writes.append($0) })
+        service.syncPlaybackState(from: controller)
+        #expect(writes.count == 7)
+        #expect(!writes.contains(.shuffle(.off)))
+        writes.removeAll()
+        for _ in 0..<10 { service.syncPlaybackState(from: controller) }
+        #expect(writes.isEmpty)
+        controller.currentPlaylistID = "restorable"
+        controller.currentTrack = CurrentPlaybackTrack(id: "track", title: "Track", artistName: "Artist")
+        service.syncPlaybackState(from: controller)
+        #expect(writes == [.availability(.play, true), .availability(.toggle, true)])
+        writes.removeAll()
+        controller.currentTrack?.playthroughCount += 1
+        controller.elapsedSeconds = 20
+        service.syncPlaybackState(from: controller)
+        #expect(writes.isEmpty)
+    }
+
+    @Test("reconnection republishes availability without duplicating command handlers")
+    func reconnectionForcesPublication() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let defaults = PlaybackTestDefaults()
+        defer { defaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: defaults.defaults)
+        var writes: [RemoteCommandPublication] = []
+        let service = RemoteCommandService(publish: { writes.append($0) })
+        defer { service.deactivate() }
+        service.activate(playbackController: controller, context: container.mainContext)
+        let initial = writes
+        #expect(initial.count == 7)
+        writes.removeAll()
+        service.update(playbackController: controller, context: container.mainContext)
+        #expect(writes.isEmpty)
+        service.activate(playbackController: controller, context: container.mainContext)
+        #expect(writes == initial)
+        #expect(service.registeredTargetCount == 7)
+    }
+
     @Test("a paused queue the player is holding keeps its remote commands")
     func pausedHeldQueueKeepsItsRemoteCommands() {
         // The exact case the availability guard used to drop: the player is
@@ -29,14 +74,14 @@ struct RemoteCommandServiceTests {
             canShuffle: true
         ))
 
-        // A held queue does not override transition suppression.
+        // Mode commands can be deferred while transport confirmation is pending.
         #expect(PlaybackRemoteCommandAvailability.make(
             canSkipTracks: true,
             hasRestorablePlayback: false,
             isPlaying: false,
             isTransitionInFlight: true,
             isDeliveryStalled: false
-        ) == .unavailable)
+        ).canShuffle)
     }
 
     @Test("availability follows queue, playback, transition, restore, and delivery state")
@@ -99,7 +144,7 @@ struct RemoteCommandServiceTests {
             isPlaying: true,
             isTransitionInFlight: true,
             isDeliveryStalled: false
-        ) == .unavailable)
+        ).canShuffle)
 
         let deliveryFailure = PlaybackRemoteCommandAvailability.make(
             canSkipTracks: true,
@@ -162,15 +207,15 @@ struct RemoteCommandServiceTests {
         ) == .unavailable)
     }
 
-    @Test("a transition in flight still suppresses everything")
-    func aTransitionInFlightStillSuppressesEverything() {
+    @Test("pause remains available during a transition")
+    func pauseRemainsAvailableDuringTransition() {
         #expect(PlaybackRemoteCommandAvailability.make(
             canSkipTracks: false,
             hasRestorablePlayback: false,
             isPlaying: true,
             isTransitionInFlight: true,
             isDeliveryStalled: false
-        ) == .unavailable)
+        ).canPause)
     }
 
     @Test("activate update and deactivate manage lifecycle state")
@@ -227,40 +272,28 @@ struct RemoteCommandServiceTests {
         service.deactivate()
     }
 
-    @Test("sync publishes shuffle off and repeat all to remote command center")
-    func syncPublishesPlaybackModesToRemoteCommandCenter() throws {
-        let playlistID = "playlist-\(UUID().uuidString)"
-        let playerID = "player-\(UUID().uuidString)"
-        let playbackDefaults = PlaybackTestDefaults()
-        defer { playbackDefaults.cleanUp() }
-        let playbackController = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults, playerID: playerID)
+    @Test("unknown initial modes preserve the command center's existing values")
+    func unknownModesDoNotPublishDefaults() {
+        let defaults = PlaybackTestDefaults()
+        defer { defaults.cleanUp() }
+        let controller = PlaybackController(localPlaybackDefaults: defaults.defaults)
         let service = RemoteCommandService()
-        let commandCenter = MPRemoteCommandCenter.shared()
+        let center = MPRemoteCommandCenter.shared()
+        let previousShuffle = center.changeShuffleModeCommand.currentShuffleType
+        let previousRepeat = center.changeRepeatModeCommand.currentRepeatType
         defer {
-            PlaybackOrderStore.clear(playerID: playerID, musicPlaylistID: playlistID, flushImmediately: true)
-            commandCenter.changeShuffleModeCommand.currentShuffleType = .off
-            commandCenter.changeRepeatModeCommand.currentRepeatType = .off
+            center.changeShuffleModeCommand.currentShuffleType = previousShuffle
+            center.changeRepeatModeCommand.currentRepeatType = previousRepeat
         }
-
-        playbackController.currentPlaylistID = playlistID
-        PlaybackOrderStore.save(
-            PlaybackOrderState(
-                playerID: playerID,
-                musicPlaylistID: playlistID
-            ),
-            flushImmediately: true
-        )
-
-        service.syncPlaybackModes(from: playbackController)
-
-        // Both modes are published as they actually are. Repeat was hard-coded
-        // to `.all`, which advertised a mode Overplay was not in.
-        #expect(commandCenter.changeShuffleModeCommand.currentShuffleType == .off)
-        #expect(commandCenter.changeRepeatModeCommand.currentRepeatType == .off)
+        center.changeShuffleModeCommand.currentShuffleType = .items
+        center.changeRepeatModeCommand.currentRepeatType = .all
+        service.syncPlaybackModes(from: controller)
+        #expect(center.changeShuffleModeCommand.currentShuffleType == .items)
+        #expect(center.changeRepeatModeCommand.currentRepeatType == .all)
     }
 
-    @Test("activation offers repeat as a real control")
-    func activationOffersRepeatAsARealControl() throws {
+    @Test("activation disables repeat until there is a live queue")
+    func activationDisablesRepeatWithoutAQueue() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = ModelContext(container)
         let playbackDefaults = PlaybackTestDefaults()
@@ -274,9 +307,8 @@ struct RemoteCommandServiceTests {
 
         service.activate(playbackController: playbackController, context: context)
 
-        // MusicKit owns repeat, so the system control has to be able to set
-        // it rather than being disabled and lying about its value.
-        #expect(commandCenter.changeRepeatModeCommand.currentRepeatType == .off)
+        // Mode commands require a live queue; retained display state is insufficient.
+        #expect(!commandCenter.changeRepeatModeCommand.isEnabled)
     }
 
     @Test("command center disables empty state, permits display restore, and disables after reset")

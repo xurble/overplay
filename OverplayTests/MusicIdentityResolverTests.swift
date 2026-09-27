@@ -14,11 +14,16 @@ struct MusicIdentityResolverTests {
         .init(id: id, type: "songs", attributes: .init(isrc: isrc))
     }
 
+    func library(_ id: String, catalog: [MusicIdentityResolver.Resource]) -> MusicIdentityResolver.Resource {
+        .init(id: id, type: "library-songs", catalog: catalog)
+    }
+
     @Test func documentedLibraryRelationship() throws {
         let json = #"{"data":[{"id":"i.a","type":"library-songs","relationships":{"catalog":{"data":[{"id":"10","type":"songs","attributes":{"isrc":"ABC"}}]}}}]}"#
         let values = try MusicIdentityResolver.decode(Data(json.utf8), kind: .library, ids: ["i.a"])
-        #expect(values["i.a"]?.first?.id == "10")
-        #expect(values["i.a"]?.first?.attributes?.isrc == "ABC")
+        #expect(values["i.a"]?.first?.id == "i.a")
+        #expect(values["i.a"]?.first?.catalog?.first?.id == "10")
+        #expect(values["i.a"]?.first?.catalog?.first?.attributes?.isrc == "ABC")
     }
 
     @Test func equivalentCorrelationUsesMetadataNotOrder() throws {
@@ -38,7 +43,7 @@ struct MusicIdentityResolverTests {
     @Test func uploadsAndAmbiguousRelationshipsDoNotUseOpaqueHint() async throws {
         let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "a") }, fetch: { kind, ids, _ in
             Dictionary(uniqueKeysWithValues: ids.map { id in
-                (id, kind == .library && id == "i.ambiguous" ? [song("1"), song("2")] : [])
+                (id, kind == .library ? [library(id, catalog: id == "i.ambiguous" ? [song("1"), song("2")] : [])] : [])
             })
         })
         var upload = snapshot("i.upload"); upload.catalogID = "opaque"
@@ -96,7 +101,7 @@ struct MusicIdentityResolverTests {
         let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "a") }, fetch: { kind, ids, _ in
             calls[kind, default: 0] += 1
             return Dictionary(uniqueKeysWithValues: ids.map { id in
-                (id, kind == .library ? [song(String(id.dropFirst(2)), isrc: "ISRC-" + id)]
+                (id, kind == .library ? [library(id, catalog: [song(String(id.dropFirst(2)), isrc: "ISRC-" + id)])]
                     : kind == .catalog ? [song(id, isrc: "ISRC-i." + id)] : [])
             })
         })
@@ -114,7 +119,7 @@ struct MusicIdentityResolverTests {
         let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "a") }, fetch: { kind, ids, _ in
             if kind == .catalog { catalogCalls += 1 }
             return Dictionary(uniqueKeysWithValues: ids.map { id in
-                (id, kind == .library ? [song("1")] : kind == .catalog ? [song(id, isrc: "KNOWN")] : [])
+                (id, kind == .library ? [library(id, catalog: [song("1")])] : kind == .catalog ? [song(id, isrc: "KNOWN")] : [])
             })
         })
         let result = try await resolver.enrich([snapshot("i.a")])
@@ -156,4 +161,15 @@ struct MusicIdentityResolverTests {
         #expect(firstResult == secondResult)
         #expect(calls == 3)
     }
+    @Test func libraryArtworkSurvivesMissingOrAmbiguousCatalogRelationships() async throws {
+        let json = #"{"data":[{"id":"i.upload","type":"library-songs","attributes":{"artwork":{"url":"https://example.com/library/{w}x{h}.jpg"}},"relationships":{"catalog":{"data":[]}}},{"id":"i.ambiguous","type":"library-songs","attributes":{"artwork":{"url":"https://example.com/custom/{w}x{h}.jpg"}},"relationships":{"catalog":{"data":[{"id":"1","type":"songs"},{"id":"2","type":"songs"}]}}}]}"#
+        let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "a") }, fetch: { kind, ids, _ in
+            #expect(kind == .library)
+            return try MusicIdentityResolver.decode(Data(json.utf8), kind: kind, ids: ids)
+        })
+        let results = try await resolver.enrich([snapshot("i.upload"), snapshot("i.ambiguous")], includeCandidates: false)
+        #expect(results.allSatisfy { $0.catalogID == nil && $0.artworkURLTemplate != nil })
+        #expect(results[0].artworkURLTemplate == "https://example.com/library/{w}x{h}.jpg")
+    }
+
 }

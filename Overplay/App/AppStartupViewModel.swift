@@ -17,9 +17,13 @@ final class AppStartupViewModel {
         var stopPeriodicPlaylistSync: () -> Void
         var compactHistory: () -> Void
         var removeVideoTracks: () -> Void = {}
+        var prepareLibrary: () async throws -> Void = {}
+        var authorizationIsReady: (() -> Bool)? = nil
     }
 
     private(set) var hasStartedAuthorizedServices = false
+    private(set) var isPreparingLibrary = false
+    private(set) var libraryPreparationError: String?
     @ObservationIgnored private(set) var authorizedServicesTask: Task<Void, Never>?
 
     func shouldShowPermissionView(
@@ -35,32 +39,11 @@ final class AppStartupViewModel {
     }
 
     func bootstrap(isReady: Bool, dependencies: Dependencies) async {
-        do {
-            _ = try StartupProfiler.measure("Startup settings load") {
-                try dependencies.loadSettings()
-            }
-        } catch {
-            StartupProfiler.mark("Startup settings load failed: \(error.localizedDescription)")
-        }
-
-        dependencies.removeVideoTracks()
-
-        // Runs before anything reads playlist roles. The pre-bucket `triage`
-        // raw value resolves to `.triageSource`, so a view that renders first
-        // would show a bucket with no tracks in it.
-        StartupProfiler.measure("Triage bucket migration") {
-            dependencies.migrateTriageBucket()
-        }
-
         await StartupProfiler.measure("Apple Music authorization refresh") {
             await dependencies.refreshAuthorization()
         }
 
-        StartupProfiler.measure("Remote command startup") {
-            dependencies.installRemoteCommands()
-        }
-
-        if isReady {
+        if dependencies.authorizationIsReady?() ?? isReady {
             startAuthorizedServices(dependencies: dependencies)
         }
     }
@@ -69,6 +52,9 @@ final class AppStartupViewModel {
         if isReady {
             startAuthorizedServices(dependencies: dependencies)
         } else {
+            authorizedServicesTask?.cancel()
+            authorizedServicesTask = nil
+            isPreparingLibrary = false
             hasStartedAuthorizedServices = false
             dependencies.stopPeriodicPlaylistSync()
         }
@@ -81,13 +67,10 @@ final class AppStartupViewModel {
         playbackController: PlaybackController
     ) -> Dependencies {
         Dependencies {
-            _ = try SettingsRepository.settings(in: modelContext)
+            // Restoration supplies settings; startup must never synthesize them.
         } migrateTriageBucket: {
-            do {
-                try TriageBucketMigrationService.migrate(in: modelContext)
-            } catch {
-                StartupProfiler.mark("Triage bucket migration failed: \(error.localizedDescription)")
-            }
+            // Generation 2 has no legacy ownership or role migration. The
+            // rebuild creates its bucket with the rest of the graph atomically.
         } refreshAuthorization: {
             await authorizationService.refresh()
         } installRemoteCommands: {
@@ -121,21 +104,50 @@ final class AppStartupViewModel {
             } catch {
                 StartupProfiler.mark("Video cleanup failed: \(error.localizedDescription)")
             }
+        } prepareLibrary: {
+            try await LibraryRebuildService.performIfNeeded(in: modelContext)
+            try await runtime.libraryRestoration.prepare(in: modelContext, cloudEnabled: AppPersistence.cloudEnabled)
+            runtime.startLibraryMaintenance()
+        } authorizationIsReady: {
+            authorizationService.readiness.isReady
         }
+    }
+
+    func retryLibraryPreparation(dependencies: Dependencies) {
+        startAuthorizedServices(dependencies: dependencies)
     }
 
     private func startAuthorizedServices(dependencies: Dependencies) {
         guard !hasStartedAuthorizedServices else { return }
         hasStartedAuthorizedServices = true
+        isPreparingLibrary = true
+        libraryPreparationError = nil
 
         // The launch UI presents immediately; authorized services start
         // behind it in main-actor slices. Ordering still matters: the merge
         // rekeys the device-local stores that display restore reads.
         authorizedServicesTask = Task { @MainActor in
+            do {
+                try await dependencies.prepareLibrary()
+                try Task.checkCancellation()
+                try dependencies.loadSettings()
+                dependencies.removeVideoTracks()
+                dependencies.migrateTriageBucket()
+                dependencies.installRemoteCommands()
+            } catch {
+                guard !Task.isCancelled else { return }
+                libraryPreparationError = error.localizedDescription
+                isPreparingLibrary = false
+                hasStartedAuthorizedServices = false
+                return
+            }
+            guard !Task.isCancelled else { return }
             await StartupProfiler.measure("Track identity merge") {
                 await dependencies.mergeDuplicateTrackIdentities()
             }
 
+            guard !Task.isCancelled else { return }
+            isPreparingLibrary = false
             StartupProfiler.measure("Local playback display restore") {
                 dependencies.restoreLocalPlaybackDisplay()
             }

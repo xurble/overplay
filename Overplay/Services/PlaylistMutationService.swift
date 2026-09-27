@@ -159,10 +159,11 @@ struct PlaylistMutationService {
         addedAt: Date = .now,
         in context: ModelContext
     ) throws -> PlaylistItemRecord {
-        let identity = MusicTrackIdentity.ids(fromRawID: result.id)
+        // SearchService requests catalog songs; the endpoint establishes the
+        // resource domain. No raw-ID syntax inference enters persistence.
         let track = try TrackRecordRepository.upsert(
-            catalogID: identity.catalogID,
-            libraryID: identity.libraryID,
+            catalogID: result.id,
+            libraryID: nil,
             title: result.title,
             artistName: result.artistName,
             albumTitle: result.albumTitle,

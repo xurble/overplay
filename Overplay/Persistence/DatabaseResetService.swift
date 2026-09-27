@@ -4,13 +4,16 @@ import SwiftData
 enum DatabaseResetService {
     @MainActor
     @discardableResult
-    static func nukeDatabase(in context: ModelContext) throws -> OverplaySettings {
+    static func nukeDatabase(in context: ModelContext, defaults: UserDefaults = .standard) throws -> OverplaySettings {
         try deleteAllRecords(in: context)
         try context.save()
 
         let settings = OverplaySettings()
         context.insert(settings)
+        context.insert(PlaylistRecord(musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName, role: .triageBucket, writePolicy: .incomingOnly))
         try context.save()
+        LibraryRestorationService.recordLocalConfiguration(settings, defaults: defaults)
         return settings
     }
 

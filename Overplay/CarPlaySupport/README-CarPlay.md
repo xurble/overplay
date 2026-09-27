@@ -12,8 +12,8 @@ entitlement, and `Config/Info.plist` declares a CarPlay scene using
   isolated from the SwiftUI iPhone/iPad shell.
 - `CarPlayLibrarySnapshot` builds testable playlist summaries for the CarPlay
   list UI.
-- `CarPlayPlaylistSectionFactory` builds the shared Shuffle and Play action
-  and track sections for all three playlist screens.
+- `CarPlayListRenderer` retains list items and images, applies changed row
+  properties, and replaces sections only when their structure changes.
 - `PlaybackController` owns the shared playlist-row action used by both
   CarPlay and iPhone/iPad, including resume, queue reuse, and replacement.
 - `AppRuntime.shared` provides the shared model container, playback controller,
@@ -50,11 +50,27 @@ before a required replacement. It evaluates the outgoing session and publishes
 the selected track through the same reconciliation path used by other playback
 surfaces. Command failures remain in shared playback state and `statusMessage`.
 
-There is no manual refresh. Visible lists are rebuilt from two triggers: the
-playback observation below, and a `ModelContext.didSave` observation that
-catches phone-side library changes — linking a playlist, changing the One True
-Playlist, or a sync updating counts — which touch SwiftData without touching
-playback state.
+There is no manual refresh. Relevant playback changes and library saves
+invalidate value presentations; equality decides whether anything is published.
+Unchanged presentations cause no CarPlay mutations. Counter and playing-indicator
+changes update existing rows. Membership/order changes replace sections while
+retaining surviving rows and artwork. Artwork loads only when its identity changes,
+keeps the previous image while loading, and rejects stale completions. Explicit
+surface re-entry retries failed artwork. Collage composition is maintained at
+library lifecycle boundaries; reading a presentation never saves SwiftData.
+
+The shared controller retains confirmed shuffle/repeat through unknown MusicKit
+reports for the same playback session. Unknown does not mean off, and cannot
+justify chronological queue repair or background continuity accounting. Remote
+command publication writes only changed known values, with a forced publication
+on activation/reconnection. During a skip, pause and mode controls remain available;
+mode commands wait for transition confirmation. A pause requested during that
+transition remains authoritative. Next/previous stay gated until confirmation.
+Now Playing retains its button array while the action layout remains the same.
+
+Diagnostics distinguish refresh requests (`carPlayRefreshRequested`) from actual
+row/section, artwork, button-state, button-array, and remote-command writes. An idle
+menu may receive requests but should produce no mutations.
 
 CarPlay exposes Active and Retired playback contexts through the same shared
 playback state used by iOS.
