@@ -16,7 +16,10 @@ final class ArtworkImagePipeline {
     private let decodeGate = ArtworkWorkGate(limit: 2)
     private var inFlight: [String: Task<DecodedArtworkImage?, Never>] = [:]
 
-    init(disk: ArtworkCacheService = .shared, memoryBytes: Int = 24 * 1024 * 1024) {
+    /// Costed by decoded bytes, so a 512px cover is about a megabyte. A
+    /// collage composes far more covers than the old 24 MB could hold, which
+    /// made every batch re-read and re-decode what the previous one evicted.
+    init(disk: ArtworkCacheService = .shared, memoryBytes: Int = 64 * 1024 * 1024) {
         self.disk = disk
         memory.totalCostLimit = memoryBytes
     }

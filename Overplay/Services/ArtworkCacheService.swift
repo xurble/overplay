@@ -33,6 +33,7 @@ actor ArtworkCacheService {
     private let downloadGate = ArtworkWorkGate(limit: 4)
     private let processingGate = ArtworkWorkGate(limit: 2)
     private var failedUntil: [String: Date] = [:]
+    private var permanentFailures: Set<String> = []
     private let failureRetryInterval: TimeInterval
     private var protectedPlaylistID: String?
     private let maxLargeCacheBytes: Int
@@ -58,8 +59,10 @@ actor ArtworkCacheService {
         self.downloader = downloader
     }
 
+    static let httpErrorDomain = "OverplayArtworkHTTP"
+
     static func cacheKey(sourceURL: String, pixelSize: Int) -> String {
-        let normalizedValue = "v2|\(normalizedSourceURL(sourceURL))|\(sizeBucket(pixelSize))"
+        let normalizedValue = "v2|\(cacheIdentity(sourceURL))|\(sizeBucket(pixelSize))"
         let digest = SHA256.hash(data: Data(normalizedValue.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
     }
@@ -70,6 +73,30 @@ actor ArtworkCacheService {
 
     static func normalizedSourceURL(_ sourceURL: String) -> String {
         sourceURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Artwork for tracks uploaded to the library is served from Apple's
+    /// blobstore through a pre-signed URL whose `X-Amz-*` query is re-issued
+    /// daily. Those parameters are a credential, not part of the asset's
+    /// identity: keying the cache on them mints a fresh entry — and a
+    /// duplicate file — every time the same cover is signed again.
+    static func cacheIdentity(_ sourceURL: String) -> String {
+        let trimmed = normalizedSourceURL(sourceURL)
+        guard var components = URLComponents(string: trimmed), let items = components.queryItems,
+              items.contains(where: { $0.name.lowercased().hasPrefix("x-amz-") }) else { return trimmed }
+        let retained = items.filter { !$0.name.lowercased().hasPrefix("x-amz-") }
+        components.queryItems = retained.isEmpty ? nil : retained
+        return components.string ?? trimmed
+    }
+
+    /// A 4xx will not become valid by waiting, 408 and 429 aside. An expired
+    /// pre-signed artwork URL answers 406 forever, so the ordinary cooldown
+    /// turns it into a request a minute for the life of the process.
+    nonisolated static func isPermanentFailure(_ error: Error) -> Bool {
+        let error = error as NSError
+        guard error.domain == httpErrorDomain else { return false }
+        guard (400..<500).contains(error.code) else { return false }
+        return error.code != 408 && error.code != 429
     }
 
     func artworkFileURL(
@@ -109,7 +136,7 @@ actor ArtworkCacheService {
                 return fileURL(for: adopted)
             }
 
-            let variants = try await downloadedVariants(for: remoteURL, priority: priority)
+            let variants = try await downloadedVariants(for: remoteURL, sourceURL: normalizedSourceURL, priority: priority)
             // Another waiter may have persisted these while this actor suspended.
             for size in [128, 512] {
                 let variantKey = Self.cacheKey(sourceURL: normalizedSourceURL, pixelSize: size)
@@ -220,25 +247,33 @@ actor ArtworkCacheService {
         // and a throttled or refused status from Apple's artwork CDN is
         // exactly the signal worth keeping.
         if let statusCode, !(200..<300).contains(statusCode) {
+            // Carry the host: the difference between Apple's artwork CDN and
+            // the blobstore that serves uploaded library covers is the whole
+            // diagnosis, and the URL itself holds a credential.
+            let failure = NSError(
+                domain: ArtworkCacheService.httpErrorDomain,
+                code: statusCode,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "Artwork download returned HTTP \(statusCode)."
+                ]
+            )
             record(
                 magnitude: Double(data.count),
-                detail: "HTTP \(statusCode)",
-                error: NSError(
-                    domain: "OverplayArtworkHTTP",
-                    code: statusCode,
-                    userInfo: [
-                        NSLocalizedDescriptionKey: "Artwork download returned HTTP \(statusCode)."
-                    ]
-                )
+                detail: "HTTP \(statusCode) \(url.host() ?? "unknown host")",
+                error: failure
             )
-            throw URLError(.badServerResponse)
+            throw failure
         }
 
         record(magnitude: Double(data.count), detail: statusCode.map { "HTTP \($0)" }, error: nil)
         return data
     }
 
-    private func downloadedVariants(for url: URL, priority: TaskPriority) async throws -> [Int: Data] {
+    private func downloadedVariants(
+        for url: URL,
+        sourceURL: String,
+        priority: TaskPriority
+    ) async throws -> [Int: Data] {
         let key = url.absoluteString
         if let task = inFlightDownloads[key] {
             MusicKitActivityLog.shared.record(.artworkRequestCoalesced)
@@ -248,7 +283,9 @@ actor ArtworkCacheService {
             MusicKitActivityLog.shared.record(.artworkRetrySkipped)
             throw URLError(.resourceUnavailable)
         }
-        let largeFile = cachedArtworkFileURL(for: key, pixelSize: 512)
+        // Entries are keyed by the stored source, not by the expanded request
+        // URL, so the already-downloaded master has to be looked up that way.
+        let largeFile = cachedArtworkFileURL(for: sourceURL, pixelSize: 512)
         let task = Task(priority: priority) {
             let wait = PerformanceSpan(.artworkWorkWait)
             await downloadGate.acquire(priority: priority)
@@ -280,9 +317,32 @@ actor ArtworkCacheService {
             return result
         } catch {
             failedUntil = failedUntil.filter { $0.value > .now }
-            failedUntil[key] = Date.now.addingTimeInterval(failureRetryInterval)
+            if Self.isPermanentFailure(error) {
+                failedUntil[key] = .distantFuture
+                permanentFailures.insert(sourceURL)
+            } else {
+                failedUntil[key] = Date.now.addingTimeInterval(failureRetryInterval)
+            }
             throw error
         }
+    }
+
+    /// Source URLs whose download failed in a way waiting cannot fix. The
+    /// artwork repair pass drops the stored template for these so MusicKit
+    /// can resolve a current one.
+    func permanentlyFailedSourceURLs() -> Set<String> { permanentFailures }
+
+    /// Drops reported failures from the pending list. Retry suppression is
+    /// deliberately left in place: the URL stays refused for this process.
+    func clearPermanentFailures(_ sourceURLs: Set<String>) {
+        permanentFailures.subtract(sourceURLs)
+    }
+
+    /// True once this source has failed unrecoverably, so a caller can treat
+    /// the missing image as final rather than as a gap worth re-rendering for.
+    func hasPermanentlyFailed(_ sourceURL: String) -> Bool {
+        guard let url = PortableArtworkReference.requestURL(Self.normalizedSourceURL(sourceURL)) else { return false }
+        return failedUntil[url.absoluteString] == .distantFuture
     }
 
     nonisolated static func makeVariants(_ data: Data) throws -> [Int: Data] {

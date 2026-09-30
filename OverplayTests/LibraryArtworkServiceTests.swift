@@ -44,4 +44,37 @@ struct LibraryArtworkServiceTests {
         #expect(track.artworkURLTemplate == nil)
         #expect(!container.mainContext.hasChanges)
     }
+
+    @Test func anExpiredArtworkCredentialIsDroppedSoItCanBeResolvedAgain() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let expired = "https://store-035.blobstore.apple.com/sq/82/96/ff/image?X-Amz-Signature=aaaa"
+        let dead = TrackRecord(libraryID: "i.upload", title: "Uploaded", artistName: "Artist",
+                               artworkURLTemplate: expired)
+        let alive = TrackRecord(libraryID: "i.other", title: "Catalog", artistName: "Artist",
+                                artworkURLTemplate: "https://example.com/art/{w}x{h}.jpg")
+        context.insert(dead)
+        context.insert(alive)
+        try context.save()
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OverplayArtworkRepairTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = ArtworkCacheService(rootDirectory: directory, downloader: { _ in
+            throw NSError(domain: ArtworkCacheService.httpErrorDomain, code: 406)
+        })
+        #expect(await cache.artworkFileURL(for: expired, pixelSize: 512) == nil)
+
+        #expect(await LibraryArtworkService.discardUnreachableArtwork(in: context, cache: cache) == 1)
+        #expect(dead.artworkURLTemplate == nil)
+        #expect(alive.artworkURLTemplate == "https://example.com/art/{w}x{h}.jpg")
+        #expect(await cache.permanentlyFailedSourceURLs().isEmpty)
+        // Now eligible for the repair pass that asks MusicKit for a fresh URL.
+        #expect(try await LibraryArtworkService.repair(in: context) { snapshots in
+            var result = snapshots
+            result[0].artworkURLTemplate = "https://example.com/fresh/{w}x{h}.jpg"
+            return result
+        } == 1)
+        #expect(dead.artworkURLTemplate == "https://example.com/fresh/{w}x{h}.jpg")
+    }
 }

@@ -226,6 +226,82 @@ struct PlaylistCollageTests {
         #expect(reopened.collageStroke(for: .retired) == .none)
     }
 
+    @Test func coverLoadsAreDeduplicatedAndConcurrencyIsBounded() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = try #require(CGImageSourceCreateWithData(artworkTestData() as CFData, nil))
+        let artwork = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        var active = 0
+        var maximumActive = 0
+        var loads: [String: Int] = [:]
+        let renderer = PlaylistCollageService(cacheDirectory: directory) { url, _, _ in
+            active += 1
+            maximumActive = max(maximumActive, active)
+            loads[url, default: 0] += 1
+            await Task.yield()
+            active -= 1
+            return artwork
+        }
+        var random = SystemRandomNumberGenerator()
+        let collage = PlaylistCollage.make(covers: covers(40), layout: .pile, stroke: .none, using: &random)
+        #expect(await renderer.image(for: collage, playlistID: "bounded") != nil)
+        #expect(maximumActive <= 4)
+        #expect(loads.count == 40)
+        #expect(loads.values.allSatisfy { $0 == 1 })
+    }
+
+    @Test func aPermanentlyMissingCoverStillProducesACachedCollage() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = try #require(CGImageSourceCreateWithData(artworkTestData() as CFData, nil))
+        let artwork = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        var loads = 0
+        let renderer = PlaylistCollageService(
+            cacheDirectory: directory,
+            loadImage: { url, _, _ in
+                loads += 1
+                return url == "cover-0" ? nil : artwork
+            },
+            isCoverUnreachable: { $0 == "cover-0" }
+        )
+        var random = SystemRandomNumberGenerator()
+        let collage = PlaylistCollage.make(covers: covers(4), layout: .grid3, stroke: .none, using: &random)
+        #expect(await renderer.image(for: collage, playlistID: "expired") != nil)
+        let loadsForFirstRender = loads
+
+        // The dead cover cannot come back, so the composition must be cached
+        // rather than rebuilt from every other cover on each appearance.
+        let folder = try #require(FileManager.default
+            .contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first)
+        #expect(try FileManager.default
+            .contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+            .contains { $0.pathExtension == "png" })
+        #expect(await renderer.image(for: collage, playlistID: "expired") != nil)
+        #expect(loads == loadsForFirstRender)
+    }
+
+    @Test func aRecoverablyMissingCoverIsNotFrozenIntoTheCache() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = try #require(CGImageSourceCreateWithData(artworkTestData() as CFData, nil))
+        let artwork = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        var loads = 0
+        let renderer = PlaylistCollageService(
+            cacheDirectory: directory,
+            loadImage: { url, _, _ in
+                loads += 1
+                return url == "cover-0" ? nil : artwork
+            },
+            isCoverUnreachable: { _ in false }
+        )
+        var random = SystemRandomNumberGenerator()
+        let collage = PlaylistCollage.make(covers: covers(4), layout: .grid3, stroke: .none, using: &random)
+        #expect(await renderer.image(for: collage, playlistID: "offline") != nil)
+        #expect(!FileManager.default.fileExists(atPath: directory.path))
+        #expect(await renderer.image(for: collage, playlistID: "offline") != nil)
+        #expect(loads == 8) // Re-rendered, so the offline cover gets another try.
+    }
+
     @Test func renderedPNGIsReusedAcrossServiceInstances() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -240,7 +316,7 @@ struct PlaylistCollageTests {
         let collage = PlaylistCollage.make(covers: covers(1), layout: .grid3, stroke: .white, using: &random)
         let rendered = try #require(await renderer.image(for: collage, playlistID: "playlist"))
         #expect(rendered.width == 1024 && rendered.height == 1024)
-        #expect(loads == 9)
+        #expect(loads == 1)
         let folder = try #require(FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first)
         let png = try #require(FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil).first)
         #expect(png.pathExtension == "png")
@@ -310,7 +386,7 @@ struct PlaylistCollageTests {
         let collage = PlaylistCollage.make(covers: covers(1), layout: .grid3, stroke: .none, using: &random)
         #expect(await renderer.image(for: collage, playlistID: "missing") == nil)
         #expect(await renderer.image(for: collage, playlistID: "missing") == nil)
-        #expect(loads == 18)
+        #expect(loads == 2) // Each unique cover is attempted once per render.
         #expect(!FileManager.default.fileExists(atPath: directory.path))
     }
 

@@ -381,6 +381,100 @@ struct ArtworkCacheServiceTests {
         await offline.flushPendingManifestSave()
     }
 
+    @Test("a re-signed pre-signed artwork URL reuses the cached asset")
+    func preSignedURLsShareOneCacheEntry() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let base = "https://store-035.blobstore.apple.com/sq/82/96/ff/image"
+        let monday = "\(base)?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Date=20260927T084722Z"
+            + "&X-Amz-Expires=86400&X-Amz-Signature=aaaa"
+        let tuesday = "\(base)?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Date=20260928T084722Z"
+            + "&X-Amz-Expires=86400&X-Amz-Signature=bbbb"
+        #expect(ArtworkCacheService.cacheKey(sourceURL: monday, pixelSize: 512)
+            == ArtworkCacheService.cacheKey(sourceURL: tuesday, pixelSize: 512))
+        // A non-signing query still distinguishes two different assets.
+        #expect(ArtworkCacheService.cacheKey(sourceURL: "\(base)?id=1", pixelSize: 512)
+            != ArtworkCacheService.cacheKey(sourceURL: "\(base)?id=2", pixelSize: 512))
+
+        let counter = ArtworkDownloadCounter()
+        let service = ArtworkCacheService(rootDirectory: directory, downloader: { _ in
+            await counter.increment()
+            return artworkTestData()
+        })
+        #expect(await service.artworkFileURL(for: monday, pixelSize: 512) != nil)
+        #expect(await service.artworkFileURL(for: tuesday, pixelSize: 512) != nil)
+        #expect(await counter.value == 1)
+        await service.flushPendingManifestSave()
+    }
+
+    @Test("an expired artwork credential is refused instead of retried every cooldown")
+    func permanentFailuresAreNotRetriedAfterTheCooldown() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = "https://store-035.blobstore.apple.com/sq/82/96/ff/image?X-Amz-Signature=aaaa"
+        let counter = ArtworkDownloadCounter()
+        let service = ArtworkCacheService(
+            rootDirectory: directory,
+            failureRetryInterval: 0,
+            downloader: { _ in
+                await counter.increment()
+                throw NSError(domain: ArtworkCacheService.httpErrorDomain, code: 406)
+            }
+        )
+        for _ in 0..<5 {
+            #expect(await service.artworkFileURL(for: source, pixelSize: 512) == nil)
+        }
+        #expect(await counter.value == 1)
+        #expect(await service.hasPermanentlyFailed(source))
+        #expect(await service.permanentlyFailedSourceURLs() == [source])
+
+        await service.clearPermanentFailures([source])
+        #expect(await service.permanentlyFailedSourceURLs().isEmpty)
+        // Reporting is drained; the refusal itself must survive it.
+        #expect(await service.hasPermanentlyFailed(source))
+    }
+
+    @Test("a transient failure is retried once its cooldown expires")
+    func transientFailuresStayRetryable() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = "https://example.com/flaky.jpg"
+        let counter = ArtworkDownloadCounter()
+        let service = ArtworkCacheService(
+            rootDirectory: directory,
+            failureRetryInterval: 0,
+            downloader: { _ in
+                await counter.increment()
+                throw NSError(domain: ArtworkCacheService.httpErrorDomain, code: 429)
+            }
+        )
+        for _ in 0..<3 {
+            #expect(await service.artworkFileURL(for: source, pixelSize: 512) == nil)
+        }
+        #expect(await counter.value == 3)
+        #expect(await service.hasPermanentlyFailed(source) == false)
+        #expect(await service.permanentlyFailedSourceURLs().isEmpty)
+    }
+
+    @Test("a templated thumbnail is rebuilt from the cached master without downloading")
+    func templatedThumbnailReusesTheCachedMaster() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let template = "https://example.com/cover/{w}x{h}bb.jpg"
+        let service = ArtworkCacheService(rootDirectory: directory, downloader: { _ in artworkTestData() })
+        _ = await service.artworkFileURL(for: template, pixelSize: 512)
+        let small = try #require(await service.cachedArtworkFileURL(for: template, pixelSize: 128))
+        try FileManager.default.removeItem(at: small)
+        await service.flushPendingManifestSave()
+
+        let offline = ArtworkCacheService(rootDirectory: directory, downloader: { _ in
+            throw URLError(.notConnectedToInternet)
+        })
+        let regenerated = try #require(await offline.artworkFileURL(for: template, pixelSize: 128))
+        #expect(try artworkDimensions(at: regenerated) == [128, 64])
+        await offline.flushPendingManifestSave()
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("OverplayArtworkCacheTests-\(UUID().uuidString)", isDirectory: true)

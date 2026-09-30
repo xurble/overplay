@@ -8,6 +8,7 @@ import SwiftData
 enum LibraryArtworkService {
     static func refreshMissingArtwork(in context: ModelContext, playbackController: PlaybackController? = nil) async {
         guard MusicAuthorization.currentStatus == .authorized else { return }
+        await discardUnreachableArtwork(in: context)
         do {
             let changed = try await repair(in: context) {
                 try await MusicIdentityResolver.shared.enrich($0, includeCandidates: false)
@@ -16,6 +17,37 @@ enum LibraryArtworkService {
         } catch {
             StartupProfiler.mark("Artwork metadata refresh failed: \(error.localizedDescription)")
         }
+    }
+
+    /// Artwork for uploaded library tracks is served through a pre-signed URL
+    /// that expires after a day. Once one has failed unrecoverably the stored
+    /// template is worthless, so drop it and let `repair` ask for a current
+    /// one rather than re-requesting a dead credential forever.
+    @discardableResult
+    static func discardUnreachableArtwork(
+        in context: ModelContext,
+        cache: ArtworkCacheService = .shared
+    ) async -> Int {
+        let unreachable = await cache.permanentlyFailedSourceURLs()
+        guard !unreachable.isEmpty else { return 0 }
+        let tracks = ((try? TrackRecordRepository.allTracks(in: context)) ?? []).filter {
+            $0.artworkURLTemplate.map(unreachable.contains) == true
+        }
+        guard !tracks.isEmpty else {
+            await cache.clearPermanentFailures(unreachable)
+            return 0
+        }
+        let previous = tracks.map { ($0, $0.artworkURLTemplate, $0.updatedAt) }
+        for track in tracks {
+            track.artworkURLTemplate = nil
+            track.updatedAt = .now
+        }
+        do { try context.save() } catch {
+            for (track, artwork, date) in previous { track.artworkURLTemplate = artwork; track.updatedAt = date }
+            return 0
+        }
+        await cache.clearPermanentFailures(unreachable)
+        return tracks.count
     }
 
     @discardableResult
