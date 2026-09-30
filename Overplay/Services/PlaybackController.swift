@@ -219,11 +219,13 @@ final class PlaybackController {
         "Playback stopped before the track finished — possibly a connection problem. Press play to resume."
 
     @ObservationIgnored private let localPlaybackDefaults: UserDefaults
+    @ObservationIgnored private let preparePlaybackTracks: @MainActor ([TrackRecord]) async throws -> Void
 
     init(
         localPlaybackDefaults: UserDefaults = .standard,
         playerID: String = "main",
         player: any PlaybackPlayer = ApplicationMusicPlaybackPlayer(),
+        preparePlaybackTracks: @escaping @MainActor ([TrackRecord]) async throws -> Void = { try await DevicePlaybackCache.prepare($0) },
         refreshUnknownApplePlayCount: (@MainActor (UUID, ModelContext) async -> Int)? = nil,
         transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy = .standard,
         loadAssociationScope: @escaping @MainActor () async throws -> String = {
@@ -238,6 +240,7 @@ final class PlaybackController {
         self.localPlaybackDefaults = localPlaybackDefaults
         self.playerID = playerID
         self.player = player
+        self.preparePlaybackTracks = preparePlaybackTracks
         self.refreshUnknownApplePlayCount = refreshUnknownApplePlayCount
         self.transitionConfirmationPolicy = transitionConfirmationPolicy
         self.sleepForTransitionConfirmation = sleepForTransitionConfirmation
@@ -820,7 +823,7 @@ final class PlaybackController {
             do {
                 let inputs = try PlaybackQueueOrchestrator.playlistInputs(for: playlist.musicPlaylistID, in: context)
                 let requiredTracks = inputs.items.filter { scope.includes($0) }.compactMap { inputs.tracksByID[$0.trackID] }
-                try await DevicePlaybackCache.prepare(requiredTracks)
+                try await preparePlaybackTracks(requiredTracks)
                 queueEntries = try PlaybackQueueOrchestrator.orderedCachedQueueEntries(
                 for: playlist.musicPlaylistID,
                 playerID: playerID,
@@ -1153,13 +1156,16 @@ final class PlaybackController {
                 rememberSubmittedQueue(queueEntries, playlistID: playlistID)
                 resetPlaybackModes()
                 player.replaceQueue(with: materialization)
+                try await player.play()
                 if enableShuffleBeforePlayback {
-                    // The starting entry is random; MusicKit shuffles the
-                    // remaining playback without changing the playlist order.
+                    // Applying shuffle before play can update the reported
+                    // mode without shuffling the queue MusicKit then loads.
+                    // Apply a fresh off/on transition to the loaded queue,
+                    // just like the working user toggle, keeping its current song.
+                    player.shuffleMode = .off
                     player.shuffleMode = .songs
                     observePlaybackModeChanges()
                 }
-                try await player.play()
             },
             onObservedTransition: { confirmation in
                 if let outgoingSessionSettings,

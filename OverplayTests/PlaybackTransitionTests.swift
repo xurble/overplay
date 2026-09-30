@@ -10,6 +10,61 @@ import Testing
 @MainActor
 @Suite("Player-confirmed playback transitions", .serialized)
 struct PlaybackTransitionTests {
+    @Test("Shuffle is applied to the loaded queue after playback starts", arguments: [false, true], [PlaylistPlaybackScope.active, .retired])
+    func shuffleReachesLoadedQueue(alreadyShuffling: Bool, scope: PlaylistPlaybackScope) async throws {
+        let fixture = try makeFixture()
+        defer { fixture.cleanUp() }
+        if scope == .retired {
+            for item in fixture.items { item.evictedAt = .now }
+            try fixture.context.save()
+        }
+        fixture.player.shuffleMode = alreadyShuffling ? .songs : .off
+        fixture.player.onPlay = {
+            // A cold MusicKit load can keep the reported mode while leaving
+            // its newly loaded queue in chronological order.
+            fixture.player.shuffleModeChanges.removeAll()
+        }
+        await fixture.controller.playPlaylist(fixture.playlist, scope: scope, settings: fixture.settings, context: fixture.context)
+        #expect(fixture.player.shuffleModeChanges == [.off, .songs])
+        #expect(fixture.controller.shuffleEnabled)
+        #expect(fixture.player.playCallCount == 1)
+        #expect(fixture.player.replaceQueueCallCount == 1)
+        #expect(fixture.player.commandEvents == ["pause", "replace", "play"])
+    }
+
+    @Test("Cold shared playlist playback resolves web-library IDs, including uploads", arguments: [false, true])
+    func coldLibraryPlayback(fails: Bool) async throws {
+        let fixture = try makeFixture(preparePlaybackTracks: { tracks in
+            try await DevicePlaybackCache.prepare(tracks) { reference in
+                let song = try await DevicePlaybackCache.loadLibrarySong(reference.value, nativeLookup: { _ in nil }, request: { _ in
+                    if fails, reference.value == "i.cold-1" { return Data(#"{"data":[]}"#.utf8) }
+                    return try DevicePlaybackCacheTests.libraryResponse(id: reference.value)
+                })
+                return try JSONEncoder().encode(Track.song(song))
+            }
+        })
+        defer { fixture.cleanUp() }
+        for (index, track) in fixture.tracks.enumerated() {
+            track.musicKitPlaybackData = nil
+            track.libraryID = "i.cold-\(index)"
+            track.catalogID = nil
+        }
+        try fixture.context.save()
+        // SwiftUI, CarPlay and system resume use this shared user action.
+        await fixture.controller.playPlaylist(fixture.playlist, settings: fixture.settings, context: fixture.context)
+        if fails {
+            #expect(fixture.player.replaceQueueCallCount == 0)
+            #expect(fixture.tracks.allSatisfy { $0.musicKitPlaybackData == nil })
+            #expect(fixture.controller.statusMessage?.contains("returned no songs") == true)
+        } else {
+            #expect(fixture.player.replaceQueueCallCount == 1)
+            #expect(fixture.player.playbackStatus == .playing)
+            #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+            #expect(fixture.controller.currentPlaylistItem != nil)
+            #expect(fixture.tracks.allSatisfy { $0.musicKitPlaybackData != nil && $0.catalogID == nil })
+        }
+    }
+
     @Test("mode retention ends when a foreign queue takes over")
     func foreignQueueDoesNotInheritModes() async throws {
         let fixture = try makeFixture()
@@ -3498,10 +3553,14 @@ private final class ControllablePlaybackPlayer: PlaybackPlayer {
 
     var reportedShuffleMode: MusicPlayer.ShuffleMode? = .off
     var reportedRepeatMode: MusicPlayer.RepeatMode? = MusicPlayer.RepeatMode.none
+    var shuffleModeChanges: [MusicPlayer.ShuffleMode] = []
 
     var shuffleMode: MusicPlayer.ShuffleMode {
         get { reportedShuffleMode ?? .off }
-        set { reportedShuffleMode = newValue }
+        set {
+            reportedShuffleMode = newValue
+            shuffleModeChanges.append(newValue)
+        }
     }
 
     var repeatMode: MusicPlayer.RepeatMode {
@@ -3694,6 +3753,7 @@ private struct PlaybackTransitionFixture {
 private func makeFixture(
     maximumObservationCount: Int = 5,
     trackCount: Int = 3,
+    preparePlaybackTracks: @escaping @MainActor ([TrackRecord]) async throws -> Void = { try await DevicePlaybackCache.prepare($0) },
     refreshUnknownApplePlayCount: (@MainActor (UUID, ModelContext) async -> Int)? = nil,
     loadAssociationScope: @escaping @MainActor () async throws -> String = { "test-account-storefront" }
 ) throws -> PlaybackTransitionFixture {
@@ -3719,6 +3779,7 @@ private func makeFixture(
         localPlaybackDefaults: playbackDefaults.defaults,
         playerID: playerID,
         player: player,
+        preparePlaybackTracks: preparePlaybackTracks,
         refreshUnknownApplePlayCount: refreshUnknownApplePlayCount,
         transitionConfirmationPolicy: PlaybackTransitionConfirmationPolicy(
             maximumObservationCount: maximumObservationCount,
