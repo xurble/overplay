@@ -1,22 +1,33 @@
-# Overplay Current-State Product and Design Specification
+# Overplay Product and Design Specification
 
 ## Specification Status
 
-This document is the canonical specification for behaviour implemented in the
-repository as of 2026-09-08. Requirements describe the current iPhone, iPad,
-and CarPlay product unless a section is explicitly labelled **Planned**.
-Future work belongs in `TODO.md`; implementation details are requirements only
-when they create observable behaviour or protect a stated invariant.
+This document is the canonical specification for Overplay. The playback,
+counting and cross-surface sections were rewritten on 2026-10-04 for the
+reliable-playback-core rewrite (`PLAY-010` onwards, `COUNT-*`, `LOAD-*`). Other
+sections describe behaviour implemented as of 2026-09-30, unless they are
+labelled **Planned**. Future work belongs in `TODO.md`. Implementation details
+are requirements only when they create observable behaviour or protect a stated
+invariant.
 
 Evidence priority is executable tests, public UI and persisted models, then
-implementation. Known defects and dead paths are recorded separately and are
-not product requirements.
+implementation. Known defects are recorded separately and are not product
+requirements. Approaches that were tried and withdrawn are recorded in
+**History: Abandoned Playback Approaches** so they are not tried again.
 
 ## Purpose
 
 Overplay is an Apple Music companion app for iPhone, iPad, and CarPlay.
 It keeps a user's main music playlist fresh while using other playlists as
 intake and triage sources.
+
+**Overplay is a reliable music player first.** Playback must never lose track
+of what Overplay asked MusicKit to play, never show different things on
+different surfaces, and never fail in a way the user cannot recover from
+without restarting the device. Deduplication, play and skip counting, Apple
+play counts, sync and curation are additive layers on top of playback. They
+read playback state, and their failures degrade to "not counted" or "not
+available", never to stopped or misdescribed playback.
 
 The core playlist is the user's **One True Playlist**. Overplay plays it,
 tracks the user's own skip and playthrough behaviour, and exposes manual
@@ -30,7 +41,7 @@ rather than playlist by playlist.
 Overplay maintains its own history and state. It does not rely on Apple
 Music's global play count or skip count.
 
-## Current-State Requirement Index
+## Requirement Index
 
 | ID | Requirement | Primary evidence |
 | --- | --- | --- |
@@ -40,27 +51,40 @@ Music's global play count or skip count.
 | `PLAYLIST-003` | There is at most one triage bucket. It owns every triage item, is ensured during startup, and has a reserved `musicPlaylistID` rather than an Apple Music playlist, so it is never fetched or synced directly. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/TriageBucketTests.swift` |
 | `PLAYLIST-004` | Sources contribute attachments, not duplicate rows. A deliberate source link/re-link revives older retirements into Triage; ordinary sync never revives them. Active OTP takes precedence over source intake. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
 | `PLAYLIST-005` | Last-source unlink deletes untouched, non-explicit active Triage rows and unowned retired 0/0 rows. Active explicit keep or prior listening (even reset) survives. Nonzero counts and necessary OTP suppression always survive. | `Overplay/Persistence/TrackRetentionPolicy.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
-| `PLAYLIST-007` | One item per track app-wide owns its statistics. OTP, Triage and global Retired are three top-level collections; every retired item belongs to the bucket. | `Overplay/Persistence/PlaylistItemRepository.swift`, `Overplay/Services/TrackLocationService.swift` |
-| `PLAYLIST-006` | Pre-bucket triage data migrates onto the bucket at startup, merging counts for tracks that appeared in several triage playlists. The migration is idempotent and keyed on the stored legacy role value, not a local flag. | `Overplay/Persistence/TriageBucketMigrationService.swift`, `OverplayTests/TriageBucketTests.swift` |
+| `PLAYLIST-007` | One item per track app-wide. OTP, Triage and global Retired are three top-level collections; every retired item belongs to the bucket. | `Overplay/Persistence/PlaylistItemRepository.swift`, `Overplay/Services/TrackLocationService.swift` |
+| `PLAYLIST-006` | Pre-bucket triage data migrates onto the bucket at startup. The migration is idempotent and keyed on the stored legacy role value, not a local flag. | `Overplay/Persistence/TriageBucketMigrationService.swift`, `OverplayTests/TriageBucketTests.swift` |
 | `PLAYLIST-002` | Initial setup can create a managed playlist, copy an existing playlist into a managed playlist, or link an existing playlist as incoming-only. | `Overplay/ViewModels/PlaylistSelectionViewModel.swift`, `Overplay/Services/PlaylistSyncService.swift` |
-| `SYNC-001` | Automatic sync starts shortly after authorization, runs every 30 minutes, skips fresh successful playlists, retries failed playlists, and prioritizes the playing and selected playlists. | `Overplay/Services/PeriodicPlaylistSyncService.swift`, `OverplayTests/PeriodicPlaylistSyncServiceTests.swift` |
-| `SYNC-002` | Sync is idempotent, collapses duplicate identities, preserves history, and leaves remotely missing tracks locally playable unless retired. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/PlaylistSyncReconciliationTests.swift` |
+| `SYNC-001` | Automatic sync starts shortly after authorization, runs every 30 minutes, skips fresh successful playlists, retries failed playlists, prioritizes the playing and selected playlists, and pauses while a playback failure is active. | `Overplay/Services/PeriodicPlaylistSyncService.swift`, `OverplayTests/PeriodicPlaylistSyncServiceTests.swift` |
+| `SYNC-002` | Sync is idempotent, collapses duplicate identities, preserves history, and leaves remotely missing tracks locally playable unless retired. Sync never mutates the live playback queue. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/PlaylistSyncReconciliationTests.swift` |
 | `MUT-001` | Successful promotion moves the existing item into OTP with its statistics and history; no source copy remains. Retired offers Move to Triage (explicit keep) and Move to One True Playlist. | `Overplay/Services/PlaylistMutationService.swift`, `OverplayTests/PlaylistMutationServiceTests.swift` |
 | `MUT-002` | Apple Music search can add songs only to active playlists that allow remote writes. | `Overplay/ViewModels/SearchMusicViewModel.swift`, `OverplayTests/SearchMusicViewModelTests.swift` |
 | `RETIRE-001` | Retirement is authoritative locally and globally equivalent from OTP/Triage. Managed OTP retirement attempts remote removal from rows and Now Playing; incoming-only OTP and Triage retirement stay local. Stale OTP membership cannot revive or silently re-promote the row. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/TrackLocationService.swift` |
-| `PLAY-001` | **WITHDRAWN.** Overplay owned queue order, shuffle and repeat. Replaced by `PLAY-004`; no longer implemented. | — |
-| `PLAY-002` | **WITHDRAWN.** The queue was handed over a window at a time. A window cannot be shuffled or repeated by MusicKit, so it could not coexist with `PLAY-004`; device evidence also showed hand-off size was not the cause of the Apple Music failures it was built for. | — |
-| `PLAY-004` | MusicKit owns shuffle and repeat. Overplay reads both modes, writes what a surface asked for, and never reorders or rebuilds the queue to emulate them. | `Overplay/Services/PlaybackController.swift`, `Overplay/Playback/PlaybackPlayer.swift` |
-| `PLAY-006` | Confirmed shuffle/repeat values survive unknown reports within a playback session. Unknown is not off. During a pending transition, pause remains effective and mode requests are deferred; competing transport changes are gated. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/RemoteCommandService.swift` |
-| `PLAY-005` | Overplay hands MusicKit the complete playback order for the selected scope in one queue, because MusicKit can only shuffle or repeat what it holds. | `Overplay/Services/PlaybackController.swift` |
-| `CAR-002` | Presented menus retain row and artwork identity. Only changed visible values are published; section replacement requires structural change. Now Playing and system commands publish only changed state. Presentation reads never mutate playback or persistence. | `Overplay/CarPlaySupport/CarPlayListRenderer.swift`, `Overplay/Services/RemoteCommandService.swift` |
+| `PLAY-004` | MusicKit owns shuffle and repeat. Overplay writes what a surface asked for, displays what the player reports, and never reorders or rebuilds the queue to emulate them. | `Overplay/Services/PlaybackController.swift` |
+| `PLAY-005` | Starting playback hands MusicKit the complete display order for the selected scope in one queue, omitting only tracks that cannot be prepared. | `Overplay/Services/PlaybackController.swift` |
+| `PLAY-010` | Starting playback records a device-local playback intent (playlist, scope, ordered members with identifiers and metadata) before the queue is submitted. Only a new submission replaces it and only a database reset clears it; no observation, error or timeout can. | `Overplay/Playback/PlaybackIntent.swift` |
+| `PLAY-011` | The player is the authority on what is audible. Every Overplay surface displays the player-reported track, position, status and modes, even when the entry cannot be attributed. | `Overplay/Services/PlaybackController.swift` |
+| `PLAY-012` | The current entry is attributed to an intent member by identifier, then by unique normalized title/artist with duration corroboration. An unattributed entry is displayed, not counted, and has curation disabled; attribution never clears context. | `Overplay/Playback/PlaybackAttribution.swift` |
+| `PLAY-013` | Every transport command is one direct MusicKit call: no confirmation loop, no rejection of overlapping commands, no automatic queue replacement or retry. Displayed state changes only through observation. | `Overplay/Services/PlaybackController.swift` |
+| `PLAY-014` | Failures are shared across surfaces and recovered only by a user Play press through a bounded ladder (play; prepare and play; resubmit the intent at the current member and position). Pause is never disabled. | `Overplay/Services/PlaybackController.swift` |
+| `PLAY-015` | Membership changes never mutate the live queue. Retiring the current track issues Next; a member that left the scope is skipped when reached; additions appear at the next start. | `Overplay/Services/PlaybackController.swift` |
+| `PLAY-016` | Overplay does not write `MPNowPlayingInfoCenter` or register transport `MPRemoteCommandCenter` handlers; the `ApplicationMusicPlayer` host owns system Now Playing. A default-off diagnostic mirror exists only for device verification. | `Overplay/Services/SystemNowPlayingBridge.swift` |
+| `PLAY-017` | Native `Track` objects needed for playback are cached on disk per device; cold launches do not need to re-resolve the whole playlist, and unresolvable songs are omitted rather than failing playback. | `Overplay/Services/DevicePlaybackCache.swift` |
+| `COUNT-001` | Counting observes playback and never commands, delays or vetoes it. Skips require witnessed listening; playthroughs are position-based; suspended spans never produce skips. | `Overplay/Playback/ListeningSessionTracker.swift`, `Overplay/UseCases/PlaybackSessionEvaluationService.swift` |
+| `COUNT-002` | Counted outcomes are immutable ledger events with idempotent session IDs. Displayed counts are derived from the ledger, including absorbed track identities; merges and resets never edit counts. | `Overplay/Services/ListenLedger.swift`, `Overplay/Models/ListenEvent.swift` |
+| `LOAD-001` | Overplay adds no avoidable Apple Music load during playback: no steady-state queue enumeration, bulk Apple play-count refresh at most every 15 minutes and never while playing, library discovery scans at most every 6 hours, and no background MusicKit work while a playback failure is active. | `Overplay/Services/ApplePlayCountSyncService.swift`, `Overplay/Services/PeriodicPlaylistSyncService.swift` |
+| `CAR-002` | Presented menus retain row and artwork identity. Only changed visible values are published; section replacement requires structural change. Presentation reads never mutate playback or persistence. | `Overplay/CarPlaySupport/CarPlayListRenderer.swift` |
 | `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing. | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
 | `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
-| `HISTORY-001` | History is filterable and paged. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
-| `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, playlist selection, and MusicKit diagnostics. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
-| `SURFACE-001` | Every playback action exposed by SwiftUI, CarPlay, Lock Screen, Control Center, or a headset/media transport has identical semantics and runs through the shared playback controller. A surface may expose fewer actions, but it must not implement a different version of an action. | Confirmed product requirement (2026-08-31); `Overplay/Services/RemoteCommandService.swift`, `Overplay/CarPlaySupport/CarPlayCoordinator.swift` |
-| `SURFACE-002` | A playback action or player-observed transition on any surface must reconcile and publish one authoritative playback snapshot to every other surface. Current-track identity, queue context, play state, position, outgoing-track evaluation, active-playlist projection, restore state, and system now-playing metadata must not diverge. | Confirmed product requirement (2026-08-31); `Overplay/Services/PlaybackController.swift`, `Overplay/Services/NowPlayingMetadataService.swift` |
-| `SURFACE-003` | Equivalent iOS/iPadOS and CarPlay actions use one shared action decision, including queue reuse/replacement, resume/restart, accounting, and failure handling. Matching final metadata does not excuse different commands or audible transitions. | Confirmed product requirement (2026-09-25); `Overplay/Services/PlaybackController.swift`, `OverplayTests/PlaybackTransitionTests.swift` |
+| `HISTORY-001` | History is filterable and paged. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. History is never the source of counts. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
+| `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, playlist selection, MusicKit diagnostics, and the diagnostic Now Playing mirror. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
+| `SURFACE-001` | Every playback action exposed by SwiftUI or CarPlay runs through the shared playback controller with identical semantics. System transport controls act on the player directly and their effects are processed through the same observation path. A surface may expose fewer actions but never a different version of one. | Confirmed product requirement (2026-08-31, revised 2026-10-04); `Overplay/Services/PlaybackController.swift`, `Overplay/CarPlaySupport/CarPlayCoordinator.swift` |
+| `SURFACE-002` | Every observed player change is published as one snapshot to every Overplay surface within one observation cycle; system surfaces read the same player. Current track, playlist context, play state, position, outgoing-session evaluation and active-playlist projection must not diverge. | Confirmed product requirement (2026-08-31, revised 2026-10-04); `Overplay/Services/PlaybackController.swift` |
+| `SURFACE-003` | Equivalent iOS/iPadOS and CarPlay actions use one controller decision, including in-intent jump versus new intent, resume versus restart, and failure handling. | Confirmed product requirement (2026-09-25); `Overplay/Services/PlaybackController.swift` |
+
+Withdrawn requirements: `PLAY-001` (Overplay-owned shuffle/repeat) and `PLAY-002`
+(windowed hand-off) — see History H-1 and H-2. `PLAY-006` (confirmed-mode
+retention during pending transitions) is superseded by `PLAY-004` and
+`PLAY-013`, because there are no pending transitions any more.
 
 ## Platform
 
@@ -74,8 +98,9 @@ Music's global play count or skip count.
 - UI framework: SwiftUI.
 - Persistence: SwiftData backed by iCloud/CloudKit for shared playlist,
   track, statistics, and retirement data.
-- Device-local state: `AppStorage` for playback and navigation state that
-  should not sync between devices.
+- Device-local state: device-local files and `AppStorage` for the playback
+  intent, playback cache and navigation state, none of which syncs between
+  devices.
 - Apple Music integration: MusicKit first; Apple Music API only where MusicKit
   cannot support the required operation.
 - Playback: `ApplicationMusicPlayer` unless a technical limitation requires a
@@ -101,7 +126,8 @@ iPhone is the focused playback and quick-triage experience.
 - Use compact navigation with a dashboard-first flow.
 - Keep Now Playing as the strongest visual surface.
 - Prioritize fast actions: play, skip, retire, promote, sync.
-- Support lock-screen metadata, remote commands, and the CarPlay music player.
+- Support Lock Screen and remote transport controls (provided by the
+  `ApplicationMusicPlayer` host, `PLAY-016`) and the CarPlay music player.
 
 ### iPad
 
@@ -244,8 +270,8 @@ For every tracked playlist item, store:
 - Playlist identifier and playlist role.
 - Playlist entry identifier where available.
 - Title, artist, album, artwork, and duration snapshot.
-- Skip count.
-- Playthrough count.
+- Skip and playthrough counts: a cache derived from the listen ledger
+  (`COUNT-002`), never edited directly.
 - Last played date.
 - Last skipped date.
 - Last seen in Apple Music sync date.
@@ -289,11 +315,14 @@ catalog relationship may invalidate an earlier unverified catalog hint.
 Duplicate track records describing the same song (legacy mirrored IDs, or
 CloudKit insert races, which cannot enforce unique constraints) are collapsed
 by an identity merge pass that runs at startup and after each sync. The
-oldest record wins; playlist items and history events repoint to it. When two
-items for the same playlist collapse, skip and playthrough counts are summed
-and retirement state follows the most recently updated item — merge must never
-discard counts. Device-local order, alias, and playback-state
-stores rekey their local track IDs in the same pass.
+oldest record wins; playlist items and history events repoint to it, and the
+keeper records each absorbed track UUID in `absorbedTrackIDs`. Listen ledger
+events are never rewritten, so the keeper's derived counts include the donor's
+events, including ones that arrive late from another device. When two items
+for the same track collapse, retirement state follows the most recently
+updated item and the count cache is recomputed. Merging never adds or discards
+counts. The playback intent rewrites merged member track UUIDs in the same
+pass.
 
 ### Album artwork cache
 
@@ -389,7 +418,7 @@ Every usable song snapshot preserves the entry ID, remote position, ISRC,
 underlying song identity, and display/playback data. Remote occurrences are
 source-scoped provenance on the one global item row; duplicate occurrences do
 not create extra listening statistics or queue rows. Remote positions never
-replace Overplay's saved playback order. A successful source snapshot replaces
+replace Overplay's display order. A successful source snapshot replaces
 that source's current occurrence observations, independently of the retained
 contributing-source attachments. Moves retain provenance; identity merges combine
 it, source-ID healing rekeys it, and explicit unlink removes it.
@@ -480,10 +509,12 @@ errors, not complete empty snapshots. Reviving into Triage does not clear that p
 
 ## Play/Skip History
 
-Overplay records global per-track playthrough and skip counts. Promotion from
-triage and retirement from any playlist are manual user actions. Skip counts
-are displayed as history only; they do not imply an automatic status, and
-retirement remains an explicit user action.
+Overplay records per-track playthrough and skip counts. Counting is a layer on
+top of playback (`COUNT-001`): it observes what the player did and records
+outcomes afterwards. It never issues player commands, never delays or vetoes
+one, and a counting failure never changes what is playing. Promotion from triage
+and retirement from any playlist are manual user actions. Skip counts are
+displayed as history only; they do not imply an automatic status.
 
 ### Defaults
 
@@ -493,45 +524,96 @@ minimumSkipListeningSeconds = 10
 playthroughThresholdPercentage = 90
 ```
 
+### Listening sessions
+
+The session tracker is fed only by player observations: the current entry, its
+attribution to a playback-intent member (see **Playback Engine**), the playback
+status and the position. A session starts when an attributed entry becomes
+current and ends when a different entry becomes current, the queue ends, or a
+new playback intent replaces the old one. Each session is evaluated at most
+once, after its end has been observed.
+
+An unattributed entry has no session that can be counted. Its listening is
+dropped with a diagnostic. Losing a count is acceptable. Stopping or
+misdescribing playback to avoid losing one is not.
+
 ### Skip decision
 
 A skip is counted when all are true:
 
-- The current play session has not already been evaluated.
-- The tracked item exists; Retired auditions count on the same path.
+- The session has not already been evaluated.
+- The session is attributed to a playback-intent member whose track still has
+  an item. Retired auditions count on the same path.
 - The user listened for at least `minimumSkipListeningSeconds`, measured as
-  witnessed listening time accumulated from playback observation, not as raw
-  playback position. Seeking or resuming mid-track contributes nothing.
+  witnessed listening time accumulated from consecutive position samples, not
+  as raw playback position. Seeking or resuming mid-track contributes nothing.
 - Playback progress is less than `skipThresholdPercentage`.
-- The transition was not a natural completion — either reported explicitly or
-  inferred because the last observed position was within a few seconds of the
-  track duration.
-- The playback observation is fresh. Playback continues out-of-process while
-  Overplay is suspended, so a transition judged from a stale observation
-  counts nothing: an unobserved interval must never produce a skip. A
-  playthrough threshold that was genuinely observed before the observation
-  went stale still counts as a playthrough.
-
-Manual Next should evaluate the outgoing track. Previous should generally not
-count as a skip. Starting a different playlist or track evaluates the
-outgoing track by the same rules. Sessions restored for display after a
-relaunch are never evaluated.
+- The transition was not a natural completion — either the queue ended, or the
+  last observed position was within three seconds of the duration.
+- The transition did not move backwards. When the incoming entry precedes the
+  outgoing entry in the player's queue order, the transition was a Previous
+  from some surface, and it is not a skip.
+- The observation is fresh: the last sample is at most five seconds older than
+  the observed transition. Playback continues out-of-process while Overplay is
+  suspended, and an unobserved interval must never produce a skip.
 
 If the user skips after the skip threshold but before the playthrough
-threshold, neither the skip count nor the playthrough count changes.
+threshold, neither count changes. Sessions restored for display after a
+relaunch are never evaluated.
 
 ### Playthrough decision
 
-A playthrough is counted when the track reaches
-`playthroughThresholdPercentage` or natural completion is detected.
+A playthrough is counted as soon as an attributed session's observed position
+reaches `playthroughThresholdPercentage`, or when natural completion is
+observed. Playthrough evaluation is position-based: seeking to or beyond the
+threshold can count a playthrough. This is an intentional product rule, and
+seeking still contributes nothing to the witnessed listening a skip requires.
+Playthroughs and skips accumulate independently.
 
-Playthrough evaluation is position-based rather than witnessed-time-based.
-Seeking to or beyond the threshold can therefore count a playthrough; this is
-an intentional current product rule. Seeking does not contribute to the
-witnessed listening time required for a skip.
+### Listen ledger (`COUNT-002`)
 
-Playthroughs and skips accumulate independently. A playthrough does not reset
-the playlist item's skip count.
+Every counted outcome is an immutable `ListenEvent` record in the shared store.
+Records are inserted and never edited. The only deletion is an explicit
+whole-database nuke.
+
+- `kind`: `playthrough`, `skip`, `skipReset` (one track's skips),
+  `statsReset` (every track), or `baseline` (carried-forward counts).
+- `trackID`: the Overplay track UUID. Counts travel with the track, not with a
+  playlist row.
+- `sessionID`: an idempotency key. Two events with the same session ID and kind
+  count once. Live sessions use a fresh UUID per session. Reconciled
+  playthroughs use their proof key. Baselines use `baseline:<trackID>`, so two
+  devices migrating the same data converge on one baseline.
+- `deviceID`, `occurredAt`, `source` (`playback`, `reconciled`, `migration`,
+  `user`), optional `mechanism`, `playthroughDelta` and `skipDelta` (baseline
+  only).
+
+A track's counts are derived from the events for its own UUID plus every UUID
+it has absorbed in an identity merge:
+
+- playthroughs = distinct playthrough sessions + baseline playthrough deltas,
+  all after the latest `statsReset`;
+- skips = distinct skip sessions + baseline skip deltas, all after the later of
+  the latest `statsReset` and that track's latest `skipReset`.
+
+`PlaylistItemRecord.skipCount` and `playthroughCount` are a materialized cache
+of that derivation. They are recomputed after local ledger writes and after
+CloudKit imports. Two devices that hold the same events compute the same
+values, so concurrent writes to the cache converge instead of losing
+increments. Nothing ever increments, sums or zeroes the cache directly.
+
+Merging duplicate items of one track needs no count arithmetic. Absorbing a
+donor track records the donor UUID in the keeper's `absorbedTrackIDs`. Events
+keep their original track UUID, and events arriving late for the donor still
+count toward the keeper.
+
+The first launch of a build with the ledger writes one `baseline` event for
+every item whose stored counts are nonzero and which has no ledger events. The
+baseline's deterministic session ID makes this migration idempotent across
+relaunches and devices.
+
+History events are a separate, human-readable log with retention limits. They
+are never the source of counts.
 
 ### Independent Apple play-count comparison
 
@@ -544,7 +626,7 @@ Apple counter of ten display `1/1`, equivalent to an effective baseline of nine.
 Missing initial metadata displays `—`; it does not create a zero baseline.
 
 Unresolved tracks also use a paginated local library scan, at most once every
-fifteen minutes. Matching prefers Apple identity aliases, then a unique ISRC
+six hours and never while the player is playing (`LOAD-001`). Matching prefers Apple identity aliases, then a unique ISRC
 with compatible duration, then unique case/diacritic/whitespace-normalized title,
 artist and album plus duration within two seconds. Conflicting ISRCs and ambiguous
 metadata matches are rejected. Missing-count candidates still participate in
@@ -562,8 +644,9 @@ and repeated misses retry at most once per minute. Playback is not blocked by
 these lookups, and completed counts publish through the shared playback state.
 
 The shared ApplePlayCountSyncService queries retained tracks in batches on
-foreground, after playlist sync (including unchanged playlists), and every
-minute while running. Library observations are independent of playback
+foreground, after playlist sync (including unchanged playlists), and at most
+every fifteen minutes while the app runs. It skips periodic refreshes while the
+player is playing or a playback failure is active (`LOAD-001`). Library observations are independent of playback
 sessions, so no per-play HistoryEvent is synthesized. Listening outside
 Overplay may contribute, and Apple controls counter propagation latency.
 
@@ -615,92 +698,62 @@ still needs physical-device verification.
 
 ### Suspended-playback reconciliation
 
-Playback continues out-of-process while Overplay is suspended, so the live
-monitor cannot witness it. Skips are NEVER reconstructed for suspended
-spans — an unobserved interval must never produce a skip. Playthroughs are
-recovered retroactively on any wake (a background refresh grant, scene
-foregrounding, or entering the background, which records the exact baseline
-waypoint) under three proof rules; anything ambiguous counts nothing:
+Playback continues out-of-process while Overplay is suspended, so the session
+tracker cannot witness it. Skips are never reconstructed for suspended spans.
+Playthroughs are recovered on wake (a background refresh grant, scene
+foregrounding, or entering the background, which records the baseline
+waypoint) under three proof rules. Anything ambiguous counts nothing.
 
-- Point-proof: an observation showing the current track at or past
-  `playthroughThresholdPercentage` counts the playthrough outright.
-  Playthroughs are position-based, so a single trusted position observation
-  is sufficient proof.
-- Continuity-proof: between two waypoints, if elapsed wall time accounts for
-  the durations of every traversed track in the stored playback order
-  (small per-boundary tolerance), each completed track counts. Any pause,
-  skip, stall, unknown duration, or playlist change fails the equation and
-  nothing in that span is counted.
-- Music-library-proof: a batched `MusicLibraryRequest<Track>` shows that the
+- Point proof: the player's current entry, attributed to an intent member, is
+  at or past `playthroughThresholdPercentage`.
+- Continuity proof: between two waypoints, elapsed wall time accounts for the
+  durations of every traversed intent member in submitted order, within a
+  small per-boundary tolerance. Each completed member counts. This proof is
+  available only while MusicKit reports shuffle explicitly off, because only
+  then does the player follow the submitted order. Any pause, skip, stall,
+  unknown duration, unattributed entry or intent change fails it.
+- Music-library proof: a batched `MusicLibraryRequest<Track>` shows that the
   same library item's `playCount` increased and its `lastPlayedDate` advanced
-  into the observed interval. Missing, disabled, stale, mismatched, or failed
-  MusicKit data is neutral. Unresolved baselines are retained briefly so a
-  later wake can observe delayed counter propagation.
+  into the observed interval. Missing, stale, mismatched or failed data is
+  neutral. At most 41 unresolved baselines (the current member plus 20
+  following members in two windows) are kept for 24 hours. A qualifying advance
+  credits at most one playthrough.
 
-Reconciled events are logged with the `reconciled` history source and their
-proof mechanism (`pointObservation`, `wallClockContinuity`, or
-`musicKitPlayCount`). History presents all-time and recent recovered-write
-totals, a mechanism breakdown, a recovered-playback filter, and the proof on
-each event. Events written by older builds are classified from their existing
-message where possible. Background wakes
-are aimed at the playthrough-threshold crossing of the current track — the
-earliest instant a single snapshot is self-sufficient proof; iOS delivers
-refresh grants late and allows one pending request, so aiming at the start
-of the proof window maximises retention and a late grant still pins the
-track boundary for continuity. Double counting is prevented by the live
-session's evaluated flag, a counted-track ledger on the waypoint, and the
-item's `lastPlayedAt` recency.
+Recovered playthroughs are written to the listen ledger with source
+`reconciled`, their proof mechanism (`pointObservation`, `wallClockContinuity`,
+`musicKitPlayCount`), and a session ID derived from the proof. They also appear
+in history with the proof mechanism. Double counting is prevented by the live
+session's evaluated flag, the waypoint's counted-track ledger and ledger
+session-ID idempotency.
 
 Background entry flushes a local waypoint before awaiting library metadata.
-If that request is cancelled or never completes, local proof remains available;
-new library baselines are only available after a successful response. Local
-playthroughs already proven at background entry are saved alongside the new
-waypoint until their counter and history writes commit together. A later wake
-can retry these proofs even if continuity has since broken; durable recency
-guards also cover termination between that commit and clearing the proofs. Background
-refreshes submit a replacement before awaiting reconciliation, with a 15-minute
-fallback when no track target is available. iOS can reject requests or withhold
-grants, so recovery does not assume per-track wakes.
-
-At background entry, one batch also samples up to 20 following tracks in the
-fully correlated live player order. At most 41 unresolved baselines (two windows plus the current
-track) are retained for 24 hours, with original timestamps preserved across
-wakes. Retention favors the current sampled window, including overlapping
-tracks whose earliest unresolved evidence predates the new sample. A qualifying counter advance credits at most one playthrough even if
-its delta exceeds one: only the final play has a dated observation. Expired or
-ambiguous evidence credits nothing. Recovery does not depend on a menu populating
-the disposable order cache. While MusicKit shuffle is enabled or its current
-report is unknown, wall-clock continuity is disabled. Recovery then covers sampled tracks whose
-library metadata proves a play, plus the current track's position proof.
-Long unattended spans beyond the sampled window, delayed or unavailable metadata,
-and repeated plays can therefore under-count by design.
-
-Stale transitions emit diagnostics but no outcome history event. A later proven
-playthrough is the sole history outcome for that unwitnessed transition.
-
-The unused `remote-notification` background mode is removed; `fetch` remains.
-The existing `audio` declaration is retained pending physical-device verification
-of MusicKit/CarPlay behavior. Its necessity has not yet been established.
+Background refreshes submit a replacement request before reconciling, aiming at
+the current track's playthrough-threshold crossing, with a 15-minute fallback.
+iOS can reject or delay grants, so recovery never assumes per-track wakes.
+Long unattended spans, delayed metadata and repeated plays can under-count by
+design.
 
 ### Manual retirement
 
 The user can manually retire a track from any linked playlist. Manual
 retirement:
 
-- Moves the same item to the global Retired collection, or deletes it under
-  the unowned 0/0 rule above.
-- Records a manual retirement event. The current data model may store this as
-  an eviction event while Retired remains the user-facing term.
+- Moves the same item to the global Retired collection, or deletes it under the
+  unowned 0/0 rule.
+- Records a manual retirement event.
 - If retiring from a managed One True Playlist, attempts Apple Music removal.
-  The current-track Retire command also advances playback.
-- Otherwise keeps the retirement local-only.
 - Falls back to local filtering if an attempted remote removal fails.
+
+Retiring the current track from Now Playing (app or CarPlay) first marks its
+session evaluated without a skip, then issues Next. Retiring any other track
+leaves the live queue alone. If that track's entry is reached later in the same
+intent, the controller issues Next when the entry is observed (`PLAY-015`).
 
 Retired offers Move to Triage and Move to One True Playlist. Each moves the
 existing row to the bottom of the destination order without resetting counts.
-Move to Triage establishes explicit keep intent. The separate global Reset All
-Stats command retains its existing counter/retirement reset behavior; ordinary
-resets preserve prior-activity evidence for active retention.
+Move to Triage establishes explicit keep intent. Reset All Stats writes a
+`statsReset` ledger event and keeps its existing retirement reset behaviour.
+Resetting one track's skips writes a `skipReset` event.
 
 ## Shared vs Device-Local State
 
@@ -708,351 +761,307 @@ The SwiftData store is backed by iCloud so devices on the same account can
 share:
 
 - Linked playlist definitions.
-- Track metadata snapshots.
+- Track metadata snapshots and identity lineage.
 - Playlist membership and retirement state.
-- Skip and playthrough counts.
-- Retirement history.
-- Promotion history.
+- The listen ledger and the count cache derived from it.
+- Retirement and promotion history.
 - User-configurable playback-evaluation thresholds.
 
-The following must remain device-local in `AppStorage` or equivalent local
-storage:
+The following must remain device-local:
 
-- Currently playing track/session.
-- Current playback queue.
-- Current local playback order for each player, playlist, and Active/Retired
-  scope.
-- Current playback position.
-- Current selected screen or playlist view.
-- Now Playing UI state.
-- Active playlist row projection for the currently playing playlist.
-- Any transient sync or playback progress state.
+- The playback intent, including its member list (`PLAY-010`).
+- The last observed playback position and play intent, for restore.
+- The device playback cache of native MusicKit `Track` objects (`PLAY-017`).
+- The suspended-playback waypoint.
+- Current selected screen, playlist view and Now Playing UI state.
+- The active playlist row projection.
+- Transient sync and playback progress state, and diagnostics.
 
-Window-specific navigation and presentation state should use `SceneStorage` or
-other scene-local storage when a platform supports multiple windows. The
-regular-width sidebar selection currently uses `SceneStorage`; future
-multiwindow iPad and Mac work must keep window navigation independent.
+Window-specific navigation and presentation state uses `SceneStorage` or other
+scene-local storage where a platform supports multiple windows. Two devices
+share playlist, count and retirement data without controlling each other's
+playback.
 
-Two devices should be able to share playlist and retirement data without
-interfering with each other's playback.
+## Playback Engine
 
-## Playback Order, Shuffle, and Repeat
+> **Direction (2026-10-04): a reliable music player first.** Playback is the
+> core of the product. Deduplication, play/skip counting, Apple play counts,
+> sync, artwork and curation are layers on top of it. A layer may read
+> playback state. It may never gate, delay, veto or rewrite playback, and its
+> failure must leave playback untouched. Approaches abandoned on the way to this
+> design are recorded in **History: Abandoned Playback Approaches**. Read that
+> section before changing anything here.
 
-Overplay derives display order and the unshuffled base queue from SwiftData
-membership timestamps: newest-added first, or newest-retired first for Retired.
-SwiftData also tracks metadata and play/skip history, but does not store Apple
-Music's live shuffled sequence. The device-local queue-order cache is disposable
-and keyed by player, Apple Music playlist, and Active/Retired scope; it does not
-determine display order or the unshuffled base queue.
+The engine rests on four rules:
 
-> **Direction change (2026-09-07): shuffle and repeat belong to MusicKit.**
->
-> Overplay no longer owns shuffle, repeat or the end-of-playlist rebuild.
-> MusicKit is authoritative for both modes: Overplay reads them, writes what a
-> surface asked for, and leaves the wrap to the player. `PLAY-001` is
-> withdrawn.
->
-> `PLAY-002`, the windowed hand-off, is withdrawn with it. A window cannot be
-> shuffled or repeated by MusicKit, and 69 hours of device evidence showed the
-> Apple Music failures it was built to prevent happening anyway, with capped
-> queues and 385 total calls. It cost complexity without buying protection.
+1. **Overplay knows what it asked to play.** That knowledge is recorded before
+   the queue is handed to MusicKit, and no observation can erase it
+   (`PLAY-010`).
+2. **The player is the authority on what is audible.** Overplay shows the track
+   MusicKit reports, even when it cannot attribute it (`PLAY-011`).
+3. **Every command is one direct call.** There are no confirmation loops,
+   automatic queue replacements, automatic retries or command rejection
+   (`PLAY-013`).
+4. **Failure is visible and recoverable by the user.** Recovery is a bounded
+   ladder run only when the user asks for it (`PLAY-014`).
 
-MusicKit receives the complete playback order for the selected scope in one
-queue, because it can only shuffle or repeat what it holds. Overplay owns
-queue *contents* — which tracks, filtered by local retirement — and MusicKit
-owns the shuffled sequence and repeat behavior. This keeps skip tracking,
-retirement filtering, playlist display order, CarPlay, system controls, and
-remote commands aligned to the same source of truth.
+### Playback intent (`PLAY-010`)
 
-During playback, the shared playback controller should maintain an active
-playlist projection for the currently playing playlist. It should contain
-stable playlist item IDs, local track IDs, display metadata, artwork source,
-skip and playthrough counts, retired/playable state, and current-row
-state. Playlist views use this projection only when it matches the displayed
-current playlist and selected Active/Retired scope; otherwise they fall back to
-SwiftData records ordered by recency in the selected scope.
+Starting playback records a playback intent:
 
-Local order state:
+- intent ID and creation time;
+- the Overplay playlist reference (Apple Music playlist ID, or the reserved
+  bucket ID) and scope (Active or Retired);
+- the ordered members that were submitted. Each member holds the local track
+  UUID, the playlist item UUID, every known Apple Music identifier for the
+  track (catalog, library, confirmed aliases, and the IDs carried by the
+  native `Track`), and title, artist, album, artwork and duration;
+- the starting member.
 
-- Store only the ordered local track IDs and an update date.
-- Seed missing local order from the current unique membership for the selected
-  scope. Active order contains active playable items. Retired order contains
-  retired items.
-- Treat old sort-order, shuffle-mode, and repeat-mode state as disposable.
-- Every playlist, including One True Playlist, displays newest-added first.
-  Use the last move into the collection when present, otherwise creation time.
-  Retired displays newest-retired first using retirement time. Equal dates use
-  stable item IDs. Playback queue observations and shuffle never reorder rows.
-- A playlist must not contain duplicate songs. Sync, manual add, and promotion
-  should reuse or reactivate the existing playlist item for a song instead of
-  creating a duplicate.
+The intent is written to a device-local file before the queue is submitted. It
+is replaced only when Overplay submits a new queue, and cleared only by a
+database reset. Errors, timeouts, unattributable entries, sync, CloudKit
+imports and relaunches never clear or rewrite it. Two narrow edits keep its
+references valid: an identity merge rewrites merged member track UUIDs, and a
+One True Playlist change that reparents the playing collection's rows rewrites
+the playlist reference.
 
-Starting playback:
+### Player authority and observation (`PLAY-011`)
 
-- Starting a playlist sends the complete chronological display order for the
-  selected scope to MusicKit in one queue (`PLAY-005`). Unshuffled playback
-  follows that order; MusicKit can shuffle or repeat the complete queue.
-- If the user starts at a specific track, MusicKit starts at that track within
-  the full queue, so the tracks before it remain available to Previous.
-- If no track is requested, playback starts at the first track in display order.
-- MusicKit and Overplay UI should be reconciled immediately after queue setup so
-  every surface agrees on the current track and queue position.
-- After queue setup succeeds, the playback controller materializes or refreshes
-  the active playlist projection from the same SwiftData records and recency
-  order used to build the queue.
+Overplay subscribes to MusicKit's queue and state change publishers. It
+coalesces bursts and reads values after the publisher fires. Each observation
+reads the current entry ID and item, the playback status, the position and
+both modes. While the status is `playing`, a one-second sample reads only the
+current entry ID, status and position. It drives witnessed listening and the
+playthrough threshold, and it catches a missed entry change. Nothing in steady
+state enumerates the queue. Paused, stopped and interrupted players are not
+sampled. Observation stays installed, and foregrounding runs one observation
+pass.
 
-Queue identity recovery:
+Every Overplay surface renders one observed state:
 
-- Retain the exact submitted tracks independently of MusicKit's incrementally
-  hydrated queue. Reissued entry IDs and partial snapshots must not discard
-  that manifest.
-- Match known song IDs first. An unfamiliar ID may match a unique submitted
-  title and artist, with duration corroboration. Position can disambiguate only
-  a complete, unshuffled queue whose metadata and known-ID anchors agree with
-  the submitted order. Ambiguous entries stay unattributed.
-- Persist uniquely validated MusicKit song ID-to-local-track associations in a
-  device-local playback cache, scoped to player, playlist, account fingerprint,
-  and storefront. Recheck metadata, current membership and identity conflicts
-  before reuse; expire evidence after 90 days and bound the cache to 2,048
-  associations. Position-only disambiguation is never persisted. Unavailable
-  account scope disables persistent matching without invalidating the submitted
-  live queue.
-- These associations do not establish canonical library identity or merge
-  tracks. They must not enter the general alias/deduplication graph.
-- An unresolved current item within a recognized queue keeps its MusicKit
-  display but no outgoing track's local counts or actions. Preserve the rest of
-  the queue and the last valid restore point while hydration can recover it.
-  A current entry outside that queue or a wholly foreign queue still diverges.
-- Activity reports include submission and live counts, matching method,
-  metadata candidate counts, title/artist, and queue/submission indices.
+- display track: title, artist, album, artwork, duration, position, status and
+  modes from the player's current entry. An entry whose item has not hydrated
+  yet shows its attributed member's metadata when one is known. Otherwise it
+  shows a neutral loading state. It never shows the previous entry's metadata;
+- playlist context: the intent's playlist and scope;
+- attribution: the intent member for the current entry, or none;
+- Overplay attributes (counts, retirement state, available curation actions):
+  from the attributed member's item.
 
-Shuffle and repeat behavior:
+### Attribution (`PLAY-012`)
 
-- MusicKit owns both. Overplay reads `shuffleMode` and `repeatMode` and writes
-  what a surface asked for; it never forces them to a value of its own.
-- Shuffle is a persistent mode, toggled. Turning it on does not reorder the
-  local order, replace the queue, or restart playback — MusicKit shuffles the
-  queue it already holds, and the current track keeps playing.
-- Overplay's repeat control toggles repeat-all on and off. Repeat-one set by
-  another system surface remains authoritative and is reflected as not-all.
-- There is no end-of-playlist rebuild. When the queue is exhausted Overplay
-  credits the track that just finished and stops; whether anything plays next
-  is MusicKit's decision.
-- A shuffle or repeat change from any surface — Lock Screen, Control Center,
-  CarPlay, Siri, the app — is authoritative, and every other surface reflects
-  it because they all read the same player state.
-- The chronological display order is the unshuffled base queue. Shuffle affects
-  playback only. If a restored or changed live queue is out of order when shuffle
-  is off, the shared controller restores chronological order while retaining the
-  current track, progress, play/pause intent, and listening session. Incomplete
-  queue hydration is allowed to finish before attempting this repair.
+When the current entry ID changes, or its item hydrates, the controller
+attributes the entry to an intent member:
 
-Additions, retirements, and restores:
+1. A per-intent entry cache, used only if the cached member still matches the
+   reported item by identifier or metadata.
+2. Any identifier reported for the item (including IDs from its play
+   parameters) that appears in exactly one member's identifier set.
+3. Normalized title and artist (case-, diacritic- and whitespace-insensitive)
+   matching exactly one member, with durations within two seconds when both
+   are known.
 
-- Playlist additions from MusicKit sync, SwiftData sync, manual add, or
-  promotion appear at their chronological position, newest first.
-- If the changed playlist is currently playing, playable additions are
-  appended to the live MusicKit queue. Once correlated, an unshuffled queue is
-  reconciled to display order while preserving the current playback position. The player
-  creates those entries, so they are correlated back to local rows on Apple
-  Music item ID and retried until they resolve — an appended entry that never
-  correlates would read as queue divergence.
-- If the changed playlist is currently playing, refresh the active playlist
-  projection immediately after the durable SwiftData/local-order mutation so
-  visible rows do not wait for SwiftData query invalidation.
-- Retiring a track removes it from Active and places it first in Retired.
-- Restoring a track removes it from Retired and places it first in Active.
-- Membership changes prune no-longer-eligible native queue entries in place,
-  preserving MusicKit shuffle/repeat and position. The current entry remains
-  until transport advances. Current-track movement settles its outgoing session
-  without fabricating a skip; source-unlink cleanup defers deletion while a
-  countable session is in flight, then reevaluates retention after accounting.
-- When switching away from a playlist, reconcile its local order so already
-  retired or otherwise unplayable tracks are removed from Active order before
-  it is played again.
+Ambiguous or unmatched entries are **unattributed**:
 
-All playback surfaces must use the same behavior: Now Playing, mini player,
-lock-screen and remote commands, CarPlay, keyboard/media keys, and playlist row
-play actions should route through the shared playback controller rather than
-implementing shuffle, repeat, queue ordering, or current-track reconciliation
-locally.
+- the player-reported track is still displayed on every surface;
+- Promote, Retire and Move actions are disabled for that entry;
+- its listening is not counted;
+- the playlist context, the intent and all other attributions are kept;
+- one diagnostic is recorded per unattributed entry.
 
-Active playlist projection updates:
+Attribution never clears state. A later hydration or a later entry can
+attribute normally.
 
-- Track changes update current-row state immediately.
-- Skip increments, playthrough counts, manual resets, retirements, restores,
-  promotions, queue changes, and local-order changes refresh the projection
-  after their shared controller or use-case mutation succeeds.
-- When playback switches to another playlist or clears, discard the old
-  projection. The old playlist then renders from SwiftData again.
-- If projection refresh fails, keep playback and durable SwiftData state
-  authoritative and allow the playlist UI to fall back to SwiftData rows.
+### Starting playback (`PLAY-005`, `PLAY-017`)
+
+1. Build the members from SwiftData in the scope's display order
+   (newest-added first, or newest-retired first for Retired).
+2. Resolve each member's native `Track` from the device playback cache
+   (`PLAY-017`), fetching missing tracks in batches. Members that cannot be
+   resolved are left out of the queue and the intent, with a diagnostic and a
+   non-blocking status message. Starting fails only when the requested start
+   member, or every member, cannot be resolved.
+3. Persist the new intent.
+4. Pause, submit the complete queue starting at the start member, and play.
+   **Shuffle and Play** picks a random start member and then writes shuffle
+   off and on to the loaded queue. MusicKit ignores shuffle written before the
+   queue loads.
+
+The device playback cache stores encoded native `Track` objects in the caches
+directory, keyed by local track UUID. It survives relaunch, is never synced,
+and can be rebuilt at any time.
+
+### Selecting a track (`SURFACE-003`)
+
+Selecting a track from any playlist list, in the app or in CarPlay, enters one
+controller action:
+
+- **The selected member is the current attributed member:** resume if paused,
+  never restart.
+- **The track is a member of the live intent (same playlist and scope):**
+  enumerate the player's queue once, find the member's entry by attribution,
+  set it as the current entry, and play. If no entry can be found, submit a new
+  intent with the same scope starting at that member.
+- **Otherwise:** start a new intent for the selected playlist and scope,
+  starting at the selected track.
+
+### Transport commands (`PLAY-013`)
+
+Play, Pause, Next, Previous, Select, Shuffle and Repeat each make one MusicKit
+call. Select also calls play. Commands are not confirmed, not serialized behind
+each other, and not rejected while another is in flight. MusicKit receives them
+in order. Displayed state changes only when the player is observed to change.
+Controls are enabled whenever the player holds a queue, and Pause whenever it
+is playing. Play with no live queue resumes the intent at its last attributed
+member and position. With no intent, it starts the default playlist.
+
+### Failure and recovery (`PLAY-014`)
+
+A thrown command error, or a stall (status `playing` while the position does
+not advance for 10 consecutive samples with the network reachable), sets one
+shared playback failure with a message and start time. The iPhone/iPad status
+line shows it, and CarPlay presents one alert per failure episode. Witnessed
+progress or a successful Play clears it.
+
+Nothing retries automatically. When the user presses Play while a failure is
+active, the controller runs a recovery ladder and stops at the first rung that
+works:
+
+1. `play()`.
+2. `prepareToPlay()`, then `play()`.
+3. Resubmit the intent from the current member at the last known position,
+   then `play()`.
+
+Each Play press runs the ladder at most once. If every rung fails, the failure
+remains with guidance that Apple Music is not responding. While a failure is
+active, periodic playlist sync, bulk Apple play-count refresh and artwork
+maintenance pause, so Overplay adds no Apple Music load. Pause is never
+disabled.
+
+### Shuffle and repeat (`PLAY-004`)
+
+MusicKit owns both. A surface's request is written straight to the player, and
+the displayed state is whatever is then observed. An unknown (`nil`) report
+keeps the last confirmed value. The repeat control toggles off and repeat-all.
+Repeat-one set elsewhere is shown as not-all. Turning shuffle on or off never
+reorders, replaces or restarts the queue.
+
+### Queue end
+
+When the player reports no current entry and stops after an attributed session
+was observed near its end, that session counts as a natural completion and
+playback stops. The intent stays. Play then resubmits it from its first member.
+With repeat-all on, MusicKit loops the queue and no queue end is observed.
+
+### Membership changes during playback (`PLAY-015`)
+
+Sync, manual add, promotion, retirement, restore and source changes never
+mutate the live MusicKit queue:
+
+- additions appear at the next playback start;
+- retiring the current track from Now Playing issues Next;
+- an entry whose member has left the intent's scope (retired from Active, or
+  restored from Retired) is skipped with Next when it is observed becoming
+  current. Its session is marked evaluated without a skip.
+
+### Launch and restore
+
+The intent, last position and play intent are loaded at launch, before and
+independently of iCloud library restoration:
+
+- **The player still holds a current entry:** it is attributed and observation
+  resumes.
+- **The player holds nothing:** the restored member is shown paused at its saved
+  position. Play resubmits the intent from that member and seeks to the saved
+  position when it is more than 5 seconds from either end of the track.
+
+Restored sessions are never evaluated. Play, Pause, Next, Previous and resume
+work before the library is restored. Browsing, curation and ledger writes wait
+for restoration, and listening before then is not counted.
+
+### System Now Playing and remote commands (`PLAY-016`)
+
+`ApplicationMusicPlayer` is hosted out of process by the system media service,
+which publishes Now Playing for Overplay. Lock Screen, Control Center, headset,
+media-key and CarPlay transport controls act on that player directly.
+Overplay therefore:
+
+- does not write `MPNowPlayingInfoCenter`;
+- does not register `MPRemoteCommandCenter` transport handlers or enable and
+  disable those commands;
+- observes every resulting change through the same observation path as its own
+  commands.
+
+A device-local diagnostic setting, **Mirror Now Playing from Overplay**
+(default off), exists only to verify CarPlay behaviour on new iOS releases.
+When it is on, Overplay publishes metadata derived solely from the observed
+player state and registers transport handlers that call the player directly,
+with no gating. Shipping it on requires an explicit spec change backed by
+device evidence.
+
+### Active playlist projection
+
+While playback is active, the controller maintains a read-only projection of
+the playing collection's rows (stable item and track IDs, display metadata,
+artwork source, counts, retirement state, current row). The current row comes
+from attribution. The projection is refreshed after shared mutations and ledger
+writes, and discarded when another collection starts. Playlist views use it only
+for the matching collection and scope, and otherwise read SwiftData. A failed
+refresh falls back to SwiftData.
 
 ## Cross-Surface Playback Consistency
 
-Cross-surface consistency is a release-blocking product invariant, not merely
-an architectural preference. Playback is one shared engine presented through
-many surfaces. iPhone, iPad, CarPlay, Lock Screen, Control Center,
-AirPods/headset controls, MusicKit queue state, and system now-playing metadata
-must agree about the current track, queue, play state, playback position, and
-the result of any track-changing action.
+Cross-surface consistency is a release-blocking product invariant.
 
-Surfaces do not have to expose identical control sets because platform
-affordances differ. However, every action a surface does expose—play, pause,
-next, previous, seek, shuffle, repeat, queue replacement, retirement, restore,
-or promotion—must execute the same shared behavior as that action on every
-other surface. No surface may maintain a private implementation or shadow
-playback state.
+- **One source of audible truth.** System surfaces render the player host's Now
+  Playing. Overplay surfaces render the controller's observation of the same
+  player. They cannot disagree about the audible track, position, status or
+  modes. Overplay-only attributes come from the attribution of that same entry.
+- **One action per intent.** Equivalent SwiftUI and CarPlay actions call the same
+  controller method. Track selection, resume-versus-restart, intent creation and
+  failure handling are decided in the controller, never in an adapter.
+- **One path for every change.** There is no separate handling for changes
+  Overplay made versus changes another surface made. Every track change is
+  processed when it is observed: the outgoing session is evaluated, attribution
+  runs, and the observed state is published.
+- **No optimistic state.** A surface never shows the result of a command before
+  the player is observed to change. A failed command produces the shared
+  playback failure, never a different playback state.
 
-Track changes can be generated by Overplay controls, CarPlay controls, remote
-commands, keyboard or headset transport controls, MusicKit queue advancement,
-natural end-of-queue completion, explicit queue rebuilds, playlist mutation,
-sync, and playback state restoration. All generated actions should enter the
-shared playback controller. All observed external changes should flow back
-through the same reconciliation path that updates:
+### Convergence contract
 
-- Observable playback state used by SwiftUI and CarPlay.
-- Local active queue identity and current playlist context.
-- Skip/playthrough session evaluation for the outgoing track.
-- Current-track metadata and artwork.
-- `MPNowPlayingInfoCenter` metadata and remote command state.
-- Local playback state used for restore.
+Overplay state follows a player change within one observation cycle: the next
+coalesced publisher delivery, or at most one second while playing. Transitions
+are processed in order:
 
-### Action routing and playlist-selection parity
+1. Read the player's current entry and status.
+2. Close and evaluate the outgoing session exactly once.
+3. Attribute the incoming entry.
+4. Publish the display track, attribution, counts, actions and active-playlist
+   row.
 
-Equivalent user intents on iPhone, iPad, and CarPlay must enter the same shared
-controller/use-case action. Calling different lower-level methods on the same
-controller does not satisfy this requirement if each surface decides how to
-execute the action. Queue reuse, replacement, resume/restart, outgoing-session
-accounting, and error/fallback decisions belong to the shared action.
-
-Playlist-row selection has the following contract on every surface:
-
-- For the matching live playlist and playback scope, select an available track
-  inside the existing queue, preserving its identity and order.
-- Selecting the current track does not restart it; if paused, it resumes at the
-  current position.
-- When a new queue is required, start at the selected track without audibly
-  playing track 1 or another unintended track during the handoff.
-- A failed or unconfirmed jump must use shared failure handling. A surface must
-  not independently turn that failure into a fresh playlist start.
-- Publish the confirmed selection, queue context, outgoing-track evaluation,
-  and restore/now-playing state through the shared reconciliation path.
-
-Surface-specific differences may concern presentation, navigation, or which
-controls a platform exposes. Different behavior for the same supported action
-requires an explicit product requirement in this specification. An existing
-iOS/CarPlay divergence is a defect, not precedent for a platform exception.
-
-### State convergence contract
-
-Each controller-initiated action must publish a reconciled shared playback
-snapshot immediately after the player confirms the change and before the
-initiating surface presents the action as settled. A player-originated or
-externally generated change must publish that snapshot no later than the next
-active player observation and reconciliation cycle.
-
-Convergence must not depend on background playlist sync, an eventual SwiftData
-query refresh, view recreation, CarPlay template-stack replacement, or a manual
-refresh. SwiftUI and CarPlay presentation state, the active-playlist
-projection, local restore state, and `MPNowPlayingInfoCenter` must be updated
-from the same reconciliation result.
-
-Player queue/state events and explicit user actions drive full reconciliation.
-Unchanged state-only invalidations do not repeat that work. During moving
-playback, a lightweight one-second sample maintains elapsed time, witnessed
-listening, playthrough thresholds, and bounded delivery-stall detection. It
-checks current entry/item identity, status, and modes before attributing time;
-a missed change triggers immediate reconciliation. Stable playback has a
-60-second fallback for other missed invalidations, measured from the latest
-full reconciliation. Unresolved current entries retain the existing bounded
-one-second hydration checks. Paused, stopped, and interrupted players
-do not poll once any in-flight transition has settled; player observation stays
-installed, and an observed resume restarts sampling. Foreground reconciliation
-continues to refresh restored or externally changed state.
-
-Track transitions are ordered operations:
-
-1. Read the actual player-reported outgoing and incoming items.
-2. Evaluate and persist the outgoing listening session exactly once.
-3. Reconcile the queue identity and current playlist context.
-4. Publish the incoming current track, play state, position, statistics,
-   history, retirement state, and active-playlist projection.
-5. Publish matching system now-playing metadata and remote-command state.
-
-If an engine command fails, no surface may continue to display an optimistic
-result as authoritative. The controller must reconcile from the player and all
-surfaces must converge on that same confirmed state; surfaces that can present
-an error should do so without inventing a different playback state.
-
-### Track-skip parity
-
-A Next action has the same meaning regardless of whether it originates in the
-app, CarPlay, Lock Screen, Control Center, a keyboard/media key, or a headset:
-
-- The same thresholds and witnessed-listening evidence decide whether the
-  outgoing track counts as a skip.
-- The outgoing track is evaluated once, even if multiple surfaces observe the
-  transition.
-- Every active surface changes to the same player-confirmed incoming track.
-- Playlist rows, history, statistics, queue position, restore state, artwork,
-  and system now-playing metadata reflect the same result.
-- No surface requires navigation, relaunch, template reset, or manual refresh
-  to observe the change.
-
-The same parity rule applies to every other shared playback action. Rapid or
-overlapping commands may be serialized or rejected, but they must not create
-duplicate history, attribute an event to the wrong track, or leave surfaces on
-different tracks.
+Convergence never depends on playlist sync, SwiftData query refresh, view
+recreation, CarPlay template replacement or manual refresh.
 
 ### Acceptance gate
 
-Every action change must trace equivalent iOS/iPadOS and CarPlay adapters to
-the shared user-action entry point. Regression tests must exercise that entry
-point, including relevant playing/paused, playlist/scope, and failure cases;
-tests of a lower-level helper alone cannot establish parity if an adapter can
-bypass it. Check both the command behavior and the resulting shared state.
-Use injected player boundaries for automated tests; live MusicKit audio checks
-require a physical device rather than a simulator.
+Every playback change must be tested through the controller's public actions
+against a fake player that can:
 
-For each supported action, validation must originate the action separately
-from SwiftUI, CarPlay, and `MPRemoteCommandCenter` (covering Lock Screen,
-Control Center, headset, and media-key transports), plus exercise natural
-MusicKit track advancement. Each case must verify:
+- re-issue every entry ID after submission and after a mode change;
+- report item IDs from the other identifier domain than the one submitted;
+- hydrate items late, or never;
+- throw from `play()`, `prepareToPlay()` and skips, or block for longer than a
+  second;
+- change the current entry with no Overplay command (an external surface);
+- report the queue in shuffled order.
 
-- The action enters the shared controller or the external transition enters
-  the shared reconciliation path.
-- The outgoing session is evaluated at most once and against the correct
-  track.
-- The shared current-track identity, queue context, play state, and position
-  match the player-confirmed state.
-- SwiftUI, the currently visible CarPlay template, system now-playing metadata,
-  remote-command state, and local restore state converge within the timing
-  contract above.
-- Statistics, history, retirement state, and the active-playlist projection
-  reflect the same completed mutation without waiting for periodic sync.
-
-Any stale or contradictory surface is a product defect and a release blocker,
-even when playback audio itself continues correctly.
-
-The actual player-reported current item is authoritative when it is available.
-Local queue order and cached active-queue entries may help correlate playlist
-items and track state, but they must not hide a concrete MusicKit current-entry
-change from another surface. If MusicKit reports a new current item that cannot
-be correlated to local queue identity, Overplay should still update the visible
-now-playing display from that player item rather than continuing to show a stale
-local queue entry.
-
-When playback leaves a track, the outgoing session should be evaluated before
-shared current-track state is replaced with the incoming track. This keeps skip,
-playthrough, retirement, and track updates attached to the track that actually
-finished or was skipped, regardless of whether the transition started from the
-app, CarPlay, a remote command, or MusicKit itself.
-
-Playback UI should observe shared playback state rather than infer state from a
-surface-local action. CarPlay templates, SwiftUI views, system metadata, and
-remote commands should be thin adapters over the shared controller and
-presentation models.
+Each case must show that the intent survives, the displayed track is the
+player's, the outgoing session is evaluated at most once against the right
+track, and no queue replacement happens without a user action. Device
+verification on My Mac (Designed for iPad) covers live MusicKit. CarPlay
+hardware covers Now Playing ownership, transport and the custom buttons.
 
 ## Required Screens
 
@@ -1129,7 +1138,7 @@ Show:
 
 - Separate top-level OTP, Triage and Retired destinations, with no per-playlist
   Active/Retired picker.
-- Active tracks ordered by the device-local Active playback order.
+- Active tracks in display order: newest-added first, independent of shuffle.
 - Retired tracks ordered by most recent retirement and
   playable as a playlist context from iOS.
 - Skip and playthrough counts.
@@ -1164,7 +1173,11 @@ Show:
 - Move to Triage and Move to One True Playlist for retired tracks.
 - Promote action when playing from the triage bucket.
 
-The standard media controls should call into a shared playback controller.
+Now Playing displays the player-reported track (`PLAY-011`). When the
+current entry is unattributed, the curation actions are disabled rather than
+hidden. The standard media controls call the shared playback controller. A
+shared playback failure is shown with a Play action that runs the recovery
+ladder (`PLAY-014`).
 
 Platform notes:
 
@@ -1190,7 +1203,8 @@ Show:
 - Global Retired as its own root destination, playable directly from CarPlay.
 - Current track title, artist, album, and artwork where CarPlay templates
   support it.
-- Play, pause, next, previous, and Now Playing controls.
+- Play, pause, next and previous, provided by the system Now Playing template
+  and acting on the player directly (`PLAY-016`).
 - Direct Retire button in Now Playing for active tracks.
 - Direct Move to Triage button in Now Playing for retired tracks.
 - Direct Promote button when the current track belongs to the triage bucket.
@@ -1273,6 +1287,8 @@ Settings:
   state. Apple Music playlists are not deleted.
 - Run MusicKit authorization, playlist-access, and playback-readiness
   diagnostics.
+- Diagnostic, device-local: **Mirror Now Playing from Overplay** (default off,
+  `PLAY-016`).
 
 There is no separate reset-local-playback-state control. **Planned Mac:** expose the settings
 window through the standard app settings command as well as in-app navigation.
@@ -1293,34 +1309,58 @@ window through the standard app settings command as well as in-app navigation.
   Playlist when requested.
 - Fetch tracks for each linked playlist.
 - Reconcile additions. Remote removals leave the local item in place with
-  its history preserved (see "Removals from Apple Music") — Overplay does
-  not model Apple Music deletions as a local removal state.
+  its history preserved (see "Removals from Apple Music").
 - Stamp `lastSeenInPlaylistAt` on every sighting (refreshed at most daily
-  for unchanged items) so future missing-from-remote logic has accurate
-  data.
-- Preserve history.
+  for unchanged items).
+- Preserve history. Never touch the live playback queue (`SYNC-002`).
 - Publish sync status.
 
 ### PlaybackController
 
-- Own Apple Music playback.
-- Build full app-owned MusicKit queues from chronological playlist display order.
-- Keep display order independent of shuffle and reconcile unshuffled playback to
-  that order. Shuffle, repeat and the playlist wrap belong to MusicKit.
-- Track play sessions.
-- Publish current playback state.
-- Forward transitions to shared playback evaluation and track action services.
-- Keep playback/session state device-local.
-- Isolate future platform-specific playback or media-session differences
-  behind a small adapter if APIs diverge.
+The single owner of playback (`PLAY-010`–`PLAY-017`):
+
+- builds, persists and restores the playback intent;
+- submits queues and issues single transport commands;
+- observes the player and publishes the observed state;
+- attributes the current entry;
+- feeds the listening-session tracker;
+- runs the user-initiated recovery ladder;
+- applies curation commands for the current track (retire, promote, restore).
+
+It contains no queue correlation, confirmation loops, order stores or system
+Now Playing publication. It depends on MusicKit only through the small
+`PlaybackPlayer` protocol, so tests can drive every failure mode.
+
+### PlaybackIntentStore and DevicePlaybackCache
+
+- `PlaybackIntentStore`: a device-local JSON file holding the intent and the
+  last observed position and play intent.
+- `DevicePlaybackCache`: encoded native `Track` objects on disk in the caches
+  directory, keyed by local track UUID, resolved in batches, with per-track
+  failure tolerance.
+
+### ListeningSessionTracker and PlaybackSessionEvaluationService
+
+- `ListeningSessionTracker` (pure): turns observations into sessions, witnessed
+  listening and transitions (forward, backward, natural completion, intent
+  change).
+- `PlaybackSessionEvaluationService`: applies the skip and playthrough rules
+  and writes outcomes through the listen ledger.
+
+### ListenLedger
+
+- Append `ListenEvent` records, idempotent by session ID.
+- Derive counts for a track and its absorbed identities, honouring reset
+  events.
+- Recompute the item count cache after writes and CloudKit imports.
+- Write idempotent migration baselines.
 
 ### TrackActionService / EvictionEngine
 
-- Apply skip and playthrough rules.
-- Increment counts and support whole-database statistic reset.
 - Manually retire or restore items from any linked playlist.
-- Record retirement events. The current implementation may still use eviction
-  naming internally.
+- Record retirement and listening history events.
+- Route count changes (outcomes, single-track skip reset, reset all) through the
+  listen ledger. Never edit counts directly.
 
 ### PlaylistMutationService
 
@@ -1335,18 +1375,13 @@ window through the standard app settings command as well as in-app navigation.
 - Return lightweight result models.
 - Support manual add to active managed linked playlists.
 
-### NowPlayingMetadataService
+### SystemNowPlayingBridge
 
-- Publish current metadata to `MPNowPlayingInfoCenter`.
-- Keep lock-screen and remote metadata in sync with playback state.
-
-### RemoteCommandService
-
-- Register remote command handlers.
-- Forward play, pause, next, previous, shuffle, and repeat actions to the
-  playback controller.
-- Avoid retain cycles and clean up handlers when appropriate.
-- Support lock-screen, Control Center, and headset transport commands.
+- By default, does nothing: the `ApplicationMusicPlayer` host owns system Now
+  Playing and transport commands (`PLAY-016`).
+- With the diagnostic mirror enabled, publishes metadata derived only from the
+  controller's observed player state, and registers transport handlers that
+  call the player directly with no gating.
 
 ### PlatformShell
 
@@ -1360,7 +1395,7 @@ window through the standard app settings command as well as in-app navigation.
 
 Generation 2 uses new persistent entity names (`LibraryPlaylistV2`,
 `LibraryTrackV2`, `LibraryMembershipV2`, `LibraryHistoryV2`,
-`LibrarySettingsV2`, `LibraryAppleCountV2`). Existing source-level type names
+`LibrarySettingsV2`, `LibraryAppleCountV2`, `LibraryListenV2`). Existing source-level type names
 below are aliases, not legacy database entities. The configuration-preserving
 cutover protocol is specified in “Datastore generation 2” below.
 
@@ -1391,14 +1426,17 @@ cutover protocol is specified in “Datastore generation 2” below.
 - `libraryScope: String`
 - `confirmedAliases: [MusicResourceReference]` (domain, scope, resource value)
 - `isrc: String?` and `equivalentCatalogIDs: [String]` (review evidence only)
+- `absorbedTrackIDs: [String]` (UUIDs of donor tracks absorbed by identity
+  merges; their ledger events count toward this track)
 - `createdAt: Date`
 - `updatedAt: Date`
 
 Artwork image bytes and native MusicKit playback objects are excluded from
-SwiftData and CloudKit. `musicKitPlaybackData` is a computed process-local cache
-accessor. Queue preparation reloads missing native objects from the typed library
-or catalog endpoint before replacing playback; unavailable songs fail preparation
-rather than silently shortening the queue.
+SwiftData and CloudKit. `musicKitPlaybackData` reads the device playback cache
+(`PLAY-017`), which is stored on disk in the caches directory. Queue preparation
+reloads missing native objects from the typed library or catalog endpoint in
+batches. Songs that cannot be resolved are omitted from the queue with a
+diagnostic and a status message.
 
 ### Artwork cache manifest
 
@@ -1419,9 +1457,9 @@ Local JSON file only:
 - `playlistID: UUID`
 - `trackID: UUID`
 - `musicPlaylistEntryID: String?`
-- `sortOrder: Int` (legacy persisted value; local playback order is authoritative)
-- `skipCount: Int`
-- `playthroughCount: Int`
+- `sortOrder: Int` (legacy persisted value; display order comes from dates)
+- `skipCount: Int` and `playthroughCount: Int` (cache derived from the listen
+  ledger, recomputed after writes and imports; never edited directly)
 - `lastPlayedAt: Date?`
 - `lastSkippedAt: Date?`
 - `lastSeenInPlaylistAt: Date?`
@@ -1430,6 +1468,21 @@ Local JSON file only:
 - `evictionSource: EvictionSource?` (retirement source in current code)
 - `createdAt: Date`
 - `updatedAt: Date`
+
+### ListenEvent (`LibraryListenV2`)
+
+- `id: UUID`
+- `trackID: UUID`
+- `kindRawValue: String` (`playthrough`, `skip`, `skipReset`, `statsReset`,
+  `baseline`)
+- `sessionID: String` (idempotency key)
+- `deviceID: String`
+- `sourceRawValue: String`
+- `mechanismRawValue: String?`
+- `playthroughDelta: Int` and `skipDelta: Int` (used by baselines)
+- `occurredAt: Date`
+
+Inserted only, never edited. Deleted only by Nuke Database.
 
 ### HistoryEvent
 
@@ -1490,6 +1543,15 @@ longer exists.
 - Two iPad windows show different playlists simultaneously.
 - A hardware keyboard or media key command arrives while a modal sheet is open.
 - Platform-specific MusicKit capability differs or is temporarily unavailable.
+- MusicKit re-issues queue-entry IDs, reports a different identifier domain
+  than was submitted, or never hydrates an entry's item.
+- A MusicKit call takes several seconds, or fails repeatedly with
+  `MPMusicPlayerControllerErrorDomain` errors.
+- The app is relaunched while the out-of-process player is still playing.
+- Two devices count plays of the same track concurrently, or one device counts
+  while another merges that track.
+- The library has not finished restoring from iCloud when the user starts
+  playback, including in CarPlay.
 
 ## Explicit Non-Goals and Deferred Work
 
@@ -1503,7 +1565,11 @@ The following are not requirements of the current product:
 - A separate reset-local-playback-state control or a direct deep link to
   system Settings after authorization denial.
 - CarPlay skip-history-only browsing.
-- Explicit Now Playing artwork publication through `MPNowPlayingInfoCenter`.
+- Overplay-authored `MPNowPlayingInfoCenter` metadata or artwork. The
+  `ApplicationMusicPlayer` host publishes system Now Playing (`PLAY-016`).
+- Appending sync additions to the live queue, or any other live queue mutation
+  driven by membership changes (`PLAY-015`).
+- Automatic playback retries or queue replacements (`PLAY-013`, `PLAY-014`).
 - User-facing keep/protection behavior, and the automatic eviction it
   existed to guard against. Eviction is a manual decision. Persisted
   controller APIs are obsolete implementation debt and must not be treated as
@@ -1511,16 +1577,26 @@ The following are not requirements of the current product:
 
 ## Known Defects and Verification Gaps
 
-- The initial physical-device cross-surface acceptance pass was completed on
-  2026-09-08. Cross-surface convergence remains a standing release gate: rerun
-  the affected checks after every playback, queue, CarPlay, remote-command,
-  reconciliation, or Now Playing change.
-- CarPlay currently has two open playback-surface reports: custom Promote,
-  Retire, and Restore controls are absent on hardware
+- The 2026-10-04 playback-core rewrite (`PLAY-010`–`PLAY-017`, `COUNT-*`,
+  `LOAD-*`) needs physical-device acceptance. Run it on My Mac (Designed for
+  iPad) for live MusicKit, and on iPhone with CarPlay hardware for system Now
+  Playing ownership, transport controls and the custom buttons.
+- **iOS 27 CarPlay Now Playing (unverified).** A developer report (Apple
+  forum thread 847151) says CarPlay's `CPNowPlayingTemplate` on iOS 27 reads
+  only the app's own Now Playing client and does not follow
+  `ApplicationMusicPlayer`'s host. If CarPlay shows stale or empty Now Playing
+  on the user's iOS version, verify with the diagnostic mirror (`PLAY-016`)
+  before changing the default.
+- Whether `CPNowPlayingShuffleButton` and `CPNowPlayingRepeatButton` reflect
+  MusicKit's modes without Overplay publishing remote-command state is
+  unverified on hardware.
+- CarPlay has two open playback-surface reports from before the rewrite:
+  custom Promote, Retire and Restore controls absent on hardware
   ([GitHub #22](https://github.com/xurble/overplay/issues/22)), and the shuffle
-  button visibly toggles several times after a track change
-  ([GitHub #28](https://github.com/xurble/overplay/issues/28)). Whether the latter
-  is presentation-only or reflects real MusicKit mode changes is unknown.
+  button toggling several times after a track change
+  ([GitHub #28](https://github.com/xurble/overplay/issues/28)). Both must be
+  re-checked after the rewrite, because the second Now Playing client
+  (History H-7) is a plausible cause of #28.
 - The distinction between CarPlay Back and the enabled Up Next button needs
   hardware investigation
   ([GitHub #27](https://github.com/xurble/overplay/issues/27)). Intended behaviour
@@ -1543,9 +1619,10 @@ for practical purposes, unavailable.
 The app target has the CarPlay audio entitlement and declares a CarPlay
 template application scene.
 
-The app architecture should keep playback, now-playing metadata, and remote
-commands independent of SwiftUI views so CarPlay templates use the same shared
-services as the phone UI.
+The app architecture keeps playback independent of SwiftUI views, so CarPlay
+templates use the same shared controller as the phone UI. System Now Playing
+and transport commands belong to the `ApplicationMusicPlayer` host
+(`PLAY-016`).
 
 Navigation is three levels and nothing more (`CAR-001`): the root lists the
 One True Playlist, Triage and Retired, a collection lists its
@@ -1557,10 +1634,12 @@ CarPlay supports:
 
 - Browse the One True Playlist, Triage and global Retired.
 - Browse playlist tracks with playthrough and skip totals in row detail.
-- Select a track to play it, skipping inside the live queue when the playlist
-  is already playing so the order after it survives.
+- Select a track to play it through the shared selection action: a jump inside
+  the live intent when the collection is already playing, otherwise a new
+  intent (`SURFACE-003`).
 - Start Retired playback directly, or continue the same context from iOS.
-- Now Playing transport controls, provided by the system.
+- Now Playing transport controls, provided by the system and acting on the
+  player directly.
 - Shuffle and repeat, as the system's own Now Playing controls, reflecting and
   setting MusicKit's modes (`PLAY-004`).
 - Retire the current track.
@@ -1569,9 +1648,10 @@ CarPlay supports:
 - Move the current retired track to Triage with explicit keep intent.
 - Return to the root menu from Now Playing.
 
-CarPlay does not provide a separate skip-history browser. The app publishes
-title, artist, album, duration, elapsed time, and playback rate to system Now
-Playing metadata; explicit artwork publication remains deferred.
+CarPlay does not provide a separate skip-history browser. Now Playing metadata
+and artwork come from the `ApplicationMusicPlayer` host. Custom buttons are
+enabled only when the current entry is attributed (`PLAY-012`). A shared
+playback failure presents one alert per failure episode (`PLAY-014`).
 
 CarPlay UI logic should remain isolated from the iPhone/iPad SwiftUI shell.
 The iPad shell does not depend on CarPlay-specific types or entitlements; the
@@ -1619,9 +1699,13 @@ The product is healthy when a user can:
 15. Use a CarPlay music player for playlist browsing, Now Playing controls,
     and playback through the shared playback controller.
 16. Start a playback action on any supported surface and see the same
-    player-confirmed current track, queue context, play state, position,
-    statistics, history, and now-playing metadata on every other active surface
-    within the cross-surface timing contract, without manual refresh.
+    player-reported current track, playlist context, play state, position,
+    statistics and history on every other active surface within one
+    observation cycle, without manual refresh.
+17. Keep playing, and keep knowing what Overplay asked to play, through
+    unattributable entries, slow or failing Apple Music calls, sync, CloudKit
+    imports and relaunches. Recover from any playback failure with Play, without
+    restarting the device.
 
 
 ## Documented music identity and duplicate review (#40)
@@ -1656,12 +1740,14 @@ Playlist, Triage, or Retired; a shared collection is retained. Canceling perform
 no merge. ISRC/equivalence can include different versions, so suggestions require
 human review.
 
-A confirmed merge revalidates identity and location, reads the latest counts,
-sums play and skip counts once, retains source attachments/keep intent and latest
-activity dates, and repoints history. Confirmed aliases prevent subsequent sync
+A confirmed merge revalidates identity and location, records the donor track
+UUID in the keeper's `absorbedTrackIDs` so the ledger-derived counts include
+the donor's events, retains source attachments/keep intent and latest activity
+dates, and repoints history. Confirmed aliases prevent subsequent sync
 from recreating donor tracks. One track and one travelling statistics row remain.
-The shared playback controller updates active session, queue correlations, stored
-order and published metadata without manufacturing a skip. Destination writes use
+The shared playback controller rewrites merged member track UUIDs in the
+playback intent and refreshes published state, without manufacturing a skip or
+touching the live queue. Destination writes use
 the existing Apple Music mutation paths; local OTP suppression remains protective
 when remote removal fails or the playlist is incoming-only.
 
@@ -1747,6 +1833,8 @@ Schema:
 - LibraryHistoryV2: events referring to Overplay UUIDs, never native MusicKit IDs.
 - LibraryAppleCountV2: append-only count observations and reset/lineage evidence.
   Existing cumulative Apple counts establish fresh baselines, not Overplay plays.
+- LibraryListenV2: the append-only listen ledger (`COUNT-002`), added after the
+  generation 2 cutover as a purely additive entity.
 
 Native MusicKit objects are rebuildable process-local playback material. They are
 not fields in the synced schema and must never supply automatic merge keys.
@@ -1776,8 +1864,10 @@ CarPlay hardware behavior must be reported separately from local test evidence.
 
 A new local V2 store is not evidence of a new user. Startup must not create
 settings, a triage bucket, or replacement memberships while iCloud restoration
-is pending. The shared runtime owns a restoration gate used by the app,
-CarPlay, background reconciliation, remote commands, and artwork maintenance.
+is pending. The shared runtime owns a restoration gate used by library
+browsing, curation, sync, ledger writes, background reconciliation and artwork
+maintenance. Playback is not gated: the device-local playback intent can be
+restored, shown and played before restoration completes (`PLAY-010`).
 
 On an unrecognised local store, require a successful import event for that
 store and a usable configuration: exactly one settings record, its selected
@@ -1826,3 +1916,164 @@ The shared now-playing display prefers the actual player-reported track. Once
 it matches the reconciled current song, its cover uses the same portable
 artwork as stored rows. Player artwork and theme use that shared projection;
 an incoming unresolved song must never borrow the outgoing song's artwork.
+
+## History: Abandoned Playback Approaches
+
+This section records approaches that were built, shipped or prototyped and then
+withdrawn. **Do not reintroduce any of them without new device evidence and an
+explicit spec change that explains why the original failure no longer applies.**
+Each entry gives what was tried, why it was attractive, and why it failed.
+
+### H-1. Overplay-owned shuffle, repeat and end-of-queue rebuild (`PLAY-001`, withdrawn 2026-09-07)
+
+Overplay kept its own shuffled order, forced MusicKit's modes off and rebuilt
+the queue at the end of the playlist. MusicKit's modes could be changed by any
+system surface, and holding them off was a constant fight. A latent bug
+(`repeatMode = .none` binding to `Optional.none`) meant repeat was probably
+never disabled at all, so most observations of queue-end behaviour from before
+2026-09-06 are untrustworthy. MusicKit now owns both modes (`PLAY-004`).
+
+### H-2. Windowed queue hand-off (`PLAY-002`, withdrawn 2026-09-07)
+
+The queue was handed over 50 entries at a time and topped up, to reduce load
+suspected of wedging Apple Music. A 69-hour device log showed the Apple Music
+stack degrading anyway, with queue replacements capped at 50 and only 385
+total calls. A window also cannot be shuffled or repeated by MusicKit. The
+complete scope is submitted in one queue (`PLAY-005`).
+
+### H-3. Mirror-playlist engine (parked, never merged)
+
+Playback from an Overplay-owned Apple Music playlist handed over as a `Playlist`
+entity, so Apple Music would own shuffle. `Queue(playlist:startingAt:)` needs a
+`Playlist.Entry`, so playback could not start at an arbitrary track without
+another fetch. Every content change also required an unbounded
+`MusicLibrary.edit`. The commit is archived as tag
+`archive/apple-music-owned-shuffle`. Issue #17 has the details.
+
+### H-4. Entry-ID queue correlation (replaced 2026-10-04)
+
+Overplay minted `MusicPlayer.Queue.Entry` values, recorded their IDs, and
+treated the player's current entry ID as its key to what was playing. MusicKit
+does not preserve those IDs: it re-materializes queues at hand-off and after
+mode changes. It also reports item IDs from a different identifier domain
+than the ones submitted (Apple developer forum thread 727737). To cope,
+correlation grew a submitted-manifest, metadata matching, position matching,
+a persistent association cache, a runtime alias store, append correlation and
+hydration waiting. Whenever all of these failed, Overplay cleared the playlist,
+the current track and the restore point, and with them every count and
+curation action, while playback carried on. That was the main reason Overplay
+"lost track of what is playing", and the cause of issue #26 (counts stopped).
+Replaced by the playback intent and attribution (`PLAY-010`, `PLAY-012`),
+neither of which can clear state.
+
+### H-5. Player-confirmed transitions (replaced 2026-10-04)
+
+Every command waited up to 2.1 seconds (21 × 100 ms) for the player to confirm
+the expected entry. Overlapping commands were rejected with "Another playback
+transition is still being confirmed", while remote commands had already
+reported success. When confirmation timed out, Overplay automatically
+replaced the queue again to restore the previous one, and then wiped its state
+if that did not confirm either. Under Apple Music degradation (single calls of
+4.6 seconds were logged), this added queue replacements exactly when the service
+was struggling, and silently dropped user commands. Commands are now single
+calls, and state follows observation (`PLAY-013`).
+
+### H-6. Automatic chronological-order repair (replaced 2026-10-04)
+
+When shuffle was off and the live queue order differed from display order (for
+example after sync added tracks), Overplay replaced the whole queue and seeked
+back to the current position mid-track. This caused audible glitches, and
+probably contributed to issue #58 (a second of track 1 playing). The live queue
+is no longer mutated by membership changes (`PLAY-015`).
+
+### H-7. Overplay as a second Now Playing client (replaced 2026-10-04)
+
+Overplay wrote `MPNowPlayingInfoCenter` from its own belief about what was
+playing (throttled by `NowPlayingPublishPolicy`). It also registered
+`MPRemoteCommandCenter` handlers, which it enabled and disabled from that same
+belief: Pause was disabled during a delivery stall, and Next/Previous during
+confirmation. `ApplicationMusicPlayer`'s host already publishes Now Playing, so
+MediaRemote had two clients to choose between. Commands sometimes ran through
+Overplay and sometimes went straight to the player, and system surfaces could
+show Overplay's stale belief. Apple Support has said remote-command customisation
+is not supported with the application music player (forum thread 688007).
+Apple's CarPlay Music sample only observes its player. Removing the
+second client was the leading unaddressed suspect from the September Apple
+Music failure investigation. See `PLAY-016`, and the iOS 27 CarPlay caveat in
+**Known Defects and Verification Gaps**.
+
+### H-8. Live queue append and prune on membership changes (replaced 2026-10-04)
+
+Sync additions were appended to the live queue and later correlated back.
+Retirements pruned entries in place. Each mutation needed its own
+correlation and retry bookkeeping, and an appended entry that never correlated
+read as divergence and tore playback down. Replaced by skip-on-reach and
+next-start additions (`PLAY-015`).
+
+### H-9. Automatic delivery-stall recovery (removed 2026-10-04)
+
+A frozen stream triggered `prepareToPlay()` and `play()` automatically, with a
+two-attempt budget that refilled after five healthy ticks. Device evidence
+exonerated it as a cause of the September failures, but it was still automatic
+Apple Music traffic during degradation. Recovery now runs only on a user Play
+press (`PLAY-014`).
+
+### H-10. All-or-nothing, memory-only playback preparation (replaced 2026-10-04)
+
+Native `Track` objects were cached in process memory only. Every cold launch
+therefore had to resolve every track in the scope before playback could start,
+and one unresolvable song failed the whole playlist. The cache is now on disk,
+and unresolvable songs are omitted (`PLAY-017`).
+
+### H-11. Mutable synced counters (replaced 2026-10-04)
+
+Skip and playthrough counts were integers on CloudKit-synced rows. They were
+incremented in place, summed into a keeper when duplicates merged (the donor
+row was then deleted), and zeroed on reset. Under CloudKit, concurrent
+increments on two devices are last-writer-wins, and an increment to a donor row
+racing a merge is lost. History is pruned, so it cannot rebuild the counts.
+Replaced by the listen ledger (`COUNT-002`). Apple play counts already used
+append-only observations.
+
+### H-12. Per-minute Apple play-count polling (reduced 2026-10-04)
+
+From 2026-09-25 the bulk refresh queried every retained track every 60 seconds,
+plus a full library scan every 15 minutes, including during playback. This was
+the largest new source of background MusicKit load added after the September
+failure evidence. The cadence is now bounded and paused during playback and
+failure (`LOAD-001`).
+
+### H-13. Device-local playback order store (removed 2026-10-04)
+
+A per-player, per-playlist stored order (`PlaybackOrderStore`, reshuffle
+engine, merge-on-demotion) outlived `PLAY-001`. Display and queue order come
+from SwiftData dates, so the store had no observable effect, but it was still
+rewritten, rekeyed and merged by many code paths.
+
+### H-14. Playback gated on iCloud library restoration (changed 2026-10-04)
+
+The whole app, CarPlay included, waited behind "Restoring your library" until
+the CloudKit import validated. Remote commands and playback monitoring were not
+installed until then. Playback now starts from the device-local intent
+independently of restoration.
+
+### Unconfirmed hypotheses (kept for reference)
+
+- MusicKit re-issues queue-entry IDs when shuffle is written to a loaded queue.
+  This was never confirmed on device. The current design does not depend on it
+  either way.
+- Overplay's combination of a second Now Playing client and background library
+  traffic wedged the system Apple Music stack, which needed a reboot to recover.
+  This is not proven. The 2026-10-04 design removes both, and the September
+  activity log (Settings → Apple Music Call Activity) remains the way to check
+  any recurrence.
+
+### Testing lesson
+
+On 2026-10-04 all 978 unit tests passed against the H-4 to H-8 design while it
+failed on device. The fake player kept entry IDs stable, hydrated items
+synchronously and never failed slowly, which made the real failure modes
+impossible to observe. The acceptance gate in **Cross-Surface Playback
+Consistency** requires a fake that re-issues IDs, crosses identifier domains,
+hydrates late and fails. Before trusting a guard's test, delete the guard and
+confirm the test fails.
