@@ -41,6 +41,15 @@ final class AppRuntime {
                 guard let self else { return }
                 self.libraryRestoration.cloudImportFinished(error: error)
                 guard error == nil, let context = self.makeModelContext() else { return }
+                // Imported listen events from other devices change derived
+                // counts; the cache is recomputed rather than synced.
+                do {
+                    if try ListenLedger.reconcile(in: context) > 0 {
+                        self.playbackController.refreshPlayCountMetadata(context: context)
+                    }
+                } catch {
+                    StartupProfiler.mark("Listen ledger reconcile after import failed: \(error.localizedDescription)")
+                }
                 ApplePlayCountSyncService.shared.reconcile(in: context, playbackController: self.playbackController)
             }
         }

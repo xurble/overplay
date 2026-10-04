@@ -107,6 +107,9 @@ final class AppStartupViewModel {
         } prepareLibrary: {
             try await LibraryRebuildService.performIfNeeded(in: modelContext)
             try await runtime.libraryRestoration.prepare(in: modelContext, cloudEnabled: AppPersistence.cloudEnabled)
+            // Before any merge: merges re-derive counts from the ledger, so
+            // pre-ledger counts must be carried forward as baselines first.
+            try ListenLedger.reconcile(in: modelContext)
             runtime.startLibraryMaintenance()
         } authorizationIsReady: {
             authorizationService.readiness.isReady

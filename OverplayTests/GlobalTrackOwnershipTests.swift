@@ -239,9 +239,11 @@ struct GlobalTrackOwnershipTests {
         #expect(item.skipCount == 2 && item.playthroughCount == 3)
         #expect(item.suppressedOTPMusicPlaylistIDs.isEmpty)
         try TrackActionService.evictTrack(item, playlist: otp, message: "Retired", in: context)
+        // A late duplicate row carries a cache of the same ledger identity,
+        // not an independent counter, so it adds nothing (`COUNT-002`).
         context.insert(PlaylistItemRecord(playlistID: otp.id, trackID: trackID, ownershipVersion: 0, skipCount: 1))
         try TrackOwnershipMigrationService.migrate(in: context)
-        #expect(item.evictedAt != nil && item.skipCount == 3)
+        #expect(item.evictedAt != nil && item.skipCount == 2)
         #expect(item.playthroughCount == 3 && item.suppressedOTPMusicPlaylistIDs == ["otp"])
     }
 
@@ -299,7 +301,8 @@ struct GlobalTrackOwnershipTests {
         PlaylistItemRepository.mergeStats(from: donor, into: keeper, adoptEvictionStateIfNewer: true)
         #expect(keeper.evictedAt == donor.evictedAt)
         #expect(keeper.locationChangedAt == donor.locationChangedAt)
-        #expect(keeper.skipCount == 2)
+        // Counts are not part of a row merge: they derive from the listen
+        // ledger (`COUNT-002`), covered by ListenLedgerTests.
     }
 
     @Test("History page loads a moved item by track identity rather than its event's original playlist")

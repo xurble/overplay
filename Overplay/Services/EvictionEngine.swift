@@ -44,6 +44,12 @@ struct TrackPlaySession: Equatable {
         }
         return min((lastObservedPlaybackTime / durationSeconds) * 100, 100)
     }
+
+    /// Ledger idempotency key: one play of one track. Derived from fields the
+    /// session already carries, so a replayed outcome counts once.
+    var ledgerSessionID: String {
+        "\(localTrackID ?? trackID)@\(sessionStartDate.timeIntervalSinceReferenceDate)"
+    }
 }
 
 enum EvictionEngine {
@@ -80,7 +86,7 @@ enum EvictionEngine {
 
         if listenedLongEnough && leftBeforeThreshold {
             let previousSkipCount = item.skipCount
-            item.skipCount += 1
+            recordOutcome(.skip, item: item, session: session, source: .playback, mechanism: nil, context: context)
             item.hasRecordedActivity = true
             item.lastSkippedAt = .now
             item.updatedAt = .now
@@ -124,7 +130,14 @@ enum EvictionEngine {
     ) {
         let previousSkipCount = item.skipCount
         let previousPlaythroughCount = item.playthroughCount
-        item.playthroughCount += 1
+        recordOutcome(
+            .playthrough,
+            item: item,
+            session: session,
+            source: source == .reconciled ? .reconciled : .playback,
+            mechanism: reconciliationMechanism?.rawValue,
+            context: context
+        )
         item.hasRecordedActivity = true
         item.lastPlayedAt = .now
         item.updatedAt = .now
@@ -184,6 +197,31 @@ enum EvictionEngine {
             message: "Restored locally",
             in: context
         )
+    }
+
+    /// Counts change only through the ledger (`COUNT-002`). A failed write is
+    /// a lost count, never a reason to touch playback.
+    private static func recordOutcome(
+        _ kind: ListenEventKind,
+        item: PlaylistItemRecord,
+        session: TrackPlaySession,
+        source: ListenEventSource,
+        mechanism: String?,
+        context: ModelContext
+    ) {
+        do {
+            try ListenLedger.record(
+                kind,
+                trackID: item.trackID,
+                sessionID: session.ledgerSessionID,
+                source: source,
+                mechanism: mechanism,
+                in: context
+            )
+            try ListenLedger.refreshCounts(forTrackIDs: [item.trackID], in: context)
+        } catch {
+            TrackMetadataDiagnostics.log("listen ledger write failed kind=\(kind.rawValue) track=\(item.trackID) error=\(error.localizedDescription)")
+        }
     }
 
     private static func logHistory(

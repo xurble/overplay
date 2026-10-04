@@ -12,7 +12,7 @@ enum TrackActionService {
     ) throws -> Bool {
         let previousSkipCount = item.skipCount
         item.hasRecordedActivity = item.hasListeningHistory
-        item.skipCount = 0
+        try ListenLedger.resetSkips(trackID: item.trackID, in: context)
         item.updatedAt = .now
         EventRepository.logHistory(
             playlistID: playlist.id,

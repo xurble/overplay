@@ -179,6 +179,9 @@ enum DuplicateTrackService {
         let otp = try PlaylistRepository.oneTruePlaylist(in: context)
         if destination == .otp, otp == nil { throw MergeError.missingOTP }
         let bucket = try PlaylistRepository.triageBucket(in: context)
+        // Each identity's pre-ledger counts must become baselines before the
+        // lineage joins them, or a donor's legacy counts could be shadowed.
+        try ListenLedger.migrateLegacyCounts(forTrackIDs: Set(ordered.map(\.id)), in: context)
         var mapping: [String: String] = [:]
         var removals: [String] = []
         for candidate in ordered {

@@ -21,7 +21,8 @@ enum PreviewContainer {
             TrackRecord.self,
             PlaylistItemRecord.self,
             ApplePlayCountRecord.self,
-            HistoryEvent.self
+            HistoryEvent.self,
+            ListenEvent.self
         ])
         let configuration = ModelConfiguration(
             schema: schema,

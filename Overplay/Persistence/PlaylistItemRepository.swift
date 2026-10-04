@@ -38,8 +38,6 @@ enum PlaylistItemRepository {
         let resetID = UUID().uuidString
         for item in items {
             item.hasRecordedActivity = item.hasListeningHistory
-            item.skipCount = 0
-            item.playthroughCount = 0
             var appleState = item.applePlayCountState ?? ApplePlayCountState(initialCount: 0, originID: item.id)
             appleState.reset(at: resetAt, id: resetID)
             item.applePlayCountState = appleState
@@ -50,6 +48,7 @@ enum PlaylistItemRepository {
             item.evictionSource = nil
             item.updatedAt = .now
         }
+        try ListenLedger.resetAll(at: resetAt, in: context)
 
         try context.save()
     }
@@ -298,10 +297,10 @@ enum PlaylistItemRepository {
         return duplicates.count
     }
 
-    /// Folds one item's accumulated history into another. Counts are summed
-    /// and dates take the later value, so a track that Overplay saw in two
-    /// places keeps the whole picture rather than the half that happened to
-    /// win.
+    /// Folds one item's accumulated history into another. Dates take the
+    /// later value and provenance is combined. Counts are re-derived from the
+    /// listen ledger rather than summed, so a merge can neither lose nor
+    /// double-count a play.
     ///
     /// `adoptEvictionStateIfNewer` exists because the two callers resolve
     /// eviction differently: `mergeDuplicateItems` settles it once across a
@@ -332,8 +331,8 @@ enum PlaylistItemRepository {
         if let context = keeper.modelContext {
             ApplePlayCountRepository.link(donorID: duplicate.id, keeperID: keeper.id, in: context)
         }
-        keeper.skipCount += duplicate.skipCount
-        keeper.playthroughCount += duplicate.playthroughCount
+        // Counts are never summed: both rows derive from the same ledger
+        // identity once the donor track is absorbed (`COUNT-002`).
         keeper.isExplicitlyKept = keeper.isExplicitlyKept || duplicate.isExplicitlyKept
         keeper.hasRecordedActivity = keeper.hasListeningHistory || duplicate.hasListeningHistory
         // A merge with a new row must never make that row eligible for legacy cleanup.
@@ -352,6 +351,21 @@ enum PlaylistItemRepository {
             keeper.addSourceMusicPlaylistID(sourceMusicPlaylistID)
         }
         keeper.updatedAt = max(keeper.updatedAt, duplicate.updatedAt)
+        if let context = keeper.modelContext {
+            do {
+                // Separate pre-ledger counters are carried forward before the
+                // rows collapse; afterwards both derive from one identity.
+                try ListenLedger.migrateLegacyCounts(forTrackIDs: [keeper.trackID, duplicate.trackID], in: context)
+                if duplicate.trackID != keeper.trackID,
+                   let keeperTrack = try TrackRecordRepository.track(id: keeper.trackID, in: context) {
+                    let donorLineage = try TrackRecordRepository.track(id: duplicate.trackID, in: context)?.absorbedTrackIDs ?? []
+                    keeperTrack.absorbLineage(donorID: duplicate.trackID, donorLineage: donorLineage)
+                }
+                try ListenLedger.refreshCounts(forTrackIDs: [keeper.trackID], in: context)
+            } catch {
+                TrackMetadataDiagnostics.log("listen ledger refresh after merge failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     private static func unobservedAppleState(for item: PlaylistItemRecord) -> ApplePlayCountState {
