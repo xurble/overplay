@@ -138,7 +138,8 @@ struct LibraryRebuildTests {
         #expect(PortableArtworkReference.validated("musicKit://native-artwork") == nil)
         #expect(PortableArtworkReference.validated("https://example.com/{w}x{h}.jpg") != nil)
     }
-    @Test func cachePreparationFailureDoesNotPublishAPartialQueue() async throws {
+    /// `PLAY-017`: resolved tracks are kept; only the failed one is missing.
+    @Test func cachePreparationFailureKeepsResolvedTracks() async throws {
         let first = TrackRecord(libraryID: "i.first", title: "First", artistName: "Artist")
         let second = TrackRecord(catalogID: "second", title: "Second", artistName: "Artist")
         var requests: [MusicResourceReference] = []
@@ -151,8 +152,9 @@ struct LibraryRebuildTests {
             Issue.record("Expected failure")
         } catch {}
         #expect(requests == [.library("i.first"), .catalog("second")])
-        #expect(first.musicKitPlaybackData == nil)
+        #expect(first.musicKitPlaybackData == Data("materialized".utf8))
         #expect(second.musicKitPlaybackData == nil)
+        first.musicKitPlaybackData = nil
     }
 
     @Test func nativeCacheRefreshDoesNotMutateSharedMetadata() throws {

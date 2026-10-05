@@ -89,9 +89,10 @@ final class CarPlayCoordinator: NSObject {
     private weak var visiblePlaylistTemplate: CPListTemplate?
     private var didPresentDeliveryStallAlert = false
     private var libraryChangeObserver: NSObjectProtocol?
+    // Shuffle and repeat are player modes; they work before the library is restored.
     private lazy var shuffleButton = CPNowPlayingShuffleButton { [weak self] _ in
         Task { @MainActor in
-            guard let self, self.runtime?.libraryRestoration.isReady == true, let modelContext = self.modelContext else { return }
+            guard let self, let modelContext = self.modelContext else { return }
             await MusicKitActivityLog.shared.withOrigin(.carPlay) {
                 await self.playbackController?.toggleShuffle(context: modelContext)
             }
@@ -99,7 +100,7 @@ final class CarPlayCoordinator: NSObject {
     }
     private lazy var repeatButton = CPNowPlayingRepeatButton { [weak self] _ in
         Task { @MainActor in
-            guard let self, self.runtime?.libraryRestoration.isReady == true, let modelContext = self.modelContext else { return }
+            guard let self, let modelContext = self.modelContext else { return }
             await MusicKitActivityLog.shared.withOrigin(.carPlay) {
                 await self.playbackController?.toggleRepeatAll(context: modelContext)
             }
@@ -173,10 +174,16 @@ final class CarPlayCoordinator: NSObject {
 
     private func updateRootList(_ template: CPListTemplate) {
         guard runtime?.libraryRestoration.isReady == true else {
-            rootRenderer.update(.init(sections: [.init(id: "restoring", rows: [
-                .init(id: "restoring", title: "Restoring your library",
-                      detail: "Open Overplay on iPhone to check iCloud restoration.", isEnabled: false)
-            ])]), on: template, actions: [:])
+            // Playback does not wait for restoration: offer the saved intent.
+            var rows: [CarPlayListPresentation.Row] = []
+            var actions: [String: @MainActor () async -> Void] = [:]
+            if let current = playbackController?.currentTrack, playbackController?.intent != nil {
+                rows.append(.init(id: "resume", title: "Resume", detail: "\(current.title) — \(current.artistName)"))
+                actions["resume"] = { [weak self] in await self?.resumeBeforeRestoration() }
+            }
+            rows.append(.init(id: "restoring", title: "Restoring your library",
+                              detail: "Open Overplay on iPhone to check iCloud restoration.", isEnabled: false))
+            rootRenderer.update(.init(sections: [.init(id: "restoring", rows: rows)]), on: template, actions: actions)
             return
         }
         typealias Section = CarPlayListPresentation.Section
@@ -381,6 +388,14 @@ final class CarPlayCoordinator: NSObject {
         } catch {
             showError(title: "Playback failed", message: error.localizedDescription)
         }
+    }
+
+    private func resumeBeforeRestoration() async {
+        guard let playbackController, let modelContext else { return }
+        await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+            await playbackController.play(context: modelContext)
+        }
+        showNowPlaying()
     }
 
     private func showNowPlaying() {

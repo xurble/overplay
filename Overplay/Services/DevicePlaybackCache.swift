@@ -2,23 +2,56 @@ import Foundation
 import Synchronization
 @preconcurrency import MusicKit
 
-/// Rebuildable process-local material, shared across ModelContexts. It is never
-/// part of SwiftData/CloudKit identity and disappears on restart/account refresh.
+/// Rebuildable device-local playback material (`PLAY-017`), keyed by Overplay
+/// track UUID. Kept in memory and in the caches directory so a cold launch can
+/// play without re-resolving the whole playlist. Never part of SwiftData or
+/// CloudKit identity; the system may purge it at any time.
 nonisolated final class DevicePlaybackCache: Sendable {
     struct PreparationError: LocalizedError {
         let message: String
         var errorDescription: String? { message }
     }
 
-    static let shared = DevicePlaybackCache()
+    static let shared = DevicePlaybackCache(
+        directory: URL.cachesDirectory.appendingPathComponent("Overplay/PlaybackTracks", isDirectory: true)
+    )
     private let resources = Mutex<[UUID: Data]>([:])
+    private let directory: URL?
 
-    func data(for id: UUID) -> Data? { resources.withLock { $0[id] } }
-    func set(_ data: Data?, for id: UUID) { resources.withLock { $0[id] = data } }
-    func removeAll() { resources.withLock { $0.removeAll() } }
+    init(directory: URL? = nil) {
+        self.directory = directory
+    }
 
-    /// Resolve the complete requested queue before replacing playback. A cache
-    /// miss cannot silently shorten the queue or drop the selected song.
+    func data(for id: UUID) -> Data? {
+        if let cached = resources.withLock({ $0[id] }) { return cached }
+        guard let url = fileURL(for: id), let data = try? Data(contentsOf: url) else { return nil }
+        resources.withLock { $0[id] = data }
+        return data
+    }
+
+    func set(_ data: Data?, for id: UUID) {
+        resources.withLock { $0[id] = data }
+        guard let url = fileURL(for: id) else { return }
+        if let data {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        } else {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    func removeAll() {
+        resources.withLock { $0.removeAll() }
+        if let directory { try? FileManager.default.removeItem(at: directory) }
+    }
+
+    private func fileURL(for id: UUID) -> URL? {
+        directory?.appendingPathComponent("\(id.uuidString).json")
+    }
+
+    /// Resolves whatever can be resolved, committing each track as it
+    /// arrives, then reports the failures. One unavailable song must not
+    /// prevent the rest of a playlist from playing (`PLAY-017`).
     @MainActor static func prepare(
         _ tracks: [TrackRecord],
         libraryLookup: ([String]) async throws -> [String: Song] = { try await loadLibrarySongs($0) }
@@ -42,7 +75,7 @@ nonisolated final class DevicePlaybackCache: Sendable {
         _ tracks: [TrackRecord],
         load: (MusicResourceReference) async throws -> Data
     ) async throws {
-        var prepared: [(UUID, Data)] = []
+        var failures: [String] = []
         for track in tracks {
             if let cached = shared.data(for: track.id),
                (try? JSONDecoder().decode(Track.self, from: cached)) != nil { continue }
@@ -51,10 +84,11 @@ nonisolated final class DevicePlaybackCache: Sendable {
             if let id = track.libraryID { reference = .library(id, scope: track.libraryScope) }
             else if let id = track.catalogID { reference = .catalog(id) }
             else {
-                throw PreparationError(message: "Playback preparation failed for ‘\(track.title)’ by \(track.artistName): no saved library or catalog song ID (track \(track.id)).")
+                failures.append("Playback preparation failed for ‘\(track.title)’ by \(track.artistName): no saved library or catalog song ID (track \(track.id)).")
+                continue
             }
             do {
-                prepared.append((track.id, try await load(reference)))
+                shared.set(try await load(reference), for: track.id)
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
@@ -66,11 +100,11 @@ nonisolated final class DevicePlaybackCache: Sendable {
                     let underlying = error as NSError
                     detail = "\(error.localizedDescription) [\(underlying.domain), code \(underlying.code)]"
                 }
-                throw PreparationError(message: "Playback preparation failed for ‘\(track.title)’ by \(track.artistName). \(lookupDescription(reference)): \(detail)")
+                failures.append("Playback preparation failed for ‘\(track.title)’ by \(track.artistName). \(lookupDescription(reference)): \(detail)")
             }
         }
-        try Task.checkCancellation()
-        for (id, data) in prepared { shared.set(data, for: id) }
+        guard let first = failures.first else { return }
+        throw PreparationError(message: failures.count == 1 ? first : "\(failures.count) tracks could not be prepared. \(first)")
     }
 
     /// Resolve a cold queue in bounded batches, rather than one network round
@@ -100,16 +134,12 @@ nonisolated final class DevicePlaybackCache: Sendable {
             let data = try await request(url.url!)
             try Task.checkCancellation()
             let response = try JSONDecoder().decode(LibrarySongResponse.self, from: data)
-            guard response.next == nil else {
-                throw PreparationError(message: "Apple Music web library returned an incomplete song batch.")
-            }
             let resources = Dictionary(grouping: response.data, by: { $0.song.id.rawValue })
+            // Unresolved IDs are left out; each such track then fails on its own.
             for id in missing {
                 let matches = resources[id] ?? []
                 guard matches.count == 1, let resource = matches.first,
-                      resource.type == "library-songs", resource.song.playParameters != nil else {
-                    throw PreparationError(message: "Apple Music web library could not resolve playable song \(id) (matches: \(matches.count)).")
-                }
+                      resource.type == "library-songs", resource.song.playParameters != nil else { continue }
                 result[id] = resource.song
             }
         }

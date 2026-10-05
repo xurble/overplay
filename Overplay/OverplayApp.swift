@@ -43,6 +43,10 @@ struct OverplayApp: App {
 
         if !Self.isRunningTests {
             PlaybackBackgroundRefreshService.shared.register()
+            // Playback does not wait for iCloud restoration (`PLAY-010`): the
+            // device-local intent can be shown, resumed and controlled now.
+            AppRuntime.shared.playbackController.restoreIntent()
+            AppRuntime.shared.playbackController.startMonitoring()
         }
     }
 

@@ -35,8 +35,10 @@ struct DevicePlaybackCacheTests {
         #expect(webBatches.count == 3)
     }
 
-    @Test func incompleteBatchDoesNotPublishAnyPreparedTracks() async throws {
+    /// `PLAY-017`: one unavailable song must not block the rest.
+    @Test func incompleteBatchPublishesResolvedTracksAndReportsTheRest() async throws {
         let tracks = ["i.first", "i.second"].map { TrackRecord(libraryID: $0, title: $0, artistName: "Artist") }
+        defer { for track in tracks { track.musicKitPlaybackData = nil } }
         await #expect(throws: DevicePlaybackCache.PreparationError.self) {
             try await DevicePlaybackCache.prepare(tracks, libraryLookup: { ids in
                 try await DevicePlaybackCache.loadLibrarySongs(ids, nativeLookup: { _ in [] }, request: { _ in
@@ -44,7 +46,20 @@ struct DevicePlaybackCacheTests {
                 })
             })
         }
-        #expect(tracks.allSatisfy { $0.musicKitPlaybackData == nil })
+        #expect(tracks[0].musicKitPlaybackData != nil)
+        #expect(tracks[1].musicKitPlaybackData == nil)
+    }
+
+    @Test func preparedTracksSurviveRelaunchOnDisk() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let id = UUID()
+        let data = Data("track".utf8)
+        DevicePlaybackCache(directory: directory).set(data, for: id)
+        let relaunched = DevicePlaybackCache(directory: directory)
+        #expect(relaunched.data(for: id) == data)
+        relaunched.set(nil, for: id)
+        #expect(DevicePlaybackCache(directory: directory).data(for: id) == nil)
     }
 
     static func libraryResponse(id: String, type: String = "library-songs", playable: Bool = true, more: Bool = false) throws -> Data {
