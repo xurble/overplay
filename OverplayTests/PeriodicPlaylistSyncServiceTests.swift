@@ -170,6 +170,28 @@ struct PeriodicPlaylistSyncServiceTests {
         ).map(\.musicPlaylistID) == ["a", "b"])
     }
 
+    /// `LOAD-001`: automatic sync adds no Apple Music load while playback
+    /// is failing; an explicit sync still runs.
+    @Test("automatic sync pauses during a playback failure")
+    func automaticSyncPausesDuringPlaybackFailure() async throws {
+        let player = FakePlaybackPlayer()
+        player.playFailuresRemaining = 1
+        let fixture = try PlaybackFixture(player: player)
+        defer { fixture.cleanUp() }
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[0],
+                                              settings: fixture.settings, context: fixture.context)
+        #expect(fixture.controller.playbackFailure != nil)
+        fixture.context.insert(playlist(musicPlaylistID: "remote", lastSyncedAt: nil, lastSyncError: nil))
+        let recorder = SyncRecorder()
+        let service = makeService(recorder: recorder)
+
+        await service.syncLinkedPlaylists(context: fixture.context, playbackController: fixture.controller)
+        #expect(recorder.syncedIDs.isEmpty)
+
+        await service.syncLinkedPlaylists(context: fixture.context, playbackController: fixture.controller, force: true)
+        #expect(recorder.syncedIDs.contains("remote"))
+    }
+
     private final class SyncRecorder {
         var syncedIDs: [String] = []
         var mergeCount = 0

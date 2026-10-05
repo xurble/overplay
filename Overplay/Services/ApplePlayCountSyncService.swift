@@ -84,7 +84,9 @@ final class ApplePlayCountSyncService {
             try Task.checkCancellation()
             var changed = try persist(observations, startedAt: startedAt, in: context)
             let unresolved = try unresolvedTracks(in: context)
-            if !unresolved.isEmpty, lastDiscoveryAt.map({ startedAt.timeIntervalSince($0) >= 15 * 60 }) ?? true {
+            if !unresolved.isEmpty, BackgroundMusicKitWorkPolicy.allowsLibraryDiscovery(
+                lastDiscoveryAt: lastDiscoveryAt, now: startedAt, isPlaying: playbackController?.isPlaying ?? false
+            ) {
                 lastDiscoveryAt = startedAt
                 do {
                     let library = try await fetchLibrary(nil)

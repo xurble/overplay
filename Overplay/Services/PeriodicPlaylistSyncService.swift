@@ -56,10 +56,17 @@ final class PeriodicPlaylistSyncService {
         guard syncTask == nil else { return }
 
         playCountTask = Task(priority: .background) { @MainActor in
-            await LibraryArtworkService.refreshMissingArtwork(in: context, playbackController: playbackController)
+            if playbackController.playbackFailure == nil {
+                await LibraryArtworkService.refreshMissingArtwork(in: context, playbackController: playbackController)
+            }
             while !Task.isCancelled {
-                await ApplePlayCountSyncService.shared.refresh(in: context, playbackController: playbackController)
-                try? await Task.sleep(for: .seconds(60))
+                if BackgroundMusicKitWorkPolicy.allowsAutomaticPlayCountRefresh(
+                    isPlaying: playbackController.isPlaying,
+                    hasPlaybackFailure: playbackController.playbackFailure != nil
+                ) {
+                    await ApplePlayCountSyncService.shared.refresh(in: context, playbackController: playbackController)
+                }
+                try? await Task.sleep(for: BackgroundMusicKitWorkPolicy.periodicPlayCountInterval)
             }
         }
 
@@ -91,6 +98,12 @@ final class PeriodicPlaylistSyncService {
         now: Date = .now,
         force: Bool = false
     ) async {
+        guard force || BackgroundMusicKitWorkPolicy.allowsAutomaticSync(
+            hasPlaybackFailure: playbackController?.playbackFailure != nil
+        ) else {
+            Self.logger.info("Automatic sync paused while playback is failing")
+            return
+        }
         let playlists: [PlaylistRecord]
 
         do {
@@ -150,8 +163,14 @@ final class PeriodicPlaylistSyncService {
         }
         await LibraryArtworkService.refreshMissingArtwork(in: context, playbackController: playbackController)
         // Also refresh when playlist contents were unchanged: listening does
-        // not necessarily change a playlist's modification date.
-        await ApplePlayCountSyncService.shared.refresh(in: context, playbackController: playbackController)
+        // not necessarily change a playlist's modification date. Automatic
+        // cycles leave Apple Music alone while it is playing (`LOAD-001`).
+        if force || BackgroundMusicKitWorkPolicy.allowsAutomaticPlayCountRefresh(
+            isPlaying: playbackController?.isPlaying ?? false,
+            hasPlaybackFailure: playbackController?.playbackFailure != nil
+        ) {
+            await ApplePlayCountSyncService.shared.refresh(in: context, playbackController: playbackController)
+        }
     }
 
     /// Catch-up ordering: the playlist the user is listening to first, then
