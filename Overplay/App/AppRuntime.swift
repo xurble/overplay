@@ -53,8 +53,21 @@ final class AppRuntime {
                 } catch {
                     StartupProfiler.mark("Listen ledger reconcile after import failed: \(error.localizedDescription)")
                 }
+                self.repairTrackLocations(in: context)
                 ApplePlayCountSyncService.shared.reconcile(in: context, playbackController: self.playbackController)
             }
+        }
+    }
+
+    /// An import can carry another device's stale row over a newer local
+    /// retirement or restore; the history events put it back (`LOC-001`).
+    func repairTrackLocations(in context: ModelContext) {
+        do {
+            guard try TrackLocationService.repairRetirementState(in: context) > 0 else { return }
+            try context.save()
+            playbackController.reconcileTrackMembership(context: context)
+        } catch {
+            StartupProfiler.mark("Track location repair failed: \(error.localizedDescription)")
         }
     }
 

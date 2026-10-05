@@ -70,6 +70,7 @@ Music's global play count or skip count.
 | `PLAYLIST-004` | Sources contribute attachments, not duplicate rows. A deliberate source link/re-link revives older retirements into Triage; ordinary sync never revives them. Active OTP takes precedence over source intake. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
 | `PLAYLIST-005` | Last-source unlink deletes untouched, non-explicit active Triage rows and unowned retired 0/0 rows. Active explicit keep or prior listening (even reset) survives. Nonzero counts and necessary OTP suppression always survive. | `Overplay/Persistence/TrackRetentionPolicy.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
 | `PLAYLIST-007` | One item per track app-wide. OTP, Triage and global Retired are three top-level collections; every retired item belongs to the bucket. | `Overplay/Persistence/PlaylistItemRepository.swift`, `Overplay/Services/TrackLocationService.swift` |
+| `LOC-001` | A retirement or restore survives another device's stale CloudKit write. After each import and at startup, a song's newest `evicted`/`restored` history event re-applies its decision when it is newer than the row's `locationChangedAt`; promotions are left to the next One True Playlist sync. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/TrackLocationRepairTests.swift` |
 | `PLAYLIST-006` | Pre-bucket triage data migrates onto the bucket at startup. The migration is idempotent and keyed on the stored legacy role value, not a local flag. | `Overplay/Persistence/TriageBucketMigrationService.swift`, `OverplayTests/TriageBucketTests.swift` |
 | `PLAYLIST-002` | Initial setup can create a managed playlist, copy an existing playlist into a managed playlist, or link an existing playlist as incoming-only. | `Overplay/ViewModels/PlaylistSelectionViewModel.swift`, `Overplay/Services/PlaylistSyncService.swift` |
 | `SYNC-001` | Automatic sync starts shortly after authorization, runs every 30 minutes, skips fresh successful playlists, retries failed playlists, prioritizes the playing and selected playlists, and pauses while a playback failure is active. | `Overplay/Services/PeriodicPlaylistSyncService.swift`, `OverplayTests/PeriodicPlaylistSyncServiceTests.swift` |
@@ -429,6 +430,22 @@ track, Overplay also attempts Apple Music deletion only when the source is a
 managed One True Playlist. Retiring a playlist row, retiring from the triage
 playlist, or retiring from an incoming-only playlist is local-only. A failed or
 unsupported remote deletion never rolls back the local retirement.
+
+Retirement survives other devices (`LOC-001`). Each song is one CloudKit record,
+and CloudKit keeps whichever device saved the whole record last. A device that
+has not yet imported a retirement can therefore write the row back unretired
+when it makes any routine background write, such as a playlist sync or a play
+count update. History events are separate append-only records, so they survive.
+After every import, and once library preparation finishes at startup, the
+newest `evicted` or `restored` event for a song re-applies its decision if that
+event is newer than the row's `locationChangedAt` and the row disagrees.
+Re-applying a retirement restores stale-OTP suppression and runs the 0/0
+retention rule, exactly as retiring does. The repair writes no new event and
+stamps `locationChangedAt` with the event's own time, so every device converges
+on the same state. A newest `promoted` event is left alone: promotion also adds
+the song to the Apple Music playlist, so the next One True Playlist sync
+restores it. Every path that changes retirement state stamps
+`locationChangedAt`, including resetting all statistics.
 
 ### Apple Music entry identity and completeness
 
