@@ -3,7 +3,10 @@
 > Historical snapshot: this review describes the July 2026 implementation and
 > is not the current roadmap or specification. In particular, its app-owned
 > shuffle, repeat, queue-window, and end-of-playlist behaviour was withdrawn in
-> September. Use `OVERPLAY_DESIGN_SPEC.md` and `TODO.md` for current direction.
+> September, and the October 2026 playback-core rewrite removed
+> `RemoteCommandService`, `NowPlayingMetadataService`, queue correlation and the
+> local playback stores it describes. Use `OVERPLAY_DESIGN_SPEC.md` and
+> `TODO.md` for current direction.
 
 Working document. Written incrementally so the review can be resumed if the
 session ends. Each chunk is marked TODO / IN PROGRESS / DONE. Findings carry

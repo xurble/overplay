@@ -1,5 +1,10 @@
 # Performance changes and measurement guide — 25 September 2026
 
+> Historical snapshot (25 September 2026). Its playback notes (polling,
+> reconciliation, queue preparation and selection paths) predate the October
+> 2026 playback-core rewrite. Use `OVERPLAY_DESIGN_SPEC.md` and `TODO.md` for
+> current behaviour.
+
 This implements the code-evidenced improvements from [the audit](PERFORMANCE_AUDIT_2026-09-25.md), adds CarPlay track artwork, and measures the remaining playback and scrolling suspects. The audit describes the original baseline, not the resulting implementation. These are engineering changes and diagnostic boundaries; no physical-device before/after speedup is claimed.
 
 ## Changes made

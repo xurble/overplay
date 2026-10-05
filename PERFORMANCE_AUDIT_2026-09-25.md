@@ -1,5 +1,9 @@
 # Performance improvement hit-list
 
+> Historical snapshot (25 September 2026). Its playback notes (polling,
+> reconciliation, queue preparation and selection paths) predate the October
+> 2026 playback-core rewrite. Use `OVERPLAY_DESIGN_SPEC.md` and `TODO.md` for
+> current behaviour.
 
 Implementation follow-up: [changes, instrumentation and investigation guide](PERFORMANCE_IMPLEMENTATION_2026-09-25.md). This audit preserves the original baseline findings.
 

@@ -303,18 +303,19 @@ invent a fake playlist or bypass the global ownership/retention rules.
 
 ### System Surfaces
 
-- Support Music Haptics by persisting ISRC, publishing
-  `MPNowPlayingInfoPropertyInternationalStandardRecordingCode`, and declaring
-  `MusicHapticsSupported`. Keep this aligned with issue #40's identity work.
-- Consider `changePlaybackPositionCommand` for Lock Screen and Control Center
-  scrubbing only after defining seek-aware session accounting; jumping forward
-  must not manufacture a playthrough or hide a witnessed skip.
-- Experiment with `likeCommand`, `dislikeCommand`, or `bookmarkCommand` as
-  standard Promote, Retire, or Save-for-later controls. Verify their actual
-  presentation on iPhone and CarPlay before relying on them.
-- Extend Now Playing publication, after the scheduled artwork work, with useful
-  queue index/count and stable external, collection, or service identifiers
-  where those values improve system behavior.
+System Now Playing and remote commands belong to `ApplicationMusicPlayer`'s
+host (`PLAY-016`). Ideas that need Overplay to publish Now Playing metadata or
+register remote commands (ISRC publication for Music Haptics, like/dislike
+commands as Promote/Retire, extra Now Playing identifiers) are withdrawn with
+History H-7. Promote, Retire and Restore away from the phone come from CarPlay
+templates (§3) and Siri (Siri Playlist Management).
+
+- Support Music Haptics only if it works without Overplay-authored Now
+  Playing, for example if the player host already publishes the ISRC.
+- Lock Screen and Control Center scrubbing are the player host's. Define
+  seek-aware session accounting so a scrub never manufactures a playthrough or
+  hides a witnessed skip (see the same-entry replay item in the spec's Known
+  Defects).
 
 ### Playback Experience
 

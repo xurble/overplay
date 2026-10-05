@@ -370,8 +370,9 @@ files and protected thumbnails may exceed the nominal budget. Visible access
 updates eviction recency. Theme recognition runs on player demand rather than
 warming every changed song after sync; theme writes are batched.
 
-See `PERFORMANCE_IMPLEMENTATION_2026-09-25.md` for the cache policy, measurement
-operations and remaining playback latency investigations.
+See `PERFORMANCE_IMPLEMENTATION_2026-09-25.md` for the artwork cache policy and
+measurement operations. It is a dated snapshot; its playback notes predate the
+October 2026 rewrite.
 
 ## Sync Behaviour
 
@@ -1697,6 +1698,22 @@ The following are not requirements of the current product:
 - In a two-entry queue under repeat-all, Previous from the second entry cannot
   be told apart from Next wrapping to the first. It is judged forward, so it can
   count a skip.
+- Accepted at merge of the rewrite (PR #62, round-4 review), in priority order:
+  - **Repeat-all laps:** a retired track is skipped on reach only on the first
+    lap; later laps play it, contrary to Manual retirement.
+  - **Merge delivery order:** if a merged track's item update arrives before its
+    lineage event and before the donor track's deletion, the track is skipped
+    on reach as if it had left the scope.
+  - **Same-entry replays:** repeat-one, a one-entry repeat-all queue and
+    scrubbing back to the start do not count another play or skip.
+  - **Count cache across devices:** the join trusts the reset date stored on
+    the synced row. If CloudKit truncates dates or merges a conflicting count
+    and reset date field by field, a row ahead of its events can be lowered on
+    the device that reset, or a reset undone on one row. Unverified on device.
+  - **Cache above the ledger:** competing baselines from two devices keep the
+    higher cached count, so a displayed count can stay above the derived one.
+  - **Import cost:** every CloudKit import scans all items and, after any local
+    play or skip, re-derives all counts on the main actor.
 - Whether `CPNowPlayingShuffleButton` and `CPNowPlayingRepeatButton` reflect
   MusicKit's modes without Overplay publishing remote-command state is
   unverified on hardware.
