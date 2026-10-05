@@ -44,12 +44,6 @@ enum TrackOwnershipMigrationService {
             }
         }
         try context.save()
-        for playlist in try PlaylistRepository.allPlaylists(in: context) where !playlist.isTriageBucket {
-            PlaybackOrderStore.mergeMusicPlaylistID(
-                from: PlaylistPlaybackScope.retired.playbackOrderPlaylistID(for: playlist.musicPlaylistID),
-                to: PlaylistPlaybackScope.retired.playbackOrderPlaylistID(for: bucket.musicPlaylistID)
-            )
-        }
         return outcome
     }
 }

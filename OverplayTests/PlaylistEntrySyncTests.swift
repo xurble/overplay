@@ -111,15 +111,12 @@ struct PlaylistEntrySyncTests {
         item.playthroughCount = 8
         item.skipCount = 3
         let itemID = item.id
-        let bucket = try PlaylistRepository.triageBucket(in: context)
-        let order = PlaybackOrderStore.state(playerID: "main", musicPlaylistID: bucket.musicPlaylistID).orderedTrackIDs
         _ = try await service.reconcile(snapshots: [second, first], playlistRecord: source, syncedAt: .now, in: context)
         #expect(item.id == itemID)
         #expect(item.playthroughCount == 8)
         #expect(item.skipCount == 3)
         #expect(item.entryProvenance.map(\.entryID) == ["b", "a"])
         #expect(item.entryProvenance.map(\.position) == [4, 0])
-        #expect(PlaybackOrderStore.state(playerID: "main", musicPlaylistID: bucket.musicPlaylistID).orderedTrackIDs == order)
         try context.save()
         let reloaded = try #require(try PlaylistItemRepository.item(id: itemID, in: ModelContext(container)))
         #expect(reloaded.entryProvenance.count == 2)

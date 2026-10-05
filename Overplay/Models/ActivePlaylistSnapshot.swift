@@ -35,7 +35,6 @@ struct ActivePlaylistSnapshot: Equatable, Sendable {
         playlist: PlaylistRecord,
         items: [PlaylistItemRecord],
         tracks: [TrackRecord],
-        playbackOrderState: PlaybackOrderState,
         playbackScope: PlaylistPlaybackScope = .active,
         currentPlaylistItemID: UUID? = nil,
         currentLocalTrackID: String? = nil,

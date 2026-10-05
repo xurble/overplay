@@ -45,7 +45,6 @@ struct PlaylistPresentationBuilder {
 
     func trackSummaries(
         forPlaylistID playlistID: UUID,
-        playbackOrderState: PlaybackOrderState? = nil,
         scope: PlaylistPlaybackScope = .active
     ) -> [TrackSummaryPresentation] {
         let playlistRole = playlists.first { $0.id == playlistID }?.role

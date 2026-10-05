@@ -5,20 +5,40 @@ This is the single living planning document for Overplay. Read it alongside
 invariants.
 
 The order below is the current impact order for reaching a dependable
-iPhone-and-CarPlay beta. Correctness and confidence in the existing product come
+iPhone-and-CarPlay beta, following the **Product priorities** in the spec
+(reliable player, then CarPlay and Siri, then playlist management, then
+statistics). Correctness and confidence in the existing product come
 before platform expansion and secondary polish. Reorder it when product goals
 change or new evidence changes the risk.
 
-## 1. Continuously Re-verify Cross-Surface Playback
+## 1. Device-Verify the Playback Core Rewrite, Then Keep Re-verifying
 
-The initial physical-device acceptance pass was completed on 2026-09-08. This
-is a standing release gate rather than a finished one-off task: repeat the
-affected parts after every change to playback, queue correlation, MusicKit
-modes, CarPlay templates, remote commands, suspended-playback reconciliation,
-or Now Playing publication.
+[GitHub issue #61](https://github.com/xurble/overplay/issues/61) rebuilt the
+playback core: a persisted playback intent, player-authoritative display,
+single-call transport, user-initiated recovery, system-owned Now Playing and
+the listen ledger. It has unit evidence only. Run the acceptance pass on My Mac
+(Designed for iPad) for live MusicKit, and on iPhone with CarPlay hardware.
+After that it remains a standing release gate: repeat the affected parts after
+every change to playback, attribution, MusicKit modes, CarPlay templates,
+suspended-playback reconciliation or counting.
+
+Rewrite-specific checks:
+
+- CarPlay Now Playing follows the playing track on the installed iOS version
+  with the diagnostic mirror off. If it does not (a reported iOS 27 issue),
+  compare with **Settings → Mirror Now Playing from Overplay** on, and record
+  the result in the spec before changing the default.
+- CarPlay shuffle and repeat buttons show MusicKit's real modes (#28).
+- A track Overplay cannot attribute still shows on every surface, and Promote
+  and Retire are disabled for it.
+- Force a failure (airplane mode mid-track): every surface shows it, Pause
+  still works, and Play recovers without restarting the phone.
+- Relaunch while music is still playing: Overplay re-attaches without
+  restarting the queue.
+- Cold launch before iCloud restoration: CarPlay offers Resume and plays.
 
 For every supported action origin — SwiftUI, CarPlay, and the system
-remote-command path (Lock Screen, Control Center, headset, or media key) — and
+transport controls (Lock Screen, Control Center, headset, or media key) — and
 for natural MusicKit track advancement, verify that current-track identity,
 queue context, play state, position, outgoing-track statistics/history,
 active-playlist projection, restore state, CarPlay presentation, and system
@@ -86,15 +106,12 @@ only the button presentation flickers or MusicKit's actual shuffle mode changes
 after a track transition. Preserve real player state changes; do not hide a
 functional mode transition with presentation debouncing.
 
-## 5. Isolate Playback Tests from Process-Global Defaults
+## 5. Close Out Playback Test Isolation
 
-Track [GitHub issue #18](https://github.com/xurble/overplay/issues/18).
-
-Inject the local playback-state `UserDefaults` domain through
-`PlaybackController`, preserve `.standard` in production, and give every test
-fixture a unique disposable suite. Keep parallel execution enabled and run the
-configured full suite repeatedly to demonstrate that the reported intermittent
-failure is gone.
+[GitHub issue #18](https://github.com/xurble/overplay/issues/18) is superseded
+by #61. The controller now takes an injected intent store and player, and every
+fixture uses its own disposable store. Run the full suite repeatedly in
+parallel to confirm the intermittent failure is gone, then close #18.
 
 ## 6. Resolve CarPlay Now Playing Navigation Semantics
 
@@ -167,11 +184,11 @@ Verification:
 - Keyboard shortcuts do not break touch workflows.
 - The app target and relevant tests pass.
 
-## 10. Publish Now Playing Artwork
+## 10. (Withdrawn) Publish Now Playing Artwork
 
-Publish artwork through `MPNowPlayingInfoCenter` in addition to title, artist,
-album, duration, elapsed time, and playback rate. Reuse the existing artwork
-cache and avoid blocking playback-state publication on image loading.
+Withdrawn by #61: the `ApplicationMusicPlayer` host publishes system Now
+Playing, including artwork (`PLAY-016`). Overplay writes nothing there unless
+the diagnostic mirror is on.
 
 ## 11. Expand the Dashboard Summary
 
@@ -224,6 +241,17 @@ does not make the primary playlists → tracks → Now Playing flow harder to us
 CarPlay browsing remains focused on Active playlists; Retired content appears
 only when it is the current playback context started elsewhere.
 
+## Siri Playlist Management (Committed, Not Yet Scheduled)
+
+Product priority 2 (CarPlay and Siri first). This work is deferred until the
+playback core is device-verified; it is not a candidate or a non-goal.
+
+- Add App Intents backed by the existing shared services for playing the One
+  True Playlist or triage bucket and for promoting, retiring, or restoring the
+  current track. Adopt the system audio schemas where they accurately represent
+  the action so Siri, Shortcuts, Spotlight, the Action button, and Apple
+  Intelligence receive consistent semantics.
+
 ## Unscheduled Music Platform Enhancements
 
 The highest-value MusicKit infrastructure opportunities are tracked separately:
@@ -273,25 +301,21 @@ invent a fake playlist or bypass the global ownership/retention rules.
 - Consider MusicKit's system music picker after it leaves beta and demonstrates
   a clear advantage over Overplay's purpose-built selection flows.
 
-### Siri and System Surfaces
+### System Surfaces
 
-- Add App Intents backed by the existing shared services for playing the One
-  True Playlist or triage bucket and for promoting, retiring, or restoring the
-  current track. Adopt the system audio schemas where they accurately represent
-  the action so Siri, Shortcuts, Spotlight, the Action button, and Apple
-  Intelligence receive consistent semantics.
-- Support Music Haptics by persisting ISRC, publishing
-  `MPNowPlayingInfoPropertyInternationalStandardRecordingCode`, and declaring
-  `MusicHapticsSupported`. Keep this aligned with issue #40's identity work.
-- Consider `changePlaybackPositionCommand` for Lock Screen and Control Center
-  scrubbing only after defining seek-aware session accounting; jumping forward
-  must not manufacture a playthrough or hide a witnessed skip.
-- Experiment with `likeCommand`, `dislikeCommand`, or `bookmarkCommand` as
-  standard Promote, Retire, or Save-for-later controls. Verify their actual
-  presentation on iPhone and CarPlay before relying on them.
-- Extend Now Playing publication, after the scheduled artwork work, with useful
-  queue index/count and stable external, collection, or service identifiers
-  where those values improve system behavior.
+System Now Playing and remote commands belong to `ApplicationMusicPlayer`'s
+host (`PLAY-016`). Ideas that need Overplay to publish Now Playing metadata or
+register remote commands (ISRC publication for Music Haptics, like/dislike
+commands as Promote/Retire, extra Now Playing identifiers) are withdrawn with
+History H-7. Promote, Retire and Restore away from the phone come from CarPlay
+templates (§3) and Siri (Siri Playlist Management).
+
+- Support Music Haptics only if it works without Overplay-authored Now
+  Playing, for example if the player host already publishes the ISRC.
+- Lock Screen and Control Center scrubbing are the player host's. Define
+  seek-aware session accounting so a scrub never manufactures a playthrough or
+  hides a witnessed skip (see the same-entry replay item in the spec's Known
+  Defects).
 
 ### Playback Experience
 

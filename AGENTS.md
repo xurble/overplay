@@ -11,6 +11,21 @@ bugs, and improve structure, but must follow the constraints below.
 Agents should **modify the smallest possible amount of code** required
 to implement a change.
 
+## Product priorities
+
+When a choice trades one goal against another, the higher priority wins
+(details: **Product priorities** in `OVERPLAY_DESIGN_SPEC.md`):
+
+1.  A stable, fast, reliable music player.
+2.  CarPlay and Siri first: playlist management with the phone in a pocket.
+3.  Reliable playlist management: One True Playlist, Triage and Retired, with
+    each logical track in exactly one of them.
+4.  Statistics: additive and best-effort.
+
+Do not let play/skip counting drive playback, surface or playlist design. A
+count that is late or missing is acceptable; a player that is less reliable
+because of counting is not.
+
 
 ------------------------------------------------------------------------
 
@@ -105,6 +120,16 @@ Prefer adaptive SwiftUI structure across targets:
 
 ## Shared Playback Surface Infrastructure
 
+**Overplay is a reliable music player first.** Before changing playback, read
+the Playback Engine, Cross-Surface Playback Consistency and **History:
+Abandoned Playback Approaches** sections of `OVERPLAY_DESIGN_SPEC.md`. Do not
+reintroduce an abandoned approach (queue-entry-ID correlation,
+confirmation loops, automatic queue replacement or retry, Overplay-authored
+system Now Playing, live queue mutation on sync, mutable synced counters)
+without new device evidence and an explicit spec change. Counting,
+deduplication, sync and curation are layers over playback: they may read
+playback state but must never gate, delay or rewrite it.
+
 All playback surfaces should use **common playback, persistence, presentation,
 and action infrastructure** so actions performed in one surface immediately
 affect the others.
@@ -135,16 +160,17 @@ How:
 
 -   Put durable behavior in shared types such as playback controllers, action
     services, repositories, presentation factories, and command services.
--   Route system playback events through the same command path used by the app,
-    typically `MPRemoteCommandCenter` handlers calling the shared playback
-    controller.
+-   System transport controls (Lock Screen, Control Center, headset, CarPlay
+    transport) act on `ApplicationMusicPlayer` directly through its host's
+    system Now Playing. Do not add `MPRemoteCommandCenter` transport handlers
+    or write `MPNowPlayingInfoCenter`. Process the effects of those controls
+    through the controller's single player-observation path.
 -   After persistence writes that affect current playback UI, update the shared
     observable playback state immediately rather than waiting for polling or a
     later MusicKit refresh.
--   After any surface-initiated playback change, reconcile local queue state and
-    now-playing metadata through the shared playback controller so SwiftUI rows,
-    now-playing views, Dynamic Island metadata, CarPlay controls, and system
-    playback surfaces stay in sync.
+-   After any playback change, publish state only from what the player is
+    observed to do, so SwiftUI rows, Now Playing views, CarPlay controls and
+    system surfaces all describe the same player.
 -   When refreshing CarPlay templates, update the currently visible template
     where practical instead of resetting the template stack, so browsing state
     is not lost during playback or background refreshes.
@@ -162,10 +188,9 @@ Behavioral parity is mandatory:
     sufficient: adapters must not independently choose between jumping within
     a queue, rebuilding it, resuming, restarting, or falling back after failure.
 -   In particular, playlist-row selection must use the same shared action on
-    iOS/iPadOS and CarPlay. A track in the matching live playlist and scope is
-    selected in place; the current track resumes without restarting. A required
-    queue replacement starts at the selected track without playing a fragment
-    of another track. These rules are not CarPlay-only behavior.
+    iOS/iPadOS and CarPlay. A track in the live playback intent is selected in
+    place; the current track resumes without restarting; otherwise a new intent
+    starts at the selected track. These rules are not CarPlay-only behavior.
 -   Before changing an action, inspect every adapter that exposes it. Fix a
     discovered divergence in the shared action and route all equivalent callers
     through it; do not add a second surface-specific fix.
@@ -185,22 +210,23 @@ Playback engine changes:
     works only from the iPhone UI is incomplete if CarPlay, Lock Screen,
     Control Center, AirPods/headset controls, keyboard/media keys, or MusicKit
     queue changes can leave another surface stale.
--   Identify every place where track-change information can originate or be
-    observed: app controls, CarPlay controls, remote command handlers, MusicKit
-    queue/current-entry changes, natural queue completion, explicit queue
-    rebuilds, playlist mutation, sync, and local persistence restore.
--   Route generated actions into the shared playback controller, and route
-    observed external changes back through the same reconciliation path that
-    updates observable playback state, local queue identity, current-track
-    metadata, and `MPNowPlayingInfoCenter`.
--   Prefer the actual player-reported current item when reconciling playback.
-    Local queue state is useful context, but it must not mask a concrete
-    MusicKit current-entry change from another surface.
+-   Never clear or rewrite the playback intent (what Overplay asked MusicKit to
+    play) because of an observation, error, timeout or unattributable entry.
+-   Route generated actions into the shared playback controller as single
+    MusicKit calls. Every resulting change, from any surface or from MusicKit
+    itself, is processed through the one observation path.
+-   The player-reported current item is authoritative for display. Attribution
+    to an intent member adds Overplay data; failing to attribute never hides
+    the player's track or clears context.
+-   Do not add confirmation loops, command rejection, automatic retries or
+    automatic queue replacement. Recovery runs only when the user presses Play.
 -   When a track changes, evaluate and persist the outgoing track/session
     before replacing shared current-track state with the incoming track.
 -   Add focused tests at the shared policy/controller/use-case layer for
-    cross-surface playback behavior. Tests should protect iPhone, CarPlay,
-    and system playback surfaces together whenever possible.
+    cross-surface playback behavior. The fake player must be able to re-issue
+    entry IDs, report other-domain IDs, hydrate late, fail and change entries
+    without an Overplay command. A fake that cannot do these hides the real
+    failure modes.
 
 ------------------------------------------------------------------------
 

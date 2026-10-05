@@ -130,6 +130,8 @@ struct AppStartupViewModelTests {
             events.append("cleanup")
         } prepareLibrary: {
             if shouldFail { throw LibraryRestorationService.RestorationError.waitingForCloud }
+        } reconcileListenLedger: {
+            events.append("ledger")
         }
         await model.bootstrap(isReady: true, dependencies: dependencies)
         await model.authorizedServicesTask?.value
@@ -140,7 +142,9 @@ struct AppStartupViewModelTests {
         model.retryLibraryPreparation(dependencies: dependencies)
         model.retryLibraryPreparation(dependencies: dependencies)
         await model.authorizedServicesTask?.value
-        #expect(events == ["settings", "cleanup", "migrate", "commands", "merge", "restore", "monitor", "sync", "compact"])
+        // The ledger reconciles before any merge; it is non-throwing, so a
+        // counting failure cannot stop startup (round 2, M5).
+        #expect(events == ["ledger", "settings", "cleanup", "migrate", "commands", "merge", "restore", "monitor", "sync", "compact"])
         #expect(model.libraryPreparationError == nil)
     }
 

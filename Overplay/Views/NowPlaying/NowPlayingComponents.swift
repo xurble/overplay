@@ -278,7 +278,7 @@ struct PlaybackModeControlsView: View {
                 fallbackStyle: controlsPresentation.isRepeatingAll ? .borderedProminent : .bordered
             )
         }
-        .disabled(!playbackController.remoteCommandAvailability.canShuffle)
+        .disabled(!playbackController.hasLiveQueue)
     }
 
     private var controlPalette: FullScreenPlayerControlPalette? {
@@ -306,7 +306,7 @@ struct TrackActionControlsView: View {
                     Label("Triage", systemImage: "tray.fill")
                         .frame(maxWidth: .infinity)
                 }
-                .disabled(playbackController.currentTrack == nil)
+                .disabled(playbackController.currentMember == nil)
                 .fullScreenPlayerControlStyle(
                     palette: controlPalette,
                     prominence: .secondary,
@@ -318,7 +318,7 @@ struct TrackActionControlsView: View {
                     Label("Overplay", systemImage: "arrow.up.circle")
                         .frame(maxWidth: .infinity)
                 }
-                .disabled(playbackController.currentTrack == nil)
+                .disabled(playbackController.currentMember == nil)
                 .fullScreenPlayerControlStyle(
                     palette: controlPalette, prominence: .secondary, fallbackStyle: .bordered
                 )
@@ -330,7 +330,7 @@ struct TrackActionControlsView: View {
                         Label("Overplay", systemImage: "arrow.up.circle")
                             .frame(maxWidth: .infinity)
                     }
-                    .disabled(playbackController.currentTrack == nil)
+                    .disabled(playbackController.currentMember == nil)
                     .fullScreenPlayerControlStyle(
                         palette: controlPalette,
                         prominence: .secondary,
@@ -344,7 +344,7 @@ struct TrackActionControlsView: View {
                     Label("Retire", systemImage: "archivebox.fill")
                         .frame(maxWidth: .infinity)
                 }
-                .disabled(playbackController.currentTrack == nil)
+                .disabled(playbackController.currentMember == nil)
                 .fullScreenPlayerControlStyle(
                     palette: controlPalette,
                     prominence: .destructive,

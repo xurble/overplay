@@ -27,7 +27,6 @@ struct MusicLibraryIdentityImportTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let playlistID = "identity-probe-\(UUID())"
-        defer { PlaybackOrderStore.clear(playerID: "main", musicPlaylistID: playlistID, flushImmediately: true) }
         let record = PlaylistRecord(musicPlaylistID: playlistID, name: "Probe", role: .oneTruePlaylist)
         context.insert(record)
         var tracks: [TrackRecord] = []

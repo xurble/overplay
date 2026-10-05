@@ -1,115 +1,70 @@
 # Overplay
 
-Overplay is an Apple Music companion app that helps keep a main playlist
-fresh. It tracks how often you play through or skip each track, presents that
-per-playlist play/skip history, and makes it easy to retire tracks that keep
-getting skipped. It currently runs on iPhone (with CarPlay support); iPad
-layouts exist via the adaptive shell, and a native Mac target is planned.
+Overplay is an Apple Music player for iPhone, iPad and CarPlay that keeps a
+main playlist fresh. Its priorities, in order, decide every trade-off (see
+**Product priorities** in [the spec](OVERPLAY_DESIGN_SPEC.md)):
 
-The app is built around a **One True Playlist** plus optional **triage
-playlists**. The One True Playlist is the main playlist Overplay manages.
-Triage playlists are intake sources, such as Shazam saves, TikTok discoveries,
-a friend's playlist, or any other playlist you want to review before promoting
-songs into the main playlist.
+1. **A stable, fast, reliable music player.**
+2. **CarPlay and Siri first:** playlist management with the phone in a pocket.
+   Siri support is planned, not yet built.
+3. **Reliable playlist management:** a One True Playlist, a single Triage
+   bucket and Retired, with each logical track in exactly one of them.
+4. **Statistics:** play and skip counts that inform curation, kept additive and
+   best-effort.
+
+A native Mac target is planned.
 
 ## How It Works
 
-Overplay syncs linked Apple Music playlists into its own SwiftData store. It
-tracks skip counts, playthrough counts, playlist membership, promotions, and
-retirement history separately from Apple Music's global play count or skip
-count. Skips and playthroughs are counted per playlist item, from witnessed
-listening time — a transition only counts as a skip if the app actually
-observed enough of the session, so playback that happens while Overplay is
-suspended never produces phantom skips. Playthroughs completed while
-suspended are recovered on the next wake (a scheduled background refresh or
-simply reopening the app) whenever they can be proven — by a snapshot catching
-the track past the playthrough threshold, wall-clock accounting showing the
-span played continuously, or an Apple Music library play-count advance tied to
-the observed interval. Anything ambiguous counts nothing.
+The **One True Playlist** is the main playlist Overplay manages. Everything
+awaiting review lives in one **Triage** bucket, fed by any number of
+contributing Apple Music playlists such as Shazam saves, TikTok discoveries or
+a friend's playlist. You triage in one place rather than playlist by playlist.
+Promotion moves a track from Triage into the One True Playlist, keeping its
+history.
 
-Track rows and Now Playing also show an independent Apple Music count as
-`Overplay/Apple plays` (for example, `1/1 plays`). On the first successful
-library-count refresh, the Apple comparison starts at the existing Overplay
-count; subsequent increases come only from Apple's counter. This includes
-listening outside Overplay that Apple records. An unavailable initial count
-is shown as `—`, never treated as zero.
+Retiring is always an explicit user action. Overplay records it locally and,
+where Apple Music allows, also removes the track from the linked playlist; if
+that fails, the local retirement still keeps the track out of Active playback.
+A retired track can be moved back to Triage or into the One True Playlist.
 
-Unknown counts get a broader, paginated library lookup at most every fifteen
-minutes. Matching uses known Apple IDs, a unique recording code (ISRC), or a
-unique title/artist/album match with duration within two seconds. Ambiguous
-matches stay unknown, and missing Apple metadata is never replaced with zero.
-When an unknown track starts playing, a focused ID and title lookup runs
-immediately without waiting for the bulk refresh. Repeated misses for that
-track retry at most once a minute. Recovered library IDs are retained for future
-count refreshes without changing playback identities or merging tracks.
-
-Counts refresh on foregrounding, after playlist sync, and once a minute while
-the app is running. All retained tracks are included, even retired tracks or
-tracks absent from their source playlist. Apple controls how soon its local
-library counters update. Each distinct library item retains its own baseline;
-aliases of the same item share one counter when merged. Devices insert immutable
-counter observations into CloudKit instead of overwriting one shared value.
-The displayed Apple count never decreases when older observations arrive or a
-different initialization baseline wins. It holds at the highest published count
-until playback or Apple's propagation makes the calculated count exceed it.
-
-Concurrent initialization uses the earliest observation (with a stable tie-break)
-for each counter and keeps a tracked item's initial credit paired with its first observation. Credits
-for aliases of the same Apple counter are not added twice. Separate counters
-retain their own history. CloudKit imports reconcile without needing MusicKit
-access, including late observations for merged tracks.
-An alias without an observed count uses its known library identity to bind its
-starting credit. If that identity is still unknown, its credit is withheld from
-the sum until later evidence resolves it; already-published floors remain intact.
-Automatic deduplication captures these identities before repointing tracks. If
-no merged item has an observed counter yet, the first reading seeds the combined
-current Overplay count once and records which earlier credits it covers.
-
-Reset All Local Overplay Stats is the explicit exception: it starts a new reset
-version and rebases known counters without changing Apple's own counts. Late
-observations from before that reset cannot resurrect the previous total.
-Resetting an unresolved track retains `—` and keeps it eligible for discovery;
-its first valid reading seeds the then-current Overplay count. New
-library identities start at their first valid reading without importing lifetime
-plays. Counter observations are retained as evidence; they are not individual
-play-history events.
-
-Retirement is the user-facing state for tracks removed from Active playback:
-Overplay surfaces playthroughs versus skips for every linked
-playlist, and tracks are retired by explicit user action. Promotion moves a
-track from a triage playlist into the One True Playlist.
-
-Playlist detail on iOS is split into **Active** and **Retired** views. Active
-contains the playable playlist; Retired contains locally retired tracks and can
-be played as its own playlist context in the app. Restoring a retired track
-makes it active again. Both Active and Retired lists follow device-local
-persisted local order rather than raw database order. That order drives list
-presentation and the queue handed to MusicKit; MusicKit owns shuffle and repeat
-after the queue is loaded.
-
-When a track is retired, Overplay always records the event locally. If Apple
-Music allows the app to remove the track from the linked playlist, Overplay
-tries to do that too. If remote deletion is unavailable or fails, Overplay
-keeps the local retirement and filters the track out of Active playback.
+Playlists are shown and queued newest-added first (Retired: newest-retired
+first). MusicKit owns shuffle and repeat once the queue is loaded.
 
 ## Playback
 
-Playback uses MusicKit's application music player with a shared playback
-controller behind every surface: the in-app Now Playing UI and mini player,
-CarPlay, Lock Screen, Control Center, and headset/remote commands. All
-surfaces route through the same controller, queue policies, and
-skip/playthrough evaluation while Overplay is able to observe them. MusicKit
-queue and player-state invalidations trigger shared reconciliation after the
-published values are readable. Bursts coalesce, queue observation follows queue
-replacement, and observation remains active when the sampling timer goes idle.
-The one-second timer remains for elapsed-time evidence, stall/hydration timing,
-and missed-event recovery while active. Existing MusicKit diagnostics distinguish
-event, timer, and explicit reconciliation, and record discrete changes first
-noticed by the timer. [Issue #48](https://github.com/xurble/overplay/issues/48)
-tracks the device-evidence review before reducing polling. If iOS
-suspends Overplay while the out-of-process MusicKit player continues, skips are
-never reconstructed from the unwitnessed interval; playthroughs are recovered
-only when persisted observations or MusicKit library evidence prove them.
+When Overplay starts a playlist it saves a device-local playback intent: the
+playlist, the scope and the ordered tracks it handed to MusicKit's application
+music player. Nothing the player reports can erase that record. The app, the
+mini player and CarPlay all show the track the player actually reports.
+Overplay matches that track to the intent by identifier, or by unique title and
+artist, to attach its counts and curation actions. A track it cannot match is
+still shown; it is simply not counted.
+
+System Now Playing belongs to Apple's player host. Lock Screen, Control
+Center, headset and CarPlay transport controls act on the player directly.
+Overplay observes every change through one path, whichever surface caused it.
+Every command is a single MusicKit call. A failed play or a stalled stream
+shows the same message on every surface. Pressing Play runs a short recovery
+sequence; nothing retries automatically. Playback can resume before the
+library has finished restoring from iCloud.
+
+## Statistics
+
+Skips and playthroughs are judged from witnessed listening time: a skip counts
+only if Overplay saw enough of the session, and anything ambiguous counts
+nothing. If iOS suspends Overplay while the player continues, skips are never
+reconstructed; playthroughs are recovered only when persisted observations or
+Apple Music library evidence prove them. Each counted play or skip is an
+immutable ledger event for the track, and displayed counts are derived from
+those events, so merges and resets add to the history rather than overwrite it.
+
+Track rows and Now Playing also show Apple Music's own count as
+`Overplay/Apple plays` (for example, `1/1 plays`). An unknown Apple count shows
+`—`, never zero. The bulk Apple refresh runs at most every 15 minutes, never
+while playing or during a playback failure; a track that starts with an unknown
+count gets one focused lookup. The full rules, and the known cross-device
+caveats, are in the spec under **Play/Skip History** and **Known Defects**.
 
 ## Sync and Data
 
@@ -218,6 +173,36 @@ controller for the sheet. Repeat on iPhone/iPad after changing this boundary.
 This checks a runtime presentation path that controller unit tests do not host.
 Verify library access and actual playback separately: a visible player and a
 successful subscription check do not prove that MusicKit can prepare its queue.
+
+## Diagnosing Problems
+
+Overplay keeps a local log of its Apple Music calls and timed work: four hours
+of per-minute tallies plus the latest 250 notable events, persisted across
+relaunch. The same events go to the unified log under category
+`MusicKitActivity`, and timed work emits signposts under category
+`Performance`.
+
+1. Open **Settings → Apple Music Call Activity**. Copy the **Full Activity
+   Report** before clearing it if it holds useful history, then clear it for a
+   clean reproduction.
+2. Note the device, build, playlist size, connection, foreground or background
+   state, whether artwork was already cached, and the real-world time of the
+   symptom. Reproduce one scenario at a time.
+3. Tap **Refresh**, expand **Full Activity Report**, and copy the text. Do not
+   mix a long sync session with a single tap when reading totals. Nested
+   timings overlap, so never add operation totals together.
+4. For playback, start with the playback selection paths (`resumeCurrent`,
+   `inIntentJump`, `newIntent`, `resubmitFromMember`, `sessionCarriedOver`,
+   `skipOnReach`), then stall detections, recovery attempts and unattributed
+   entries.
+5. For stutter, attach Instruments to a physical-device Development build and
+   record Time Profiler, SwiftUI and Points of Interest, filtered to the
+   `Performance` category; use Allocations for image memory. The activity
+   report alone cannot prove a frame hitch.
+6. Keep warm-cache and cold-cache runs separate. Clearing recorded activity
+   does not clear cached artwork.
+7. Check CarPlay on a physical head unit. Simulator tests cover row
+   configuration, not real head-unit layout or live MusicKit playback.
 
 ## Current Status
 

@@ -30,6 +30,16 @@ final class LibraryMembershipV2 {
     var sortOrder: Int = 0
     var skipCount: Int = 0
     var playthroughCount: Int = 0
+    /// Set in the same write as the count cache by the listen ledger. A synced
+    /// row carrying it holds derived counts, never pre-ledger counts, so it is
+    /// never migrated as a baseline (`COUNT-002`).
+    var countsDerivedFromLedger: Bool = false
+    /// The reset each cached count was derived after (nil: no reset). With
+    /// the counts they form a join: the latest reset wins, then the highest
+    /// count, so out-of-order CloudKit delivery can never lower a count that
+    /// only looks lower because this device is missing events (`COUNT-002`).
+    var countsPlaysResetAt: Date?
+    var countsSkipsResetAt: Date?
     @Transient private var detachedApplePlayCountState: ApplePlayCountState?
 
     @MainActor var applePlayCountState: ApplePlayCountState? {

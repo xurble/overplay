@@ -42,8 +42,6 @@ struct VideoTrackPolicyTests {
         context.insert(PlaylistItemRecord(playlistID: UUID(), trackID: song.id, playthroughCount: 5))
         context.insert(HistoryEvent(trackID: video.id, eventType: .trackAdded, source: .user))
         context.insert(HistoryEvent(trackID: song.id, eventType: .trackAdded, source: .user))
-        LocalPlaybackStateStore.save(LocalPlaybackState(playlistID: "source", musicItemID: "video",
-            elapsedSeconds: 3, wasPlaying: false, updatedAt: .now, localTrackID: video.id.uuidString), to: defaults.defaults)
         PlaybackWaypointStore.save(PlaybackWaypoint(playlistID: "source", localTrackID: video.id.uuidString,
             positionSeconds: 3, recordedAt: .now), to: defaults.defaults)
         try context.save()
@@ -53,7 +51,6 @@ struct VideoTrackPolicyTests {
         #expect(Set(try TrackRecordRepository.allTracks(in: reloaded).map(\.id)) == Set([song.id, unknown.id, malformed.id]))
         #expect(try PlaylistItemRepository.allItems(in: reloaded).map(\.trackID) == [song.id])
         #expect(try context.fetch(FetchDescriptor<HistoryEvent>()).map(\.trackID) == [song.id])
-        #expect(LocalPlaybackStateStore.load(from: defaults.defaults) == nil)
         #expect(PlaybackWaypointStore.load(from: defaults.defaults) == nil)
         #expect(try VideoTrackCleanupService.removeVideos(in: context, defaults: defaults.defaults) == 0)
 
@@ -100,11 +97,8 @@ struct VideoTrackPolicyTests {
         let song = try makeSong()
         #expect([video, song, song].filter(VideoTrackPolicy.isSong).map(\.id.rawValue) == ["song", "song"])
         #expect(AppleMusicPlaylistTrackLoader.videoMusicItemIDs(from: [video, song]) == ["video"])
-        let record = TrackRecord(catalogID: "video", title: "Video", artistName: "Artist",
-            musicKitPlaybackData: try JSONEncoder().encode(video))
-        let item = PlaylistItemRecord(playlistID: UUID(), trackID: record.id)
-        #expect(PlaybackQueueCoordinator.cachedEntry(localTrackID: record.id.uuidString,
-            itemsByTrackID: [record.id: item], tracksByID: [record.id: record]) == nil)
+        #expect(!PlaybackController.isQueueable(video))
+        #expect(PlaybackController.isQueueable(song))
     }
 
     @Test("Unchanged remote sync still purges legacy video data")

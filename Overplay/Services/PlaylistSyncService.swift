@@ -610,13 +610,6 @@ struct PlaylistSyncService {
                 owner.lastSyncedAt = syncedAt
                 owner.updatedAt = syncedAt
             }
-            let items = try PlaylistItemRepository.items(forPlaylistID: owner.id, in: context)
-            PlaybackOrderCoordinator.appendTrackIDs(
-                summary.insertedLocalTrackIDs,
-                playerID: "main",
-                playlistID: owner.musicPlaylistID,
-                orderTracks: PlaybackQueueBuilder.playbackOrderTracks(items: items)
-            )
         }
         return summary
     }

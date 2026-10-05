@@ -18,6 +18,8 @@ final class AppStartupViewModel {
         var compactHistory: () -> Void
         var removeVideoTracks: () -> Void = {}
         var prepareLibrary: () async throws -> Void = {}
+        /// Counting is a layer: its failures are logged, never fatal to startup.
+        var reconcileListenLedger: () -> Void = {}
         var authorizationIsReady: (() -> Bool)? = nil
     }
 
@@ -74,7 +76,7 @@ final class AppStartupViewModel {
         } refreshAuthorization: {
             await authorizationService.refresh()
         } installRemoteCommands: {
-            runtime.remoteCommandService.activate(playbackController: playbackController, context: modelContext)
+            runtime.nowPlayingBridge.activate(playbackController: playbackController, context: modelContext)
         } mergeDuplicateTrackIdentities: {
             do {
                 try await TrackIdentityMergeService.mergeDuplicates(in: modelContext)
@@ -108,6 +110,12 @@ final class AppStartupViewModel {
             try await LibraryRebuildService.performIfNeeded(in: modelContext)
             try await runtime.libraryRestoration.prepare(in: modelContext, cloudEnabled: AppPersistence.cloudEnabled)
             runtime.startLibraryMaintenance()
+        } reconcileListenLedger: {
+            do {
+                try ListenLedger.reconcile(in: modelContext)
+            } catch {
+                StartupProfiler.mark("Listen ledger reconcile failed: \(error.localizedDescription)")
+            }
         } authorizationIsReady: {
             authorizationService.readiness.isReady
         }
@@ -130,6 +138,9 @@ final class AppStartupViewModel {
             do {
                 try await dependencies.prepareLibrary()
                 try Task.checkCancellation()
+                // Before any merge: merges re-derive counts from the ledger,
+                // so pre-ledger counts must become baselines first.
+                dependencies.reconcileListenLedger()
                 try dependencies.loadSettings()
                 dependencies.removeVideoTracks()
                 dependencies.migrateTriageBucket()

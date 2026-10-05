@@ -83,10 +83,6 @@ struct PlaylistSyncReconciliationTests {
         let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
         #expect(items.count == 2)
         #expect(summary.insertedLocalTrackIDs.count == 2)
-        #expect(PlaybackOrderStore.state(
-            playerID: "main",
-            musicPlaylistID: musicPlaylistID
-        ).orderedTrackIDs == summary.insertedLocalTrackIDs)
         #expect(playlist.lastSyncedAt == Date(timeIntervalSince1970: 100))
     }
 
@@ -264,10 +260,6 @@ struct PlaylistSyncReconciliationTests {
             syncedAt: Date(timeIntervalSince1970: 100),
             in: context
         )
-        let firstOrder = PlaybackOrderStore.state(
-            playerID: "main",
-            musicPlaylistID: musicPlaylistID
-        ).orderedTrackIDs
 
         let summary = try await PlaylistSyncService().reconcile(
             snapshots: [
@@ -285,10 +277,6 @@ struct PlaylistSyncReconciliationTests {
         #expect(summary.updatedCount == 0)
         #expect(summary.unchangedCount == 2)
         #expect(items.count == 2)
-        #expect(PlaybackOrderStore.state(
-            playerID: "main",
-            musicPlaylistID: musicPlaylistID
-        ).orderedTrackIDs == firstOrder)
         #expect(items.allSatisfy { $0.lastSeenInPlaylistAt != Date(timeIntervalSince1970: 200) })
     }
 
@@ -320,10 +308,6 @@ struct PlaylistSyncReconciliationTests {
         #expect(summary.skippedCount == 1)
         #expect(try TrackRecordRepository.allTracks(in: context).count == 2)
         #expect(try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context).count == 2)
-        #expect(PlaybackOrderStore.state(
-            playerID: "main",
-            musicPlaylistID: musicPlaylistID
-        ).orderedTrackIDs.count == 2)
     }
 
     @Test("reconcile remote removals keeps local item playable")
@@ -461,18 +445,6 @@ struct PlaylistSyncReconciliationTests {
         let snapshots = (0...PlaylistSyncService.syncYieldStride).map { index in
             snapshot(id: "track-\(index)-\(UUID().uuidString)", title: "Track \(index)")
         }
-        PlaybackOrderStore.clear(
-            playerID: "main",
-            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
-            flushImmediately: true
-        )
-        defer {
-            PlaybackOrderStore.clear(
-                playerID: "main",
-                musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
-                flushImmediately: true
-            )
-        }
 
         var didDemote = false
         let service = PlaylistSyncService(yieldDuringReconciliation: {
@@ -501,10 +473,6 @@ struct PlaylistSyncReconciliationTests {
             $0.sourceMusicPlaylistIDs == [originalPlaylistID]
         })
         #expect(summary.insertedCount == snapshots.count)
-        #expect(Set(PlaybackOrderStore.state(
-            playerID: "main",
-            musicPlaylistID: bucket.musicPlaylistID
-        ).orderedTrackIDs) == Set(summary.insertedLocalTrackIDs))
     }
 
     @Test("promoting a source between sync chunks replays earlier rows into the new main")
@@ -519,22 +487,6 @@ struct PlaylistSyncReconciliationTests {
         let bucket = try PlaylistRepository.triageBucket(in: context)
         let snapshots = (0...PlaylistSyncService.syncYieldStride).map { index in
             snapshot(id: "track-\(index)-\(UUID().uuidString)", title: "Track \(index)")
-        }
-        for musicPlaylistID in [sourcePlaylistID, bucket.musicPlaylistID] {
-            PlaybackOrderStore.clear(
-                playerID: "main",
-                musicPlaylistID: musicPlaylistID,
-                flushImmediately: true
-            )
-        }
-        defer {
-            for musicPlaylistID in [sourcePlaylistID, bucket.musicPlaylistID] {
-                PlaybackOrderStore.clear(
-                    playerID: "main",
-                    musicPlaylistID: musicPlaylistID,
-                    flushImmediately: true
-                )
-            }
         }
 
         var didPromote = false
@@ -564,14 +516,6 @@ struct PlaylistSyncReconciliationTests {
             $0.sourceMusicPlaylistIDs == [sourcePlaylistID]
         })
         #expect(summary.insertedCount == snapshots.count)
-        #expect(Set(PlaybackOrderStore.state(
-            playerID: "main",
-            musicPlaylistID: sourcePlaylistID
-        ).orderedTrackIDs) == Set(mainItems.map { $0.trackID.uuidString }))
-        #expect(Set(PlaybackOrderStore.state(
-            playerID: "main",
-            musicPlaylistID: bucket.musicPlaylistID
-        ).orderedTrackIDs) == Set(bucketItems.map { $0.trackID.uuidString }))
     }
 
     @Test("a main source main round trip between chunks still replays the moved prefix")
@@ -588,22 +532,6 @@ struct PlaylistSyncReconciliationTests {
             snapshot(id: "track-\(index)-\(UUID().uuidString)", title: "Track \(index)")
         }
         let bucket = try PlaylistRepository.triageBucket(in: context)
-        for musicPlaylistID in [originalPlaylistID, bucket.musicPlaylistID] {
-            PlaybackOrderStore.clear(
-                playerID: "main",
-                musicPlaylistID: musicPlaylistID,
-                flushImmediately: true
-            )
-        }
-        defer {
-            for musicPlaylistID in [originalPlaylistID, bucket.musicPlaylistID] {
-                PlaybackOrderStore.clear(
-                    playerID: "main",
-                    musicPlaylistID: musicPlaylistID,
-                    flushImmediately: true
-                )
-            }
-        }
 
         var didRoundTrip = false
         let service = PlaylistSyncService(yieldDuringReconciliation: {
@@ -632,10 +560,6 @@ struct PlaylistSyncReconciliationTests {
         #expect(original.role == .oneTruePlaylist)
         #expect(mainItems.count == snapshots.count)
         #expect(bucketItems.isEmpty)
-        #expect(Set(PlaybackOrderStore.state(
-            playerID: "main",
-            musicPlaylistID: originalPlaylistID
-        ).orderedTrackIDs) == Set(mainItems.map { $0.trackID.uuidString }))
     }
 
     @Test("healing a source ID between chunks refreshes cached bucket provenance")

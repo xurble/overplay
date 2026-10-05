@@ -129,16 +129,7 @@ struct PlaylistPresentationBuilderTests {
 
         let summaries = builder(items: items, tracks: [firstTrack, secondTrack, thirdTrack])
             .trackSummaries(
-                forPlaylistID: playlistID,
-                playbackOrderState: PlaybackOrderState(
-                    playerID: "main",
-                    musicPlaylistID: "one",
-                    orderedTrackIDs: [
-                        thirdTrack.id.uuidString,
-                        firstTrack.id.uuidString,
-                        secondTrack.id.uuidString
-                    ]
-                )
+                forPlaylistID: playlistID
             )
 
         #expect(summaries.map(\.title) == ["Third", "Second", "First"])

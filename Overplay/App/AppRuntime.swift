@@ -12,13 +12,16 @@ final class AppRuntime {
 
     let authorizationService = MusicAuthorizationService()
     let playbackController = PlaybackController()
-    let remoteCommandService = RemoteCommandService()
+    let nowPlayingBridge = SystemNowPlayingBridge()
     let periodicPlaylistSyncService = PeriodicPlaylistSyncService()
 
     @ObservationIgnored private var modelContainer: ModelContainer?
     @ObservationIgnored private var cloudImportObserver: NSObjectProtocol?
 
-    private init() {}
+    private init() {
+        // Counting and item reads wait for restoration; playback does not.
+        playbackController.isLibraryReady = { [weak self] in self?.libraryRestoration.isReady ?? false }
+    }
 
     func configure(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
@@ -41,6 +44,15 @@ final class AppRuntime {
                 guard let self else { return }
                 self.libraryRestoration.cloudImportFinished(error: error)
                 guard error == nil, let context = self.makeModelContext() else { return }
+                // Imported listen events from other devices change derived
+                // counts; the cache is recomputed rather than synced.
+                do {
+                    if try ListenLedger.reconcile(in: context) > 0 {
+                        self.playbackController.refreshPlayCountMetadata(context: context)
+                    }
+                } catch {
+                    StartupProfiler.mark("Listen ledger reconcile after import failed: \(error.localizedDescription)")
+                }
                 ApplePlayCountSyncService.shared.reconcile(in: context, playbackController: self.playbackController)
             }
         }

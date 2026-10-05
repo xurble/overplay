@@ -35,8 +35,10 @@ struct DevicePlaybackCacheTests {
         #expect(webBatches.count == 3)
     }
 
-    @Test func incompleteBatchDoesNotPublishAnyPreparedTracks() async throws {
+    /// `PLAY-017`: one unavailable song must not block the rest.
+    @Test func incompleteBatchPublishesResolvedTracksAndReportsTheRest() async throws {
         let tracks = ["i.first", "i.second"].map { TrackRecord(libraryID: $0, title: $0, artistName: "Artist") }
+        defer { for track in tracks { track.musicKitPlaybackData = nil } }
         await #expect(throws: DevicePlaybackCache.PreparationError.self) {
             try await DevicePlaybackCache.prepare(tracks, libraryLookup: { ids in
                 try await DevicePlaybackCache.loadLibrarySongs(ids, nativeLookup: { _ in [] }, request: { _ in
@@ -44,7 +46,86 @@ struct DevicePlaybackCacheTests {
                 })
             })
         }
-        #expect(tracks.allSatisfy { $0.musicKitPlaybackData == nil })
+        #expect(tracks[0].musicKitPlaybackData != nil)
+        #expect(tracks[1].musicKitPlaybackData == nil)
+    }
+
+    /// Review finding 7: one failed batched lookup is not retried per track.
+    @Test func failedLibraryLookupRunsOncePerPreparation() async throws {
+        let tracks = (0..<5).map { TrackRecord(libraryID: "i.fail-\($0)", title: "Song \($0)", artistName: "Artist") }
+        var lookups = 0
+        await #expect(throws: DevicePlaybackCache.PreparationError.self) {
+            try await DevicePlaybackCache.prepare(tracks, libraryLookup: { _ in
+                lookups += 1
+                throw URLError(.timedOut)
+            })
+        }
+        #expect(lookups == 1)
+    }
+
+    /// Round 2, L6: catalog-only tracks are fetched in one batch per preparation.
+    @Test func catalogTracksAreFetchedInOneBatch() async throws {
+        let tracks = (0..<4).map { TrackRecord(catalogID: "cat-batch-\($0)", title: "Song \($0)", artistName: "Artist") }
+        defer { for track in tracks { track.musicKitPlaybackData = nil } }
+        var batches: [[String]] = []
+        await #expect(throws: DevicePlaybackCache.PreparationError.self) {
+            try await DevicePlaybackCache.prepare(tracks, libraryLookup: { _ in [:] }, catalogLookup: { ids in
+                batches.append(ids)
+                return [:]
+            })
+        }
+        #expect(batches == [tracks.compactMap(\.catalogID).sorted()])
+    }
+
+    /// Round 4, R4-2: a song re-added to the library gets a new ID; the
+    /// persisted track for the old ID is resolved again, not reused.
+    @Test func aCachedTrackForAnOldLibraryIDIsResolvedAgain() async throws {
+        let track = TrackRecord(libraryID: "i.readded", title: "Song", artistName: "Artist")
+        defer { track.musicKitPlaybackData = nil }
+        track.musicKitPlaybackData = try PlaybackFixture.encodedTrack(id: "i.removed", title: "Song", artist: "Artist")
+        var lookups: [[String]] = []
+        try await DevicePlaybackCache.prepare([track], libraryLookup: { ids in
+            lookups.append(ids)
+            return try await DevicePlaybackCache.loadLibrarySongs(ids, nativeLookup: { _ in [] }, request: { _ in
+                try Self.libraryResponse(id: "i.readded")
+            })
+        })
+        #expect(lookups == [["i.readded"]])
+        let cached = try JSONDecoder().decode(Track.self, from: #require(track.musicKitPlaybackData))
+        #expect(cached.id.rawValue == "i.readded")
+    }
+
+    /// Round 4, R4-2: recovery refreshes a current cached track; a failed
+    /// refresh keeps what was cached.
+    @Test func aRefreshResolvesACurrentTrackAndKeepsItWhenTheLookupFails() async throws {
+        let track = TrackRecord(libraryID: "i.current", title: "Song", artistName: "Artist")
+        defer { track.musicKitPlaybackData = nil }
+        let cached = try PlaybackFixture.encodedTrack(id: "i.current", title: "Song", artist: "Artist")
+        track.musicKitPlaybackData = cached
+        var lookups = 0
+        let failing: ([String]) async throws -> [String: Song] = { _ in
+            lookups += 1
+            throw URLError(.timedOut)
+        }
+        try await DevicePlaybackCache.prepare([track], libraryLookup: failing)
+        #expect(lookups == 0)
+        await #expect(throws: DevicePlaybackCache.PreparationError.self) {
+            try await DevicePlaybackCache.prepare([track], refreshing: [track.id], libraryLookup: failing)
+        }
+        #expect(lookups == 1)
+        #expect(track.musicKitPlaybackData == cached)
+    }
+
+    @Test func preparedTracksSurviveRelaunchOnDisk() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let id = UUID()
+        let data = Data("track".utf8)
+        DevicePlaybackCache(directory: directory).set(data, for: id)
+        let relaunched = DevicePlaybackCache(directory: directory)
+        #expect(relaunched.data(for: id) == data)
+        relaunched.set(nil, for: id)
+        #expect(DevicePlaybackCache(directory: directory).data(for: id) == nil)
     }
 
     static func libraryResponse(id: String, type: String = "library-songs", playable: Bool = true, more: Bool = false) throws -> Data {

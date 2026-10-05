@@ -31,6 +31,7 @@ struct NowPlayingView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
+                    PlaybackFailureRetryView()
                 }
                 .padding()
             }

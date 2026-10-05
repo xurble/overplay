@@ -257,13 +257,16 @@ enum PlaybackSessionEvaluationService {
         context: ModelContext
     ) throws -> PlaylistItemRecord? {
         if let localTrackID = session.localTrackID ?? fallbackLocalTrackID,
-           let trackID = UUID(uuidString: localTrackID),
-           let item = try PlaylistItemRepository.item(
-               playlistID: playlist.id,
-               trackID: trackID,
-               in: context
-           ) {
-            return item
+           let trackID = UUID(uuidString: localTrackID) {
+            if let item = try PlaylistItemRepository.item(playlistID: playlist.id, trackID: trackID, in: context) {
+                return item
+            }
+            // One item per track app-wide (`PLAYLIST-007`): a row that moved
+            // mid-play is still this track's statistics row. The local ID is
+            // authoritative; the reported music ID may be another domain.
+            if let item = try PlaylistItemRepository.item(trackID: trackID, in: context) {
+                return item
+            }
         }
 
         if let item = try PlaybackSessionSupport.resolvePlaylistItem(

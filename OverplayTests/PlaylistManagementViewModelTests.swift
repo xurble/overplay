@@ -24,16 +24,10 @@ struct PlaylistManagementViewModelTests {
         let firstItem = PlaylistItemRecord(playlistID: playlist.id, trackID: firstTrack.id, sortOrder: 0)
         let secondItem = PlaylistItemRecord(playlistID: playlist.id, trackID: secondTrack.id, sortOrder: 1)
         let otherItem = PlaylistItemRecord(playlistID: otherPlaylist.id, trackID: otherTrack.id, sortOrder: 0)
-        let state = PlaybackOrderState(
-            playerID: "player",
-            musicPlaylistID: playlist.musicPlaylistID,
-            orderedTrackIDs: [firstTrack.id.uuidString, secondTrack.id.uuidString]
-        )
 
         let orderedItems = viewModel.orderedItems(
             for: playlist,
-            playlistItems: [firstItem, otherItem, secondItem],
-            playbackOrderState: state
+            playlistItems: [firstItem, otherItem, secondItem]
         )
 
         #expect(orderedItems.map(\.id) == [secondItem.id, firstItem.id])
@@ -73,21 +67,11 @@ struct PlaylistManagementViewModelTests {
             evictedAt: .now
         )
         let otherItem = PlaylistItemRecord(playlistID: otherPlaylist.id, trackID: otherTrack.id, sortOrder: 0)
-        let state = PlaybackOrderState(
-            playerID: "player",
-            musicPlaylistID: playlist.musicPlaylistID,
-            orderedTrackIDs: [
-                secondTrack.id.uuidString,
-                firstTrack.id.uuidString,
-                evictedTrack.id.uuidString
-            ]
-        )
 
         let detail = viewModel.detailPresentation(
             for: playlist,
             playlistItems: [firstItem, otherItem, secondItem, evictedItem],
             tracks: [otherTrack, evictedTrack, firstTrack, secondTrack],
-            playbackOrderState: state,
             currentPlaylistID: playlist.musicPlaylistID,
             currentPlaylistItem: secondItem,
             currentTrack: CurrentPlaybackTrack(id: "second", title: "Second", artistName: "Artist"),
@@ -108,7 +92,6 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [firstItem, otherItem, secondItem, evictedItem],
             tracks: [otherTrack, evictedTrack, firstTrack, secondTrack],
-            playbackOrderState: state,
             currentPlaylistID: playlist.musicPlaylistID,
             currentPlaylistItem: secondItem,
             currentTrack: CurrentPlaybackTrack(id: "second", title: "Second", artistName: "Artist"),
@@ -144,17 +127,12 @@ struct PlaylistManagementViewModelTests {
             trackID: unattributedTrack.id,
             createdAt: Date(timeIntervalSince1970: 2)
         )
-        let order = PlaybackOrderState(
-            playerID: "player",
-            musicPlaylistID: bucket.musicPlaylistID
-        )
         let sourcePlaylists = [weekly, discovery]
 
         let persistedDetail = viewModel.detailPresentation(
             for: bucket,
             playlistItems: [attributedItem, unattributedItem],
             tracks: [attributedTrack, unattributedTrack],
-            playbackOrderState: order,
             currentPlaylistID: nil,
             currentPlaylistItem: nil,
             currentTrack: nil,
@@ -163,15 +141,13 @@ struct PlaylistManagementViewModelTests {
         let snapshot = ActivePlaylistSnapshot(
             playlist: bucket,
             items: [attributedItem, unattributedItem],
-            tracks: [attributedTrack, unattributedTrack],
-            playbackOrderState: order
+            tracks: [attributedTrack, unattributedTrack]
         )
         attributedItem.sourceMusicPlaylistIDs = []
         let activeDetail = viewModel.detailPresentation(
             for: bucket,
             playlistItems: [attributedItem, unattributedItem],
             tracks: [attributedTrack, unattributedTrack],
-            playbackOrderState: order,
             currentPlaylistID: bucket.musicPlaylistID,
             currentPlaylistItem: attributedItem,
             currentTrack: CurrentPlaybackTrack(id: "attributed", title: "Attributed", artistName: "Artist"),
@@ -196,7 +172,6 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [item],
             tracks: [track],
-            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
             currentPlaylistID: playlist.musicPlaylistID,
             currentPlaylistItem: item,
             currentTrack: CurrentPlaybackTrack(id: "track", title: "Track", artistName: "Artist"),
@@ -209,7 +184,6 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [item],
             tracks: [track],
-            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
             currentPlaylistID: playlist.musicPlaylistID,
             currentPlaylistItem: item,
             currentTrack: CurrentPlaybackTrack(id: "track", title: "Track", artistName: "Artist"),
@@ -232,7 +206,6 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [item],
             tracks: [track],
-            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
             currentPlaylistID: playlist.musicPlaylistID,
             currentPlaylistItem: nil,
             currentTrack: nil,
@@ -242,7 +215,6 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [item],
             tracks: [track],
-            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
             currentPlaylistID: playlist.musicPlaylistID,
             currentPlaylistItem: item,
             currentTrack: CurrentPlaybackTrack(id: "track", title: "Track", artistName: "Artist"),
@@ -266,7 +238,6 @@ struct PlaylistManagementViewModelTests {
             playlist: playlist,
             items: [snapshotItem],
             tracks: [freshTrack],
-            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
             currentPlaylistItemID: item.id
         )
 
@@ -274,7 +245,6 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [item],
             tracks: [staleTrack],
-            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
             currentPlaylistID: playlist.musicPlaylistID,
             currentPlaylistItem: item,
             currentTrack: CurrentPlaybackTrack(id: "fresh", title: "Fresh", artistName: "Artist"),
@@ -312,23 +282,13 @@ struct PlaylistManagementViewModelTests {
             playlist: playlist,
             items: [retiredFirstItem, retiredSecondItem],
             tracks: [retiredFirstTrack, retiredSecondTrack],
-            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
             playbackScope: .active
-        )
-        let retiredOrder = PlaybackOrderState(
-            playerID: "player",
-            musicPlaylistID: PlaylistPlaybackScope.retired.playbackOrderPlaylistID(for: playlist.musicPlaylistID),
-            orderedTrackIDs: [
-                retiredSecondTrack.id.uuidString,
-                retiredFirstTrack.id.uuidString
-            ]
         )
 
         let detail = viewModel.detailPresentation(
             for: playlist,
             playlistItems: [retiredFirstItem, retiredSecondItem],
             tracks: [retiredFirstTrack, retiredSecondTrack],
-            playbackOrderState: retiredOrder,
             currentPlaylistID: playlist.musicPlaylistID,
             currentPlaylistItem: nil,
             currentTrack: CurrentPlaybackTrack(id: "retired-second", title: "Retired Second", artistName: "Artist"),
@@ -353,7 +313,6 @@ struct PlaylistManagementViewModelTests {
             playlist: activePlaylist,
             items: [activeItem],
             tracks: [activeTrack],
-            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: activePlaylist.musicPlaylistID),
             currentPlaylistItemID: activeItem.id
         )
 
@@ -361,7 +320,6 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [item],
             tracks: [track],
-            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
             currentPlaylistID: activePlaylist.musicPlaylistID,
             currentPlaylistItem: activeItem,
             currentTrack: CurrentPlaybackTrack(id: "active", title: "Active", artistName: "Artist"),
@@ -402,7 +360,6 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [item],
             tracks: [track],
-            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
             currentPlaylistID: playlist.musicPlaylistID,
             currentPlaylistItem: nil,
             currentLocalTrackID: track.id.uuidString,

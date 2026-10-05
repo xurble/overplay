@@ -7,7 +7,8 @@ import SwiftData
 /// MusicKit ID domains (catalog vs. library) before identities were captured
 /// distinctly, or from CloudKit sync races, which cannot enforce unique
 /// constraints. The merge keeps the oldest record as canonical, repoints
-/// playlist items and history events, sums per-playlist stats, and rekeys the
+/// playlist items and history events, records the donor in the keeper's
+/// listen-ledger lineage (counts are derived, never summed), and rekeys the
 /// device-local stores that reference local track IDs.
 enum TrackIdentityMergeService {
     struct MergeSummary: Equatable {
@@ -33,6 +34,8 @@ enum TrackIdentityMergeService {
     ) async throws -> MergeSummary {
         var summary = MergeSummary()
         let tracks = try TrackRecordRepository.allTracks(in: context)
+        // Pre-ledger counts become baselines before any lineage joins them.
+        try ListenLedger.writeBaselinesIfNeeded(in: context)
 
         for group in await duplicateGroups(tracks: tracks) {
             let ordered = group.sorted(by: canonicalPrecedes)
@@ -62,6 +65,10 @@ enum TrackIdentityMergeService {
             TrackRetentionPolicy.rekeyPlaybackTracks(summary.localTrackIDMapping)
         }
         let ownership = try TrackOwnershipMigrationService.migrate(in: context)
+        if !summary.localTrackIDMapping.isEmpty {
+            let keeperIDs = Set(summary.localTrackIDMapping.values.compactMap(UUID.init(uuidString:)))
+            try ListenLedger.refreshCounts(forTrackIDs: keeperIDs, in: context)
+        }
         summary.mergedItemCount = ownership.mergedCount
         summary.migratedItemCount = ownership.migratedCount
         summary.deletedItemCount = ownership.deletedCount
@@ -70,9 +77,7 @@ enum TrackIdentityMergeService {
             try context.save()
         }
         if !summary.localTrackIDMapping.isEmpty {
-            PlaybackOrderStore.rekeyLocalTrackIDs(summary.localTrackIDMapping, from: defaults, flushImmediately: true)
-            PlaybackIdentityStore.rekeyLocalTrackIDs(summary.localTrackIDMapping, from: defaults, flushImmediately: true)
-            LocalPlaybackStateStore.rekeyLocalTrackIDs(summary.localTrackIDMapping, from: defaults, flushImmediately: true)
+            AppRuntime.shared.playbackController.rekeyIntent(summary.localTrackIDMapping)
         }
         if summary.didChange {
             TrackMetadataDiagnostics.log(
@@ -133,6 +138,16 @@ enum TrackIdentityMergeService {
         if let id = acceptedDonorCatalog { aliases.insert(.catalog(id)) }
         if let id = duplicate.libraryID { aliases.insert(.library(id, scope: duplicate.libraryScope)) }
         canonical.confirmedAliases = aliases.sorted { ($0.domain.rawValue, $0.scope, $0.value) < ($1.domain.rawValue, $1.scope, $1.value) }
+        // The donor's listen events keep their track UUID; the lineage makes
+        // them, and any that arrive later, count toward the canonical track.
+        canonical.absorbLineage(donorID: duplicate.id, donorLineage: duplicate.absorbedTrackIDs)
+        if let context = canonical.modelContext {
+            do {
+                try ListenLedger.recordLineage(keeper: canonical.id, donor: duplicate.id, in: context)
+            } catch {
+                TrackMetadataDiagnostics.log("listen ledger lineage write failed: \(error.localizedDescription)")
+            }
+        }
         canonical.isrc = canonical.isrc ?? duplicate.isrc
         canonical.equivalentCatalogIDs = Array(Set(canonical.equivalentCatalogIDs + duplicate.equivalentCatalogIDs)).sorted()
         canonical.hasDocumentedIdentity = canonical.hasDocumentedIdentity || duplicate.hasDocumentedIdentity

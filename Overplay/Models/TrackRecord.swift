@@ -19,6 +19,18 @@ final class LibraryTrackV2 {
     }
     /// Alternatives are evidence for review, never automatic merge keys.
     var equivalentCatalogIDs: [String] = []
+    /// Track UUIDs absorbed by identity merges. Their listen-ledger events
+    /// count toward this track (`COUNT-002`), including late arrivals.
+    var absorbedTrackIDs: [String] = []
+    var absorbedTrackUUIDs: [UUID] { absorbedTrackIDs.compactMap(UUID.init(uuidString:)) }
+
+    /// Joins a donor's ledger lineage (its own UUID and everything it had
+    /// absorbed) into this track. Additive and idempotent.
+    func absorbLineage(donorID: UUID, donorLineage: [String] = []) {
+        let joined = Set(absorbedTrackIDs + [donorID.uuidString] + donorLineage).subtracting([id.uuidString])
+        let sorted = joined.sorted()
+        if sorted != absorbedTrackIDs { absorbedTrackIDs = sorted }
+    }
     var hasDocumentedIdentity: Bool = false
     var title: String = ""
     var artistName: String = ""

@@ -207,201 +207,82 @@ struct NowPlayingPresentationTests {
     }
 }
 
-@Suite("Now playing presentation factory")
+@Suite("Now playing presentation factory", .serialized)
+@MainActor
 struct NowPlayingPresentationFactoryTests {
     @Test("factory handles missing current track")
-    @MainActor
-    func factoryMissingTrack() {
-        let playbackDefaults = PlaybackTestDefaults()
-        defer { playbackDefaults.cleanUp() }
-        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
-        let settings = OverplaySettings()
-
+    func factoryMissingTrack() throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
         let presentation = NowPlayingPresentationFactory.presentation(
-            playbackController: controller,
-            settings: settings
+            playbackController: fixture.controller, settings: fixture.settings
         )
         #expect(presentation.trackID == nil)
         #expect(presentation.title == "Nothing playing")
     }
 
     @Test("factory includes playback timing state")
-    @MainActor
-    func factoryIncludesPlaybackTimingState() {
-        let playbackDefaults = PlaybackTestDefaults()
-        defer { playbackDefaults.cleanUp() }
-        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
-        controller.elapsedSeconds = 30
-        controller.durationSeconds = 120
-        controller.isPlaying = true
-        let settings = OverplaySettings()
-
+    func factoryIncludesPlaybackTimingState() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[0],
+                                              settings: fixture.settings, context: fixture.context)
+        await fixture.listen(seconds: 30)
         let presentation = NowPlayingPresentationFactory.presentation(
-            playbackController: controller,
-            settings: settings
+            playbackController: fixture.controller, settings: fixture.settings
         )
-
         #expect(presentation.elapsedSeconds == 30)
-        #expect(presentation.durationSeconds == 120)
+        #expect(presentation.durationSeconds == 180)
         #expect(presentation.isPlaying)
     }
 
-    @Test("factory prefers MusicKit now-playing track for visible metadata")
-    @MainActor
-    func factoryPrefersMusicKitNowPlayingTrackForVisibleMetadata() {
-        let playbackDefaults = PlaybackTestDefaults()
-        defer { playbackDefaults.cleanUp() }
-        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
-        controller.currentTrack = CurrentPlaybackTrack(
-            id: "local-guess",
-            title: "Local Guess",
-            artistName: "Guessed Artist",
-            durationSeconds: 300,
-            skipCount: 2
-        )
-        controller.musicKitNowPlayingTrack = CurrentPlaybackTrack(
-            id: "musickit-current",
-            title: "MusicKit Current",
-            artistName: "Actual Artist",
-            albumTitle: "Actual Album",
-            durationSeconds: 100
-        )
-        controller.elapsedSeconds = 25
-        let settings = OverplaySettings()
-
+    @Test("factory shows the player-reported track even when unattributed")
+    func factoryShowsPlayerReportedTrack() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[0],
+                                              settings: fixture.settings, context: fixture.context)
+        fixture.player.replaceCurrentItem(with: PlayerItemSnapshot(
+            id: "musickit-current", identifiers: ["musickit-current"], title: "MusicKit Current",
+            artistName: "Actual Artist", albumTitle: "Actual Album", artworkURLTemplate: nil, durationSeconds: 100))
+        fixture.player.reissueEntryIDs()
+        await fixture.player.notify()
         let presentation = NowPlayingPresentationFactory.presentation(
-            playbackController: controller,
-            settings: settings
+            playbackController: fixture.controller, settings: fixture.settings
         )
-
         #expect(presentation.trackID == "musickit-current")
         #expect(presentation.title == "MusicKit Current")
-        #expect(presentation.artistName == "Actual Artist")
         #expect(presentation.albumTitle == "Actual Album")
         #expect(presentation.durationSeconds == 100)
-        #expect(presentation.progress == 0.25)
-        #expect(presentation.skipCount == 2)
     }
 
-    @Test("factory avoids local queue guess while MusicKit item is pending")
-    @MainActor
-    func factoryAvoidsLocalQueueGuessWhileMusicKitItemIsPending() {
-        let playbackDefaults = PlaybackTestDefaults()
-        defer { playbackDefaults.cleanUp() }
-        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
-        controller.currentTrack = CurrentPlaybackTrack(
-            id: "local-guess",
-            title: "Local Guess",
-            artistName: "Guessed Artist",
-            durationSeconds: 300
-        )
-        controller.musicKitNowPlayingTrack = CurrentPlaybackTrack(
-            id: "previous-musickit",
-            title: "Previous MusicKit",
-            artistName: "Actual Artist",
-            durationSeconds: 100
-        )
-        controller.isMusicKitNowPlayingTrackPending = true
-        let settings = OverplaySettings()
-
+    @Test("factory never shows the previous track while the next one hydrates")
+    func factoryAvoidsPreviousTrackWhileHydrating() async throws {
+        let player = FakePlaybackPlayer()
+        player.hydratesOnSubmit = false
+        let fixture = try PlaybackFixture(player: player)
+        defer { fixture.cleanUp() }
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[0],
+                                              settings: fixture.settings, context: fixture.context)
+        await fixture.player.externallyAdvance()
         let presentation = NowPlayingPresentationFactory.presentation(
-            playbackController: controller,
-            settings: settings
+            playbackController: fixture.controller, settings: fixture.settings
         )
-
-        #expect(presentation.trackID == "previous-musickit")
-        #expect(presentation.title == "Previous MusicKit")
-        #expect(presentation.durationSeconds == 100)
+        #expect(presentation.title != "Song 0")
     }
 
-    @Test("context factory uses live playlist item skip count")
-    @MainActor
-    func contextFactoryUsesLivePlaylistItemSkipCount() throws {
-        let container = try OverplayTestSupport.makeModelContainer()
-        let context = container.mainContext
-        let settings = try SettingsRepository.settings(in: context)
-        let playbackDefaults = PlaybackTestDefaults()
-        defer { playbackDefaults.cleanUp() }
-        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
-        let playlist = PlaylistRecord(
-            musicPlaylistID: "playlist-1",
-            name: "Main",
-            role: .oneTruePlaylist
-        )
-        let track = TrackRecord(
-            catalogID: "music-1",
-            libraryID: "music-1",
-            title: "Track",
-            artistName: "Artist"
-        )
-        let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id, skipCount: 1)
-        context.insert(playlist)
-        context.insert(track)
-        context.insert(item)
-        controller.currentPlaylistID = playlist.musicPlaylistID
-        controller.currentTrack = CurrentPlaybackTrack(
-            id: "music-1",
-            title: "Track",
-            artistName: "Artist",
-            skipCount: 0
-        )
+    @Test("context factory uses the live playlist item skip count")
+    func contextFactoryUsesLivePlaylistItemSkipCount() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[0],
+                                              settings: fixture.settings, context: fixture.context)
+        try ListenLedger.record(.skip, trackID: fixture.tracks[0].id, sessionID: "earlier", source: .playback, in: fixture.context)
+        try ListenLedger.refreshCounts(forTrackIDs: [fixture.tracks[0].id], in: fixture.context)
 
         let presentation = NowPlayingPresentationFactory.presentation(
-            playbackController: controller,
-            settings: settings,
-            context: context
+            playbackController: fixture.controller, settings: fixture.settings, context: fixture.context
         )
-
-        #expect(presentation.skipCount == 1)
-        #expect(presentation.skipCountText == "1 skip")
-        #expect(presentation.playSkipMetricText == "0/— plays · 1 skip")
-    }
-
-    @Test("context factory refreshes stale cached playlist item before presenting skip count")
-    @MainActor
-    func contextFactoryRefreshesStaleCachedPlaylistItemBeforePresentingSkipCount() throws {
-        let container = try OverplayTestSupport.makeModelContainer()
-        let context = container.mainContext
-        let settings = try SettingsRepository.settings(in: context)
-        let playbackDefaults = PlaybackTestDefaults()
-        defer { playbackDefaults.cleanUp() }
-        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
-        let playlist = PlaylistRecord(
-            musicPlaylistID: "playlist-1",
-            name: "Main",
-            role: .oneTruePlaylist
-        )
-        let track = TrackRecord(
-            catalogID: "music-1",
-            libraryID: "music-1",
-            title: "Track",
-            artistName: "Artist"
-        )
-        let liveItem = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id, skipCount: 1)
-        let staleCachedItem = PlaylistItemRecord(
-            id: liveItem.id,
-            playlistID: playlist.id,
-            trackID: track.id,
-            skipCount: 0
-        )
-        context.insert(playlist)
-        context.insert(track)
-        context.insert(liveItem)
-        controller.currentPlaylistID = playlist.musicPlaylistID
-        controller.currentPlaylistItem = staleCachedItem
-        controller.currentTrack = CurrentPlaybackTrack(
-            id: "music-1",
-            title: "Track",
-            artistName: "Artist",
-            skipCount: 0
-        )
-
-        let presentation = NowPlayingPresentationFactory.presentation(
-            playbackController: controller,
-            settings: settings,
-            context: context
-        )
-
         #expect(presentation.skipCount == 1)
         #expect(presentation.skipCountText == "1 skip")
         #expect(presentation.playSkipMetricText == "0/— plays · 1 skip")

@@ -16,9 +16,8 @@ entitlement, and `Config/Info.plist` declares a CarPlay scene using
   properties, and replaces sections only when their structure changes.
 - `PlaybackController` owns the shared playlist-row action used by both
   CarPlay and iPhone/iPad, including resume, queue reuse, and replacement.
-- `AppRuntime.shared` provides the shared model container, playback controller,
-  authorization service, and remote command service used by both phone UI and
-  CarPlay.
+- `AppRuntime.shared` provides the shared model container, playback controller
+  and authorization service used by both phone UI and CarPlay.
 
 ## Current CarPlay UI
 
@@ -31,7 +30,7 @@ The root template has no navigation-bar actions. It shows:
 - A Retired row for locally retired tracks.
 
 Each of these three track lists starts with a **Shuffle and Play** row above
-tracks in their current local order. The action uses the shared controller's
+tracks in display order (newest-added first; Retired newest-retired first). The action uses the shared controller's
 playlist playback path, stops existing playback, selects a random starting track,
 and enables MusicKit shuffle without changing the displayed playlist order. It
 preserves the displayed Active or Retired scope and opens Now Playing on success.
@@ -41,14 +40,16 @@ disabled. Shuffle and repeat also remain available as Now Playing controls.
 
 Tapping any track calls the same `PlaybackController.playPlaylist(_:startingAt:scope:settings:context:)`
 action as the iPhone/iPad playlist UI. The shared action decides whether to
-resume the current track, jump inside the matching live queue, or build a new
-queue. CarPlay only presents and navigates; it has no separate track-selection
-policy or fallback strategy.
+resume the current track, select it in place in the live playback intent, or
+start a new intent. CarPlay only presents and navigates; it has no separate
+track-selection policy or fallback strategy.
 
-The controller preserves the live queue for an in-queue selection and pauses
-before a required replacement. It evaluates the outgoing session and publishes
-the selected track through the same reconciliation path used by other playback
-surfaces. Command failures remain in shared playback state and `statusMessage`.
+Every resulting change is processed through the controller's single player
+observation path, the same one used for the phone UI, Lock Screen, Control
+Center and headset controls. A playback failure is shared state: CarPlay shows
+one alert per failure episode with **Try Again**, which runs the same recovery
+as Play on the phone. While the library is still restoring from iCloud, the root
+template offers a **Resume** row for the saved playback intent.
 
 There is no manual refresh. Relevant playback changes and library saves
 invalidate value presentations; equality decides whether anything is published.
@@ -59,18 +60,14 @@ keeps the previous image while loading, and rejects stale completions. Explicit
 surface re-entry retries failed artwork. Collage composition is maintained at
 library lifecycle boundaries; reading a presentation never saves SwiftData.
 
-The shared controller retains confirmed shuffle/repeat through unknown MusicKit
-reports for the same playback session. Unknown does not mean off, and cannot
-justify chronological queue repair or background continuity accounting. Remote
-command publication writes only changed known values, with a forced publication
-on activation/reconnection. During a skip, pause and mode controls remain available;
-mode commands wait for transition confirmation. A pause requested during that
-transition remains authoritative. Next/previous stay gated until confirmation.
-Now Playing retains its button array while the action layout remains the same.
+System Now Playing, including transport, belongs to `ApplicationMusicPlayer`'s
+host (`PLAY-016`). Overplay registers no remote commands and gates no controls on
+its own belief. Now Playing retains its button array while the action layout
+remains the same.
 
 Diagnostics distinguish refresh requests (`carPlayRefreshRequested`) from actual
-row/section, artwork, button-state, button-array, and remote-command writes. An idle
-menu may receive requests but should produce no mutations.
+row/section, artwork, button-state and button-array writes. An idle menu may
+receive requests but should produce no mutations.
 
 CarPlay exposes Active and Retired playback contexts through the same shared
 playback state used by iOS.
@@ -90,9 +87,10 @@ playable counts, Shuffle and Play placement and scope forwarding, empty-list
 behavior, template refresh targeting, Now Playing action policy, and shared
 playlist-row selection, in-queue skip, and playback-mode paths in
 `PlaybackController`. The initial physical-device
-acceptance pass was completed on 2026-09-08. Repeat the affected hardware checks
-after every CarPlay, playback, queue-correlation, remote-command, or MusicKit-mode
-change.
+acceptance pass was completed on 2026-09-08, before the October 2026
+playback-core rewrite, which needs its own hardware pass (`TODO.md` §1). Repeat
+the affected hardware checks after every CarPlay, playback, attribution or
+MusicKit-mode change.
 
 Current hardware follow-ups are tracked in GitHub: custom Promote, Retire, and
 Restore controls are reported missing from Now Playing

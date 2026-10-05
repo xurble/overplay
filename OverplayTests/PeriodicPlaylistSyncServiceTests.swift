@@ -126,10 +126,15 @@ struct PeriodicPlaylistSyncServiceTests {
         context.insert(playlist(musicPlaylistID: "playing", lastSyncedAt: nil, lastSyncError: nil))
         let settings = try SettingsRepository.settings(in: context)
         settings.selectedPlaylistID = "selected"
-        let playbackDefaults = PlaybackTestDefaults()
-        defer { playbackDefaults.cleanUp() }
-        let playbackController = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
-        playbackController.currentPlaylistID = "playing"
+        let suite = "OverplayTests.Periodic.\(UUID().uuidString)"
+        let store = PlaybackIntentStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("\(suite).json"),
+                                        defaults: UserDefaults(suiteName: suite)!)
+        defer { store.clear() }
+        try store.save(PlaybackIntent(id: UUID(), createdAt: .now, musicPlaylistID: "playing", scope: .active,
+                                      members: [], startingLocalTrackID: nil))
+        let playbackController = PlaybackController(player: FakePlaybackPlayer(), intentStore: store,
+                                                    preparePlaybackTracks: { _, _ in }, sleep: PlaybackFixture.manualSampling)
+        playbackController.restoreIntent()
         let recorder = SyncRecorder()
         let service = makeService(recorder: recorder)
 
@@ -163,6 +168,28 @@ struct PeriodicPlaylistSyncServiceTests {
             currentPlaylistID: nil,
             selectedPlaylistID: nil
         ).map(\.musicPlaylistID) == ["a", "b"])
+    }
+
+    /// `LOAD-001`: automatic sync adds no Apple Music load while playback
+    /// is failing; an explicit sync still runs.
+    @Test("automatic sync pauses during a playback failure")
+    func automaticSyncPausesDuringPlaybackFailure() async throws {
+        let player = FakePlaybackPlayer()
+        player.playFailuresRemaining = 1
+        let fixture = try PlaybackFixture(player: player)
+        defer { fixture.cleanUp() }
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[0],
+                                              settings: fixture.settings, context: fixture.context)
+        #expect(fixture.controller.playbackFailure != nil)
+        fixture.context.insert(playlist(musicPlaylistID: "remote", lastSyncedAt: nil, lastSyncError: nil))
+        let recorder = SyncRecorder()
+        let service = makeService(recorder: recorder)
+
+        await service.syncLinkedPlaylists(context: fixture.context, playbackController: fixture.controller)
+        #expect(recorder.syncedIDs.isEmpty)
+
+        await service.syncLinkedPlaylists(context: fixture.context, playbackController: fixture.controller, force: true)
+        #expect(recorder.syncedIDs.contains("remote"))
     }
 
     private final class SyncRecorder {
