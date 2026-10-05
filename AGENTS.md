@@ -11,6 +11,21 @@ bugs, and improve structure, but must follow the constraints below.
 Agents should **modify the smallest possible amount of code** required
 to implement a change.
 
+## Product priorities
+
+When a choice trades one goal against another, the higher priority wins
+(details: **Product priorities** in `OVERPLAY_DESIGN_SPEC.md`):
+
+1.  A stable, fast, reliable music player.
+2.  CarPlay and Siri first: playlist management with the phone in a pocket.
+3.  Reliable playlist management: One True Playlist, Triage and Retired, with
+    each logical track in exactly one of them.
+4.  Statistics: additive and best-effort.
+
+Do not let play/skip counting drive playback, surface or playlist design. A
+count that is late or missing is acceptable; a player that is less reliable
+because of counting is not.
+
 
 ------------------------------------------------------------------------
 

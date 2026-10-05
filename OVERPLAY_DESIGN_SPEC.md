@@ -21,13 +21,31 @@ Overplay is an Apple Music companion app for iPhone, iPad, and CarPlay.
 It keeps a user's main music playlist fresh while using other playlists as
 intake and triage sources.
 
-**Overplay is a reliable music player first.** Playback must never lose track
-of what Overplay asked MusicKit to play, never show different things on
-different surfaces, and never fail in a way the user cannot recover from
-without restarting the device. Deduplication, play and skip counting, Apple
-play counts, sync and curation are additive layers on top of playback. They
-read playback state, and their failures degrade to "not counted" or "not
-available", never to stopped or misdescribed playback.
+### Product priorities
+
+These goals are in priority order. When a design or implementation choice
+trades one against another, the higher priority wins.
+
+1. **A stable, fast, reliable music player.** Playback never loses track of
+   what Overplay asked MusicKit to play, never shows different things on
+   different surfaces, and never fails in a way the user cannot recover from
+   with Play. Nothing below may gate, delay or rewrite playback.
+2. **CarPlay and Siri first.** Playlist management works with the phone in a
+   pocket. Playing a playlist and promoting, retiring or restoring the current
+   track are reachable from CarPlay and by voice; an action that needs the
+   phone screen is, in practice, unavailable. Siri support is **Planned**
+   (`TODO.md`).
+3. **Reliable playlist management.** One True Playlist, Triage and Retired
+   stay correct, and deduplication keeps each logical track in exactly one of
+   them (`PLAYLIST-007`).
+4. **Statistics.** Play, skip and Apple play counts inform curation. They
+   are additive and best-effort: a late or missing count is acceptable, but a
+   stalled player, disagreeing surfaces or a track in two places is not.
+
+Statistics never drive the design of playback, surfaces or playlist
+management. For example, if a CarPlay control can only be built by making
+Overplay a second Now Playing client again (H-7), priority 1 wins and the
+control moves to a CarPlay list template.
 
 The core playlist is the user's **One True Playlist**. Overplay plays it,
 tracks the user's own skip and playthrough behaviour, and exposes manual
@@ -1642,8 +1660,8 @@ longer exists.
 The following are not requirements of the current product:
 
 - Native Mac target, Mac windows, menus, tables, and media-key integration.
-- Siri, App Intents/Shortcuts, widgets, Dynamic Island, or separate watch
-  surfaces.
+- Widgets, Dynamic Island, or separate watch surfaces. (Siri and App Intents
+  are planned under product priority 2, not a non-goal.)
 - Rich dashboard summaries such as recent promotions, unreviewed queues, or
   high-skip queues.
 - A separate reset-local-playback-state control or a direct deep link to

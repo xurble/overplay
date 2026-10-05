@@ -5,7 +5,9 @@ This is the single living planning document for Overplay. Read it alongside
 invariants.
 
 The order below is the current impact order for reaching a dependable
-iPhone-and-CarPlay beta. Correctness and confidence in the existing product come
+iPhone-and-CarPlay beta, following the **Product priorities** in the spec
+(reliable player, then CarPlay and Siri, then playlist management, then
+statistics). Correctness and confidence in the existing product come
 before platform expansion and secondary polish. Reorder it when product goals
 change or new evidence changes the risk.
 
