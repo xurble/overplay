@@ -245,6 +245,51 @@ struct OneTruePlaylistRemoteMembershipTests {
         #expect(requested.count == 2)
     }
 
+    @Test("Apple Music refusing the edit is remembered: later attempts skip the rewrite but still notice absent songs")
+    func refusalIsRemembered() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        let retired = try retire(0, in: fixture, skipCount: 2)
+        let recorder = Recorder()
+        let ids = ["i.lib-0", "i.lib-1", "i.lib-2"]
+        var membership = Self.membership(cloud: { Self.entries(ids) }, device: ids, recorder: recorder)
+        membership.write = { _, _ in
+            throw NSError(domain: "ICPlaylistUpdateErrorDomain", code: -1, userInfo: [
+                NSLocalizedDescriptionKey: "Updating playlists are only allowed when updating a playlist that your app has created."
+            ])
+        }
+
+        let first = try await membership.removeSongsHeldOutside(fixture.playlist, in: fixture.context)
+        #expect(first.refusedItemIDs == [retired.id])
+        #expect(fixture.playlist.remoteEditsRefusedAt != nil)
+        #expect(retired.suppressedOTPMusicPlaylistIDs == ["playlist-main"])
+
+        let second = try await membership.removeSongsHeldOutside(fixture.playlist, in: fixture.context)
+        #expect(second.refusedItemIDs == [retired.id])
+        #expect(recorder.deviceLoads == 1)
+
+        // Removed by hand in the Music app: still noticed and cleaned up.
+        let gone = try await Self.membership(cloud: { Self.entries(["i.lib-1", "i.lib-2"]) }, device: [], recorder: recorder)
+            .removeSongsHeldOutside(fixture.playlist, in: fixture.context)
+        #expect(gone.absentItemIDs == [retired.id])
+        #expect(retired.suppressedOTPMusicPlaylistIDs.isEmpty)
+    }
+
+    @Test("On a Mac the playlist is never loaded or edited; the song waits for an iPhone or iPad")
+    func macNeverEdits() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        let retired = try retire(0, in: fixture)
+        let recorder = Recorder()
+        let ids = ["i.lib-0", "i.lib-1", "i.lib-2"]
+        var membership = Self.membership(cloud: { Self.entries(ids) }, device: ids, recorder: recorder)
+        membership.canEditPlaylists = { false }
+        let outcome = try await membership.removeSongsHeldOutside(fixture.playlist, in: fixture.context)
+
+        #expect(outcome.notEditableHereItemIDs == [retired.id])
+        #expect(recorder.deviceLoads == 0 && recorder.written.isEmpty)
+        #expect(fixture.playlist.remoteEditsRefusedAt == nil)
+        #expect(retired.suppressedOTPMusicPlaylistIDs == ["playlist-main"])
+    }
+
     // MARK: - Shared entry points
 
     @Test("Retiring through the playback controller removes the song from Apple Music")
@@ -277,6 +322,20 @@ struct OneTruePlaylistRemoteMembershipTests {
 
         #expect(fixture.controller.statusMessage == "Retired. Apple Music will be updated after the next sync.")
         #expect(recorder.written.isEmpty)
+    }
+
+    @Test("Retiring from a playlist Apple Music won't let Overplay edit says so and points to the rebuild")
+    func retireEntryPointRefused() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        fixture.playlist.remoteEditsRefusedAt = .now
+        let recorder = Recorder()
+        let ids = ["i.lib-0", "i.lib-1", "i.lib-2"]
+        fixture.controller.remoteMembership = Self.membership(cloud: { Self.entries(ids) }, device: ids, recorder: recorder)
+        try fixture.controller.retireTrack(try fixture.item(0), playlist: fixture.playlist, message: "Retired manually", context: fixture.context)
+        for _ in 0..<200 where fixture.controller.statusMessage == nil { await Task.yield() }
+
+        #expect(fixture.controller.statusMessage == PlaybackController.editsRefusedMessage)
+        #expect(recorder.deviceLoads == 0 && recorder.written.isEmpty)
     }
 
     @Test("A completed sync of the One True Playlist retries removals; a retry failure never fails the sync")

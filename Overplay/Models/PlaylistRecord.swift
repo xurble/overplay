@@ -24,6 +24,10 @@ final class LibraryPlaylistV2 {
     var remoteLastModifiedAt: Date?
     /// Older track-only syncs need one full entry fetch even if unchanged.
     var hasSyncedPlaylistEntries: Bool = false
+    /// When Apple Music refused to let Overplay edit this playlist ("only a
+    /// playlist your app has created"). Removals stop being attempted;
+    /// rebuilding the playlist links a new one and clears it (`PLAYLIST-008`).
+    var remoteEditsRefusedAt: Date?
     /// Explicit link intent, distinct from ordinary refresh timestamps. A later
     /// retirement must survive retries of this playlist's original import.
     var triageLinkedAt: Date?

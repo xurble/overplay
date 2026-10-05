@@ -453,6 +453,16 @@ deleted elsewhere or drop songs added elsewhere. So:
 - A song that is removed, or already absent from iCloud's copy, releases its
   suppression and gets the retention rule at once, so a retired source-free
   0/0 row is deleted.
+- MusicKit lets an app replace a playlist's contents only when that app
+  created it, and Apple Music can stop recognising Overplay as the creator of
+  an older playlist. When it refuses (`ICPlaylistUpdateErrorDomain` -1),
+  Overplay records the refusal on the playlist and stops attempting edits. It
+  keeps reading iCloud's copy, so a song removed by hand in the Music app still
+  releases its suppression. Rebuilding the Apple Music playlist links a new,
+  Overplay-created one and clears the refusal.
+- An iPad app running on a Mac has no MusicKit playlist editing, and any edit
+  crashes. A Mac never loads or edits the playlist; its removals wait for an
+  iPhone or iPad.
 - Retirement, duplicate merge, and every completed One True Playlist sync
   (periodic, manual or CarPlay) run the same operation, so deferred or failed
   removals are retried after each sync. A retry never fails the sync.

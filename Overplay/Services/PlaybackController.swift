@@ -1362,6 +1362,10 @@ final class PlaybackController {
                 let outcome = try await remoteMembership.removeSongsHeldOutside(otp, in: context)
                 if outcome.deferredItemIDs.contains(result.itemID) {
                     message += " Apple Music will be updated after the next sync."
+                } else if outcome.refusedItemIDs.contains(result.itemID) {
+                    message += " " + Self.editsRefusedMessage
+                } else if outcome.notEditableHereItemIDs.contains(result.itemID) {
+                    message += " " + Self.notEditableHereMessage
                 }
                 reconcileTrackMembership(context: context)
             } catch {
@@ -1453,6 +1457,9 @@ final class PlaybackController {
         evaluatePlaythroughIfNeeded()
     }
 
+    static let editsRefusedMessage = "Retired. Apple Music won't let Overplay edit this playlist; rebuild it in Settings, or remove the song in the Music app."
+    static let notEditableHereMessage = "Retired. Apple Music will be updated from your iPhone or iPad."
+
     /// Every One True Playlist retire, from any surface, removes the song from
     /// the Apple Music playlist (`PLAYLIST-008`). The local retirement stands
     /// whatever happens remotely.
@@ -1470,6 +1477,10 @@ final class PlaybackController {
                 statusMessage = "Removed \(title) from the Apple Music playlist."
             } else if outcome.deferredItemIDs.contains(itemID) {
                 statusMessage = "Retired. Apple Music will be updated after the next sync."
+            } else if outcome.refusedItemIDs.contains(itemID) {
+                statusMessage = Self.editsRefusedMessage
+            } else if outcome.notEditableHereItemIDs.contains(itemID) {
+                statusMessage = Self.notEditableHereMessage
             }
         } catch {
             statusMessage = "Retired locally, but Apple Music playlist removal failed: \(error.localizedDescription)"

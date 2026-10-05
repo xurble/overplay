@@ -18,6 +18,10 @@ struct OneTruePlaylistRemoteMembership {
         var absentItemIDs: Set<UUID> = []
         /// Still in Apple Music; this device's copy did not match iCloud's.
         var deferredItemIDs: Set<UUID> = []
+        /// Still in Apple Music; Apple Music refuses Overplay's edits to it.
+        var refusedItemIDs: Set<UUID> = []
+        /// Still in Apple Music; this device cannot edit playlists (a Mac).
+        var notEditableHereItemIDs: Set<UUID> = []
     }
 
     var cloudEntries: @MainActor (String) async throws -> [AppleMusicLibraryPlaylistResources.Entry] = {
@@ -38,7 +42,17 @@ struct OneTruePlaylistRemoteMembership {
         }
     }
 
+    /// iPad apps running on a Mac lack MusicKit's playlist editing and crash
+    /// on any edit, so removals there always wait for an iPhone or iPad.
+    var canEditPlaylists: @MainActor () -> Bool = { !ProcessInfo.processInfo.isiOSAppOnMac }
+
     init() {}
+
+    /// Apple Music's refusal to edit a playlist this app did not create.
+    nonisolated static func isEditRefusal(_ error: Error) -> Bool {
+        let error = error as NSError
+        return error.domain == "ICPlaylistUpdateErrorDomain" && error.code == -1
+    }
 
     static func managesRemoteMembership(of playlist: PlaylistRecord) -> Bool {
         playlist.isActive && playlist.source == .appleMusic && playlist.role == .oneTruePlaylist && playlist.allowsRemoteWrites
@@ -76,6 +90,14 @@ struct OneTruePlaylistRemoteMembership {
                 }
             }
             guard !presentItemIDs.isEmpty else { return }
+            guard playlist.remoteEditsRefusedAt == nil else {
+                outcome.refusedItemIDs = presentItemIDs
+                return
+            }
+            guard canEditPlaylists() else {
+                outcome.notEditableHereItemIDs = presentItemIDs
+                return
+            }
 
             let (remotePlaylist, tracks) = try await loadDeviceCopy(musicPlaylistID)
             guard let deviceReferences = try await references(for: tracks, matching: cloud) else {
@@ -84,7 +106,14 @@ struct OneTruePlaylistRemoteMembership {
                 return
             }
             let remaining = zip(tracks, deviceReferences).filter { !presentReferences.contains($0.1) }.map(\.0)
-            try await write(remotePlaylist, remaining)
+            do {
+                try await write(remotePlaylist, remaining)
+            } catch where Self.isEditRefusal(error) {
+                playlist.remoteEditsRefusedAt = .now
+                outcome.refusedItemIDs = presentItemIDs
+                TrackMetadataDiagnostics.log("remote edits refused playlist=\(musicPlaylistID): not created by this app")
+                return
+            }
             outcome.removedItemIDs = presentItemIDs
         }
 
