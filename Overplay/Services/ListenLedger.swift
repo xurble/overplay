@@ -202,8 +202,11 @@ enum ListenLedger {
         })).filter { !$0.isDeleted }
         var changed = 0
         for trackID in trackIDs {
-            let derived = try counts(forTrackID: trackID, in: context)
-            for item in items where item.trackID == trackID && apply(derived, to: item) {
+            let identities = try identities(for: trackID, in: context)
+            let entries = try entries(for: identities, in: context)
+            let derived = counts(identities: identities, entries: entries)
+            let hasEvidence = hasTrackEvidence(identities: identities, entries: entries)
+            for item in items where item.trackID == trackID && apply(derived, to: item, hasEvidence: hasEvidence) {
                 changed += 1
             }
         }
@@ -223,7 +226,8 @@ enum ListenLedger {
         for item in items {
             let identities = lineageClosure(of: item.trackID, tracksByID: tracksByID, entriesByTrackID: entriesByTrackID)
             let entries = identities.flatMap { entriesByTrackID[$0] ?? [] } + globalResets
-            if apply(counts(identities: identities, entries: entries), to: item) { changed += 1 }
+            let hasEvidence = hasTrackEvidence(identities: identities, entries: entries)
+            if apply(counts(identities: identities, entries: entries), to: item, hasEvidence: hasEvidence) { changed += 1 }
         }
         return changed
     }
@@ -281,6 +285,29 @@ enum ListenLedger {
         return result
     }
 
+    /// The surviving track that absorbed `trackID`, following lineage until a
+    /// track that still exists. Nil when nothing absorbed it.
+    static func keeper(absorbing trackID: UUID, in context: ModelContext) throws -> UUID? {
+        let lineage = ListenEventKind.lineage.rawValue
+        var current = trackID
+        var visited: Set<UUID> = [trackID]
+        while true {
+            let sessionID = "lineage:\(current.uuidString)"
+            var descriptor = FetchDescriptor<ListenEvent>(predicate: #Predicate {
+                $0.kindRawValue == lineage && $0.sessionID == sessionID
+            })
+            descriptor.fetchLimit = 1
+            var next = try context.fetch(descriptor).first?.trackID
+            if next == nil {
+                let idString = current.uuidString
+                next = try context.fetch(FetchDescriptor<TrackRecord>()).first { $0.absorbedTrackIDs.contains(idString) }?.id
+            }
+            guard let keeper = next, visited.insert(keeper).inserted else { return nil }
+            if try TrackRecordRepository.track(id: keeper, in: context) != nil { return keeper }
+            current = keeper
+        }
+    }
+
     private static func lineageClosure(
         of trackID: UUID,
         tracksByID: [UUID: TrackRecord],
@@ -319,10 +346,26 @@ enum ListenLedger {
                      skipDelta: event.skipDelta)
     }
 
+    /// Whether this store holds any outcome evidence (events or a baseline)
+    /// for the identity. Lineage and global resets are not evidence of plays.
+    nonisolated static func hasTrackEvidence(identities: Set<UUID>, entries: [Entry]) -> Bool {
+        entries.contains { identities.contains($0.trackID) && $0.kind != .lineage }
+    }
+
     /// Writes only real changes, and leaves `updatedAt` alone: the cache is
     /// derived, and must not look like a user decision to merge logic. The
     /// marker travels with the cache so no device mistakes it for legacy counts.
-    private static func apply(_ counts: Counts, to item: PlaylistItemRecord) -> Bool {
+    ///
+    /// A derived cache that is higher than this store can explain, while the
+    /// store holds no evidence at all for the track, came from a device whose
+    /// events have not arrived yet. Lowering it would publish a wrong count to
+    /// every device and could let the 0/0 retention rule delete a row whose
+    /// history is in flight, so it is kept until evidence arrives.
+    private static func apply(_ counts: Counts, to item: PlaylistItemRecord, hasEvidence: Bool) -> Bool {
+        if item.countsDerivedFromLedger, !hasEvidence,
+           counts.playthroughs < item.playthroughCount || counts.skips < item.skipCount {
+            return false
+        }
         guard item.playthroughCount != counts.playthroughs || item.skipCount != counts.skips
             || !item.countsDerivedFromLedger else { return false }
         item.playthroughCount = counts.playthroughs

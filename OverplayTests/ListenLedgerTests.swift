@@ -155,6 +155,24 @@ struct ListenLedgerTests {
         #expect(phone.item.skipCount == 1 && pad.item.skipCount == 1)
     }
 
+    /// Round 2, M4: a synced derived row whose events have not arrived keeps
+    /// its counts, so the 0/0 retention rule cannot delete it.
+    @Test func aDerivedRowAheadOfItsEventsIsNotLowered() throws {
+        let trackID = UUID()
+        let pad = try makeStore(trackID: trackID)
+        let bucket = try PlaylistRepository.triageBucket(in: pad.context)
+        pad.item.playlistID = bucket.id
+        pad.item.evictedAt = .now
+        pad.item.playthroughCount = 3
+        pad.item.countsDerivedFromLedger = true
+        try pad.context.save()
+
+        try ListenLedger.reconcile(in: pad.context)
+        try ListenLedger.refreshAllCounts(in: pad.context)
+        #expect(pad.item.playthroughCount == 3)
+        #expect(!TrackRetentionPolicy.shouldDelete(pad.item))
+    }
+
     /// Review finding 1: a baseline written after another device's reset must
     /// not bring the reset counts back.
     @Test func lateBaselineAfterAResetDoesNotResurrectCounts() throws {

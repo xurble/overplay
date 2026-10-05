@@ -28,6 +28,8 @@ final class FakePlaybackPlayer: PlaybackPlayer {
     var reportedIDForSubmittedID: (String) -> String = { $0 }
     /// When false, submitted entries carry no item until `hydrateAll()`.
     var hydratesOnSubmit = true
+    /// Replaces the starting entry's item on the next submission only.
+    var nextSubmissionStartItem: PlayerItemSnapshot?
     var playFailuresRemaining = 0
     var prepareFailuresRemaining = 0
     var nextFailuresRemaining = 0
@@ -75,6 +77,10 @@ final class FakePlaybackPlayer: PlaybackPlayer {
             return PlayerEntrySnapshot(entryID: entryID, item: hydratesOnSubmit ? item : nil)
         }
         currentIndex = entries.isEmpty ? nil : min(max(index, 0), entries.count - 1)
+        if let override = nextSubmissionStartItem, let currentIndex {
+            entries[currentIndex].item = override
+            nextSubmissionStartItem = nil
+        }
         playbackTime = 0
     }
 
@@ -141,6 +147,12 @@ final class FakePlaybackPlayer: PlaybackPlayer {
         await notify()
     }
 
+    /// The player moves on while Overplay is suspended and hears nothing.
+    func silentlyAdvance(to position: Double) {
+        advance()
+        playbackTime = position
+    }
+
     func externallySelect(index: Int) async {
         currentIndex = index
         playbackTime = 0
@@ -183,6 +195,11 @@ final class FakePlaybackPlayer: PlaybackPlayer {
     func replaceCurrentItem(with item: PlayerItemSnapshot?) {
         guard let currentIndex else { return }
         entries[currentIndex].item = item
+    }
+
+    /// Changes another entry's item without telling anyone.
+    func replaceItem(at index: Int, with item: PlayerItemSnapshot?) {
+        entries[index].item = item
     }
 
     func reverseQueueOrder() {

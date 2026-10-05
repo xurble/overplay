@@ -51,37 +51,61 @@ nonisolated final class DevicePlaybackCache: Sendable {
 
     /// Resolves whatever can be resolved, committing each track as it
     /// arrives, then reports the failures. One unavailable song must not
-    /// prevent the rest of a playlist from playing (`PLAY-017`).
+    /// prevent the rest of a playlist from playing (`PLAY-017`). Library and
+    /// catalog songs are each fetched in one batched lookup per preparation;
+    /// a failed lookup is remembered, so the remaining tracks of that domain
+    /// fail fast instead of retrying against a struggling service (`LOAD-001`).
     @MainActor static func prepare(
         _ tracks: [TrackRecord],
-        libraryLookup: ([String]) async throws -> [String: Song] = { try await loadLibrarySongs($0) }
+        libraryLookup: ([String]) async throws -> [String: Song] = { try await loadLibrarySongs($0) },
+        catalogLookup: ([String]) async throws -> [String: Song] = { try await loadCatalogSongs($0) }
     ) async throws {
-        let libraryIDs = Array(Set(tracks.filter { track in
+        let uncached = tracks.filter { track in
             guard let data = shared.data(for: track.id) else { return true }
             return (try? JSONDecoder().decode(Track.self, from: data)) == nil
-        }.compactMap(\.libraryID))).sorted()
-        var librarySongs: [String: Song]?
-        var libraryLookupError: Error?
+        }
+        let libraryIDs = Array(Set(uncached.compactMap(\.libraryID))).sorted()
+        let catalogIDs = Array(Set(uncached.filter { $0.libraryID == nil }.compactMap(\.catalogID))).sorted()
+        var batches: [MusicResourceReference.Domain: Result<[String: Song], Error>] = [:]
         try await prepare(tracks) { reference in
-            guard reference.domain == .librarySong else { return try await loadResource(reference) }
-            // One batched lookup per preparation. A failure is remembered, so
-            // the remaining library tracks fail fast instead of each retrying
-            // the whole lookup against a struggling service (`LOAD-001`).
-            if librarySongs == nil, libraryLookupError == nil {
+            if batches[reference.domain] == nil {
                 do {
-                    librarySongs = try await libraryLookup(libraryIDs)
+                    let songs = reference.domain == .librarySong
+                        ? try await libraryLookup(libraryIDs)
+                        : try await catalogLookup(catalogIDs)
+                    batches[reference.domain] = .success(songs)
                 } catch is CancellationError {
                     throw CancellationError()
                 } catch {
-                    libraryLookupError = error
+                    batches[reference.domain] = .failure(error)
                 }
             }
-            if let libraryLookupError { throw libraryLookupError }
-            guard let song = librarySongs?[reference.value] else {
+            guard let song = try batches[reference.domain]?.get()[reference.value] else {
                 throw PreparationError(message: "Apple Music returned no song for \(reference.value).")
             }
             return try JSONEncoder().encode(Track.song(song))
         }
+    }
+
+    /// Catalog songs in bounded batches, correlated by ID, never by position.
+    @MainActor static func loadCatalogSongs(
+        _ ids: [String],
+        lookup: ([String]) async throws -> [Song] = { batch in
+            let request = MusicCatalogResourceRequest<Song>(matching: \.id, memberOf: batch.map { MusicItemID($0) })
+            return Array(try await request.response().items)
+        }
+    ) async throws -> [String: Song] {
+        var result: [String: Song] = [:]
+        let ids = Array(Set(ids)).sorted()
+        for start in stride(from: 0, to: ids.count, by: 100) {
+            try Task.checkCancellation()
+            let batch = Array(ids[start..<min(start + 100, ids.count)])
+            let grouped = Dictionary(grouping: try await lookup(batch), by: { $0.id.rawValue })
+            for id in batch {
+                if let matches = grouped[id], matches.count == 1 { result[id] = matches[0] }
+            }
+        }
+        return result
     }
 
     @MainActor static func prepare(
@@ -164,21 +188,6 @@ nonisolated final class DevicePlaybackCache: Sendable {
         request.filter(matching: \.id, memberOf: ids.map { MusicItemID($0) })
         request.limit = ids.count
         return Array(try await request.response().items)
-    }
-
-    @MainActor private static func loadResource(_ reference: MusicResourceReference) async throws -> Data {
-        let id = reference.value
-        let song: Song
-        switch reference.domain {
-        case .librarySong:
-            song = try await loadLibrarySong(id)
-        case .catalogSong:
-            let request = MusicCatalogResourceRequest<Song>(matching: \.id, equalTo: MusicItemID(id))
-            let items = try await request.response().items
-            try validateLookup(reference, returnedIDs: items.map { $0.id.rawValue }, hasNextBatch: false)
-            song = items[items.startIndex]
-        }
-        return try JSONEncoder().encode(Track.song(song))
     }
 
     /// A persisted web-library ID need not be queryable in the device's native

@@ -605,7 +605,11 @@ list attribute is last-writer-wins:
 `PlaylistItemRecord.skipCount` and `playthroughCount` are a materialized cache
 of that derivation, written together with `countsDerivedFromLedger = true`. They
 are recomputed after local ledger writes and after CloudKit imports (skipped
-when the store's event count is unchanged and nothing was migrated). Two devices that hold the same events compute the same
+when the store's event count is unchanged and nothing was migrated). A derived
+row that is higher than this store can explain, while the store holds no
+evidence at all for the track, came from a device whose events have not arrived
+yet. It is kept as it is rather than lowered, so the 0/0 retention rule and Apple
+play-count seeding never act on counts that are merely in flight. Two devices that hold the same events compute the same
 values, so concurrent writes to the cache converge instead of losing
 increments. Nothing ever increments, sums or zeroes the cache directly.
 
@@ -613,6 +617,10 @@ Merging duplicate items of one track needs no count arithmetic. Absorbing a
 donor track records the donor UUID in the keeper's `absorbedTrackIDs` and writes
 a `lineage` event. Events keep their original track UUID, and events arriving
 late for the donor still count toward the keeper.
+
+A playthrough that suspended-playback reconciliation already credited for the
+current play (the item's last playthrough falls after this play began) is not
+counted again when the controller later observes the same play.
 
 Pre-ledger counts are carried forward as one `baseline` event per track. Only
 rows the ledger has never written are pre-ledger: a row marked
@@ -888,7 +896,8 @@ attribute normally.
 1. Build the members from SwiftData in the scope's display order
    (newest-added first, or newest-retired first for Retired).
 2. Resolve each member's native `Track` from the device playback cache
-   (`PLAY-017`), fetching missing tracks in batches. Members that cannot be
+   (`PLAY-017`), fetching missing library and catalog tracks in one batch
+   each. Members that cannot be
    resolved are left out of the queue and the intent, with a diagnostic and a
    non-blocking status message. Starting fails only when the requested start
    member, or every member, cannot be resolved.
@@ -907,8 +916,9 @@ and can be rebuilt at any time.
 Selecting a track from any playlist list, in the app or in CarPlay, enters one
 controller action:
 
-- **The selected member is the current attributed member:** resume if paused,
-  never restart.
+- **The selected member is the current member:** resume if paused, never
+  restart. With no live queue (after a relaunch or a stop), this resumes the
+  intent at its saved position, exactly like Play.
 - **The track is a member of the live intent (same playlist and scope):**
   enumerate the player's queue once, find the member's entry by attribution,
   set it as the current entry, and play. If no entry can be found, submit a new
@@ -948,7 +958,8 @@ works:
    then `play()`.
 
 A stalled player already reports `playing`, so a bare `play()` proves nothing:
-a stall starts at rung 2. A press within two minutes of an earlier recovery
+a stall starts at rung 2. Each recovery gets a fresh stall window, and the
+failure stays shown while a rung-3 resubmission prepares. A press within two minutes of an earlier recovery
 starts one rung above the rung that last ran, so a failure that keeps coming
 back reaches rung 3. Resubmitting the track that is playing continues its
 listening session instead of judging it. Each Play press runs the ladder at most
@@ -975,7 +986,9 @@ If the last observation is stale (the end happened while Overplay was
 suspended), the end is treated the same way and is not a failure. A fresh stop
 mid-track is a failure: the current member and position are kept, so Play
 resumes there. With repeat-all on, MusicKit loops the queue and no queue end is
-observed. A wrap from the last entry to the first is a forward transition.
+observed. Under repeat-all, a wrap from the last entry to the first is
+forward and a move from the first to the last (in a queue of three or more) is
+backward. Without repeat-all, queue order alone decides.
 
 ### Same song, new entry ID
 
@@ -985,7 +998,10 @@ session, or its item has not hydrated yet, and the position is continuous
 (within three seconds, at least one second in), the session moves to the new
 entry instead of ending. An unconfirmed carry-over is checked when the item
 hydrates. If it turns out to be a different song, the carried session ends
-then and a new one starts.
+then and a new one starts. If it is still unconfirmed after ten seconds, its
+listening is no longer attributed. When the first entry of a recovery or resume
+resubmission is not the track being resumed, the carried listen is dropped,
+never judged.
 
 ### Concurrent starts
 
@@ -1002,9 +1018,12 @@ mutate the live MusicKit queue:
 - retiring the current track from Now Playing issues Next;
 - an entry whose member has left the intent's scope (retired from Active, or
   restored from Retired) is skipped with Next when it is observed becoming
-  current. Its session is marked evaluated without a skip. An entry is skipped at
-  most once per intent, so a repeat-all wrap cannot loop, and a failed lookup is
-  never treated as out of scope.
+  current. Its session is marked evaluated without a skip. Each entry is checked
+  at most once per intent, so a repeat-all wrap cannot loop, and a session
+  carried onto a new entry ID is never re-checked mid-song. A failed lookup is
+  never out of scope. A member whose track was merged away on another device
+  follows its keeper (by lineage), and the intent is rekeyed, instead of being
+  skipped.
 
 ### Launch and restore
 

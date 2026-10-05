@@ -63,6 +63,20 @@ struct DevicePlaybackCacheTests {
         #expect(lookups == 1)
     }
 
+    /// Round 2, L6: catalog-only tracks are fetched in one batch per preparation.
+    @Test func catalogTracksAreFetchedInOneBatch() async throws {
+        let tracks = (0..<4).map { TrackRecord(catalogID: "cat-batch-\($0)", title: "Song \($0)", artistName: "Artist") }
+        defer { for track in tracks { track.musicKitPlaybackData = nil } }
+        var batches: [[String]] = []
+        await #expect(throws: DevicePlaybackCache.PreparationError.self) {
+            try await DevicePlaybackCache.prepare(tracks, libraryLookup: { _ in [:] }, catalogLookup: { ids in
+                batches.append(ids)
+                return [:]
+            })
+        }
+        #expect(batches == [tracks.compactMap(\.catalogID).sorted()])
+    }
+
     @Test func preparedTracksSurviveRelaunchOnDisk() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
