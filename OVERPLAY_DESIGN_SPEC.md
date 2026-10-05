@@ -71,6 +71,7 @@ Music's global play count or skip count.
 | `PLAYLIST-005` | Last-source unlink deletes untouched, non-explicit active Triage rows and unowned retired 0/0 rows. Active explicit keep or prior listening (even reset) survives. Nonzero counts and necessary OTP suppression always survive. | `Overplay/Persistence/TrackRetentionPolicy.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
 | `PLAYLIST-007` | One item per track app-wide. OTP, Triage and global Retired are three top-level collections; every retired item belongs to the bucket. | `Overplay/Persistence/PlaylistItemRepository.swift`, `Overplay/Services/TrackLocationService.swift` |
 | `PLAYLIST-008` | Every retire or duplicate merge out of a managed One True Playlist removes the song from the Apple Music playlist, retried after each sync. A rewrite runs only when the device's copy matches iCloud's; removed or absent songs release suppression and get the retention rule. Promotion does not add a song iCloud already holds. | `Overplay/Services/OneTruePlaylistRemoteMembership.swift`, `OverplayTests/OneTruePlaylistRemoteMembershipTests.swift` |
+| `PLAYLIST-009` | From iPhone or iPad, the user can rebuild the One True Playlist's Apple Music playlist: Overplay creates a new playlist of the active songs in Overplay's order and relinks the same One True Playlist to it, keeping counts, retirements and history. Nothing is deleted from Apple Music. | `Overplay/Services/OneTruePlaylistRebuildService.swift`, `OverplayTests/OneTruePlaylistRebuildTests.swift` |
 | `LOC-001` | A retirement or restore survives another device's stale CloudKit write. After each import and at startup, a song's newest `evicted`/`restored` history event re-applies its decision when it is newer than the row's `locationChangedAt`; promotions are left to the next One True Playlist sync. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/TrackLocationRepairTests.swift` |
 | `PLAYLIST-006` | Pre-bucket triage data migrates onto the bucket at startup. The migration is idempotent and keyed on the stored legacy role value, not a local flag. | `Overplay/Persistence/TriageBucketMigrationService.swift`, `OverplayTests/TriageBucketTests.swift` |
 | `PLAYLIST-002` | Initial setup can create a managed playlist, copy an existing playlist into a managed playlist, or link an existing playlist as incoming-only. | `Overplay/ViewModels/PlaylistSelectionViewModel.swift`, `Overplay/Services/PlaylistSyncService.swift` |
@@ -463,6 +464,30 @@ deleted elsewhere or drop songs added elsewhere. So:
 - An iPad app running on a Mac has no MusicKit playlist editing, and any edit
   crashes. A Mac never loads or edits the playlist; its removals wait for an
   iPhone or iPad.
+
+#### Rebuilding the Apple Music playlist (`PLAYLIST-009`)
+
+Settings on iPhone and iPad offers **Rebuild Apple Music Playlist**, after a
+confirmation. It explains when Apple Music has refused Overplay's edits. A
+rebuild:
+
+- Creates a new Apple Music playlist with the One True Playlist's name and
+  "Managed by Overplay" description. It contains the active songs in Overplay's
+  playback order, using the same per-device tracks playback queues. Retired
+  songs are left out. Songs with no playable item on this device are skipped
+  and reported; they stay in Overplay.
+- Relinks the same One True Playlist record to the new identifier, exactly as
+  when MusicKit reissues one: source provenance, stale-OTP suppression, the
+  selected playlist and the playback intent all follow it. The playlist
+  becomes `managed`, and its recorded edit refusal is cleared.
+- Changes nothing when no song can be added or creation fails. Deletes nothing
+  in Apple Music: the user deletes the older playlist in the Music app.
+- Syncs the One True Playlist afterwards. A failed sync leaves the new link in
+  place for the next sync to complete.
+
+Rebuilding is deliberate. Overplay never recreates a playlist because it seems
+to be missing, since a lagging or offline device cannot tell a deleted playlist
+from one it has not loaded.
 - Retirement, duplicate merge, and every completed One True Playlist sync
   (periodic, manual or CarPlay) run the same operation, so deferred or failed
   removals are retried after each sync. A retry never fails the sync.

@@ -9,6 +9,7 @@ struct SettingsView: View {
     @Bindable var settings: OverplaySettings
     @State private var showResetConfirmation = false
     @State private var showNukeConfirmation = false
+    @State private var showRebuildConfirmation = false
     @State private var viewModel = SettingsViewModel()
     @AppStorage(SystemNowPlayingBridge.mirrorDefaultsKey) private var mirrorsNowPlaying = false
 
@@ -65,6 +66,16 @@ struct SettingsView: View {
 
             Section {
                 NavigationLink("Find Duplicates", destination: DuplicateTracksView())
+            }
+
+            if let oneTruePlaylist, !ProcessInfo.processInfo.isiOSAppOnMac {
+                RebuildPlaylistSection(
+                    playlistName: oneTruePlaylist.name,
+                    editsRefused: oneTruePlaylist.remoteEditsRefusedAt != nil,
+                    isRebuilding: viewModel.isRebuildingPlaylist
+                ) {
+                    showRebuildConfirmation = true
+                }
             }
 
             Section {
@@ -167,6 +178,17 @@ struct SettingsView: View {
         .onDisappear {
             viewModel.saveIfNeeded(settings: settings, context: modelContext, dependencies: dependencies)
         }
+        .confirmationDialog(
+            "Rebuild “\(oneTruePlaylist?.name ?? "Overplay")” in Apple Music?",
+            isPresented: $showRebuildConfirmation, titleVisibility: .visible
+        ) {
+            Button("Rebuild Playlist") {
+                Task { await viewModel.rebuildOneTruePlaylist(context: modelContext, dependencies: dependencies) }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Overplay creates a new playlist with the same name, containing your active songs in Overplay’s order, and uses it from now on. Retired songs are left out. Plays, skips and history are kept. Afterwards, delete the older playlist in the Music app.")
+        }
         .confirmationDialog("Reset all local stats?", isPresented: $showResetConfirmation, titleVisibility: .visible) {
             Button("Reset Local Stats", role: .destructive) {
                 resetStats()
@@ -183,6 +205,10 @@ struct SettingsView: View {
         } message: {
             Text("This deletes Overplay records locally and saves the deletions so iCloud can sync them. Apple Music playlists are not deleted.")
         }
+    }
+
+    private var oneTruePlaylist: PlaylistRecord? {
+        try? PlaylistRepository.oneTruePlaylist(in: modelContext)
     }
 
     private func resetStats() {
@@ -280,6 +306,44 @@ private struct SettingsLabeledToggle: View {
                 SettingsSubtitle(subtitle)
             }
         }
+    }
+}
+
+/// `PLAYLIST-009`: replaces the Apple Music playlist with an Overplay-made one.
+private struct RebuildPlaylistSection: View {
+    var playlistName: String
+    var editsRefused: Bool
+    var isRebuilding: Bool
+    var rebuild: () -> Void
+
+    var body: some View {
+        Section {
+            Button(action: rebuild) {
+                if isRebuilding {
+                    Label("Rebuilding “\(playlistName)”…", systemImage: "arrow.triangle.2.circlepath")
+                } else {
+                    SettingsActionLabel(
+                        title: "Rebuild Apple Music Playlist",
+                        subtitle: "Creates a new “\(playlistName)” playlist from Overplay’s active songs and uses it from now on.",
+                        systemImage: "arrow.triangle.2.circlepath"
+                    )
+                }
+            }
+            .disabled(isRebuilding)
+        } header: {
+            Text("Apple Music Playlist")
+        } footer: {
+            if editsRefused {
+                Text("Apple Music won’t let Overplay remove songs from “\(playlistName)”. A rebuilt playlist is one Overplay created, so it can be edited again.")
+                    .font(.caption)
+            }
+        }
+    }
+}
+
+#Preview("Rebuild section") {
+    Form {
+        RebuildPlaylistSection(playlistName: "Overplay", editsRefused: true, isRebuilding: false) {}
     }
 }
 
