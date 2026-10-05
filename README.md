@@ -174,6 +174,36 @@ This checks a runtime presentation path that controller unit tests do not host.
 Verify library access and actual playback separately: a visible player and a
 successful subscription check do not prove that MusicKit can prepare its queue.
 
+## Diagnosing Problems
+
+Overplay keeps a local log of its Apple Music calls and timed work: four hours
+of per-minute tallies plus the latest 250 notable events, persisted across
+relaunch. The same events go to the unified log under category
+`MusicKitActivity`, and timed work emits signposts under category
+`Performance`.
+
+1. Open **Settings → Apple Music Call Activity**. Copy the **Full Activity
+   Report** before clearing it if it holds useful history, then clear it for a
+   clean reproduction.
+2. Note the device, build, playlist size, connection, foreground or background
+   state, whether artwork was already cached, and the real-world time of the
+   symptom. Reproduce one scenario at a time.
+3. Tap **Refresh**, expand **Full Activity Report**, and copy the text. Do not
+   mix a long sync session with a single tap when reading totals. Nested
+   timings overlap, so never add operation totals together.
+4. For playback, start with the playback selection paths (`resumeCurrent`,
+   `inIntentJump`, `newIntent`, `resubmitFromMember`, `sessionCarriedOver`,
+   `skipOnReach`), then stall detections, recovery attempts and unattributed
+   entries.
+5. For stutter, attach Instruments to a physical-device Development build and
+   record Time Profiler, SwiftUI and Points of Interest, filtered to the
+   `Performance` category; use Allocations for image memory. The activity
+   report alone cannot prove a frame hitch.
+6. Keep warm-cache and cold-cache runs separate. Clearing recorded activity
+   does not clear cached artwork.
+7. Check CarPlay on a physical head unit. Simulator tests cover row
+   configuration, not real head-unit layout or live MusicKit playback.
+
 ## Current Status
 
 The core product loop is in place: linked playlist management, periodic sync

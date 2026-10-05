@@ -370,10 +370,6 @@ files and protected thumbnails may exceed the nominal budget. Visible access
 updates eviction recency. Theme recognition runs on player demand rather than
 warming every changed song after sync; theme writes are batched.
 
-See `PERFORMANCE_IMPLEMENTATION_2026-09-25.md` for the artwork cache policy and
-measurement operations. It is a dated snapshot; its playback notes predate the
-October 2026 rewrite.
-
 ## Sync Behaviour
 
 All linked playlists should be periodically synced against Apple Music. The
