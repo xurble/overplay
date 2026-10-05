@@ -94,22 +94,29 @@ keeps the local retirement and filters the track out of Active playback.
 
 ## Playback
 
-Playback uses MusicKit's application music player with a shared playback
-controller behind every surface: the in-app Now Playing UI and mini player,
-CarPlay, Lock Screen, Control Center, and headset/remote commands. All
-surfaces route through the same controller, queue policies, and
-skip/playthrough evaluation while Overplay is able to observe them. MusicKit
-queue and player-state invalidations trigger shared reconciliation after the
-published values are readable. Bursts coalesce, queue observation follows queue
-replacement, and observation remains active when the sampling timer goes idle.
-The one-second timer remains for elapsed-time evidence, stall/hydration timing,
-and missed-event recovery while active. Existing MusicKit diagnostics distinguish
-event, timer, and explicit reconciliation, and record discrete changes first
-noticed by the timer. [Issue #48](https://github.com/xurble/overplay/issues/48)
-tracks the device-evidence review before reducing polling. If iOS
-suspends Overplay while the out-of-process MusicKit player continues, skips are
-never reconstructed from the unwitnessed interval; playthroughs are recovered
-only when persisted observations or MusicKit library evidence prove them.
+Overplay is a reliable music player first. When it starts a playlist it saves
+a device-local playback intent: the playlist, the scope and the ordered
+tracks it handed to MusicKit's application music player. Nothing the player
+reports can erase that record. The app, the mini player and CarPlay all show
+the track the player actually reports. Overplay matches that track to the
+intent by identifier, or by unique title and artist, to attach its counts and
+curation actions. A track it cannot match is still shown; it is simply not
+counted.
+
+System Now Playing belongs to Apple's player host. Lock Screen, Control
+Center, headset and CarPlay transport controls act on the player directly.
+Overplay observes every change through one path, whichever surface caused it.
+Every command is a single MusicKit call. A failed play or a stalled stream
+shows the same message on every surface. Pressing Play runs a short recovery
+sequence; nothing retries automatically. Playback can resume before the
+library has finished restoring from iCloud.
+
+Plays and skips are recorded as immutable ledger events, and the displayed
+counts are derived from them. Merges, resets and two devices counting at once
+therefore never lose or double-count a play. If iOS suspends Overplay while the
+player continues, skips are never reconstructed from the unwitnessed interval.
+Playthroughs are recovered only when persisted observations or Apple Music
+library evidence prove them.
 
 ## Sync and Data
 

@@ -122,8 +122,6 @@ final class PlaybackController {
     var nowPlayingDisplayLocalTrackID: String? { currentMember?.localTrackID }
     var isDeliveryStalled: Bool { playbackFailure != nil }
     var canSkipTracks: Bool { hasLiveQueue }
-    var canControlPlayback: Bool { hasLiveQueue }
-    var isMonitoringPlayback: Bool { sampleTask != nil }
 
     var progress: Double {
         guard let durationSeconds, durationSeconds > 0 else { return 0 }

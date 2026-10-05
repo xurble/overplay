@@ -3,7 +3,7 @@ project:
   type: ios
   profile: normal
 commands:
-  check: "xcodebuild test -project Overplay.xcodeproj -scheme Overplay -destination 'platform=iOS Simulator,name=iPhone 17 Pro'"
+  check: "xcodebuild test -project Overplay.xcodeproj -scheme Overplay -destination 'platform=iOS Simulator,name=iPhone 17 Pro (26)'"
 github:
   enabled: true
   use_issues: true
