@@ -1,5 +1,6 @@
 import Foundation
 @preconcurrency import MusicKit
+import OSLog
 
 /// Resolves a song observed in a library playlist through an API that owns
 /// its identifier. Playlist-entry IDs are not Apple Music web resource IDs.
@@ -31,24 +32,82 @@ enum MusicLibrarySongResolver {
         }
     }
 
-    static func resolve(_ id: MusicItemID) async throws -> Resolution {
-        var libraryRequest = MusicLibraryRequest<Song>()
-        libraryRequest.filter(matching: \.id, equalTo: id)
-        libraryRequest.limit = 2
-        let library = try await libraryRequest.response().items
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Overplay", category: "PlaylistSync")
+
+    static func resolve(_ observed: Song) async throws -> Resolution {
+        try await resolve(observed, library: librarySongs, webLibrary: webLibrarySongIDs, catalog: catalogSongs)
+    }
+
+    static func resolve(
+        _ observed: Song,
+        library: (MusicItemID) async throws -> [Song],
+        webLibrary: (MusicItemID) async throws -> [String],
+        catalog: (MusicItemID) async throws -> [Song]
+    ) async throws -> Resolution {
+        let id = observed.id
+        let librarySongs = try await library(id)
         try Task.checkCancellation()
-        if library.count == 1, !library.hasNextBatch, let song = library.first {
+        if librarySongs.count == 1, let song = librarySongs.first {
             return .library(song)
         }
-        guard library.isEmpty else { throw ResolutionError.unresolved(id.rawValue) }
+        guard librarySongs.isEmpty else { throw ResolutionError.unresolved(id.rawValue) }
+
+        // A device's on-device library can lack songs its account library and
+        // playlists still hold. The web library owns the same ID, and the
+        // observed entry is the device's own representation of that song.
+        let webIDs = try await webLibrary(id)
+        try Task.checkCancellation()
+        if webIDs == [id.rawValue] {
+            logger.notice("Resolved playlist song \(id.rawValue, privacy: .public) through the web library; absent from the on-device library")
+            return .library(observed)
+        }
+        guard webIDs.isEmpty else { throw ResolutionError.unresolved(id.rawValue) }
 
         // A playlist can also contain catalog songs not added to the library.
         // Ask the catalog explicitly; never infer this domain from ID syntax.
-        let catalogRequest = MusicCatalogResourceRequest<Song>(matching: \.id, equalTo: id)
-        let catalog = try await catalogRequest.response().items
+        let catalogSongs = try await catalog(id)
         try Task.checkCancellation()
-        guard catalog.count == 1, !catalog.hasNextBatch, let song = catalog.first,
+        guard catalogSongs.count == 1, let song = catalogSongs.first,
               song.id == id else { throw ResolutionError.unresolved(id.rawValue) }
         return .catalog(song)
+    }
+
+    private static func librarySongs(_ id: MusicItemID) async throws -> [Song] {
+        var request = MusicLibraryRequest<Song>()
+        request.filter(matching: \.id, equalTo: id)
+        request.limit = 2
+        let items = try await request.response().items
+        guard items.isEmpty || !items.hasNextBatch else { throw ResolutionError.unresolved(id.rawValue) }
+        return Array(items)
+    }
+
+    /// IDs of the library-song resources the account's web library returns.
+    private static func webLibrarySongIDs(_ id: MusicItemID) async throws -> [String] {
+        var components = URLComponents(string: "https://api.music.apple.com/v1/me/library/songs")!
+        components.queryItems = [URLQueryItem(name: "ids", value: id.rawValue)]
+        let data: Data
+        do {
+            data = try await MusicDataRequest(urlRequest: URLRequest(url: components.url!)).response().data
+        } catch let error as MusicDataRequest.Error where error.status == 404 {
+            return []
+        }
+        return try webLibrarySongIDs(from: data)
+    }
+
+    static func webLibrarySongIDs(from data: Data) throws -> [String] {
+        struct Envelope: Decodable {
+            struct Resource: Decodable { var id: String; var type: String }
+            var data: [Resource]
+        }
+        return try JSONDecoder().decode(Envelope.self, from: data).data
+            .filter { $0.type == "library-songs" }
+            .map(\.id)
+    }
+
+    private static func catalogSongs(_ id: MusicItemID) async throws -> [Song] {
+        let request = MusicCatalogResourceRequest<Song>(matching: \.id, equalTo: id)
+        let items = try await request.response().items
+        guard !items.hasNextBatch else { throw ResolutionError.unresolved(id.rawValue) }
+        return Array(items)
     }
 }

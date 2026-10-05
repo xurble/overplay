@@ -11,14 +11,14 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
 
     private let playlistFetcher: any MusicLibraryPlaylistFetching
     private let entryLoader: (Playlist) async throws -> [Playlist.Entry]
-    private let songResolver: (MusicItemID) async throws -> MusicLibrarySongResolver.Resolution
+    private let songResolver: (Song) async throws -> MusicLibrarySongResolver.Resolution
     private let identityResolver: MusicIdentityResolver
     private let entryItem: (Playlist.Entry) -> Playlist.Entry.Item?
 
     init(
         playlistFetcher: any MusicLibraryPlaylistFetching = CachingMusicLibraryPlaylistFetcher.shared,
         entryLoader: @escaping (Playlist) async throws -> [Playlist.Entry] = AppleMusicPlaylistTrackLoader.loadEntries,
-        songResolver: @escaping (MusicItemID) async throws -> MusicLibrarySongResolver.Resolution = MusicLibrarySongResolver.resolve,
+        songResolver: @escaping (Song) async throws -> MusicLibrarySongResolver.Resolution = MusicLibrarySongResolver.resolve,
         identityResolver: MusicIdentityResolver = .shared,
         entryItem: @escaping (Playlist.Entry) -> Playlist.Entry.Item? = { $0.item }
     ) {
@@ -166,17 +166,17 @@ enum AppleMusicPlaylistTrackLoader {
     /// Mappings remain scoped to this operation, never persisted as global aliases.
     static func resolvedSongSnapshots(
         from tracks: [Track], playlistID: String,
-        resolve: (MusicItemID) async throws -> MusicLibrarySongResolver.Resolution = MusicLibrarySongResolver.resolve
+        resolve: (Song) async throws -> MusicLibrarySongResolver.Resolution = MusicLibrarySongResolver.resolve
     ) async throws -> [TrackSnapshot] {
         var resolutions: [MusicItemID: MusicLibrarySongResolver.Resolution] = [:]
         var result: [TrackSnapshot] = []
         for track in tracks {
-            guard case .song = track else { continue }
+            guard case .song(let observed) = track else { continue }
             try Task.checkCancellation()
             let resolution: MusicLibrarySongResolver.Resolution
             if let existing = resolutions[track.id] { resolution = existing }
             else {
-                resolution = try await resolve(track.id)
+                resolution = try await resolve(observed)
                 try Task.checkCancellation()
                 resolutions[track.id] = resolution
             }
