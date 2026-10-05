@@ -73,7 +73,9 @@ final class PlaybackController {
 
     @ObservationIgnored private let player: any PlaybackPlayer
     @ObservationIgnored private let intentStore: PlaybackIntentStore
-    @ObservationIgnored private let preparePlaybackTracks: @MainActor ([TrackRecord]) async throws -> Void
+    /// Prepares tracks for playback; the set names tracks to resolve again
+    /// even when cached.
+    @ObservationIgnored private let preparePlaybackTracks: @MainActor ([TrackRecord], Set<UUID>) async throws -> Void
     @ObservationIgnored private let refreshUnknownApplePlayCount: (@MainActor (UUID, ModelContext) async -> Int)?
     @ObservationIgnored var isLibraryReady: @MainActor () -> Bool = { true }
     @ObservationIgnored private let sleep: @MainActor (Duration) async -> Void
@@ -127,7 +129,9 @@ final class PlaybackController {
     init(
         player: any PlaybackPlayer = ApplicationMusicPlaybackPlayer(),
         intentStore: PlaybackIntentStore = PlaybackIntentStore(),
-        preparePlaybackTracks: @escaping @MainActor ([TrackRecord]) async throws -> Void = { try await DevicePlaybackCache.prepare($0) },
+        preparePlaybackTracks: @escaping @MainActor ([TrackRecord], Set<UUID>) async throws -> Void = {
+            try await DevicePlaybackCache.prepare($0, refreshing: $1)
+        },
         refreshUnknownApplePlayCount: (@MainActor (UUID, ModelContext) async -> Int)? = nil,
         sleep: @escaping @MainActor (Duration) async -> Void = { try? await Task.sleep(for: $0) }
     ) {
@@ -951,14 +955,19 @@ final class PlaybackController {
 
     /// Resubmits an existing intent from a member, for resume, recovery and
     /// selection when the entry cannot be found in the live queue.
-    private func resubmit(_ intent: PlaybackIntent, from member: PlaybackIntent.Member?, position: Double) async {
+    private func resubmit(
+        _ intent: PlaybackIntent, from member: PlaybackIntent.Member?, position: Double, refreshingStart: Bool = false
+    ) async {
         startGeneration &+= 1
         let generation = startGeneration
         let records = intent.members.compactMap { member -> TrackRecord? in
             guard let id = UUID(uuidString: member.localTrackID), let context = countingContext() else { return nil }
             return try? TrackRecordRepository.track(id: id, in: context)
         }
-        let resolved = await resolvePlayableTracks(records, fallbackLocalTrackIDs: intent.members.map(\.localTrackID))
+        var refreshing: Set<UUID> = []
+        if refreshingStart, let id = member.flatMap({ UUID(uuidString: $0.localTrackID) }) { refreshing.insert(id) }
+        let resolved = await resolvePlayableTracks(records, refreshing: refreshing,
+                                                   fallbackLocalTrackIDs: intent.members.map(\.localTrackID))
         guard generation == startGeneration else { return }
         let playable = intent.members.compactMap { member -> (PlaybackIntent.Member, Track)? in
             guard let id = UUID(uuidString: member.localTrackID), let track = resolved[id] else { return nil }
@@ -1052,10 +1061,12 @@ final class PlaybackController {
 
     /// Native tracks from the device cache, preparing any that are missing.
     /// Unresolvable tracks are simply absent from the result (`PLAY-017`).
-    private func resolvePlayableTracks(_ records: [TrackRecord], fallbackLocalTrackIDs: [String] = []) async -> [UUID: Track] {
+    private func resolvePlayableTracks(
+        _ records: [TrackRecord], refreshing: Set<UUID> = [], fallbackLocalTrackIDs: [String] = []
+    ) async -> [UUID: Track] {
         if !records.isEmpty {
             do {
-                try await preparePlaybackTracks(records)
+                try await preparePlaybackTracks(records, refreshing)
             } catch {
                 TrackMetadataDiagnostics.log("playback preparation incomplete: \(error.localizedDescription)")
             }
@@ -1129,10 +1140,12 @@ final class PlaybackController {
         // gates stay closed and the control stays Retry while it prepares.
         // Escalation is recorded first: a press during preparation supersedes
         // this one at rung 3, and its newer generation drops this resubmit.
+        // The start track is looked up again, so cached play parameters that
+        // MusicKit can no longer play are not resubmitted unchanged.
         recoveryEscalation = (3, now)
         let messageBefore = playbackFailure?.message
         let generation = startGeneration &+ 1
-        await resubmit(intent, from: currentMember ?? intent.members.first, position: elapsedSeconds)
+        await resubmit(intent, from: currentMember ?? intent.members.first, position: elapsedSeconds, refreshingStart: true)
         guard startGeneration == generation else { return }
         // Keep a more specific message from the resubmission itself.
         if let failure = playbackFailure, failure.message == messageBefore {
@@ -1573,7 +1586,9 @@ final class PlaybackController {
     }
 
     private func prioritizeUnknownApplePlayCount() {
-        guard isPlaying, let item = currentPlaylistItem, item.applePlayCount == nil, let context = countingContext() else { return }
+        // A stalled player still reports playing; no lookups during a failure (`LOAD-001`).
+        guard isPlaying, playbackFailure == nil, let item = currentPlaylistItem, item.applePlayCount == nil,
+              let context = countingContext() else { return }
         let trackID = item.trackID
         guard appleCountLookupTrackID != trackID || appleCountLookupTask == nil else { return }
         appleCountLookupTask?.cancel()

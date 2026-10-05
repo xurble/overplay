@@ -247,7 +247,8 @@ struct PlaybackFixture {
         player: FakePlaybackPlayer = FakePlaybackPlayer(),
         intentStore: PlaybackIntentStore? = nil,
         container: ModelContainer? = nil,
-        preparePlaybackTracks: @escaping @MainActor ([TrackRecord]) async throws -> Void = { _ in }
+        preparePlaybackTracks: @escaping @MainActor ([TrackRecord], Set<UUID>) async throws -> Void = { _, _ in },
+        refreshUnknownApplePlayCount: @escaping @MainActor (UUID, ModelContext) async -> Int = { _, _ in 0 }
     ) throws {
         let container = try container ?? OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
@@ -295,7 +296,7 @@ struct PlaybackFixture {
         self.suiteName = suiteName
         controller = PlaybackController(
             player: player, intentStore: store, preparePlaybackTracks: preparePlaybackTracks,
-            refreshUnknownApplePlayCount: { _, _ in 0 }, sleep: PlaybackFixture.manualSampling
+            refreshUnknownApplePlayCount: refreshUnknownApplePlayCount, sleep: PlaybackFixture.manualSampling
         )
         controller.startMonitoring(context: context)
     }

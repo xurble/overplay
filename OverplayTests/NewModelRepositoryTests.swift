@@ -675,7 +675,7 @@ struct NewModelRepositoryTests {
         let controller = PlaybackController(player: FakePlaybackPlayer(), intentStore: PlaybackIntentStore(
             fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).json"),
             defaults: UserDefaults(suiteName: UUID().uuidString)!
-        ), preparePlaybackTracks: { _ in }, sleep: PlaybackFixture.manualSampling)
+        ), preparePlaybackTracks: { _, _ in }, sleep: PlaybackFixture.manualSampling)
         let settings = OverplaySettings(
             selectedPlaylistID: "playlist-1",
             selectedPlaylistName: "Main"

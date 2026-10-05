@@ -51,7 +51,7 @@ struct PlaybackControllerReviewRound3Tests {
         first.controller.stopMonitoring()
 
         let relaunched = PlaybackController(player: FakePlaybackPlayer(), intentStore: first.intentStore,
-                                            preparePlaybackTracks: { _ in }, sleep: PlaybackFixture.manualSampling)
+                                            preparePlaybackTracks: { _, _ in }, sleep: PlaybackFixture.manualSampling)
         relaunched.restoreIntent()
         #expect(relaunched.currentMember?.localTrackID == keeper.id.uuidString)
         #expect(relaunched.elapsedSeconds == 40)
@@ -67,7 +67,7 @@ struct PlaybackControllerReviewRound3Tests {
                                                    positionSeconds: 95, wasPlaying: false, updatedAt: .now))
 
         let relaunched = PlaybackController(player: FakePlaybackPlayer(), intentStore: first.intentStore,
-                                            preparePlaybackTracks: { _ in }, sleep: PlaybackFixture.manualSampling)
+                                            preparePlaybackTracks: { _, _ in }, sleep: PlaybackFixture.manualSampling)
         relaunched.restoreIntent()
         #expect(relaunched.elapsedSeconds == 0)
     }
@@ -75,7 +75,7 @@ struct PlaybackControllerReviewRound3Tests {
     // F4
     @Test func aSecondPressDuringRungThreeSupersedesItWithoutRungTwo() async throws {
         let gate = NthCallGate(call: 2)
-        let fixture = try PlaybackFixture(preparePlaybackTracks: { _ in await gate.arrive() })
+        let fixture = try PlaybackFixture(preparePlaybackTracks: { _, _ in await gate.arrive() })
         defer { fixture.cleanUp() }
         await start(fixture, at: 0)
         await stall(fixture)

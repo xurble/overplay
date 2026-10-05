@@ -138,7 +138,7 @@ struct PlaybackControllerReviewFixTests {
     // Finding 9
     @Test func aSlowerOlderStartCannotOverrideANewerSelection() async throws {
         let gate = PreparationGate()
-        let fixture = try PlaybackFixture(preparePlaybackTracks: { _ in await gate.waitOnFirstCall() })
+        let fixture = try PlaybackFixture(preparePlaybackTracks: { _, _ in await gate.waitOnFirstCall() })
         defer { fixture.cleanUp() }
         let slow = Task { await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[0],
                                                                 settings: fixture.settings, context: fixture.context) }
@@ -177,7 +177,7 @@ struct PlaybackControllerReviewFixTests {
         first.player.dehydrateCurrent()
 
         let relaunched = PlaybackController(player: first.player, intentStore: first.intentStore,
-                                            preparePlaybackTracks: { _ in }, refreshUnknownApplePlayCount: { _, _ in 0 },
+                                            preparePlaybackTracks: { _, _ in }, refreshUnknownApplePlayCount: { _, _ in 0 },
                                             sleep: PlaybackFixture.manualSampling)
         relaunched.restoreLocalPlaybackDisplay(context: first.context)
         await relaunched.reconcilePlayerState(context: first.context)
@@ -197,7 +197,7 @@ struct PlaybackControllerReviewFixTests {
         first.controller.stopMonitoring()
 
         let relaunched = PlaybackController(player: first.player, intentStore: first.intentStore,
-                                            preparePlaybackTracks: { _ in }, refreshUnknownApplePlayCount: { _, _ in 0 },
+                                            preparePlaybackTracks: { _, _ in }, refreshUnknownApplePlayCount: { _, _ in 0 },
                                             sleep: PlaybackFixture.manualSampling)
         relaunched.restoreIntent()
         relaunched.startMonitoring()

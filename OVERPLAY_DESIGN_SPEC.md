@@ -65,10 +65,10 @@ Music's global play count or skip count.
 | `PLAY-011` | The player is the authority on what is audible. Every Overplay surface displays the player-reported track, position, status and modes, even when the entry cannot be attributed. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-012` | The current entry is attributed to an intent member by identifier, then by unique normalized title/artist with duration corroboration. An unattributed entry is displayed, not counted, and has curation disabled; attribution never clears context. | `Overplay/Playback/PlaybackAttribution.swift` |
 | `PLAY-013` | Every transport command is one direct MusicKit call: no confirmation loop, no rejection of overlapping commands, no automatic queue replacement or retry. Displayed state changes only through observation. | `Overplay/Services/PlaybackController.swift` |
-| `PLAY-014` | Failures are shared across surfaces and recovered only by a user Play press through a bounded ladder (play; prepare and play; resubmit the intent at the current member and position). Pause is never disabled. | `Overplay/Services/PlaybackController.swift` |
+| `PLAY-014` | Failures are shared across surfaces and recovered only by a user Play press through a bounded ladder (play; prepare and play; resubmit the intent at the current member and position, looking that member's track up again). Pause is never disabled. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-015` | Membership changes never mutate the live queue. Retiring the current track issues Next; a member that left the scope is skipped when reached; additions appear at the next start. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-016` | Overplay does not write `MPNowPlayingInfoCenter` or register transport `MPRemoteCommandCenter` handlers; the `ApplicationMusicPlayer` host owns system Now Playing. A default-off diagnostic mirror exists only for device verification. | `Overplay/Services/SystemNowPlayingBridge.swift` |
-| `PLAY-017` | Native `Track` objects needed for playback are cached on disk per device; cold launches do not need to re-resolve the whole playlist, and unresolvable songs are omitted rather than failing playback. | `Overplay/Services/DevicePlaybackCache.swift` |
+| `PLAY-017` | Native `Track` objects needed for playback are cached on disk per device; cold launches do not need to re-resolve the whole playlist, a cached track is reused only while it is the song its record names, and unresolvable songs are omitted rather than failing playback. | `Overplay/Services/DevicePlaybackCache.swift` |
 | `COUNT-001` | Counting observes playback and never commands, delays or vetoes it. Skips require witnessed listening; playthroughs are position-based; suspended spans never produce skips. | `Overplay/Playback/ListeningSessionTracker.swift`, `Overplay/UseCases/PlaybackSessionEvaluationService.swift` |
 | `COUNT-002` | Counted outcomes are immutable ledger events with idempotent session IDs. Displayed counts are derived from the ledger, including absorbed track identities; merges and resets never edit counts. | `Overplay/Services/ListenLedger.swift`, `Overplay/Models/ListenEvent.swift` |
 | `LOAD-001` | Overplay adds no avoidable Apple Music load during playback: no steady-state queue enumeration, bulk Apple play-count refresh at most every 15 minutes and never while playing, library discovery scans at most every 6 hours, and no background MusicKit work while a playback failure is active. | `Overplay/Services/ApplePlayCountSyncService.swift`, `Overplay/Services/PeriodicPlaylistSyncService.swift` |
@@ -961,7 +961,9 @@ works:
 1. `play()`.
 2. `prepareToPlay()`, then `play()`.
 3. Resubmit the intent from the current member at the last known position,
-   then `play()`.
+   then `play()`. That member's track is looked up again first, so cached
+   play parameters MusicKit can no longer play are not resubmitted unchanged;
+   if the lookup fails, the cached track is used.
 
 A stalled player already reports `playing`, so a bare `play()` proves nothing:
 a stall starts at rung 2. Each recovery gets a fresh stall window, and the
@@ -1510,7 +1512,10 @@ Artwork image bytes and native MusicKit playback objects are excluded from
 SwiftData and CloudKit. `musicKitPlaybackData` reads the device playback cache
 (`PLAY-017`), which is stored on disk in the caches directory. Queue preparation
 reloads missing native objects from the typed library or catalog endpoint in
-batches. Songs that cannot be resolved are omitted from the queue with a
+batches. A cached object whose ID is no longer the record's library ID (or,
+without one, its catalog ID) is outdated, because a song removed and re-added
+or re-matched by sync gets a new ID, and is reloaded the same way; if that
+fails, the outdated object is still used. Songs that cannot be resolved are omitted from the queue with a
 diagnostic and a status message.
 
 ### Artwork cache manifest

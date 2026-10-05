@@ -49,25 +49,35 @@ nonisolated final class DevicePlaybackCache: Sendable {
         directory?.appendingPathComponent("\(id.uuidString).json")
     }
 
+    /// A cached track is current only when it decodes and is the song its
+    /// record now names. Removing and re-adding a song, or a sync that
+    /// re-matches the record, changes that ID while the disk cache keeps the
+    /// old play parameters across launches.
+    @MainActor static func hasCurrentData(for track: TrackRecord) -> Bool {
+        guard let data = shared.data(for: track.id),
+              let cached = try? JSONDecoder().decode(Track.self, from: data) else { return false }
+        return cached.id.rawValue == (track.libraryID ?? track.catalogID)
+    }
+
     /// Resolves whatever can be resolved, committing each track as it
     /// arrives, then reports the failures. One unavailable song must not
     /// prevent the rest of a playlist from playing (`PLAY-017`). Library and
     /// catalog songs are each fetched in one batched lookup per preparation;
     /// a failed lookup is remembered, so the remaining tracks of that domain
     /// fail fast instead of retrying against a struggling service (`LOAD-001`).
+    /// Tracks in `refreshing` are resolved again even when cached; a failed
+    /// refresh keeps the cached data.
     @MainActor static func prepare(
         _ tracks: [TrackRecord],
+        refreshing: Set<UUID> = [],
         libraryLookup: ([String]) async throws -> [String: Song] = { try await loadLibrarySongs($0) },
         catalogLookup: ([String]) async throws -> [String: Song] = { try await loadCatalogSongs($0) }
     ) async throws {
-        let uncached = tracks.filter { track in
-            guard let data = shared.data(for: track.id) else { return true }
-            return (try? JSONDecoder().decode(Track.self, from: data)) == nil
-        }
+        let uncached = tracks.filter { refreshing.contains($0.id) || !hasCurrentData(for: $0) }
         let libraryIDs = Array(Set(uncached.compactMap(\.libraryID))).sorted()
         let catalogIDs = Array(Set(uncached.filter { $0.libraryID == nil }.compactMap(\.catalogID))).sorted()
         var batches: [MusicResourceReference.Domain: Result<[String: Song], Error>] = [:]
-        try await prepare(tracks) { reference in
+        try await prepare(tracks, refreshing: refreshing) { reference in
             if batches[reference.domain] == nil {
                 do {
                     let songs = reference.domain == .librarySong
@@ -110,12 +120,12 @@ nonisolated final class DevicePlaybackCache: Sendable {
 
     @MainActor static func prepare(
         _ tracks: [TrackRecord],
+        refreshing: Set<UUID> = [],
         load: (MusicResourceReference) async throws -> Data
     ) async throws {
         var failures: [String] = []
         for track in tracks {
-            if let cached = shared.data(for: track.id),
-               (try? JSONDecoder().decode(Track.self, from: cached)) != nil { continue }
+            if !refreshing.contains(track.id), hasCurrentData(for: track) { continue }
             try Task.checkCancellation()
             let reference: MusicResourceReference
             if let id = track.libraryID { reference = .library(id, scope: track.libraryScope) }

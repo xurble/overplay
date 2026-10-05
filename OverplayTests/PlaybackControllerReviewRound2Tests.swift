@@ -82,7 +82,7 @@ struct PlaybackControllerReviewRound2Tests {
         first.controller.stopMonitoring()
 
         let player = FakePlaybackPlayer()
-        let relaunched = PlaybackController(player: player, intentStore: first.intentStore, preparePlaybackTracks: { _ in },
+        let relaunched = PlaybackController(player: player, intentStore: first.intentStore, preparePlaybackTracks: { _, _ in },
                                             refreshUnknownApplePlayCount: { _, _ in 0 }, sleep: PlaybackFixture.manualSampling)
         relaunched.restoreLocalPlaybackDisplay(context: first.context)
         await relaunched.playPlaylist(first.playlist, startingAt: first.tracks[2], settings: first.settings, context: first.context)
@@ -145,7 +145,7 @@ struct PlaybackControllerReviewRound2Tests {
         var calls = 0
         var failureDuringPreparation: PlaybackFailure?
         var controller: PlaybackController?
-        let fixture = try PlaybackFixture(preparePlaybackTracks: { _ in
+        let fixture = try PlaybackFixture(preparePlaybackTracks: { _, _ in
             calls += 1
             if calls == 2 { failureDuringPreparation = controller?.playbackFailure }
         })
