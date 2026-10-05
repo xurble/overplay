@@ -86,7 +86,7 @@ private final class IdentityProbe {
                         }
                         if case .song(let song) = entry.item {
                             do {
-                                switch try await MusicLibrarySongResolver.resolve(song.id) {
+                                switch try await MusicLibrarySongResolver.resolve(song) {
                                 case .library(let resolved): resolvedLibraryIDs.append(resolved.id.rawValue)
                                 case .catalog: resolvedCatalogCount += 1
                                 }

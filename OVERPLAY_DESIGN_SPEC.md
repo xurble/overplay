@@ -313,7 +313,11 @@ can expose different identifiers for the same song. Persistent playlist intake
 must establish the domain through the request that resolves the item, not ID
 syntax or serialized play parameters. Normal sync and playlist copying share
 one song-resolution boundary: a native library-song lookup resolves the observed
-ID, with an explicit catalog request for songs absent from the library. The web
+ID. A device's on-device library can lack songs that its account library and
+playlists still hold, so when the native lookup finds nothing, a web library
+request that returns exactly the observed ID resolves the song as that library
+song, keeping the observed entry as the device's representation of it. Only
+then does an explicit catalog request resolve songs absent from the library. The web
 library resource and its catalog relationship establish the corresponding shared
 identifiers. Native lookup mappings stay within the import operation; they are
 not persisted as global aliases.
