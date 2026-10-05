@@ -32,6 +32,7 @@ enum PlaylistMutationError: LocalizedError {
 struct PlaylistMutationService {
     // Inject only the remote boundary; durable movement remains shared.
     var addRemotely: (@MainActor (TrackRecord, PlaylistRecord, ModelContext) async throws -> Void)?
+    var remoteMembership = OneTruePlaylistRemoteMembership()
 
     @discardableResult
     func promote(
@@ -88,11 +89,7 @@ struct PlaylistMutationService {
         }
         try context.save()
         do {
-            if let addRemotely {
-                try await addRemotely(track, oneTruePlaylist, context)
-            } else {
-                try await add(track: track, to: oneTruePlaylist, in: context)
-            }
+            try await addUnlessPresent(track, to: oneTruePlaylist, in: context)
             guard let liveItem = try PlaylistItemRepository.item(id: sourceItemID, in: context),
                   liveItem.playlistID == sourcePlaylist.id,
                   liveItem.evictedAt == previousRetiredAt,
@@ -225,10 +222,21 @@ struct PlaylistMutationService {
         try await PlaylistRemoteMutationCoordinator.shared.perform(playlistID: playlist.musicPlaylistID) {
             guard try isCurrent(), playlist.allowsRemoteWrites else { throw PlaylistMutationError.trackMissing }
             try beforeAdd()
-            if let addRemotely { try await addRemotely(track, playlist, context) }
-            else { try await add(track: track, to: playlist, in: context) }
+            try await addUnlessPresent(track, to: playlist, in: context)
             guard try isCurrent() else { throw PlaylistMutationError.trackMissing }
         }
+    }
+
+    /// A song already in iCloud's copy, for example one whose earlier
+    /// removal could not run, is not added a second time (`PLAYLIST-008`).
+    /// When iCloud cannot be checked, adding is the safe default.
+    private func addUnlessPresent(_ track: TrackRecord, to playlist: PlaylistRecord, in context: ModelContext) async throws {
+        if (try? await remoteMembership.contains(track, in: playlist)) == true {
+            TrackMetadataDiagnostics.log("remote add skipped: already in playlist=\(playlist.musicPlaylistID) track=\(track.id)")
+            return
+        }
+        if let addRemotely { try await addRemotely(track, playlist, context) }
+        else { try await add(track: track, to: playlist, in: context) }
     }
 
     private func add(track: TrackRecord, to playlistRecord: PlaylistRecord, in context: ModelContext) async throws {
