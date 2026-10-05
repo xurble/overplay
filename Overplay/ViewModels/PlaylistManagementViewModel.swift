@@ -74,7 +74,6 @@ final class PlaylistManagementViewModel {
         for playlist: PlaylistRecord,
         playlistItems: [PlaylistItemRecord],
         tracks: [TrackRecord],
-        playbackOrderState: PlaybackOrderState,
         currentPlaylistID: String?,
         currentPlaylistItem: PlaylistItemRecord?,
         currentLocalTrackID: String? = nil,
@@ -228,8 +227,7 @@ final class PlaylistManagementViewModel {
 
     func orderedItems(
         for playlist: PlaylistRecord,
-        playlistItems: [PlaylistItemRecord],
-        playbackOrderState: PlaybackOrderState
+        playlistItems: [PlaylistItemRecord]
     ) -> [PlaylistItemRecord] {
         PlaylistDisplayOrder.orderedItems(
             visibleItems(for: playlist, playlistItems: playlistItems, scope: .active),

@@ -221,9 +221,6 @@ enum DuplicateTrackService {
         }
         try context.save()
         TrackRetentionPolicy.rekeyPlaybackTracks(mapping)
-        PlaybackOrderStore.rekeyLocalTrackIDs(mapping, from: defaults, flushImmediately: true)
-        PlaybackIdentityStore.rekeyLocalTrackIDs(mapping, from: defaults, flushImmediately: true)
-        LocalPlaybackStateStore.rekeyLocalTrackIDs(mapping, from: defaults, flushImmediately: true)
         return Result(trackID: track.id, itemID: item.id, mapping: mapping,
                       remoteRemovalIDs: Array(Set(removals)), previousOTP: otp)
     }

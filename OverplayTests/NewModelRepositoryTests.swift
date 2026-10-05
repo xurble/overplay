@@ -672,9 +672,10 @@ struct NewModelRepositoryTests {
     func triagePlaylistPlaybackUsesLinkedPlaylistState() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let playbackDefaults = PlaybackTestDefaults()
-        defer { playbackDefaults.cleanUp() }
-        let controller = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
+        let controller = PlaybackController(player: FakePlaybackPlayer(), intentStore: PlaybackIntentStore(
+            fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).json"),
+            defaults: UserDefaults(suiteName: UUID().uuidString)!
+        ), preparePlaybackTracks: { _ in }, sleep: { _ in })
         let settings = OverplaySettings(
             selectedPlaylistID: "playlist-1",
             selectedPlaylistName: "Main"
@@ -690,6 +691,6 @@ struct NewModelRepositoryTests {
         await controller.playPlaylist(triagePlaylist, settings: settings, context: context)
 
         #expect(controller.currentPlaylistID == nil)
-        #expect(controller.statusMessage == "No locally cached active tracks for Triage.")
+        #expect(controller.statusMessage == "No active tracks in Triage.")
     }
 }

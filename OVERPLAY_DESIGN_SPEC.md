@@ -918,9 +918,11 @@ member and position. With no intent, it starts the default playlist.
 
 ### Failure and recovery (`PLAY-014`)
 
-A thrown command error, or a stall (status `playing` while the position does
-not advance for 10 consecutive samples with the network reachable), sets one
-shared playback failure with a message and start time. The iPhone/iPad status
+A failed play, resume or queue submission, or a stall (status `playing`
+while the position does not advance for 10 consecutive samples), sets one
+shared playback failure with a message and start time. A failed Next or
+Previous is logged and leaves playback as observed, because at the end of a
+queue that is normal. The iPhone/iPad status
 line shows it, and CarPlay presents one alert per failure episode. Witnessed
 progress or a successful Play clears it.
 

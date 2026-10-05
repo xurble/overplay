@@ -43,9 +43,6 @@ enum VideoTrackCleanupService {
         guard !videos.isEmpty else { return 0 }
         let trackIDs = Set(videos.map(\.id))
         let localIDs = Set(trackIDs.map(\.uuidString))
-        let musicIDs = Set(videos.flatMap {
-            [$0.catalogID, $0.libraryID].compactMap { $0 } + $0.identityAliases
-        })
         // UUID references are not SwiftData relationships, so remove dependents explicitly.
         for item in try PlaylistItemRepository.allItems(in: context) where trackIDs.contains(item.trackID) {
             context.delete(item)
@@ -56,10 +53,6 @@ enum VideoTrackCleanupService {
         for video in videos { context.delete(video) }
         try context.save()
 
-        if let state = LocalPlaybackStateStore.load(from: defaults),
-           localIDs.contains(state.localTrackID ?? "") || musicIDs.contains(state.musicItemID) {
-            LocalPlaybackStateStore.clear(from: defaults, flushImmediately: true)
-        }
         if let waypoint = PlaybackWaypointStore.load(from: defaults), localIDs.contains(waypoint.localTrackID) {
             PlaybackWaypointStore.clear(from: defaults, flushImmediately: true)
         }

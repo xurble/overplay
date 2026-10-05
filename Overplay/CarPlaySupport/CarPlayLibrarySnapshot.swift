@@ -21,7 +21,6 @@ enum CarPlayLibrarySnapshot {
 
     static func trackSummaries(
         forPlaylistID playlistID: UUID,
-        playbackOrderState: PlaybackOrderState? = nil,
         scope: PlaylistPlaybackScope = .active,
         in context: ModelContext
     ) throws -> [TrackSummaryPresentation] {
@@ -32,7 +31,7 @@ enum CarPlayLibrarySnapshot {
             playlists: playlists,
             items: items,
             tracks: tracks
-        ).trackSummaries(forPlaylistID: playlistID, playbackOrderState: playbackOrderState, scope: scope)
+        ).trackSummaries(forPlaylistID: playlistID, scope: scope)
     }
 
     /// Active playback surfaces consume the controller-owned snapshot so a

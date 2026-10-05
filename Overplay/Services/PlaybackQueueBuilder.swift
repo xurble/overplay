@@ -2,19 +2,6 @@ import Foundation
 @preconcurrency import MusicKit
 
 enum PlaybackQueueBuilder {
-    static func playbackOrderTracks(
-        items: [PlaylistItemRecord],
-        scope: PlaylistPlaybackScope = .active
-    ) -> [PlaybackOrderTrack] {
-        items.map { item in
-            PlaybackOrderTrack(
-                id: item.trackID.uuidString,
-                createdAt: item.createdAt,
-                isPlayable: scope.includes(item)
-            )
-        }
-    }
-
     static func cachedPlayableMusicTracks(
         items: [PlaylistItemRecord],
         tracksByID: [UUID: TrackRecord],
@@ -58,15 +45,7 @@ enum PlaybackQueueBuilder {
         }
     }
 
-    static func trackRecord(
-        matching musicItemID: String,
-        tracks: [TrackRecord]
-    ) -> TrackRecord? {
-        tracks.first { track in
-            musicItemIDs(for: track).contains(musicItemID)
-        }
-    }
-
+    /// Every Apple Music identifier a track may be reported under.
     static func musicItemIDs(for track: TrackRecord) -> [String] {
         var ids = Array(Set([track.catalogID, track.libraryID].compactMap { $0 } + track.identityAliases))
 
@@ -80,41 +59,5 @@ enum PlaybackQueueBuilder {
         }
 
         return ids
-    }
-
-    static func localTrackID(
-        matching musicItemID: String,
-        tracksByID: [UUID: TrackRecord]
-    ) -> String? {
-        tracksByID.first { _, track in
-            musicItemIDs(for: track).contains(musicItemID)
-        }?.key.uuidString
-    }
-
-    static func localTrackID(
-        for musicTrack: Track,
-        tracksByID: [UUID: TrackRecord]
-    ) -> String? {
-        localTrackID(matching: musicTrack.id.rawValue, tracksByID: tracksByID)
-    }
-
-    static func orderedMusicTracks(
-        _ musicTracks: [Track],
-        orderedTrackIDs: [String],
-        tracksByID: [UUID: TrackRecord]
-    ) -> [Track] {
-        let musicTracksByLocalID = musicTracksByLocalID(musicTracks, tracksByID: tracksByID)
-
-        return orderedTrackIDs.compactMap { musicTracksByLocalID[$0] }
-    }
-
-    static func musicTracksByLocalID(
-        _ musicTracks: [Track],
-        tracksByID: [UUID: TrackRecord]
-    ) -> [String: Track] {
-        musicTracks.compactMap { musicTrack in
-            localTrackID(for: musicTrack, tracksByID: tracksByID).map { ($0, musicTrack) }
-        }
-        .firstValueDictionary(keyedBy: \.0, value: \.1)
     }
 }

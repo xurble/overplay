@@ -207,15 +207,6 @@ struct CarPlayLibrarySnapshotTests {
 
         let tracks = try CarPlayLibrarySnapshot.trackSummaries(
             forPlaylistID: playlist.id,
-            playbackOrderState: PlaybackOrderState(
-                playerID: "main",
-                musicPlaylistID: playlist.musicPlaylistID,
-                orderedTrackIDs: [
-                    thirdTrack.id.uuidString,
-                    firstTrack.id.uuidString,
-                    secondTrack.id.uuidString
-                ]
-            ),
             in: context
         )
 
@@ -235,12 +226,7 @@ struct CarPlayLibrarySnapshotTests {
         let initial = ActivePlaylistSnapshot(
             playlist: playlist,
             items: [item],
-            tracks: [track],
-            playbackOrderState: PlaybackOrderState(
-                playerID: "main",
-                musicPlaylistID: playlist.musicPlaylistID,
-                orderedTrackIDs: [track.id.uuidString]
-            )
+            tracks: [track]
         )
         item.playthroughCount = 1
         let updated = try #require(initial.updatingRow(for: item))

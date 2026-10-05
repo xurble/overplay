@@ -37,17 +37,11 @@ struct ActivePlaylistSnapshotTests {
             skipCount: 3,
             createdAt: Date(timeIntervalSince1970: 2)
         )
-        let state = PlaybackOrderState(
-            playerID: "player",
-            musicPlaylistID: playlist.musicPlaylistID,
-            orderedTrackIDs: [firstTrack.id.uuidString, secondTrack.id.uuidString]
-        )
 
         let snapshot = ActivePlaylistSnapshot(
             playlist: playlist,
             items: [firstItem, secondItem],
             tracks: [firstTrack, secondTrack],
-            playbackOrderState: state,
             currentLocalTrackID: secondTrack.id.uuidString,
             currentMusicItemID: "catalog-second"
         )
@@ -76,12 +70,7 @@ struct ActivePlaylistSnapshotTests {
         let snapshot = ActivePlaylistSnapshot(
             playlist: playlist,
             items: [item],
-            tracks: [track],
-            playbackOrderState: PlaybackOrderState(
-                playerID: "player",
-                musicPlaylistID: playlist.musicPlaylistID,
-                orderedTrackIDs: [track.id.uuidString]
-            )
+            tracks: [track]
         )
 
         item.skipCount = 5
@@ -106,12 +95,7 @@ struct ActivePlaylistSnapshotTests {
         let snapshot = ActivePlaylistSnapshot(
             playlist: playlist,
             items: [item],
-            tracks: [track],
-            playbackOrderState: PlaybackOrderState(
-                playerID: "player",
-                musicPlaylistID: playlist.musicPlaylistID,
-                orderedTrackIDs: [track.id.uuidString]
-            )
+            tracks: [track]
         )
 
         let unknownItem = PlaylistItemRecord(
@@ -137,7 +121,6 @@ struct ActivePlaylistSnapshotTests {
             playlist: playlist,
             items: [firstItem, secondItem],
             tracks: [firstTrack, secondTrack],
-            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
             currentPlaylistItemID: firstItem.id
         )
 
@@ -162,7 +145,6 @@ struct ActivePlaylistSnapshotTests {
             playlist: playlist,
             items: [item],
             tracks: [track],
-            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
             currentPlaylistItemID: item.id,
             updatedAt: revision
         )
@@ -197,7 +179,6 @@ struct ActivePlaylistSnapshotTests {
             playlist: playlist,
             items: [item],
             tracks: [track],
-            playbackOrderState: PlaybackOrderState(playerID: "player", musicPlaylistID: playlist.musicPlaylistID),
             currentPlaylistItemID: item.id
         )
 

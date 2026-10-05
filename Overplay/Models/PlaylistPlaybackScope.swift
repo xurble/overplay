@@ -1,6 +1,6 @@
 import Foundation
 
-enum PlaylistPlaybackScope: String, CaseIterable, Identifiable, Sendable {
+enum PlaylistPlaybackScope: String, CaseIterable, Codable, Identifiable, Sendable {
     case active
     case retired
 

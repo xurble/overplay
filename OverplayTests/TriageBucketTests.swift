@@ -407,57 +407,6 @@ struct TriageBucketTests {
         #expect(bucketItems.first?.evictionReason == .manual)
     }
 
-    @Test("migration rekeys the restore point that pointed at a migrated playlist")
-    func migrationRekeysRestorePointForMigratedPlaylist() throws {
-        let container = try OverplayTestSupport.makeModelContainer()
-        let context = container.mainContext
-        _ = try insertLegacyTriageData(in: context)
-        let playbackDefaults = PlaybackTestDefaults()
-        defer { playbackDefaults.cleanUp() }
-        let defaults = playbackDefaults.defaults
-        LocalPlaybackStateStore.save(
-            LocalPlaybackState(
-                playlistID: "legacy-1",
-                musicItemID: "shared",
-                elapsedSeconds: 12,
-                wasPlaying: false,
-                updatedAt: Date(timeIntervalSince1970: 100)
-            ),
-            to: defaults
-        )
-
-        try TriageBucketMigrationService.migrate(in: context, defaults: defaults)
-
-        #expect(
-            LocalPlaybackStateStore.load(from: defaults)?.playlistID
-                == PlaylistRecord.triageBucketMusicPlaylistID
-        )
-    }
-
-    @Test("migration leaves a One True Playlist restore point alone")
-    func migrationLeavesOneTruePlaylistRestorePointAlone() throws {
-        let container = try OverplayTestSupport.makeModelContainer()
-        let context = container.mainContext
-        _ = try insertLegacyTriageData(in: context)
-        let playbackDefaults = PlaybackTestDefaults()
-        defer { playbackDefaults.cleanUp() }
-        let defaults = playbackDefaults.defaults
-        LocalPlaybackStateStore.save(
-            LocalPlaybackState(
-                playlistID: "main",
-                musicItemID: "shared",
-                elapsedSeconds: 12,
-                wasPlaying: false,
-                updatedAt: Date(timeIntervalSince1970: 100)
-            ),
-            to: defaults
-        )
-
-        try TriageBucketMigrationService.migrate(in: context, defaults: defaults)
-
-        #expect(LocalPlaybackStateStore.load(from: defaults)?.playlistID == "main")
-    }
-
     @Test("migration creates the initial bucket when there is no legacy triage data")
     func migrationCreatesInitialBucketWithoutLegacyTriageData() throws {
         let container = try OverplayTestSupport.makeModelContainer()

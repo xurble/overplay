@@ -340,16 +340,16 @@ struct ApplePlayCountTests {
         let item = try fixture(context)
         let track = try #require(try TrackRecordRepository.track(id: item.trackID, in: context))
         let playlist = try #require(try PlaylistRepository.playlist(id: item.playlistID, in: context))
-        let defaults = PlaybackTestDefaults()
-        defer { defaults.cleanUp() }
-        let controller = PlaybackController(localPlaybackDefaults: defaults.defaults)
-        controller.currentPlaylistID = playlist.musicPlaylistID
-        controller.currentPlaylistItem = item
-        controller.currentTrack = CurrentPlaybackTrack(track, musicItemID: "i.song", item: item)
-        controller.activePlaylistSnapshot = ActivePlaylistSnapshot(
-            playlist: playlist, items: [item], tracks: [track],
-            playbackOrderState: PlaybackOrderState(playerID: controller.playerID, musicPlaylistID: playlist.musicPlaylistID)
-        )
+        DevicePlaybackCache.shared.set(try PlaybackFixture.encodedTrack(id: "i.song", title: "Song", artist: "Artist"), for: track.id)
+        let suite = "OverplayTests.AppleCount.\(UUID().uuidString)"
+        let store = PlaybackIntentStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("\(suite).json"),
+                                        defaults: UserDefaults(suiteName: suite)!)
+        defer { store.clear() }
+        let controller = PlaybackController(player: FakePlaybackPlayer(), intentStore: store, preparePlaybackTracks: { _ in },
+                                            refreshUnknownApplePlayCount: { _, _ in 0 }, sleep: { _ in })
+        controller.startMonitoring(context: context)
+        await controller.playPlaylist(playlist, startingAt: track, settings: OverplaySettings(), context: context)
+        defer { controller.stopMonitoring() }
         let otherContext = ModelContext(container)
         let service = ApplePlayCountSyncService(fetch: { _ in [observation(count: 10)] })
         #expect(await service.refresh(in: otherContext, playbackController: controller) == 1)

@@ -12,13 +12,16 @@ final class AppRuntime {
 
     let authorizationService = MusicAuthorizationService()
     let playbackController = PlaybackController()
-    let remoteCommandService = RemoteCommandService()
+    let nowPlayingBridge = SystemNowPlayingBridge()
     let periodicPlaylistSyncService = PeriodicPlaylistSyncService()
 
     @ObservationIgnored private var modelContainer: ModelContainer?
     @ObservationIgnored private var cloudImportObserver: NSObjectProtocol?
 
-    private init() {}
+    private init() {
+        // Counting and item reads wait for restoration; playback does not.
+        playbackController.isLibraryReady = { [weak self] in self?.libraryRestoration.isReady ?? false }
+    }
 
     func configure(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer

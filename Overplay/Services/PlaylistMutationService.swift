@@ -147,7 +147,6 @@ struct PlaylistMutationService {
         TrackLocationService.moveToOTP(promotedItem, playlist: oneTruePlaylist, source: .user, at: promotedAt, in: context)
         promotedItem.lastSeenInPlaylistAt = promotedAt
         promotedItem.updatedAt = promotedAt
-        try appendToLocalOrder(item: promotedItem, playlist: oneTruePlaylist, in: context)
 
         return promotedItem
     }
@@ -185,9 +184,6 @@ struct PlaylistMutationService {
         }
         item.lastSeenInPlaylistAt = addedAt
         item.updatedAt = addedAt
-        if item.playlistID == playlist.id {
-            try appendToLocalOrder(item: item, playlist: playlist, in: context)
-        }
 
         EventRepository.logHistory(
             playlistID: playlist.id,
@@ -266,19 +262,5 @@ struct PlaylistMutationService {
             throw PlaylistMutationError.musicItemMissing
         }
         return song
-    }
-
-    private func appendToLocalOrder(
-        item: PlaylistItemRecord,
-        playlist: PlaylistRecord,
-        in context: ModelContext
-    ) throws {
-        let items = try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
-        PlaybackOrderCoordinator.appendTrackIDs(
-            [item.trackID.uuidString],
-            playerID: "main",
-            playlistID: playlist.musicPlaylistID,
-            orderTracks: PlaybackQueueBuilder.playbackOrderTracks(items: items)
-        )
     }
 }

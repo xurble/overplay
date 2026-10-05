@@ -77,9 +77,7 @@ enum TrackIdentityMergeService {
             try context.save()
         }
         if !summary.localTrackIDMapping.isEmpty {
-            PlaybackOrderStore.rekeyLocalTrackIDs(summary.localTrackIDMapping, from: defaults, flushImmediately: true)
-            PlaybackIdentityStore.rekeyLocalTrackIDs(summary.localTrackIDMapping, from: defaults, flushImmediately: true)
-            LocalPlaybackStateStore.rekeyLocalTrackIDs(summary.localTrackIDMapping, from: defaults, flushImmediately: true)
+            AppRuntime.shared.playbackController.rekeyIntent(summary.localTrackIDMapping)
         }
         if summary.didChange {
             TrackMetadataDiagnostics.log(

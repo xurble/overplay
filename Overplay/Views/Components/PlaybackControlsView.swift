@@ -17,7 +17,7 @@ struct PlaybackControlsView: View {
                 Image(systemName: "backward.fill")
             }
             .accessibilityLabel("Previous track")
-            .disabled(!playbackController.remoteCommandAvailability.canSkipToPrevious)
+            .disabled(!playbackController.hasLiveQueue)
             .buttonStyle(PlaybackControlButtonStyle(
                 controlSize: controlSize,
                 prominence: .secondary,
@@ -43,7 +43,7 @@ struct PlaybackControlsView: View {
                 Image(systemName: controlsPresentation.skipForwardSystemImage)
             }
             .accessibilityLabel(controlsPresentation.skipForwardAccessibilityLabel)
-            .disabled(!playbackController.remoteCommandAvailability.canSkipToNext)
+            .disabled(!playbackController.hasLiveQueue)
             .buttonStyle(PlaybackControlButtonStyle(
                 controlSize: controlSize,
                 prominence: .secondary,
@@ -52,21 +52,12 @@ struct PlaybackControlsView: View {
         }
     }
 
+    /// Pause is never disabled, and Play works whenever there is a live queue,
+    /// a playback intent to resume, or a default playlist (`PLAY-014`).
     private var canUsePrimaryPlaybackAction: Bool {
-        if playbackController.isPlaybackTransitionInFlight {
-            return playbackController.remoteCommandAvailability.canPause
-        }
-        // The player holding a queue is the cheap, observable case, and it
-        // short-circuits the two store lookups below out of every render.
-        return playbackController.canSkipTracks
-            || playbackController.canControlPlayback
-            || (try? PlaybackTrackResolver.restoredPlaybackTarget(
-                currentPlaylistID: playbackController.currentPlaylistID,
-                currentPlaylistItem: playbackController.currentPlaylistItem,
-                currentLocalTrackID: playbackController.nowPlayingDisplayLocalTrackID,
-                currentTrack: playbackController.currentTrack,
-                in: modelContext
-            )) != nil
+        playbackController.isPlaying
+            || playbackController.hasLiveQueue
+            || playbackController.intent != nil
             || (try? PlaybackTrackResolver.defaultPlaybackPlaylist(
                 settings: settings,
                 in: modelContext

@@ -212,23 +212,11 @@ private struct PlaylistManagementContentView: View {
         }
     }
 
-    // Read-only on purpose: the persisting reconcile
-    // (playbackOrderState(for:scope:items:)) used to run inside body, which
-    // meant a UserDefaults write as a view-update side effect.
-    private var selectedPlaybackOrderState: PlaybackOrderState {
-        playbackController.previewedPlaybackOrderState(
-            for: playlist.musicPlaylistID,
-            scope: selectedScope,
-            items: playlistItems
-        )
-    }
-
     private var detailPresentation: PlaylistManagementViewModel.DetailPresentation {
         viewModel.detailPresentation(
             for: playlist,
             playlistItems: playlistItems,
             tracks: tracks,
-            playbackOrderState: selectedPlaybackOrderState,
             currentPlaylistID: playbackController.currentPlaylistID,
             currentPlaylistItem: playbackController.currentPlaylistItem,
             currentLocalTrackID: playbackController.nowPlayingDisplayLocalTrackID,

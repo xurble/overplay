@@ -139,24 +139,6 @@ struct DuplicateTrackServiceTests {
         let fresh = ModelContext(container)
         #expect(try TrackRecordRepository.track(id: track.id, in: fresh)?.isrc == "ISRC")
     }
-    @Test func playbackDisplayFollowsMergedDonorImmediately() throws {
-        let container = try OverplayTestSupport.makeModelContainer(); let context = container.mainContext
-        let candidates = try fixture(context)
-        let donor = candidates[1]
-        let defaults = PlaybackTestDefaults()
-        defer { defaults.cleanUp() }
-        let controller = PlaybackController(localPlaybackDefaults: defaults.defaults)
-        controller.currentPlaylistID = PlaylistRecord.triageBucketMusicPlaylistID
-        controller.currentPlaylistItem = try PlaylistItemRepository.item(id: donor.itemID, in: context)
-        controller.currentTrack = CurrentPlaybackTrack(id: donor.catalogID!, title: donor.title, artistName: donor.artist)
-        let result = try DuplicateTrackService.merge(candidates, destination: nil, in: context, defaults: defaults.defaults)
-        controller.applyDuplicateMerge(result, previousCurrentID: donor.id, context: context)
-        #expect(controller.currentPlaylistItem?.id == result.itemID)
-        #expect(controller.currentPlaylistItem?.trackID == result.trackID)
-        #expect(controller.currentTrack?.skipCount == 3)
-        #expect(controller.currentTrack?.playthroughCount == 6)
-    }
-
     @Test func retiredMergePreservesNewestRetirementAgainstOlderSourceLink() throws {
         let container = try OverplayTestSupport.makeModelContainer(); let context = container.mainContext
         let candidates = try fixture(context)

@@ -1,0 +1,301 @@
+import Foundation
+@preconcurrency import MusicKit
+import SwiftData
+import Testing
+@testable import Overplay
+
+/// An adversarial stand-in for MusicKit's player (spec: Acceptance gate).
+///
+/// It can re-issue entry IDs, report another identifier domain, hydrate late or
+/// never, fail or block commands, change entries with no Overplay command, and
+/// report a shuffled queue order. A fake without these hides the failures that
+/// matter on device.
+@MainActor
+final class FakePlaybackPlayer: PlaybackPlayer {
+    enum Failure: Error { case commandFailed }
+
+    private(set) var entries: [PlayerEntrySnapshot] = []
+    private var hiddenItems: [String: PlayerItemSnapshot] = [:]
+    private(set) var currentIndex: Int?
+    private var entryCounter = 0
+
+    var playbackStatus: MusicPlayer.PlaybackStatus = .stopped
+    var playbackTime: TimeInterval = 0
+    var reportedShuffleMode: MusicPlayer.ShuffleMode? = .off
+    var reportedRepeatMode: MusicPlayer.RepeatMode? = MusicPlayer.RepeatMode.none
+
+    /// Maps a submitted track ID to the ID the player reports for it.
+    var reportedIDForSubmittedID: (String) -> String = { $0 }
+    /// When false, submitted entries carry no item until `hydrateAll()`.
+    var hydratesOnSubmit = true
+    var playFailuresRemaining = 0
+    var prepareFailuresRemaining = 0
+    var nextFailuresRemaining = 0
+
+    private(set) var commands: [String] = []
+    private(set) var submittedTitles: [[String]] = []
+    private(set) var submittedStartIndices: [Int] = []
+    private var observationHandler: (@MainActor (Set<PlaybackPlayerChange>) async -> Void)?
+
+    var submitCount: Int { submittedTitles.count }
+    var playCount: Int { commands.filter { $0 == "play" }.count }
+
+    var currentEntryID: String? { currentEntry?.entryID }
+
+    var currentEntry: PlayerEntrySnapshot? {
+        currentIndex.flatMap { entries.indices.contains($0) ? entries[$0] : nil }
+    }
+
+    var queueEntries: [PlayerEntrySnapshot] { entries }
+
+    func setShuffleMode(_ mode: MusicPlayer.ShuffleMode) {
+        commands.append("shuffle=\(mode)")
+        reportedShuffleMode = mode
+    }
+
+    func setRepeatMode(_ mode: MusicPlayer.RepeatMode) {
+        commands.append("repeat=\(mode)")
+        reportedRepeatMode = mode
+    }
+
+    func submitQueue(_ tracks: [Track], startingAt index: Int) {
+        commands.append("submit")
+        submittedTitles.append(tracks.map(\.title))
+        submittedStartIndices.append(index)
+        hiddenItems = [:]
+        entries = tracks.map { track in
+            entryCounter += 1
+            let entryID = "entry-\(entryCounter)"
+            let reportedID = reportedIDForSubmittedID(track.id.rawValue)
+            let item = PlayerItemSnapshot(
+                id: reportedID, identifiers: [reportedID], title: track.title, artistName: track.artistName,
+                albumTitle: track.albumTitle, artworkURLTemplate: nil, durationSeconds: track.duration
+            )
+            if !hydratesOnSubmit { hiddenItems[entryID] = item }
+            return PlayerEntrySnapshot(entryID: entryID, item: hydratesOnSubmit ? item : nil)
+        }
+        currentIndex = entries.isEmpty ? nil : min(max(index, 0), entries.count - 1)
+        playbackTime = 0
+    }
+
+    func prepareToPlay() async throws {
+        commands.append("prepare")
+        if prepareFailuresRemaining > 0 {
+            prepareFailuresRemaining -= 1
+            throw Failure.commandFailed
+        }
+    }
+
+    func play() async throws {
+        commands.append("play")
+        if playFailuresRemaining > 0 {
+            playFailuresRemaining -= 1
+            throw Failure.commandFailed
+        }
+        if currentIndex != nil { playbackStatus = .playing }
+    }
+
+    func pause() {
+        commands.append("pause")
+        if playbackStatus == .playing { playbackStatus = .paused }
+    }
+
+    func skipToNextEntry() async throws {
+        commands.append("next")
+        if nextFailuresRemaining > 0 {
+            nextFailuresRemaining -= 1
+            throw Failure.commandFailed
+        }
+        advance()
+    }
+
+    func skipToPreviousEntry() async throws {
+        commands.append("previous")
+        guard let currentIndex else { return }
+        self.currentIndex = max(currentIndex - 1, 0)
+        playbackTime = 0
+    }
+
+    func selectEntry(withID entryID: String) throws {
+        commands.append("select")
+        guard let index = entries.firstIndex(where: { $0.entryID == entryID }) else {
+            throw PlaybackQueueEntryError.entryNotInQueue
+        }
+        currentIndex = index
+        playbackTime = 0
+    }
+
+    func startObservingChanges(_ handler: @escaping @MainActor (Set<PlaybackPlayerChange>) async -> Void) {
+        observationHandler = handler
+    }
+
+    func refreshObservationBindings() {}
+    func stopObservingChanges() { observationHandler = nil }
+
+    // MARK: - Behaviour another surface or MusicKit itself causes
+
+    /// The player moves on without Overplay: natural advance, Lock Screen,
+    /// CarPlay transport or a headset.
+    func externallyAdvance() async {
+        advance()
+        await notify()
+    }
+
+    func externallySelect(index: Int) async {
+        currentIndex = index
+        playbackTime = 0
+        await notify()
+    }
+
+    /// MusicKit re-materializes the queue with new entry IDs.
+    func reissueEntryIDs() {
+        entries = entries.map { entry in
+            entryCounter += 1
+            return PlayerEntrySnapshot(entryID: "entry-\(entryCounter)", item: entry.item)
+        }
+    }
+
+    func hydrateAll() {
+        entries = entries.map { entry in
+            PlayerEntrySnapshot(entryID: entry.entryID, item: entry.item ?? hiddenItems[entry.entryID])
+        }
+        hiddenItems = [:]
+    }
+
+    /// Replaces the current entry's item, e.g. a song Overplay never queued.
+    func replaceCurrentItem(with item: PlayerItemSnapshot?) {
+        guard let currentIndex else { return }
+        entries[currentIndex].item = item
+    }
+
+    func reverseQueueOrder() {
+        let currentID = currentEntryID
+        entries.reverse()
+        currentIndex = entries.firstIndex { $0.entryID == currentID }
+    }
+
+    func notify() async {
+        await observationHandler?([.queue, .state])
+    }
+
+    private func advance() {
+        guard let currentIndex else { return }
+        if currentIndex + 1 < entries.count {
+            self.currentIndex = currentIndex + 1
+        } else {
+            self.currentIndex = nil
+            playbackStatus = .stopped
+        }
+        playbackTime = 0
+    }
+}
+
+/// A store, a playlist of tracks with cached native playback data, and a
+/// controller driven by `FakePlaybackPlayer`.
+@MainActor
+struct PlaybackFixture {
+    let container: ModelContainer
+    let context: ModelContext
+    let settings: OverplaySettings
+    let playlist: PlaylistRecord
+    let tracks: [TrackRecord]
+    let items: [PlaylistItemRecord]
+    let player: FakePlaybackPlayer
+    let intentStore: PlaybackIntentStore
+    let controller: PlaybackController
+    private let suiteName: String
+
+    init(
+        trackCount: Int = 3,
+        role: PlaylistRole = .oneTruePlaylist,
+        player: FakePlaybackPlayer = FakePlaybackPlayer(),
+        intentStore: PlaybackIntentStore? = nil,
+        container: ModelContainer? = nil,
+        preparePlaybackTracks: @escaping @MainActor ([TrackRecord]) async throws -> Void = { _ in }
+    ) throws {
+        let container = try container ?? OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let settings = try SettingsRepository.settings(in: context)
+        let playlist: PlaylistRecord
+        var tracks: [TrackRecord] = []
+        var items: [PlaylistItemRecord] = []
+        if let existing = try PlaylistRepository.playlist(musicPlaylistID: "playlist-main", in: context) {
+            playlist = existing
+            items = try PlaylistItemRepository.items(forPlaylistID: existing.id, in: context)
+            tracks = try TrackRecordRepository.tracks(ids: items.map(\.trackID), in: context)
+        } else {
+            playlist = role == .triageBucket
+                ? try PlaylistRepository.triageBucket(in: context)
+                : PlaylistRecord(musicPlaylistID: "playlist-main", name: "Main", role: role)
+            if role != .triageBucket { context.insert(playlist) }
+            for index in 0..<trackCount {
+                let track = TrackRecord(catalogID: "cat-\(index)", libraryID: "i.lib-\(index)",
+                                        title: "Song \(index)", artistName: "Artist \(index)", durationSeconds: 180)
+                context.insert(track)
+                // Newest first: the earliest index is displayed and queued first.
+                let item = PlaylistItemRecord(playlistID: playlist.id, trackID: track.id,
+                                              createdAt: Date(timeIntervalSince1970: 1_000_000 - Double(index)))
+                context.insert(item)
+                DevicePlaybackCache.shared.set(try Self.encodedTrack(id: "i.lib-\(index)", title: "Song \(index)",
+                                                                     artist: "Artist \(index)"), for: track.id)
+                tracks.append(track)
+                items.append(item)
+            }
+            try context.save()
+        }
+        let suiteName = "OverplayTests.Intent.\(UUID().uuidString)"
+        let store = intentStore ?? PlaybackIntentStore(
+            fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("\(suiteName).json"),
+            defaults: UserDefaults(suiteName: suiteName)!
+        )
+        self.container = container
+        self.context = context
+        self.settings = settings
+        self.playlist = playlist
+        self.tracks = tracks.sorted { $0.title < $1.title }
+        self.items = items
+        self.player = player
+        self.intentStore = store
+        self.suiteName = suiteName
+        controller = PlaybackController(
+            player: player, intentStore: store, preparePlaybackTracks: preparePlaybackTracks,
+            refreshUnknownApplePlayCount: { _, _ in 0 }, sleep: { _ in }
+        )
+        controller.startMonitoring(context: context)
+    }
+
+    func cleanUp() {
+        controller.stopMonitoring()
+        intentStore.clear()
+        UserDefaults().removePersistentDomain(forName: suiteName)
+    }
+
+    func item(_ index: Int) throws -> PlaylistItemRecord {
+        try #require(try PlaylistItemRepository.item(trackID: tracks[index].id, in: context))
+    }
+
+    /// Plays the current entry for `seconds`, one sample per second, as the
+    /// monitor would.
+    func listen(seconds: Int) async {
+        for _ in 0..<seconds {
+            player.playbackTime += 1
+            await controller.samplePlayback()
+        }
+    }
+
+    func listen(to position: Double) async {
+        player.playbackTime = position - 1
+        await controller.samplePlayback()
+        player.playbackTime = position
+        await controller.samplePlayback()
+    }
+
+    static func encodedTrack(id: String, title: String, artist: String, durationMillis: Int = 180_000) throws -> Data {
+        let json = """
+        {"id": "\(id)", "type": "songs", "attributes": {"albumName": "Album", "artistName": "\(artist)",
+          "durationInMillis": \(durationMillis), "genreNames": [], "name": "\(title)", "trackNumber": 1}}
+        """
+        let track = try JSONDecoder().decode(Track.self, from: Data(json.utf8))
+        return try JSONEncoder().encode(track)
+    }
+}

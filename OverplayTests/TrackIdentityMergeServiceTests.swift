@@ -182,71 +182,23 @@ struct TrackIdentityMergeServiceTests {
         #expect(event.trackID == canonical.id)
     }
 
-    @Test("device-local stores rekey merged local track IDs")
-    func deviceLocalStoresRekeyMergedLocalTrackIDs() async throws {
-        let suiteName = "OverplayTests.TrackIdentityMerge.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suiteName))
-        defer {
-            defaults.removePersistentDomain(forName: suiteName)
-        }
-
+    @Test("merged donors join the keeper's listen-ledger lineage")
+    func mergedDonorsJoinLedgerLineage() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let canonical = TrackRecord(
-            catalogID: "1440833098",
-            title: "Song",
-            artistName: "Artist",
-            createdAt: Date(timeIntervalSince1970: 10)
-        )
-        let duplicate = TrackRecord(
-            catalogID: "1440833098",
-            libraryID: "i.abc123",
-            title: "Song",
-            artistName: "Artist",
-            createdAt: Date(timeIntervalSince1970: 20)
-        )
-        let unrelatedTrackID = UUID().uuidString
+        let canonical = TrackRecord(catalogID: "1440833098", title: "Song", artistName: "Artist",
+                                    createdAt: Date(timeIntervalSince1970: 10))
+        let duplicate = TrackRecord(catalogID: "1440833098", libraryID: "i.abc123", title: "Song", artistName: "Artist",
+                                    createdAt: Date(timeIntervalSince1970: 20))
         context.insert(canonical)
         context.insert(duplicate)
+        let duplicateID = duplicate.id
+        try ListenLedger.record(.playthrough, trackID: duplicateID, sessionID: "donor-play", source: .playback, in: context)
 
-        PlaybackOrderStore.save(
-            PlaybackOrderState(
-                playerID: "main",
-                musicPlaylistID: "playlist-1",
-                orderedTrackIDs: [duplicate.id.uuidString, canonical.id.uuidString, unrelatedTrackID]
-            ),
-            to: defaults
-        )
-        PlaybackIdentityStore.recordAlias(
-            "runtime-1",
-            playerID: "main",
-            musicPlaylistID: "playlist-1",
-            localTrackID: duplicate.id.uuidString,
-            to: defaults
-        )
-        LocalPlaybackStateStore.save(
-            LocalPlaybackState(
-                playlistID: "playlist-1",
-                musicItemID: "i.abc123",
-                elapsedSeconds: 10,
-                wasPlaying: false,
-                updatedAt: .now,
-                localTrackID: duplicate.id.uuidString
-            ),
-            to: defaults
-        )
+        try await TrackIdentityMergeService.mergeDuplicates(in: context)
 
-        try await TrackIdentityMergeService.mergeDuplicates(in: context, defaults: defaults)
-
-        let orderState = PlaybackOrderStore.state(playerID: "main", musicPlaylistID: "playlist-1", from: defaults)
-        #expect(orderState.orderedTrackIDs == [canonical.id.uuidString, unrelatedTrackID])
-        #expect(PlaybackIdentityStore.aliases(
-            playerID: "main",
-            musicPlaylistID: "playlist-1",
-            localTrackID: canonical.id.uuidString,
-            from: defaults
-        ) == ["runtime-1"])
-        #expect(LocalPlaybackStateStore.load(from: defaults)?.localTrackID == canonical.id.uuidString)
+        #expect(canonical.absorbedTrackIDs == [duplicateID.uuidString])
+        #expect(try ListenLedger.counts(forTrackID: canonical.id, in: context).playthroughs == 1)
     }
 
     @Test("merge is idempotent")

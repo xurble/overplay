@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var showResetConfirmation = false
     @State private var showNukeConfirmation = false
     @State private var viewModel = SettingsViewModel()
+    @AppStorage(SystemNowPlayingBridge.mirrorDefaultsKey) private var mirrorsNowPlaying = false
 
     var body: some View {
         Form {
@@ -137,6 +138,15 @@ struct SettingsView: View {
                     Text(musicKitDiagnosticsReport)
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
+                }
+
+                SettingsLabeledToggle(
+                    title: "Mirror Now Playing from Overplay",
+                    subtitle: "Diagnostic only, this device. Use it to check CarPlay on a new iOS release; normally Apple Music publishes Now Playing itself.",
+                    isOn: $mirrorsNowPlaying
+                )
+                .onChange(of: mirrorsNowPlaying) { _, isOn in
+                    AppRuntime.shared.nowPlayingBridge.isMirrorEnabled = isOn
                 }
             } header: {
                 Text("Diagnostics")

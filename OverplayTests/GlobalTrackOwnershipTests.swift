@@ -280,17 +280,6 @@ struct GlobalTrackOwnershipTests {
         #expect(try PlaylistItemRepository.item(id: itemID, in: context) == nil)
     }
 
-    @Test("Legacy retired orders merge idempotently without replacing the destination")
-    func retiredOrderMigration() throws {
-        let defaults = try #require(UserDefaults(suiteName: "ownership-order-\(UUID().uuidString)"))
-        PlaybackOrderStore.save(.init(playerID: "player", musicPlaylistID: "old", orderedTrackIDs: ["a", "b"]), to: defaults)
-        PlaybackOrderStore.save(.init(playerID: "player", musicPlaylistID: "new", orderedTrackIDs: ["b", "c"]), to: defaults)
-        PlaybackOrderStore.mergeMusicPlaylistID(from: "old", to: "new", from: defaults)
-        PlaybackOrderStore.mergeMusicPlaylistID(from: "old", to: "new", from: defaults)
-        #expect(PlaybackOrderStore.state(playerID: "player", musicPlaylistID: "new", from: defaults).orderedTrackIDs == ["b", "c", "a"])
-        #expect(PlaybackOrderStore.state(playerID: "player", musicPlaylistID: "old", from: defaults).orderedTrackIDs.isEmpty)
-    }
-
     @Test("Bucket pairwise convergence retains newer location intent despite a later metadata refresh")
     func pairwiseMergePreservesLocationIntent() {
         let keeper = PlaylistItemRecord(playlistID: UUID(), trackID: UUID(), updatedAt: Date(timeIntervalSince1970: 500))

@@ -41,8 +41,6 @@ enum TriageBucketMigrationService {
         defaults: UserDefaults = .standard
     ) throws -> Outcome {
         let playlists = try PlaylistRepository.allPlaylists(in: context)
-        let legacyPlaylists = playlists
-            .filter(\.needsTriageBucketMigration)
         let triageItemOwners = playlists.filter {
             $0.needsTriageBucketMigration
                 || $0.roleRawValue == PlaylistRole.triageSource.rawValue
@@ -93,52 +91,9 @@ enum TriageBucketMigrationService {
             }
         }
 
-        if !legacyPlaylists.isEmpty {
-            rekeyDeviceLocalPlaybackState(
-                migratedMusicPlaylistIDs: legacyPlaylists.map(\.musicPlaylistID),
-                bucketMusicPlaylistID: bucket.musicPlaylistID,
-                defaults: defaults
-            )
-        }
-
         if outcome.didChangeAnything {
             try context.save()
         }
         return outcome
-    }
-
-    /// Device-local playback state is keyed by `musicPlaylistID`, so a restore
-    /// point captured against a former triage playlist would point at a
-    /// record that no longer owns any items.
-    ///
-    /// Only the playlist playback was actually restored against is rekeyed.
-    /// Rewriting all of them would collide on the bucket's single key and let
-    /// the last one processed clobber the rest — and the rest are inert
-    /// anyway, since nothing keys on those IDs once the roles change.
-    private static func rekeyDeviceLocalPlaybackState(
-        migratedMusicPlaylistIDs: [String],
-        bucketMusicPlaylistID: String,
-        defaults: UserDefaults
-    ) {
-        guard let restoredPlaylistID = LocalPlaybackStateStore.load(from: defaults)?.playlistID,
-              migratedMusicPlaylistIDs.contains(restoredPlaylistID) else {
-            return
-        }
-
-        LocalPlaybackStateStore.rekeyMusicPlaylistID(
-            from: restoredPlaylistID,
-            to: bucketMusicPlaylistID,
-            from: defaults
-        )
-        PlaybackIdentityStore.rekeyMusicPlaylistID(
-            from: restoredPlaylistID,
-            to: bucketMusicPlaylistID,
-            from: defaults
-        )
-        PlaybackOrderStore.rekeyMusicPlaylistID(
-            from: restoredPlaylistID,
-            to: bucketMusicPlaylistID,
-            from: defaults
-        )
     }
 }

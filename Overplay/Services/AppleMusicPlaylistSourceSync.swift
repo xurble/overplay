@@ -153,9 +153,7 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
             settings.updatedAt = .now
         }
 
-        PlaybackOrderStore.rekeyMusicPlaylistID(from: oldID, to: newID, flushImmediately: true)
-        LocalPlaybackStateStore.rekeyMusicPlaylistID(from: oldID, to: newID, flushImmediately: true)
-        PlaybackIdentityStore.rekeyMusicPlaylistID(from: oldID, to: newID, flushImmediately: true)
+        AppRuntime.shared.playbackController.rekeyIntentPlaylist(from: oldID, to: newID)
         try context.save()
     }
 }

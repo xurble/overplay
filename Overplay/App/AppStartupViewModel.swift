@@ -74,7 +74,7 @@ final class AppStartupViewModel {
         } refreshAuthorization: {
             await authorizationService.refresh()
         } installRemoteCommands: {
-            runtime.remoteCommandService.activate(playbackController: playbackController, context: modelContext)
+            runtime.nowPlayingBridge.activate(playbackController: playbackController, context: modelContext)
         } mergeDuplicateTrackIdentities: {
             do {
                 try await TrackIdentityMergeService.mergeDuplicates(in: modelContext)

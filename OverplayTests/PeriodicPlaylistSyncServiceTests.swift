@@ -126,10 +126,15 @@ struct PeriodicPlaylistSyncServiceTests {
         context.insert(playlist(musicPlaylistID: "playing", lastSyncedAt: nil, lastSyncError: nil))
         let settings = try SettingsRepository.settings(in: context)
         settings.selectedPlaylistID = "selected"
-        let playbackDefaults = PlaybackTestDefaults()
-        defer { playbackDefaults.cleanUp() }
-        let playbackController = PlaybackController(localPlaybackDefaults: playbackDefaults.defaults)
-        playbackController.currentPlaylistID = "playing"
+        let suite = "OverplayTests.Periodic.\(UUID().uuidString)"
+        let store = PlaybackIntentStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("\(suite).json"),
+                                        defaults: UserDefaults(suiteName: suite)!)
+        defer { store.clear() }
+        try store.save(PlaybackIntent(id: UUID(), createdAt: .now, musicPlaylistID: "playing", scope: .active,
+                                      members: [], startingLocalTrackID: nil))
+        let playbackController = PlaybackController(player: FakePlaybackPlayer(), intentStore: store,
+                                                    preparePlaybackTracks: { _ in }, sleep: { _ in })
+        playbackController.restoreIntent()
         let recorder = SyncRecorder()
         let service = makeService(recorder: recorder)
 

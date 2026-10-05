@@ -144,15 +144,6 @@ final class CarPlayCoordinator: NSObject {
         stopPlaybackObservation()
         stopLibraryChangeObservation()
 
-        // Lock Screen handlers keep running after CarPlay disconnects and
-        // retain the runtime's shared context.
-        if let runtime, let mainContext = runtime.mainModelContext {
-            runtime.remoteCommandService.update(
-                playbackController: runtime.playbackController,
-                context: mainContext
-            )
-        }
-
         interfaceController = nil
         runtime = nil
         modelContext = nil
@@ -313,7 +304,6 @@ final class CarPlayCoordinator: NSObject {
         } else {
             tracks = try CarPlayLibrarySnapshot.trackSummaries(
                 forPlaylistID: playlist.id,
-                playbackOrderState: playbackController?.playbackOrderState(for: playlist.musicPlaylistID, scope: scope),
                 scope: scope,
                 in: modelContext
             )
@@ -473,12 +463,13 @@ final class CarPlayCoordinator: NSObject {
             _ = runtime?.libraryRestoration.isReady
             _ = runtime?.libraryRestoration.importRevision
             _ = playbackController.currentPlaylistScope
-            _ = playbackController.remoteCommandAvailability
+            _ = playbackController.hasLiveQueue
+            _ = playbackController.currentMember?.localTrackID
             _ = playbackController.currentPlaylistID
             _ = playbackController.currentTrack?.id
             _ = playbackController.displayedIsEvicted
             _ = playbackController.activePlaylistSnapshot?.updatedAt
-            _ = playbackController.isDeliveryStalled
+            _ = playbackController.playbackFailure
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, generation == self.playbackObservationGeneration else { return }
@@ -498,12 +489,11 @@ final class CarPlayCoordinator: NSObject {
         }
     }
 
-    /// Delivery failures used to be invisible from CarPlay — statusMessage
-    /// renders only on iPhone/iPad. Present one dismissible alert per stall
-    /// episode; the flag resets when playback recovers.
+    /// The shared playback failure (`PLAY-014`), once per episode. "Try Again"
+    /// runs the same user-initiated recovery as Play on every other surface.
     private func presentDeliveryStallAlertIfNeeded() {
         guard let playbackController else { return }
-        guard playbackController.isDeliveryStalled else {
+        guard let failure = playbackController.playbackFailure else {
             didPresentDeliveryStallAlert = false
             return
         }
@@ -514,15 +504,21 @@ final class CarPlayCoordinator: NSObject {
         }
 
         didPresentDeliveryStallAlert = true
-        let action = CPAlertAction(title: "OK", style: .default) { [weak interfaceController] _ in
+        let retry = CPAlertAction(title: "Try Again", style: .default) { [weak self, weak interfaceController] _ in
+            interfaceController?.dismissTemplate(animated: true, completion: nil)
+            Task { @MainActor in
+                guard let self, let controller = self.playbackController, let context = self.modelContext else { return }
+                await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+                    await controller.play(context: context)
+                }
+            }
+        }
+        let dismiss = CPAlertAction(title: "OK", style: .cancel) { [weak interfaceController] _ in
             interfaceController?.dismissTemplate(animated: true, completion: nil)
         }
         let template = CPAlertTemplate(
-            titleVariants: [
-                "Playback stalled — check the network connection. Overplay will retry automatically.",
-                "Playback stalled"
-            ],
-            actions: [action]
+            titleVariants: [failure.message, "Playback problem"],
+            actions: [retry, dismiss]
         )
         interfaceController.presentTemplate(template, animated: true, completion: nil)
     }
@@ -558,7 +554,7 @@ final class CarPlayCoordinator: NSObject {
         }
         for (action, button) in zip(displayedActions, displayedActionButtons) {
             let enabled = action == .shuffle || action == .repeatMode
-                ? playbackController.remoteCommandAvailability.canShuffle
+                ? playbackController.hasLiveQueue
                 : signature.hasCurrentTrack && signature.playlistRole != nil
             if button.isEnabled != enabled {
                 button.isEnabled = enabled
