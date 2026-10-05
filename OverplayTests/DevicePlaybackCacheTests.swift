@@ -50,6 +50,19 @@ struct DevicePlaybackCacheTests {
         #expect(tracks[1].musicKitPlaybackData == nil)
     }
 
+    /// Review finding 7: one failed batched lookup is not retried per track.
+    @Test func failedLibraryLookupRunsOncePerPreparation() async throws {
+        let tracks = (0..<5).map { TrackRecord(libraryID: "i.fail-\($0)", title: "Song \($0)", artistName: "Artist") }
+        var lookups = 0
+        await #expect(throws: DevicePlaybackCache.PreparationError.self) {
+            try await DevicePlaybackCache.prepare(tracks, libraryLookup: { _ in
+                lookups += 1
+                throw URLError(.timedOut)
+            })
+        }
+        #expect(lookups == 1)
+    }
+
     @Test func preparedTracksSurviveRelaunchOnDisk() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }

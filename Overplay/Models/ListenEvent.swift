@@ -10,6 +10,10 @@ enum ListenEventKind: String, Codable, CaseIterable, Sendable {
     case statsReset
     /// Counts carried forward from before the ledger existed.
     case baseline
+    /// The track absorbed another track in an identity merge. The donor UUID
+    /// is carried in the session ID (`lineage:<donor>`). Immutable, so two
+    /// devices merging into the same keeper cannot lose each other's lineage.
+    case lineage
 }
 
 enum ListenEventSource: String, Codable, Sendable {

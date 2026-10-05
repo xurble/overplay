@@ -71,6 +71,7 @@ struct NowPlayingPaneView: View {
                         .foregroundStyle(activeArtworkTheme?.albumName ?? .secondary)
                         .multilineTextAlignment(.center)
                 }
+                PlaybackFailureRetryView()
             }
             .padding(.horizontal, 24)
             .padding(.top, compactLayout ? 16 : 24)

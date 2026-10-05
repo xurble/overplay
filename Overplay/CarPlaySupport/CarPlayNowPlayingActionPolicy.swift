@@ -50,3 +50,26 @@ enum CarPlayNowPlayingActionPolicy {
         }
     }
 }
+
+/// What CarPlay shows after a playback action. The controller decides
+/// success (`SURFACE-003`); this only maps its shared state to a template.
+enum CarPlayPlaybackOutcome: Equatable, Sendable {
+    /// Playback started, possibly with a non-blocking note.
+    case nowPlaying
+    /// The shared failure presents its own alert, with Try Again.
+    case sharedFailure
+    /// Nothing started; report the controller's reason.
+    case notStarted
+
+    static func decide(
+        hasPlaybackFailure: Bool,
+        currentPlaylistID: String?,
+        currentScope: PlaylistPlaybackScope,
+        requestedPlaylistID: String,
+        requestedScope: PlaylistPlaybackScope
+    ) -> Self {
+        if hasPlaybackFailure { return .sharedFailure }
+        guard currentPlaylistID == requestedPlaylistID, currentScope == requestedScope else { return .notStarted }
+        return .nowPlaying
+    }
+}

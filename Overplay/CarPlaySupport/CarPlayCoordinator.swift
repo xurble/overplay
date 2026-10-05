@@ -363,9 +363,27 @@ final class CarPlayCoordinator: NSObject {
             }
 
             refreshAfterTrackAction()
-            showNowPlaying()
+            presentPlaybackOutcome(for: playlist, scope: scope)
         } catch {
             showError(title: "Playback failed", message: error.localizedDescription)
+        }
+    }
+
+    /// The controller decides success (`SURFACE-003`): a shared failure shows
+    /// its own alert with Try Again; a start that never happened reports why;
+    /// anything else, including a non-blocking note, goes to Now Playing.
+    private func presentPlaybackOutcome(for playlist: PlaylistRecord, scope: PlaylistPlaybackScope) {
+        guard let playbackController else { return }
+        switch CarPlayPlaybackOutcome.decide(
+            hasPlaybackFailure: playbackController.playbackFailure != nil,
+            currentPlaylistID: playbackController.currentPlaylistID,
+            currentScope: playbackController.currentPlaylistScope,
+            requestedPlaylistID: playlist.musicPlaylistID,
+            requestedScope: scope
+        ) {
+        case .nowPlaying: showNowPlaying()
+        case .sharedFailure: break
+        case .notStarted: showPlaybackFailure(title: "Playback failed")
         }
     }
 
@@ -377,14 +395,7 @@ final class CarPlayCoordinator: NSObject {
                 await playbackController.playPlaylist(playlist, scope: scope, settings: settings, context: modelContext)
             }
             refreshAfterTrackAction()
-            guard playbackController.statusMessage == nil,
-                  playbackController.isPlaying,
-                  playbackController.currentPlaylistID == playlist.musicPlaylistID,
-                  playbackController.currentPlaylistScope == scope else {
-                showPlaybackFailure(title: "Playback failed")
-                return
-            }
-            showNowPlaying()
+            presentPlaybackOutcome(for: playlist, scope: scope)
         } catch {
             showError(title: "Playback failed", message: error.localizedDescription)
         }
@@ -395,7 +406,7 @@ final class CarPlayCoordinator: NSObject {
         await MusicKitActivityLog.shared.withOrigin(.carPlay) {
             await playbackController.play(context: modelContext)
         }
-        showNowPlaying()
+        if playbackController.playbackFailure == nil { showNowPlaying() }
     }
 
     private func showNowPlaying() {

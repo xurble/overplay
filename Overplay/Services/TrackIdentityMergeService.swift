@@ -141,6 +141,13 @@ enum TrackIdentityMergeService {
         // The donor's listen events keep their track UUID; the lineage makes
         // them, and any that arrive later, count toward the canonical track.
         canonical.absorbLineage(donorID: duplicate.id, donorLineage: duplicate.absorbedTrackIDs)
+        if let context = canonical.modelContext {
+            do {
+                try ListenLedger.recordLineage(keeper: canonical.id, donor: duplicate.id, in: context)
+            } catch {
+                TrackMetadataDiagnostics.log("listen ledger lineage write failed: \(error.localizedDescription)")
+            }
+        }
         canonical.isrc = canonical.isrc ?? duplicate.isrc
         canonical.equivalentCatalogIDs = Array(Set(canonical.equivalentCatalogIDs + duplicate.equivalentCatalogIDs)).sorted()
         canonical.hasDocumentedIdentity = canonical.hasDocumentedIdentity || duplicate.hasDocumentedIdentity

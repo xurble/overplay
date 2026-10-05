@@ -5,9 +5,11 @@ import SwiftData
 ///
 /// Outcomes are appended as immutable `ListenEvent`s. A track's counts are a
 /// pure function of the events for its own UUID and every UUID it absorbed in
-/// an identity merge, so two devices holding the same events always derive the
-/// same numbers. `PlaylistItemRecord.skipCount`/`playthroughCount` are only a
-/// cache of that derivation; nothing increments, sums or zeroes them directly.
+/// an identity merge (lineage is itself recorded as immutable events), so two
+/// devices holding the same events always derive the same numbers.
+/// `PlaylistItemRecord.skipCount`/`playthroughCount` are only a cache of that
+/// derivation, marked `countsDerivedFromLedger` when written; nothing
+/// increments, sums or zeroes them directly.
 @MainActor
 enum ListenLedger {
     struct Counts: Equatable, Sendable {
@@ -63,6 +65,14 @@ enum ListenLedger {
                           playthroughDelta: playthroughDelta, skipDelta: skipDelta, at: date, in: context)
     }
 
+    /// Records that `keeper` absorbed `donor` (and, transitively, everything
+    /// the donor had absorbed). Idempotent; callers save.
+    static func recordLineage(keeper: UUID, donor: UUID, in context: ModelContext) throws {
+        guard keeper != donor else { return }
+        _ = try insert(.lineage, trackID: keeper, sessionID: "lineage:\(donor.uuidString)", source: .migration,
+                       mechanism: nil, playthroughDelta: 0, skipDelta: 0, at: .now, in: context)
+    }
+
     /// Restarts every track's counts. Retirement reset stays with the caller.
     static func resetAll(at date: Date = .now, in context: ModelContext) throws {
         try writeBaselinesIfNeeded(in: context, at: date.addingTimeInterval(-0.001))
@@ -80,16 +90,19 @@ enum ListenLedger {
     @discardableResult
     static func writeBaselinesIfNeeded(in context: ModelContext, at date: Date = .now) throws -> Int {
         let items = try context.fetch(FetchDescriptor<PlaylistItemRecord>()).filter { !$0.isDeleted }
-        let trackIDs = Set(items.filter { $0.skipCount != 0 || $0.playthroughCount != 0 }.map(\.trackID))
+        let trackIDs = Set(items.filter(hasLegacyCounts).map(\.trackID))
         return try migrateLegacyCounts(forTrackIDs: trackIDs, at: date, in: context)
     }
 
-    /// Writes one `baseline:<trackID>` event holding a track's cached counts
-    /// when no event exists for the track or anything it absorbed: until then
-    /// the cache is the only record of those plays. Items of one track were
-    /// separate counters before the ledger, so their counts are added. The
-    /// deterministic session ID collapses migrations on several devices.
-    /// Call before absorbing tracks, so each identity migrates on its own.
+    /// Writes one `baseline:<trackID>` event holding a track's pre-ledger
+    /// counts. Only rows the ledger has never written count as pre-ledger: a
+    /// row marked `countsDerivedFromLedger` holds a derived cache, possibly
+    /// synced from another device ahead of its events, and migrating it would
+    /// count those plays twice. Tracks with outcome events already are left
+    /// alone. Items of one track were separate counters before the ledger, so
+    /// their counts are added. The deterministic session ID collapses
+    /// migrations on several devices. Call before absorbing tracks, so each
+    /// identity migrates on its own.
     @discardableResult
     static func migrateLegacyCounts(forTrackIDs trackIDs: Set<UUID>, at date: Date = .now, in context: ModelContext) throws -> Int {
         let candidates = trackIDs.subtracting([allTracksID])
@@ -100,13 +113,16 @@ enum ListenLedger {
         })).filter { !$0.isDeleted }
         let itemsByTrackID = Dictionary(grouping: items, by: \.trackID)
         var written = 0
+        let lineage = ListenEventKind.lineage.rawValue
         for trackID in candidates {
-            let trackItems = itemsByTrackID[trackID] ?? []
+            let trackItems = (itemsByTrackID[trackID] ?? []).filter(hasLegacyCounts)
             let plays = trackItems.reduce(0) { $0 + max($1.playthroughCount, 0) }
             let skips = trackItems.reduce(0) { $0 + max($1.skipCount, 0) }
             guard plays != 0 || skips != 0 else { continue }
             let identities = Array(try identities(for: trackID, in: context))
-            var existing = FetchDescriptor<ListenEvent>(predicate: #Predicate { identities.contains($0.trackID) })
+            var existing = FetchDescriptor<ListenEvent>(predicate: #Predicate {
+                identities.contains($0.trackID) && $0.kindRawValue != lineage
+            })
             existing.fetchLimit = 1
             guard try context.fetchCount(existing) == 0 else { continue }
             if try insert(.baseline, trackID: trackID, sessionID: "baseline:\(trackID.uuidString)", source: .migration, mechanism: nil,
@@ -148,12 +164,20 @@ enum ListenLedger {
         return true
     }
 
+    /// Event counts at the last full recompute, per store. Unchanged events
+    /// and no new migration mean every cache is already derived from them.
+    private static var reconciledEventCounts: [ObjectIdentifier: Int] = [:]
+
     /// Startup and CloudKit-import entry point: migrate anything uncounted,
     /// then bring every item's cache in line with the ledger.
     @discardableResult
     static func reconcile(in context: ModelContext) throws -> Int {
         let migrated = try writeBaselinesIfNeeded(in: context)
+        let store = ObjectIdentifier(context.container)
+        let eventCount = try context.fetchCount(FetchDescriptor<ListenEvent>())
+        guard migrated > 0 || reconciledEventCounts[store] != eventCount else { return 0 }
         let changed = try refreshAllCounts(in: context)
+        reconciledEventCounts[store] = eventCount
         if migrated > 0 || changed > 0 {
             try context.save()
             TrackMetadataDiagnostics.log("listen ledger reconciled baselines=\(migrated) refreshedItems=\(changed)")
@@ -197,7 +221,7 @@ enum ListenLedger {
         let entriesByTrackID = Dictionary(grouping: allEntries, by: \.trackID)
         var changed = 0
         for item in items {
-            let identities = Set([item.trackID] + (tracksByID[item.trackID]?.absorbedTrackUUIDs ?? []))
+            let identities = lineageClosure(of: item.trackID, tracksByID: tracksByID, entriesByTrackID: entriesByTrackID)
             let entries = identities.flatMap { entriesByTrackID[$0] ?? [] } + globalResets
             if apply(counts(identities: identities, entries: entries), to: item) { changed += 1 }
         }
@@ -206,8 +230,8 @@ enum ListenLedger {
 
     /// Pure derivation. Playthroughs restart at the latest global reset; skips
     /// at the later of that and the track's own latest skip reset. Session IDs
-    /// make every outcome idempotent; competing baselines for one session keep
-    /// the largest carried-forward total, which is the most complete one.
+    /// make every outcome idempotent; competing baselines for one session
+    /// resolve deterministically to the earliest, then the lowest ID.
     nonisolated static func counts(identities: Set<UUID>, entries: [Entry]) -> Counts {
         let globalResetAt = entries.filter { $0.kind == .statsReset }.map(\.occurredAt).max()
         let own = entries.filter { identities.contains($0.trackID) }
@@ -230,9 +254,8 @@ enum ListenLedger {
 
         let baselines = Dictionary(grouping: own.filter { $0.kind == .baseline }, by: \.sessionID)
         for candidates in baselines.values {
-            guard let chosen = candidates.max(by: {
-                let left = $0.playthroughDelta + $0.skipDelta, right = $1.playthroughDelta + $1.skipDelta
-                return left != right ? left < right : $0.id.uuidString > $1.id.uuidString
+            guard let chosen = candidates.min(by: {
+                $0.occurredAt != $1.occurredAt ? $0.occurredAt < $1.occurredAt : $0.id.uuidString < $1.id.uuidString
             }) else { continue }
             if after(globalResetAt, chosen) { result.playthroughs += max(chosen.playthroughDelta, 0) }
             if after(skipFloor, chosen) { result.skips += max(chosen.skipDelta, 0) }
@@ -242,9 +265,44 @@ enum ListenLedger {
 
     // MARK: - Helpers
 
+    /// The track plus everything it absorbed, transitively, from both the
+    /// track's lineage list and immutable lineage events.
     private static func identities(for trackID: UUID, in context: ModelContext) throws -> Set<UUID> {
-        let track = try TrackRecordRepository.track(id: trackID, in: context)
-        return Set([trackID] + (track?.absorbedTrackUUIDs ?? []))
+        let lineage = ListenEventKind.lineage.rawValue
+        var result: Set<UUID> = [trackID]
+        var pending: [UUID] = [trackID]
+        while let next = pending.popLast() {
+            var donors = try TrackRecordRepository.track(id: next, in: context)?.absorbedTrackUUIDs ?? []
+            donors += try context.fetch(FetchDescriptor<ListenEvent>(predicate: #Predicate {
+                $0.trackID == next && $0.kindRawValue == lineage
+            })).compactMap { lineageDonor(sessionID: $0.sessionID) }
+            for donor in donors where result.insert(donor).inserted { pending.append(donor) }
+        }
+        return result
+    }
+
+    private static func lineageClosure(
+        of trackID: UUID,
+        tracksByID: [UUID: TrackRecord],
+        entriesByTrackID: [UUID: [Entry]]
+    ) -> Set<UUID> {
+        var result: Set<UUID> = [trackID]
+        var pending: [UUID] = [trackID]
+        while let next = pending.popLast() {
+            let donors = (tracksByID[next]?.absorbedTrackUUIDs ?? [])
+                + (entriesByTrackID[next] ?? []).filter { $0.kind == .lineage }.compactMap { lineageDonor(sessionID: $0.sessionID) }
+            for donor in donors where result.insert(donor).inserted { pending.append(donor) }
+        }
+        return result
+    }
+
+    nonisolated static func lineageDonor(sessionID: String) -> UUID? {
+        guard sessionID.hasPrefix("lineage:") else { return nil }
+        return UUID(uuidString: String(sessionID.dropFirst("lineage:".count)))
+    }
+
+    private static func hasLegacyCounts(_ item: PlaylistItemRecord) -> Bool {
+        !item.countsDerivedFromLedger && (item.skipCount != 0 || item.playthroughCount != 0)
     }
 
     private static func entries(for identities: Set<UUID>, in context: ModelContext) throws -> [Entry] {
@@ -262,11 +320,14 @@ enum ListenLedger {
     }
 
     /// Writes only real changes, and leaves `updatedAt` alone: the cache is
-    /// derived, and must not look like a user decision to merge logic.
+    /// derived, and must not look like a user decision to merge logic. The
+    /// marker travels with the cache so no device mistakes it for legacy counts.
     private static func apply(_ counts: Counts, to item: PlaylistItemRecord) -> Bool {
-        guard item.playthroughCount != counts.playthroughs || item.skipCount != counts.skips else { return false }
+        guard item.playthroughCount != counts.playthroughs || item.skipCount != counts.skips
+            || !item.countsDerivedFromLedger else { return false }
         item.playthroughCount = counts.playthroughs
         item.skipCount = counts.skips
+        item.countsDerivedFromLedger = true
         return true
     }
 }

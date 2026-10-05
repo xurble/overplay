@@ -147,12 +147,29 @@ final class FakePlaybackPlayer: PlaybackPlayer {
         await notify()
     }
 
-    /// MusicKit re-materializes the queue with new entry IDs.
-    func reissueEntryIDs() {
+    /// MusicKit re-materializes the queue with new entry IDs, optionally
+    /// before the new entries' items have hydrated. Position is unchanged.
+    func reissueEntryIDs(droppingItems: Bool = false) {
         entries = entries.map { entry in
             entryCounter += 1
-            return PlayerEntrySnapshot(entryID: "entry-\(entryCounter)", item: entry.item)
+            let entryID = "entry-\(entryCounter)"
+            if droppingItems, let item = entry.item { hiddenItems[entryID] = item }
+            return PlayerEntrySnapshot(entryID: entryID, item: droppingItems ? nil : entry.item)
         }
+    }
+
+    /// The current entry loses its item, as after a relaunch before hydration.
+    func dehydrateCurrent() {
+        guard let currentIndex, let item = entries[currentIndex].item else { return }
+        hiddenItems[entries[currentIndex].entryID] = item
+        entries[currentIndex].item = nil
+    }
+
+    /// The player abandons the queue mid-track, as on a delivery failure.
+    func abandonQueue() async {
+        currentIndex = nil
+        playbackStatus = .stopped
+        await notify()
     }
 
     func hydrateAll() {
@@ -182,6 +199,8 @@ final class FakePlaybackPlayer: PlaybackPlayer {
         guard let currentIndex else { return }
         if currentIndex + 1 < entries.count {
             self.currentIndex = currentIndex + 1
+        } else if reportedRepeatMode == .all, !entries.isEmpty {
+            self.currentIndex = 0
         } else {
             self.currentIndex = nil
             playbackStatus = .stopped
@@ -259,9 +278,15 @@ struct PlaybackFixture {
         self.suiteName = suiteName
         controller = PlaybackController(
             player: player, intentStore: store, preparePlaybackTracks: preparePlaybackTracks,
-            refreshUnknownApplePlayCount: { _, _ in 0 }, sleep: { _ in }
+            refreshUnknownApplePlayCount: { _, _ in 0 }, sleep: PlaybackFixture.manualSampling
         )
         controller.startMonitoring(context: context)
+    }
+
+    /// Tests drive sampling with `samplePlayback()`. The controller's own loop
+    /// sleeps (cancellably) instead of spinning on the main actor.
+    static let manualSampling: @MainActor (Duration) async -> Void = { _ in
+        try? await Task.sleep(for: .seconds(3600))
     }
 
     func cleanUp() {

@@ -61,9 +61,22 @@ nonisolated final class DevicePlaybackCache: Sendable {
             return (try? JSONDecoder().decode(Track.self, from: data)) == nil
         }.compactMap(\.libraryID))).sorted()
         var librarySongs: [String: Song]?
+        var libraryLookupError: Error?
         try await prepare(tracks) { reference in
             guard reference.domain == .librarySong else { return try await loadResource(reference) }
-            if librarySongs == nil { librarySongs = try await libraryLookup(libraryIDs) }
+            // One batched lookup per preparation. A failure is remembered, so
+            // the remaining library tracks fail fast instead of each retrying
+            // the whole lookup against a struggling service (`LOAD-001`).
+            if librarySongs == nil, libraryLookupError == nil {
+                do {
+                    librarySongs = try await libraryLookup(libraryIDs)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    libraryLookupError = error
+                }
+            }
+            if let libraryLookupError { throw libraryLookupError }
             guard let song = librarySongs?[reference.value] else {
                 throw PreparationError(message: "Apple Music returned no song for \(reference.value).")
             }

@@ -133,7 +133,7 @@ struct PeriodicPlaylistSyncServiceTests {
         try store.save(PlaybackIntent(id: UUID(), createdAt: .now, musicPlaylistID: "playing", scope: .active,
                                       members: [], startingLocalTrackID: nil))
         let playbackController = PlaybackController(player: FakePlaybackPlayer(), intentStore: store,
-                                                    preparePlaybackTracks: { _ in }, sleep: { _ in })
+                                                    preparePlaybackTracks: { _ in }, sleep: PlaybackFixture.manualSampling)
         playbackController.restoreIntent()
         let recorder = SyncRecorder()
         let service = makeService(recorder: recorder)

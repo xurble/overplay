@@ -577,19 +577,25 @@ Records are inserted and never edited. The only deletion is an explicit
 whole-database nuke.
 
 - `kind`: `playthrough`, `skip`, `skipReset` (one track's skips),
-  `statsReset` (every track), or `baseline` (carried-forward counts).
+  `statsReset` (every track), `baseline` (carried-forward counts), or
+  `lineage` (this track absorbed the donor named in the session ID).
 - `trackID`: the Overplay track UUID. Counts travel with the track, not with a
   playlist row.
 - `sessionID`: an idempotency key. Two events with the same session ID and kind
   count once. Live sessions use a fresh UUID per session. Reconciled
   playthroughs use their proof key. Baselines use `baseline:<trackID>`, so two
-  devices migrating the same data converge on one baseline.
+  devices migrating the same data converge on one baseline; when they differ,
+  the earliest (then lowest ID) wins, deterministically. Lineage uses
+  `lineage:<donor UUID>`.
 - `deviceID`, `occurredAt`, `source` (`playback`, `reconciled`, `migration`,
   `user`), optional `mechanism`, `playthroughDelta` and `skipDelta` (baseline
   only).
 
 A track's counts are derived from the events for its own UUID plus every UUID
-it has absorbed in an identity merge:
+it has absorbed in an identity merge, transitively, from both the keeper's
+`absorbedTrackIDs` and its immutable `lineage` events. Two devices merging
+different donors into one keeper therefore keep both, even though the keeper's
+list attribute is last-writer-wins:
 
 - playthroughs = distinct playthrough sessions + baseline playthrough deltas,
   all after the latest `statsReset`;
@@ -597,20 +603,24 @@ it has absorbed in an identity merge:
   the latest `statsReset` and that track's latest `skipReset`.
 
 `PlaylistItemRecord.skipCount` and `playthroughCount` are a materialized cache
-of that derivation. They are recomputed after local ledger writes and after
-CloudKit imports. Two devices that hold the same events compute the same
+of that derivation, written together with `countsDerivedFromLedger = true`. They
+are recomputed after local ledger writes and after CloudKit imports (skipped
+when the store's event count is unchanged and nothing was migrated). Two devices that hold the same events compute the same
 values, so concurrent writes to the cache converge instead of losing
 increments. Nothing ever increments, sums or zeroes the cache directly.
 
 Merging duplicate items of one track needs no count arithmetic. Absorbing a
-donor track records the donor UUID in the keeper's `absorbedTrackIDs`. Events
-keep their original track UUID, and events arriving late for the donor still
-count toward the keeper.
+donor track records the donor UUID in the keeper's `absorbedTrackIDs` and writes
+a `lineage` event. Events keep their original track UUID, and events arriving
+late for the donor still count toward the keeper.
 
-The first launch of a build with the ledger writes one `baseline` event for
-every item whose stored counts are nonzero and which has no ledger events. The
-baseline's deterministic session ID makes this migration idempotent across
-relaunches and devices.
+Pre-ledger counts are carried forward as one `baseline` event per track. Only
+rows the ledger has never written are pre-ledger: a row marked
+`countsDerivedFromLedger` may have been synced from another device ahead of that
+device's events, and migrating it would count those plays twice. Migration
+runs at startup before any merge, before a track's first new event, and before
+two identities are joined. Tracks that already have outcome events are not
+migrated again.
 
 History events are a separate, human-readable log with retention limits. They
 are never the source of counts.
@@ -923,8 +933,10 @@ while the position does not advance for 10 consecutive samples), sets one
 shared playback failure with a message and start time. A failed Next or
 Previous is logged and leaves playback as observed, because at the end of a
 queue that is normal. The iPhone/iPad status
-line shows it, and CarPlay presents one alert per failure episode. Witnessed
-progress or a successful Play clears it.
+line shows it with **Try Again**, the primary control becomes Retry, and CarPlay
+presents one alert per failure episode with **Try Again**. Witnessed progress or
+a successful recovery clears any failure, including a command error after which
+MusicKit started playing anyway.
 
 Nothing retries automatically. When the user presses Play while a failure is
 active, the controller runs a recovery ladder and stops at the first rung that
@@ -935,7 +947,12 @@ works:
 3. Resubmit the intent from the current member at the last known position,
    then `play()`.
 
-Each Play press runs the ladder at most once. If every rung fails, the failure
+A stalled player already reports `playing`, so a bare `play()` proves nothing:
+a stall starts at rung 2. A press within two minutes of an earlier recovery
+starts one rung above the rung that last ran, so a failure that keeps coming
+back reaches rung 3. Resubmitting the track that is playing continues its
+listening session instead of judging it. Each Play press runs the ladder at most
+once. If every rung fails, the failure
 remains with guidance that Apple Music is not responding. While a failure is
 active, periodic playlist sync, bulk Apple play-count refresh and artwork
 maintenance pause, so Overplay adds no Apple Music load. Pause is never
@@ -954,7 +971,27 @@ reorders, replaces or restarts the queue.
 When the player reports no current entry and stops after an attributed session
 was observed near its end, that session counts as a natural completion and
 playback stops. The intent stays. Play then resubmits it from its first member.
-With repeat-all on, MusicKit loops the queue and no queue end is observed.
+If the last observation is stale (the end happened while Overplay was
+suspended), the end is treated the same way and is not a failure. A fresh stop
+mid-track is a failure: the current member and position are kept, so Play
+resumes there. With repeat-all on, MusicKit loops the queue and no queue end is
+observed. A wrap from the last entry to the first is a forward transition.
+
+### Same song, new entry ID
+
+MusicKit can re-issue entry IDs for the song that is playing, for example after
+a mode change. When the incoming entry is the same member as the outgoing
+session, or its item has not hydrated yet, and the position is continuous
+(within three seconds, at least one second in), the session moves to the new
+entry instead of ending. An unconfirmed carry-over is checked when the item
+hydrates. If it turns out to be a different song, the carried session ends
+then and a new one starts.
+
+### Concurrent starts
+
+Every start or selection supersedes any earlier one still preparing. An older
+start that finishes preparing later is dropped, and its post-play steps never
+touch the newer queue.
 
 ### Membership changes during playback (`PLAY-015`)
 
@@ -965,7 +1002,9 @@ mutate the live MusicKit queue:
 - retiring the current track from Now Playing issues Next;
 - an entry whose member has left the intent's scope (retired from Active, or
   restored from Retired) is skipped with Next when it is observed becoming
-  current. Its session is marked evaluated without a skip.
+  current. Its session is marked evaluated without a skip. An entry is skipped at
+  most once per intent, so a repeat-all wrap cannot loop, and a failed lookup is
+  never treated as out of scope.
 
 ### Launch and restore
 
@@ -1462,6 +1501,8 @@ Local JSON file only:
 - `sortOrder: Int` (legacy persisted value; display order comes from dates)
 - `skipCount: Int` and `playthroughCount: Int` (cache derived from the listen
   ledger, recomputed after writes and imports; never edited directly)
+- `countsDerivedFromLedger: Bool` (set with the cache; such rows are never
+  migrated as pre-ledger counts)
 - `lastPlayedAt: Date?`
 - `lastSkippedAt: Date?`
 - `lastSeenInPlaylistAt: Date?`
@@ -1476,7 +1517,7 @@ Local JSON file only:
 - `id: UUID`
 - `trackID: UUID`
 - `kindRawValue: String` (`playthrough`, `skip`, `skipReset`, `statsReset`,
-  `baseline`)
+  `baseline`, `lineage`)
 - `sessionID: String` (idempotency key)
 - `deviceID: String`
 - `sourceRawValue: String`

@@ -116,15 +116,86 @@ struct ListenLedgerTests {
         #expect(phone.item.skipCount == 1 && pad.item.skipCount == 1)
     }
 
-    @Test func competingBaselinesKeepTheMostComplete() {
+    @Test func competingBaselinesResolveToTheEarliest() {
         let trackID = UUID()
         let entries = [
             ListenLedger.Entry(id: UUID(), trackID: trackID, kind: .baseline, sessionID: "baseline:x",
-                               occurredAt: .now, playthroughDelta: 3, skipDelta: 0),
+                               occurredAt: Date(timeIntervalSince1970: 20), playthroughDelta: 5, skipDelta: 1),
             ListenLedger.Entry(id: UUID(), trackID: trackID, kind: .baseline, sessionID: "baseline:x",
-                               occurredAt: .now, playthroughDelta: 5, skipDelta: 1)
+                               occurredAt: Date(timeIntervalSince1970: 10), playthroughDelta: 3, skipDelta: 0)
         ]
-        #expect(ListenLedger.counts(identities: [trackID], entries: entries) == .init(playthroughs: 5, skips: 1))
+        #expect(ListenLedger.counts(identities: [trackID], entries: entries) == .init(playthroughs: 3, skips: 0))
+    }
+
+    /// Review finding 1: CloudKit can deliver another device's derived count
+    /// cache before its events. That cache must not be migrated again.
+    @Test func derivedCacheSyncedAheadOfEventsIsNotMigratedAgain() throws {
+        let trackID = UUID()
+        let phone = try makeStore(trackID: trackID, plays: 5)
+        let pad = try makeStore(trackID: trackID)
+        try ListenLedger.record(.playthrough, trackID: trackID, sessionID: "phone-1", source: .playback, in: phone.context)
+        try ListenLedger.refreshCounts(forTrackIDs: [trackID], in: phone.context)
+        try phone.context.save()
+        #expect(phone.item.playthroughCount == 6 && phone.item.countsDerivedFromLedger)
+
+        // The item record arrives first.
+        pad.item.playthroughCount = phone.item.playthroughCount
+        pad.item.countsDerivedFromLedger = true
+        try pad.context.save()
+        try ListenLedger.reconcile(in: pad.context)
+        try ListenLedger.record(.skip, trackID: trackID, sessionID: "pad-1", source: .playback, in: pad.context)
+        try pad.context.save()
+        #expect(try events(in: pad.context).filter { $0.kind == .baseline }.isEmpty)
+
+        try deliver(phone.context, into: pad.context)
+        try deliver(pad.context, into: phone.context)
+        try ListenLedger.reconcile(in: phone.context)
+        try ListenLedger.reconcile(in: pad.context)
+        #expect(phone.item.playthroughCount == 6 && pad.item.playthroughCount == 6)
+        #expect(phone.item.skipCount == 1 && pad.item.skipCount == 1)
+    }
+
+    /// Review finding 1: a baseline written after another device's reset must
+    /// not bring the reset counts back.
+    @Test func lateBaselineAfterAResetDoesNotResurrectCounts() throws {
+        let trackID = UUID()
+        let phone = try makeStore(trackID: trackID, plays: 4)
+        let pad = try makeStore(trackID: trackID, plays: 4)
+        try ListenLedger.resetAll(at: Date(timeIntervalSince1970: 1_000), in: phone.context)
+        try phone.context.save()
+        // The pad never saw the phone's reset and migrates its legacy counts later.
+        try ListenLedger.writeBaselinesIfNeeded(in: pad.context, at: Date(timeIntervalSince1970: 2_000))
+        try pad.context.save()
+
+        try deliver(phone.context, into: pad.context)
+        try deliver(pad.context, into: phone.context)
+        try ListenLedger.reconcile(in: phone.context)
+        try ListenLedger.reconcile(in: pad.context)
+        #expect(phone.item.playthroughCount == 0 && pad.item.playthroughCount == 0)
+    }
+
+    /// Review finding 10: two devices absorbing different donors into one
+    /// keeper keep both, even when the keeper's lineage list is last-writer-wins.
+    @Test func concurrentMergesIntoOneKeeperKeepBothDonors() throws {
+        let store = try makeStore()
+        let firstDonor = UUID(), secondDonor = UUID()
+        for donor in [firstDonor, secondDonor] {
+            try ListenLedger.record(.playthrough, trackID: donor, sessionID: "play-\(donor)", source: .playback, in: store.context)
+            try ListenLedger.recordLineage(keeper: store.track.id, donor: donor, in: store.context)
+        }
+        store.track.absorbedTrackIDs = [secondDonor.uuidString]
+        try ListenLedger.refreshAllCounts(in: store.context)
+        #expect(store.item.playthroughCount == 2)
+    }
+
+    @Test func lineageIsTransitive() throws {
+        let store = try makeStore()
+        let middle = UUID(), original = UUID()
+        try ListenLedger.record(.playthrough, trackID: original, sessionID: "old", source: .playback, in: store.context)
+        try ListenLedger.recordLineage(keeper: middle, donor: original, in: store.context)
+        try ListenLedger.recordLineage(keeper: store.track.id, donor: middle, in: store.context)
+        try ListenLedger.refreshCounts(forTrackIDs: [store.track.id], in: store.context)
+        #expect(store.item.playthroughCount == 1)
     }
 
     @Test func absorbedTrackEventsCountIncludingLateArrivals() throws {

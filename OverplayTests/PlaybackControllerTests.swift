@@ -370,7 +370,7 @@ struct PlaybackControllerTests {
 
         let relaunched = PlaybackController(player: first.player, intentStore: first.intentStore,
                                             preparePlaybackTracks: { _ in }, refreshUnknownApplePlayCount: { _, _ in 0 },
-                                            sleep: { _ in })
+                                            sleep: PlaybackFixture.manualSampling)
         relaunched.restoreLocalPlaybackDisplay(context: first.context)
         await relaunched.reconcilePlayerState(context: first.context)
 
@@ -392,7 +392,7 @@ struct PlaybackControllerTests {
         let player = FakePlaybackPlayer()
         let relaunched = PlaybackController(player: player, intentStore: first.intentStore,
                                             preparePlaybackTracks: { _ in }, refreshUnknownApplePlayCount: { _, _ in 0 },
-                                            sleep: { _ in })
+                                            sleep: PlaybackFixture.manualSampling)
         relaunched.restoreIntent()
         #expect(relaunched.currentTrack?.title == "Song 2")
         #expect(relaunched.elapsedSeconds == 40)
@@ -415,7 +415,7 @@ struct PlaybackControllerTests {
         let player = FakePlaybackPlayer()
         let relaunched = PlaybackController(player: player, intentStore: first.intentStore,
                                             preparePlaybackTracks: { _ in }, refreshUnknownApplePlayCount: { _, _ in 0 },
-                                            sleep: { _ in })
+                                            sleep: PlaybackFixture.manualSampling)
         relaunched.isLibraryReady = { false }
         relaunched.restoreIntent()
         relaunched.startMonitoring()

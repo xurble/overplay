@@ -105,7 +105,8 @@ enum NowPlayingPresentationFactory {
         playbackController: PlaybackController
     ) -> PlaybackControlsPresentation {
         PlaybackControlsPresentation(
-            isPlaying: playbackController.isPlaying,
+            // During a failure the primary control is Retry (`PLAY-014`).
+            isPlaying: playbackController.isPlaying && playbackController.playbackFailure == nil,
             isShuffling: playbackController.shuffleEnabled,
             isRepeatingAll: playbackController.repeatAllEnabled
         )

@@ -346,7 +346,7 @@ struct ApplePlayCountTests {
                                         defaults: UserDefaults(suiteName: suite)!)
         defer { store.clear() }
         let controller = PlaybackController(player: FakePlaybackPlayer(), intentStore: store, preparePlaybackTracks: { _ in },
-                                            refreshUnknownApplePlayCount: { _, _ in 0 }, sleep: { _ in })
+                                            refreshUnknownApplePlayCount: { _, _ in 0 }, sleep: PlaybackFixture.manualSampling)
         controller.startMonitoring(context: context)
         await controller.playPlaylist(playlist, startingAt: track, settings: OverplaySettings(), context: context)
         defer { controller.stopMonitoring() }

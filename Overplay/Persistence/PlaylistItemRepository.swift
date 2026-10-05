@@ -356,10 +356,12 @@ enum PlaylistItemRepository {
                 // Separate pre-ledger counters are carried forward before the
                 // rows collapse; afterwards both derive from one identity.
                 try ListenLedger.migrateLegacyCounts(forTrackIDs: [keeper.trackID, duplicate.trackID], in: context)
-                if duplicate.trackID != keeper.trackID,
-                   let keeperTrack = try TrackRecordRepository.track(id: keeper.trackID, in: context) {
-                    let donorLineage = try TrackRecordRepository.track(id: duplicate.trackID, in: context)?.absorbedTrackIDs ?? []
-                    keeperTrack.absorbLineage(donorID: duplicate.trackID, donorLineage: donorLineage)
+                if duplicate.trackID != keeper.trackID {
+                    try ListenLedger.recordLineage(keeper: keeper.trackID, donor: duplicate.trackID, in: context)
+                    if let keeperTrack = try TrackRecordRepository.track(id: keeper.trackID, in: context) {
+                        let donorLineage = try TrackRecordRepository.track(id: duplicate.trackID, in: context)?.absorbedTrackIDs ?? []
+                        keeperTrack.absorbLineage(donorID: duplicate.trackID, donorLineage: donorLineage)
+                    }
                 }
                 try ListenLedger.refreshCounts(forTrackIDs: [keeper.trackID], in: context)
             } catch {

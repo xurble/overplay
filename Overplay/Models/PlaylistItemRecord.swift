@@ -30,6 +30,10 @@ final class LibraryMembershipV2 {
     var sortOrder: Int = 0
     var skipCount: Int = 0
     var playthroughCount: Int = 0
+    /// Set in the same write as the count cache by the listen ledger. A synced
+    /// row carrying it holds derived counts, never pre-ledger counts, so it is
+    /// never migrated as a baseline (`COUNT-002`).
+    var countsDerivedFromLedger: Bool = false
     @Transient private var detachedApplePlayCountState: ApplePlayCountState?
 
     @MainActor var applePlayCountState: ApplePlayCountState? {
