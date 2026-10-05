@@ -241,6 +241,17 @@ does not make the primary playlists → tracks → Now Playing flow harder to us
 CarPlay browsing remains focused on Active playlists; Retired content appears
 only when it is the current playback context started elsewhere.
 
+## Siri Playlist Management (Committed, Not Yet Scheduled)
+
+Product priority 2 (CarPlay and Siri first). This work is deferred until the
+playback core is device-verified; it is not a candidate or a non-goal.
+
+- Add App Intents backed by the existing shared services for playing the One
+  True Playlist or triage bucket and for promoting, retiring, or restoring the
+  current track. Adopt the system audio schemas where they accurately represent
+  the action so Siri, Shortcuts, Spotlight, the Action button, and Apple
+  Intelligence receive consistent semantics.
+
 ## Unscheduled Music Platform Enhancements
 
 The highest-value MusicKit infrastructure opportunities are tracked separately:
@@ -290,13 +301,8 @@ invent a fake playlist or bypass the global ownership/retention rules.
 - Consider MusicKit's system music picker after it leaves beta and demonstrates
   a clear advantage over Overplay's purpose-built selection flows.
 
-### Siri and System Surfaces
+### System Surfaces
 
-- Add App Intents backed by the existing shared services for playing the One
-  True Playlist or triage bucket and for promoting, retiring, or restoring the
-  current track. Adopt the system audio schemas where they accurately represent
-  the action so Siri, Shortcuts, Spotlight, the Action button, and Apple
-  Intelligence receive consistent semantics.
 - Support Music Haptics by persisting ISRC, publishing
   `MPNowPlayingInfoPropertyInternationalStandardRecordingCode`, and declaring
   `MusicHapticsSupported`. Keep this aligned with issue #40's identity work.

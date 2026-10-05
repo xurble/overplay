@@ -33,8 +33,8 @@ trades one against another, the higher priority wins.
 2. **CarPlay and Siri first.** Playlist management works with the phone in a
    pocket. Playing a playlist and promoting, retiring or restoring the current
    track are reachable from CarPlay and by voice; an action that needs the
-   phone screen is, in practice, unavailable. Siri support is **Planned**
-   (`TODO.md`).
+   phone screen is, in practice, unavailable. Siri support is **Planned**:
+   deferred, not yet built (`TODO.md`, Siri Playlist Management).
 3. **Reliable playlist management.** One True Playlist, Triage and Retired
    stay correct, and deduplication keeps each logical track in exactly one of
    them (`PLAYLIST-007`).
@@ -1660,8 +1660,7 @@ longer exists.
 The following are not requirements of the current product:
 
 - Native Mac target, Mac windows, menus, tables, and media-key integration.
-- Widgets, Dynamic Island, or separate watch surfaces. (Siri and App Intents
-  are planned under product priority 2, not a non-goal.)
+- Widgets, Dynamic Island, or separate watch surfaces.
 - Rich dashboard summaries such as recent promotions, unreviewed queues, or
   high-skip queues.
 - A separate reset-local-playback-state control or a direct deep link to
