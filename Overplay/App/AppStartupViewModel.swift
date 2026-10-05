@@ -20,6 +20,7 @@ final class AppStartupViewModel {
         var prepareLibrary: () async throws -> Void = {}
         /// Counting is a layer: its failures are logged, never fatal to startup.
         var reconcileListenLedger: () -> Void = {}
+        var repairTrackLocations: () -> Void = {}
         var authorizationIsReady: (() -> Bool)? = nil
     }
 
@@ -116,6 +117,8 @@ final class AppStartupViewModel {
             } catch {
                 StartupProfiler.mark("Listen ledger reconcile failed: \(error.localizedDescription)")
             }
+        } repairTrackLocations: {
+            runtime.repairTrackLocations(in: modelContext)
         } authorizationIsReady: {
             authorizationService.readiness.isReady
         }
@@ -141,6 +144,8 @@ final class AppStartupViewModel {
                 // Before any merge: merges re-derive counts from the ledger,
                 // so pre-ledger counts must become baselines first.
                 dependencies.reconcileListenLedger()
+                // Imports that landed before the library was ready skipped it.
+                dependencies.repairTrackLocations()
                 try dependencies.loadSettings()
                 dependencies.removeVideoTracks()
                 dependencies.migrateTriageBucket()

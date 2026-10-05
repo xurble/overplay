@@ -43,6 +43,9 @@ enum PlaylistItemRepository {
             item.applePlayCountState = appleState
             item.lastPlayedAt = nil
             item.lastSkippedAt = nil
+            // Un-retiring is a move; without the stamp the location repair
+            // would re-apply the older retirement event (`LOC-001`).
+            if item.evictedAt != nil { item.locationChangedAt = resetAt }
             item.evictedAt = nil
             item.evictionReason = nil
             item.evictionSource = nil
