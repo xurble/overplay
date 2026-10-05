@@ -582,7 +582,7 @@ whole-database nuke.
 - `trackID`: the Overplay track UUID. Counts travel with the track, not with a
   playlist row.
 - `sessionID`: an idempotency key. Two events with the same session ID and kind
-  count once. Live sessions use a fresh UUID per session. Reconciled
+  count once. Live sessions use `<local track UUID>@<session start time>`. Reconciled
   playthroughs use their proof key. Baselines use `baseline:<trackID>`, so two
   devices migrating the same data converge on one baseline; when they differ,
   the earliest (then lowest ID) wins, deterministically. Lineage uses
@@ -603,13 +603,19 @@ list attribute is last-writer-wins:
   the latest `statsReset` and that track's latest `skipReset`.
 
 `PlaylistItemRecord.skipCount` and `playthroughCount` are a materialized cache
-of that derivation, written together with `countsDerivedFromLedger = true`. They
-are recomputed after local ledger writes and after CloudKit imports (skipped
-when the store's event count is unchanged and nothing was migrated). A derived
-row that is higher than this store can explain, while the store holds no
-evidence at all for the track, came from a device whose events have not arrived
-yet. It is kept as it is rather than lowered, so the 0/0 retention rule and Apple
-play-count seeding never act on counts that are merely in flight. Two devices that hold the same events compute the same
+of that derivation, written together with `countsDerivedFromLedger = true` and
+the reset each count was derived after (`countsPlaysResetAt`,
+`countsSkipsResetAt`). They are recomputed after local ledger writes and after
+CloudKit imports (skipped when the store's event count is unchanged and nothing
+was migrated). A marked row is joined with the local derivation, never simply
+overwritten:
+- a later reset wins outright;
+- with the same reset, the higher count wins, because it is the more complete.
+
+A row that only looks higher because this device is still missing events is
+therefore never lowered, and the 0/0 retention rule and Apple play-count seeding
+never act on counts that are merely in flight. A reset this device knows about,
+newer than the one the row reflects, lowers it immediately. Two devices that hold the same events compute the same
 values, so concurrent writes to the cache converge instead of losing
 increments. Nothing ever increments, sums or zeroes the cache directly.
 
@@ -959,7 +965,9 @@ works:
 
 A stalled player already reports `playing`, so a bare `play()` proves nothing:
 a stall starts at rung 2. Each recovery gets a fresh stall window, and the
-failure stays shown while a rung-3 resubmission prepares. A press within two minutes of an earlier recovery
+failure stays shown while a rung-3 resubmission prepares. A Play press while it
+prepares supersedes it at rung 3, never rung 2 on the old queue. A more specific
+failure from the resubmission itself is kept. A press within two minutes of an earlier recovery
 starts one rung above the rung that last ran, so a failure that keeps coming
 back reaches rung 3. Resubmitting the track that is playing continues its
 listening session instead of judging it. Each Play press runs the ladder at most
@@ -998,8 +1006,9 @@ session, or its item has not hydrated yet, and the position is continuous
 (within three seconds, at least one second in), the session moves to the new
 entry instead of ending. An unconfirmed carry-over is checked when the item
 hydrates. If it turns out to be a different song, the carried session ends
-then and a new one starts. If it is still unconfirmed after ten seconds, its
-listening is no longer attributed. When the first entry of a recovery or resume
+then and a new one starts, with the new song's duration. If it is still
+unconfirmed after ten seconds, its listening is no longer attributed, but a
+later hydration as a different song still splits it. When the first entry of a recovery or resume
 resubmission is not the track being resumed, the carried listen is dropped,
 never judged.
 
@@ -1018,12 +1027,16 @@ mutate the live MusicKit queue:
 - retiring the current track from Now Playing issues Next;
 - an entry whose member has left the intent's scope (retired from Active, or
   restored from Retired) is skipped with Next when it is observed becoming
-  current. Its session is marked evaluated without a skip. Each entry is checked
-  at most once per intent, so a repeat-all wrap cannot loop, and a session
-  carried onto a new entry ID is never re-checked mid-song. A failed lookup is
-  never out of scope. A member whose track was merged away on another device
-  follows its keeper (by lineage), and the intent is rekeyed, instead of being
-  skipped.
+  current. Its session is marked evaluated without a skip. An entry is
+  checked each time it becomes current, so a track retired after it played is
+  skipped on the next repeat-all lap. It is checked once per visit, never after
+  a mid-song carry-over, and skipped at most once per intent, so a wrap over
+  out-of-scope entries cannot loop. A failed lookup is never out of scope. A
+  member whose track was merged away on another device follows its keeper (by
+  lineage), and the intent is rekeyed, instead of being skipped. When the item,
+  the track and any lineage are all missing (a merge still arriving), the entry
+  is unknown: it is not skipped, and it is checked again on its next
+  attribution.
 
 ### Launch and restore
 
@@ -1033,7 +1046,9 @@ independently of iCloud library restoration:
 - **The player still holds a current entry:** it is attributed and observation
   resumes.
 - **The player holds nothing:** the restored member is shown paused at its saved
-  position. Play resubmits the intent from that member and seeks to the saved
+  position. A saved position belongs to its own track: if that track is no
+  longer in the intent, the intent resumes from its start at 0. An identity
+  merge rewrites the resume point along with the intent. Play resubmits the intent from that member and seeks to the saved
   position when it is more than 5 seconds from either end of the track.
 
 Restored sessions are never evaluated. Play, Pause, Next, Previous and resume
@@ -1522,6 +1537,8 @@ Local JSON file only:
   ledger, recomputed after writes and imports; never edited directly)
 - `countsDerivedFromLedger: Bool` (set with the cache; such rows are never
   migrated as pre-ledger counts)
+- `countsPlaysResetAt: Date?` and `countsSkipsResetAt: Date?` (the reset each
+  cached count was derived after, used to join rows across devices)
 - `lastPlayedAt: Date?`
 - `lastSkippedAt: Date?`
 - `lastSeenInPlaylistAt: Date?`
@@ -1649,6 +1666,15 @@ The following are not requirements of the current product:
   `ApplicationMusicPlayer`'s host. If CarPlay shows stale or empty Now Playing
   on the user's iOS version, verify with the diagnostic mirror (`PLAY-016`)
   before changing the default.
+- **Mixed versions and rollback.** All devices on an account must move to the
+  listen-ledger build together. A device still on an older build increments the
+  count cache directly. Once an upgraded device re-derives that row, those plays
+  are dropped. Rolling back after ledger events exist leaves rows marked as
+  derived, and upgrading again re-derives them from the ledger. There is no
+  supported rollback once events are written.
+- In a two-entry queue under repeat-all, Previous from the second entry cannot
+  be told apart from Next wrapping to the first. It is judged forward, so it can
+  count a skip.
 - Whether `CPNowPlayingShuffleButton` and `CPNowPlayingRepeatButton` reflect
   MusicKit's modes without Overplay publishing remote-command state is
   unverified on hardware.

@@ -204,9 +204,8 @@ enum ListenLedger {
         for trackID in trackIDs {
             let identities = try identities(for: trackID, in: context)
             let entries = try entries(for: identities, in: context)
-            let derived = counts(identities: identities, entries: entries)
-            let hasEvidence = hasTrackEvidence(identities: identities, entries: entries)
-            for item in items where item.trackID == trackID && apply(derived, to: item, hasEvidence: hasEvidence) {
+            let derived = derivation(identities: identities, entries: entries)
+            for item in items where item.trackID == trackID && apply(derived, to: item) {
                 changed += 1
             }
         }
@@ -226,8 +225,7 @@ enum ListenLedger {
         for item in items {
             let identities = lineageClosure(of: item.trackID, tracksByID: tracksByID, entriesByTrackID: entriesByTrackID)
             let entries = identities.flatMap { entriesByTrackID[$0] ?? [] } + globalResets
-            let hasEvidence = hasTrackEvidence(identities: identities, entries: entries)
-            if apply(counts(identities: identities, entries: entries), to: item, hasEvidence: hasEvidence) { changed += 1 }
+            if apply(derivation(identities: identities, entries: entries), to: item) { changed += 1 }
         }
         return changed
     }
@@ -236,6 +234,38 @@ enum ListenLedger {
     /// at the later of that and the track's own latest skip reset. Session IDs
     /// make every outcome idempotent; competing baselines for one session
     /// resolve deterministically to the earliest, then the lowest ID.
+    struct Derivation: Equatable, Sendable {
+        var counts: Counts
+        var playsResetAt: Date?
+        var skipsResetAt: Date?
+    }
+
+    /// Counts plus the reset floors they were derived after.
+    nonisolated static func derivation(identities: Set<UUID>, entries: [Entry]) -> Derivation {
+        let globalResetAt = entries.filter { $0.kind == .statsReset }.map(\.occurredAt).max()
+        let skipResetAt = entries.filter { identities.contains($0.trackID) && $0.kind == .skipReset }.map(\.occurredAt).max()
+        return Derivation(
+            counts: counts(identities: identities, entries: entries),
+            playsResetAt: globalResetAt,
+            skipsResetAt: [globalResetAt, skipResetAt].compactMap { $0 }.max()
+        )
+    }
+
+    /// Joins a cached count with a derived one. A later reset wins outright;
+    /// with the same reset, the higher count is the more complete.
+    nonisolated static func join(
+        cached: (count: Int, resetAt: Date?),
+        derived: (count: Int, resetAt: Date?)
+    ) -> (count: Int, resetAt: Date?) {
+        switch (cached.resetAt, derived.resetAt) {
+        case let (cachedReset?, derivedReset?) where cachedReset > derivedReset: return cached
+        case let (cachedReset?, derivedReset?) where cachedReset < derivedReset: return derived
+        case (.some, nil): return cached
+        case (nil, .some): return derived
+        default: return (max(cached.count, derived.count), derived.resetAt)
+        }
+    }
+
     nonisolated static func counts(identities: Set<UUID>, entries: [Entry]) -> Counts {
         let globalResetAt = entries.filter { $0.kind == .statsReset }.map(\.occurredAt).max()
         let own = entries.filter { identities.contains($0.trackID) }
@@ -297,12 +327,10 @@ enum ListenLedger {
                 $0.kindRawValue == lineage && $0.sessionID == sessionID
             })
             descriptor.fetchLimit = 1
-            var next = try context.fetch(descriptor).first?.trackID
-            if next == nil {
-                let idString = current.uuidString
-                next = try context.fetch(FetchDescriptor<TrackRecord>()).first { $0.absorbedTrackIDs.contains(idString) }?.id
-            }
-            guard let keeper = next, visited.insert(keeper).inserted else { return nil }
+            // Every merge writes a lineage event, so the immutable record is
+            // enough; no scan of every track during playback.
+            guard let keeper = try context.fetch(descriptor).first?.trackID,
+                  visited.insert(keeper).inserted else { return nil }
             if try TrackRecordRepository.track(id: keeper, in: context) != nil { return keeper }
             current = keeper
         }
@@ -346,30 +374,31 @@ enum ListenLedger {
                      skipDelta: event.skipDelta)
     }
 
-    /// Whether this store holds any outcome evidence (events or a baseline)
-    /// for the identity. Lineage and global resets are not evidence of plays.
-    nonisolated static func hasTrackEvidence(identities: Set<UUID>, entries: [Entry]) -> Bool {
-        entries.contains { identities.contains($0.trackID) && $0.kind != .lineage }
-    }
-
     /// Writes only real changes, and leaves `updatedAt` alone: the cache is
     /// derived, and must not look like a user decision to merge logic. The
     /// marker travels with the cache so no device mistakes it for legacy counts.
     ///
-    /// A derived cache that is higher than this store can explain, while the
-    /// store holds no evidence at all for the track, came from a device whose
-    /// events have not arrived yet. Lowering it would publish a wrong count to
-    /// every device and could let the 0/0 retention rule delete a row whose
-    /// history is in flight, so it is kept until evidence arrives.
-    private static func apply(_ counts: Counts, to item: PlaylistItemRecord, hasEvidence: Bool) -> Bool {
-        if item.countsDerivedFromLedger, !hasEvidence,
-           counts.playthroughs < item.playthroughCount || counts.skips < item.skipCount {
-            return false
+    /// A marked row is joined with the derivation instead of overwritten: a
+    /// count that is higher than this store can explain came from a device
+    /// whose events have not all arrived yet, and lowering it would publish a
+    /// wrong count to every device, permanently lower an Apple play-count seed,
+    /// or let the 0/0 retention rule delete a row whose history is in flight.
+    /// Only a reset this store knows about, newer than the one the row
+    /// reflects, can lower it.
+    private static func apply(_ derived: Derivation, to item: PlaylistItemRecord) -> Bool {
+        var plays = (count: derived.counts.playthroughs, resetAt: derived.playsResetAt)
+        var skips = (count: derived.counts.skips, resetAt: derived.skipsResetAt)
+        if item.countsDerivedFromLedger {
+            plays = join(cached: (item.playthroughCount, item.countsPlaysResetAt), derived: plays)
+            skips = join(cached: (item.skipCount, item.countsSkipsResetAt), derived: skips)
         }
-        guard item.playthroughCount != counts.playthroughs || item.skipCount != counts.skips
-            || !item.countsDerivedFromLedger else { return false }
-        item.playthroughCount = counts.playthroughs
-        item.skipCount = counts.skips
+        guard !item.countsDerivedFromLedger
+            || item.playthroughCount != plays.count || item.skipCount != skips.count
+            || item.countsPlaysResetAt != plays.resetAt || item.countsSkipsResetAt != skips.resetAt else { return false }
+        item.playthroughCount = plays.count
+        item.skipCount = skips.count
+        item.countsPlaysResetAt = plays.resetAt
+        item.countsSkipsResetAt = skips.resetAt
         item.countsDerivedFromLedger = true
         return true
     }

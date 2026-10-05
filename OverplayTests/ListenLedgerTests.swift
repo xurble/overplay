@@ -173,6 +173,58 @@ struct ListenLedgerTests {
         #expect(!TrackRetentionPolicy.shouldDelete(pad.item))
     }
 
+    /// Round 3, F2: with some local evidence, a remote row ahead of its events
+    /// is still not lowered.
+    @Test func aRemoteRowAheadOfItsEventsIsNotLoweredByPartialLocalEvidence() throws {
+        let trackID = UUID()
+        let pad = try makeStore(trackID: trackID)
+        try ListenLedger.record(.playthrough, trackID: trackID, sessionID: "pad-1", source: .playback, in: pad.context)
+        try ListenLedger.refreshCounts(forTrackIDs: [trackID], in: pad.context)
+        #expect(pad.item.playthroughCount == 1)
+        // Another device's row (six plays, no reset) overwrites the cache.
+        pad.item.playthroughCount = 6
+        try pad.context.save()
+
+        try ListenLedger.record(.playthrough, trackID: trackID, sessionID: "pad-2", source: .playback, in: pad.context)
+        try ListenLedger.refreshCounts(forTrackIDs: [trackID], in: pad.context)
+        try ListenLedger.refreshAllCounts(in: pad.context)
+        #expect(pad.item.playthroughCount == 6)
+    }
+
+    @Test func aLocalSkipResetLowersOnlySkips() throws {
+        let trackID = UUID()
+        let pad = try makeStore(trackID: trackID)
+        pad.item.countsDerivedFromLedger = true
+        pad.item.playthroughCount = 4
+        pad.item.skipCount = 2
+        try pad.context.save()
+
+        try ListenLedger.resetSkips(trackID: trackID, in: pad.context)
+        #expect(pad.item.playthroughCount == 4)
+        #expect(pad.item.skipCount == 0)
+        #expect(!TrackRetentionPolicy.shouldDelete(pad.item))
+    }
+
+    @Test func aRowReflectingANewerResetIsNotRaisedByOlderLocalEvents() throws {
+        let trackID = UUID()
+        let pad = try makeStore(trackID: trackID)
+        for session in ["a", "b", "c"] {
+            try ListenLedger.record(.playthrough, trackID: trackID, sessionID: session, source: .playback,
+                                    at: Date(timeIntervalSince1970: 100), in: pad.context)
+        }
+        try ListenLedger.refreshCounts(forTrackIDs: [trackID], in: pad.context)
+        #expect(pad.item.playthroughCount == 3)
+        // Another device reset everything; its row arrives before the reset event.
+        pad.item.playthroughCount = 0
+        pad.item.skipCount = 0
+        pad.item.countsPlaysResetAt = Date(timeIntervalSince1970: 500)
+        pad.item.countsSkipsResetAt = Date(timeIntervalSince1970: 500)
+        try pad.context.save()
+
+        try ListenLedger.refreshAllCounts(in: pad.context)
+        #expect(pad.item.playthroughCount == 0)
+    }
+
     /// Review finding 1: a baseline written after another device's reset must
     /// not bring the reset counts back.
     @Test func lateBaselineAfterAResetDoesNotResurrectCounts() throws {
