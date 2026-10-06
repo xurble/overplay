@@ -56,7 +56,8 @@ nonisolated final class DevicePlaybackCache: Sendable {
     @MainActor static func hasCurrentData(for track: TrackRecord) -> Bool {
         guard let data = shared.data(for: track.id),
               let cached = try? JSONDecoder().decode(Track.self, from: data) else { return false }
-        return cached.id.rawValue == (track.libraryID ?? track.catalogID)
+        // A catalog song prepared because the library ID was gone is current too.
+        return [track.libraryID, track.catalogID].contains(cached.id.rawValue)
     }
 
     /// Resolves whatever can be resolved, committing each track as it
@@ -76,7 +77,15 @@ nonisolated final class DevicePlaybackCache: Sendable {
         let uncached = tracks.filter { refreshing.contains($0.id) || !hasCurrentData(for: $0) }
         let libraryIDs = Array(Set(uncached.compactMap(\.libraryID))).sorted()
         let catalogIDs = Array(Set(uncached.filter { $0.libraryID == nil }.compactMap(\.catalogID))).sorted()
+        // A stored library ID can stop existing in the account library while
+        // the song stays in its playlists; identifiers are fill-and-heal, so
+        // sync never clears it (#75). Such a song plays from its catalog ID.
+        var catalogForLibraryID: [String: String] = [:]
+        for track in uncached {
+            if let libraryID = track.libraryID, let catalogID = track.catalogID { catalogForLibraryID[libraryID] = catalogID }
+        }
         var batches: [MusicResourceReference.Domain: Result<[String: Song], Error>] = [:]
+        var fallback: Result<[String: Song], Error>?
         try await prepare(tracks, refreshing: refreshing) { reference in
             if batches[reference.domain] == nil {
                 do {
@@ -90,10 +99,31 @@ nonisolated final class DevicePlaybackCache: Sendable {
                     batches[reference.domain] = .failure(error)
                 }
             }
-            guard let song = try batches[reference.domain]?.get()[reference.value] else {
-                throw PreparationError(message: "Apple Music returned no song for \(reference.value).")
+            let songs = try batches[reference.domain]?.get() ?? [:]
+            if let song = songs[reference.value] { return try JSONEncoder().encode(Track.song(song)) }
+
+            // Only a definite library miss falls back; a failed request has
+            // already thrown above, so the rest fail fast (`LOAD-001`).
+            if reference.domain == .librarySong, let catalogID = catalogForLibraryID[reference.value] {
+                if fallback == nil {
+                    let missing = libraryIDs.filter { songs[$0] == nil }.compactMap { catalogForLibraryID[$0] }
+                    do {
+                        fallback = .success(try await catalogLookup(missing))
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        fallback = .failure(error)
+                    }
+                    let found = (try? fallback?.get().count) ?? 0
+                    MusicKitActivityLog.shared.record(
+                        .playbackQueuePreparation, magnitude: Double(found),
+                        detail: "prepared \(found) of \(missing.count) songs from the catalog; their library IDs no longer exist"
+                    )
+                }
+                if let song = try fallback?.get()[catalogID] { return try JSONEncoder().encode(Track.song(song)) }
+                throw PreparationError(message: "Apple Music returned no library song for \(reference.value) and no catalog song for \(catalogID).")
             }
-            return try JSONEncoder().encode(Track.song(song))
+            throw PreparationError(message: "Apple Music returned no song for \(reference.value).")
         }
     }
 
