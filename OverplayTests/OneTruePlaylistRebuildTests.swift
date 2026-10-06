@@ -36,8 +36,12 @@ struct OneTruePlaylistRebuildTests {
         }
         service.createPlaylist = { name, items in
             recorder.created.append((name, items.map(\.id.rawValue)))
-            return try create?() ?? "p.rebuilt"
+            let id = try create?() ?? "p.rebuilt"
+            return try JSONDecoder().decode(Playlist.self, from: JSONSerialization.data(withJSONObject: [
+                "id": id, "type": "library-playlists", "attributes": ["name": name, "canEdit": true]
+            ]))
         }
+        service.durableID = { $0.id.rawValue }
         service.sync = { playlist, _ in recorder.synced.append(playlist.musicPlaylistID) }
         return service
     }
@@ -113,6 +117,24 @@ struct OneTruePlaylistRebuildTests {
         #expect(fixture.playlist.musicPlaylistID == "playlist-main")
         #expect(recorder.synced.isEmpty)
         #expect(recorder.created.count == 1)
+    }
+
+    @Test("A created playlist that cannot be confirmed is reported as created, and Overplay keeps its current playlist")
+    func unconfirmedPlaylistKeepsCurrentLink() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        let recorder = Recorder()
+        var service = Self.service(recorder: recorder)
+        service.durableID = { _ in throw PlaylistSyncError.playlistNotFound }
+        fixture.controller.playlistRebuild = service
+
+        do {
+            _ = try await fixture.controller.rebuildOneTruePlaylist(context: fixture.context)
+            Issue.record("Expected the rebuild to report the unconfirmed playlist")
+        } catch let error as OneTruePlaylistRebuildService.RebuildError {
+            #expect(error.localizedDescription.hasPrefix("Created a new “Main” in Apple Music with 3 songs"))
+        }
+        #expect(fixture.playlist.musicPlaylistID == "playlist-main")
+        #expect(recorder.synced.isEmpty)
     }
 
     @Test("A sync failure after rebuilding leaves the new playlist linked")

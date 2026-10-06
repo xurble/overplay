@@ -484,6 +484,11 @@ rebuild:
 - If creation fails, Overplay keeps its current playlist and says that an empty
   playlist may have been left behind. MusicKit creates the playlist before
   adding songs, and cannot delete it.
+- The new playlist's identifier is confirmed by a native lookup of its MusicKit
+  ID, which on iPhone and iPad is the web library ID. Apple's library list can
+  lag a new playlist. If the identifier cannot be confirmed, Overplay keeps its
+  current playlist and reports the created playlist and its song count, so the
+  user can delete it and try again.
 - Relinks the same One True Playlist record to the new identifier, exactly as
   when MusicKit reissues one: source provenance, stale-OTP suppression, the
   selected playlist and the playback intent all follow it. The playlist

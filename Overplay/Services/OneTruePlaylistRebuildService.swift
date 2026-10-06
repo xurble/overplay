@@ -25,12 +25,14 @@ struct OneTruePlaylistRebuildService {
         case notOnThisDevice
         case nothingToAdd
         case creationFailed(String)
+        case linkFailed(name: String, songCount: Int)
 
         var errorDescription: String? {
             switch self {
             case .noOneTruePlaylist: "Choose a One True Playlist before rebuilding it."
             case .notOnThisDevice: "Rebuild the Apple Music playlist from your iPhone or iPad."
             case .nothingToAdd: "None of the playlist's active songs could be prepared for Apple Music, so nothing was changed."
+            case .linkFailed(let name, let songCount): "Created a new “\(name)” in Apple Music with \(songCount) songs, but couldn't confirm it, so Overplay still uses your current playlist. Delete the new one (\(songCount) songs) in the Music app and try again."
             case .creationFailed(let reason): "Apple Music couldn't create the playlist (\(reason)). Overplay still uses your current playlist. If an empty playlist appeared in the Music app, delete it."
             }
         }
@@ -78,12 +80,22 @@ struct OneTruePlaylistRebuildService {
         }
         return tracks
     }
-    /// Creates the playlist and returns its durable web library identifier.
-    var createPlaylist: @MainActor (String, [Track]) async throws -> String = { name, items in
+    var createPlaylist: @MainActor (String, [Track]) async throws -> Playlist = { name, items in
         let created = try await MusicKitActivityLog.shared.measure(.libraryPlaylistCreate, magnitude: Double(items.count)) {
             try await MusicLibrary.shared.createPlaylist(name: name, description: "Managed by Overplay", items: items)
         }
         CachingMusicLibraryPlaylistFetcher.shared.invalidate()
+        return created
+    }
+    /// The created playlist's durable identifier. On iPhone and iPad its
+    /// MusicKit ID is the web library ID, which a native lookup confirms at
+    /// once. Apple's library list can lag a new playlist (2026-10-06: the
+    /// first rebuild created its playlist but could not find it there).
+    var durableID: @MainActor (Playlist) async throws -> String = { created in
+        if let native = try await CachingMusicLibraryPlaylistFetcher.shared.fetchPlaylist(id: created.id.rawValue),
+           native.id == created.id {
+            return created.id.rawValue
+        }
         return try await AppleMusicPlaylistSourceSync().canonicalLink(for: created).id
     }
     var sync: @MainActor (PlaylistRecord, ModelContext) async throws -> Void = { playlist, context in
@@ -105,13 +117,20 @@ struct OneTruePlaylistRebuildService {
             let items = records.compactMap { tracksByID[$0.id] }
             guard !items.isEmpty else { throw RebuildError.nothingToAdd }
 
-            let newID: String
+            let created: Playlist
             do {
-                newID = try await createPlaylist(playlist.name, items)
+                created = try await createPlaylist(playlist.name, items)
             } catch {
                 // MusicKit creates the playlist before adding its songs, so a
                 // failure can leave an empty one behind; it cannot delete it.
                 throw RebuildError.creationFailed(error.localizedDescription)
+            }
+            let newID: String
+            do {
+                newID = try await durableID(created)
+            } catch {
+                TrackMetadataDiagnostics.log("rebuilt playlist could not be confirmed: \(error.localizedDescription)")
+                throw RebuildError.linkFailed(name: playlist.name, songCount: items.count)
             }
             // The same logical playlist under a new identifier, exactly as when
             // MusicKit reissues one: provenance, suppression, selection and the
