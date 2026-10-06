@@ -71,6 +71,7 @@ Music's global play count or skip count.
 | `PLAYLIST-005` | Last-source unlink deletes untouched, non-explicit active Triage rows and unowned retired 0/0 rows. Active explicit keep or prior listening (even reset) survives. Nonzero counts and necessary OTP suppression always survive. | `Overplay/Persistence/TrackRetentionPolicy.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
 | `PLAYLIST-007` | One item per track app-wide. OTP, Triage and global Retired are three top-level collections; every retired item belongs to the bucket. | `Overplay/Persistence/PlaylistItemRepository.swift`, `Overplay/Services/TrackLocationService.swift` |
 | `PLAYLIST-008` | Every retire or duplicate merge out of a managed One True Playlist removes the song from the Apple Music playlist, retried after each sync. A rewrite runs only when the device's copy matches iCloud's; removed or absent songs release suppression and get the retention rule. Promotion does not add a song iCloud already holds. | `Overplay/Services/OneTruePlaylistRemoteMembership.swift`, `OverplayTests/OneTruePlaylistRemoteMembershipTests.swift` |
+| `PLAYLIST-009` | From iPhone or iPad, the user can rebuild the One True Playlist's Apple Music playlist: Overplay creates a new playlist of the active songs in Overplay's order and relinks the same One True Playlist to it, keeping counts, retirements and history. Nothing is deleted from Apple Music. | `Overplay/Services/OneTruePlaylistRebuildService.swift`, `OverplayTests/OneTruePlaylistRebuildTests.swift` |
 | `LOC-001` | A retirement or restore survives another device's stale CloudKit write. After each import and at startup, a song's newest `evicted`/`restored` history event re-applies its decision when it is newer than the row's `locationChangedAt`; promotions are left to the next One True Playlist sync. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/TrackLocationRepairTests.swift` |
 | `PLAYLIST-006` | Pre-bucket triage data migrates onto the bucket at startup. The migration is idempotent and keyed on the stored legacy role value, not a local flag. | `Overplay/Persistence/TriageBucketMigrationService.swift`, `OverplayTests/TriageBucketTests.swift` |
 | `PLAYLIST-002` | Initial setup can create a managed playlist, copy an existing playlist into a managed playlist, or link an existing playlist as incoming-only. | `Overplay/ViewModels/PlaylistSelectionViewModel.swift`, `Overplay/Services/PlaylistSyncService.swift` |
@@ -466,6 +467,41 @@ deleted elsewhere or drop songs added elsewhere. So:
 - Retirement, duplicate merge, and every completed One True Playlist sync
   (periodic, manual or CarPlay) run the same operation, so deferred or failed
   removals are retried after each sync. A retry never fails the sync.
+
+#### Rebuilding the Apple Music playlist (`PLAYLIST-009`)
+
+Settings on iPhone and iPad offers **Rebuild Apple Music Playlist**, after a
+confirmation. It explains when Apple Music has refused Overplay's edits. A
+rebuild:
+
+- Creates a new Apple Music playlist with the One True Playlist's name and
+  "Managed by Overplay" description. It contains the active songs in Overplay's
+  playback order; retired songs are left out. Apple Music adds only live
+  MusicKit items to a playlist and refuses tracks decoded from saved playback
+  data. So each song comes from the current playlist's own entries, matched by
+  library ID, or else from the catalog, as promotion adds it. Songs with
+  neither are skipped and reported; they stay in Overplay.
+- If creation fails, Overplay keeps its current playlist and says that an empty
+  playlist may have been left behind. MusicKit creates the playlist before
+  adding songs, and cannot delete it.
+- The new playlist's identifier is confirmed by a native lookup of its MusicKit
+  ID, which on iPhone and iPad is the web library ID. Apple's library list can
+  lag a new playlist. If the identifier cannot be confirmed, Overplay keeps its
+  current playlist and reports the created playlist and its song count, so the
+  user can delete it and try again.
+- Relinks the same One True Playlist record to the new identifier, exactly as
+  when MusicKit reissues one: source provenance, stale-OTP suppression, the
+  selected playlist and the playback intent all follow it. The playlist
+  becomes `managed`, and its recorded edit refusal is cleared.
+- Changes nothing in Overplay when no song can be added or creation fails.
+  Deletes nothing in Apple Music: the user deletes the older playlist in the
+  Music app.
+- Syncs the One True Playlist afterwards. A failed sync leaves the new link in
+  place for the next sync to complete.
+
+Rebuilding is deliberate. Overplay never recreates a playlist because it seems
+to be missing, since a lagging or offline device cannot tell a deleted playlist
+from one it has not loaded.
 
 Retirement survives other devices (`LOC-001`). Each song is one CloudKit record,
 and CloudKit keeps whichever device saved the whole record last. A device that

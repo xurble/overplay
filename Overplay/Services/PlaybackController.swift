@@ -80,6 +80,8 @@ final class PlaybackController {
     @ObservationIgnored var isLibraryReady: @MainActor () -> Bool = { true }
     /// Apple Music membership of the One True Playlist (`PLAYLIST-008`); injectable for tests.
     @ObservationIgnored var remoteMembership = OneTruePlaylistRemoteMembership()
+    /// Rebuilds the One True Playlist's Apple Music playlist (`PLAYLIST-009`); injectable for tests.
+    @ObservationIgnored var playlistRebuild = OneTruePlaylistRebuildService()
     @ObservationIgnored private let sleep: @MainActor (Duration) async -> Void
 
     // MARK: - Internal state
@@ -1333,6 +1335,14 @@ final class PlaybackController {
     func removeTriageSource(_ playlist: PlaylistRecord, context: ModelContext) throws {
         try PlaylistRepository.removeTriageSource(playlist, in: context)
         reconcileTrackMembership(context: context)
+    }
+
+    /// `PLAYLIST-009`: one shared entry point for every surface offering it.
+    func rebuildOneTruePlaylist(context: ModelContext) async throws -> OneTruePlaylistRebuildService.Result {
+        adopt(context)
+        let result = try await playlistRebuild.rebuild(in: context)
+        reconcileTrackMembership(context: context)
+        return result
     }
 
     func resetAllLocalStats(context: ModelContext) throws {
