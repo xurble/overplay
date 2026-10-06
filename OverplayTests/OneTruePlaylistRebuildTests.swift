@@ -29,7 +29,7 @@ struct OneTruePlaylistRebuildTests {
     ) -> OneTruePlaylistRebuildService {
         var service = OneTruePlaylistRebuildService()
         service.canCreatePlaylists = { true }
-        service.playableTracks = { records in
+        service.addableTracks = { records, _ in
             var tracks: [UUID: Track] = [:]
             for record in playable(records) { tracks[record.id] = try? Self.track(record.libraryID ?? "") }
             return tracks
@@ -77,7 +77,7 @@ struct OneTruePlaylistRebuildTests {
         #expect(recorder.synced == ["p.rebuilt"])
     }
 
-    @Test("Songs with no playable item on this device are left out and counted")
+    @Test("Songs with no addable item on this device are left out and counted")
     func skippedSongsAreCounted() async throws {
         let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
         let recorder = Recorder()
@@ -99,7 +99,7 @@ struct OneTruePlaylistRebuildTests {
         }
 
         fixture.controller.playlistRebuild = Self.service(recorder: recorder, create: { throw URLError(.notConnectedToInternet) })
-        await #expect(throws: URLError.self) {
+        await #expect(throws: OneTruePlaylistRebuildService.RebuildError.self) {
             _ = try await fixture.controller.rebuildOneTruePlaylist(context: fixture.context)
         }
 

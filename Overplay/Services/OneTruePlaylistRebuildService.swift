@@ -24,29 +24,57 @@ struct OneTruePlaylistRebuildService {
         case noOneTruePlaylist
         case notOnThisDevice
         case nothingToAdd
+        case creationFailed(String)
 
         var errorDescription: String? {
             switch self {
             case .noOneTruePlaylist: "Choose a One True Playlist before rebuilding it."
             case .notOnThisDevice: "Rebuild the Apple Music playlist from your iPhone or iPad."
             case .nothingToAdd: "None of the playlist's active songs could be prepared for Apple Music, so nothing was changed."
+            case .creationFailed(let reason): "Apple Music couldn't create the playlist (\(reason)). Overplay still uses your current playlist. If an empty playlist appeared in the Music app, delete it."
             }
         }
     }
 
     /// An iPad app on a Mac has no MusicKit playlist creation.
     var canCreatePlaylists: @MainActor () -> Bool = { !ProcessInfo.processInfo.isiOSAppOnMac }
-    /// The same per-device tracks playback queues.
-    var playableTracks: @MainActor ([TrackRecord]) async -> [UUID: Track] = { records in
-        do { try await DevicePlaybackCache.prepare(records) } catch {
-            TrackMetadataDiagnostics.log("rebuild preparation incomplete: \(error.localizedDescription)")
-        }
+    /// Live MusicKit items for the given songs. Apple Music adds only live
+    /// items to a playlist: tracks decoded from saved playback data are
+    /// refused (`MPPlaylistUpdateErrorDomain` -1, observed 2026-10-06). The
+    /// current playlist's own entries come first; any other song is fetched
+    /// from the catalog, as promotion adds it.
+    var addableTracks: @MainActor ([TrackRecord], String) async -> [UUID: Track] = { records, playlistID in
         var tracks: [UUID: Track] = [:]
-        for record in records {
-            guard let data = DevicePlaybackCache.shared.data(for: record.id),
-                  let track = try? JSONDecoder().decode(Track.self, from: data),
-                  VideoTrackPolicy.isSong(track) else { continue }
-            tracks[record.id] = track
+        do {
+            let playlist = try await PlaylistSyncService().loadPlaylist(id: playlistID)
+            let entries = try await AppleMusicPlaylistTrackLoader.loadTracks(for: playlist).filter(VideoTrackPolicy.isSong)
+            let entriesByID = Dictionary(entries.map { ($0.id.rawValue, $0) }, uniquingKeysWith: { first, _ in first })
+            // On iPhone and iPad, entries report web library IDs.
+            for record in records {
+                if let match = record.identityReferences.lazy
+                    .filter({ $0.domain == .librarySong }).compactMap({ entriesByID[$0.value] }).first {
+                    tracks[record.id] = match
+                }
+            }
+        } catch {
+            TrackMetadataDiagnostics.log("rebuild could not load the current playlist: \(error.localizedDescription)")
+        }
+        let missing = records.filter { tracks[$0.id] == nil && $0.catalogID != nil }
+        if !missing.isEmpty {
+            do {
+                let request = MusicCatalogResourceRequest<Song>(
+                    matching: \.id, memberOf: missing.compactMap { $0.catalogID.map { MusicItemID($0) } }
+                )
+                let songs = try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, detail: "rebuild songs") {
+                    try await request.response().items
+                }
+                let songsByID = Dictionary(songs.map { ($0.id.rawValue, $0) }, uniquingKeysWith: { first, _ in first })
+                for record in missing {
+                    if let catalogID = record.catalogID, let song = songsByID[catalogID] { tracks[record.id] = .song(song) }
+                }
+            } catch {
+                TrackMetadataDiagnostics.log("rebuild catalog lookup failed: \(error.localizedDescription)")
+            }
         }
         return tracks
     }
@@ -73,11 +101,18 @@ struct OneTruePlaylistRebuildService {
             let inputs = try PlaybackQueueOrchestrator.playlistInputs(for: previousID, in: context)
             let active = PlaylistDisplayOrder.orderedItems(inputs.items.filter { PlaylistPlaybackScope.active.includes($0) }, scope: .active)
             let records = active.compactMap { inputs.tracksByID[$0.trackID] }
-            let tracksByID = await playableTracks(records)
+            let tracksByID = await addableTracks(records, previousID)
             let items = records.compactMap { tracksByID[$0.id] }
             guard !items.isEmpty else { throw RebuildError.nothingToAdd }
 
-            let newID = try await createPlaylist(playlist.name, items)
+            let newID: String
+            do {
+                newID = try await createPlaylist(playlist.name, items)
+            } catch {
+                // MusicKit creates the playlist before adding its songs, so a
+                // failure can leave an empty one behind; it cannot delete it.
+                throw RebuildError.creationFailed(error.localizedDescription)
+            }
             // The same logical playlist under a new identifier, exactly as when
             // MusicKit reissues one: provenance, suppression, selection and the
             // playback intent all follow it.

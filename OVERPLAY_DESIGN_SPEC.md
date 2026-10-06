@@ -464,6 +464,9 @@ deleted elsewhere or drop songs added elsewhere. So:
 - An iPad app running on a Mac has no MusicKit playlist editing, and any edit
   crashes. A Mac never loads or edits the playlist; its removals wait for an
   iPhone or iPad.
+- Retirement, duplicate merge, and every completed One True Playlist sync
+  (periodic, manual or CarPlay) run the same operation, so deferred or failed
+  removals are retried after each sync. A retry never fails the sync.
 
 #### Rebuilding the Apple Music playlist (`PLAYLIST-009`)
 
@@ -473,24 +476,27 @@ rebuild:
 
 - Creates a new Apple Music playlist with the One True Playlist's name and
   "Managed by Overplay" description. It contains the active songs in Overplay's
-  playback order, using the same per-device tracks playback queues. Retired
-  songs are left out. Songs with no playable item on this device are skipped
-  and reported; they stay in Overplay.
+  playback order; retired songs are left out. Apple Music adds only live
+  MusicKit items to a playlist and refuses tracks decoded from saved playback
+  data. So each song comes from the current playlist's own entries, matched by
+  library ID, or else from the catalog, as promotion adds it. Songs with
+  neither are skipped and reported; they stay in Overplay.
+- If creation fails, Overplay keeps its current playlist and says that an empty
+  playlist may have been left behind. MusicKit creates the playlist before
+  adding songs, and cannot delete it.
 - Relinks the same One True Playlist record to the new identifier, exactly as
   when MusicKit reissues one: source provenance, stale-OTP suppression, the
   selected playlist and the playback intent all follow it. The playlist
   becomes `managed`, and its recorded edit refusal is cleared.
-- Changes nothing when no song can be added or creation fails. Deletes nothing
-  in Apple Music: the user deletes the older playlist in the Music app.
+- Changes nothing in Overplay when no song can be added or creation fails.
+  Deletes nothing in Apple Music: the user deletes the older playlist in the
+  Music app.
 - Syncs the One True Playlist afterwards. A failed sync leaves the new link in
   place for the next sync to complete.
 
 Rebuilding is deliberate. Overplay never recreates a playlist because it seems
 to be missing, since a lagging or offline device cannot tell a deleted playlist
 from one it has not loaded.
-- Retirement, duplicate merge, and every completed One True Playlist sync
-  (periodic, manual or CarPlay) run the same operation, so deferred or failed
-  removals are retried after each sync. A retry never fails the sync.
 
 Retirement survives other devices (`LOC-001`). Each song is one CloudKit record,
 and CloudKit keeps whichever device saved the whole record last. A device that
