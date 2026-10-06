@@ -57,6 +57,15 @@ struct OneTruePlaylistRemoteMembershipTests {
         return membership
     }
 
+    /// `retireTrack` removes remotely in an unstructured task. Waits on the
+    /// clock rather than a fixed number of yields, which is flaky under load.
+    private static func waitUntil(timeout: Duration = .seconds(5), _ condition: () -> Bool) async {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !condition(), ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
     private func retire(_ index: Int, in fixture: PlaybackFixture, skipCount: Int = 0) throws -> PlaylistItemRecord {
         let item = try fixture.item(index)
         item.skipCount = skipCount
@@ -302,10 +311,10 @@ struct OneTruePlaylistRemoteMembershipTests {
         let title = try #require(fixture.tracks.first { $0.id == item.trackID }).title
 
         try fixture.controller.retireTrack(item, playlist: fixture.playlist, message: "Retired manually", context: fixture.context)
-        for _ in 0..<200 where recorder.written.isEmpty { await Task.yield() }
+        await Self.waitUntil { !recorder.written.isEmpty }
 
         #expect(recorder.written == [ids.filter { $0 != "i.lib-0" }])
-        for _ in 0..<200 where fixture.controller.statusMessage == nil { await Task.yield() }
+        await Self.waitUntil { fixture.controller.statusMessage != nil }
         #expect(fixture.controller.statusMessage == "Removed \(title) from the Apple Music playlist.")
     }
 
@@ -318,7 +327,7 @@ struct OneTruePlaylistRemoteMembershipTests {
             resolved: ["i.lib-0": "i.lib-0", "i.lib-1": "i.lib-1", "i.lib-2": "i.lib-2"], recorder: recorder
         )
         try fixture.controller.retireTrack(try fixture.item(0), playlist: fixture.playlist, message: "Retired manually", context: fixture.context)
-        for _ in 0..<200 where fixture.controller.statusMessage == nil { await Task.yield() }
+        await Self.waitUntil { fixture.controller.statusMessage != nil }
 
         #expect(fixture.controller.statusMessage == "Retired. Apple Music will be updated after the next sync.")
         #expect(recorder.written.isEmpty)
@@ -332,7 +341,7 @@ struct OneTruePlaylistRemoteMembershipTests {
         let ids = ["i.lib-0", "i.lib-1", "i.lib-2"]
         fixture.controller.remoteMembership = Self.membership(cloud: { Self.entries(ids) }, device: ids, recorder: recorder)
         try fixture.controller.retireTrack(try fixture.item(0), playlist: fixture.playlist, message: "Retired manually", context: fixture.context)
-        for _ in 0..<200 where fixture.controller.statusMessage == nil { await Task.yield() }
+        await Self.waitUntil { fixture.controller.statusMessage != nil }
 
         #expect(fixture.controller.statusMessage == PlaybackController.editsRefusedMessage)
         #expect(recorder.deviceLoads == 0 && recorder.written.isEmpty)
