@@ -179,9 +179,11 @@ final class PlaylistCollageService {
                     CGImageDestinationAddImage(destination, image.image, nil)
                     guard CGImageDestinationFinalize(destination) else { return }
                     try (bytes as Data).write(to: file, options: .atomic)
-                    // Keep just the latest complete image for this playlist.
+                    // Keep just the latest complete image for this playlist. Compare
+                    // names: listings can report the same file under another path
+                    // (`/private/var` on iPhone), and URL inequality deleted it.
                     for old in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-                        where old != file && old.pathExtension == "png" {
+                        where old.lastPathComponent != file.lastPathComponent && old.pathExtension == "png" {
                         try? FileManager.default.removeItem(at: old)
                     }
                 } catch { /* Disposable cache; the saved arrangement can be rendered again. */ }

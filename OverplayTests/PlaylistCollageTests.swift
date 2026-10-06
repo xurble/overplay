@@ -94,7 +94,7 @@ struct PlaylistCollageTests {
         let collage = PlaylistCollage.make(covers: covers(100), layout: .pile, stroke: .white, using: &random)
         #expect(collage.placements.allSatisfy { (0.30...0.60).contains($0.side) })
         let foreground = Array(collage.placements.dropFirst(25))
-        #expect(foreground.map(\.url) == covers(100).map(\.url))
+        #expect(foreground.map(\.url) == covers(100).dropFirst(25).map(\.url))
         for cover in foreground {
             #expect((0.30...0.60).contains(cover.side))
             #expect((-3...3).contains(cover.rotation))
@@ -106,6 +106,35 @@ struct PlaylistCollageTests {
         }
         let top = try #require(foreground.last)
         #expect(top.side == 0.50 && top.x == 0.5 && top.y == 0.5)
+    }
+
+    /// Owner report, 2026-10-06: the pile repeated the first covers all round
+    /// the edges and then drew every cover again on top.
+    @Test func pileDrawsEachCoverOnceWithTheEarliestOnTheEdges() {
+        var random = SystemRandomNumberGenerator()
+        let all = covers(100)
+        let collage = PlaylistCollage.make(covers: all, layout: .pile, stroke: .none, using: &random)
+        let urls = collage.placements.map(\.url)
+        #expect(urls.count == 100 && Set(urls).count == 100)
+
+        let underlay = collage.placements.prefix(25)
+        let edge = underlay.filter { $0.x == 0 || $0.x == 1 || $0.y == 0 || $0.y == 1 }
+        #expect(edge.count == 16)
+        #expect(Set(edge.map(\.url)) == Set(all.prefix(16).map(\.url)))
+        #expect(Set(underlay.map(\.url)) == Set(all.prefix(25).map(\.url)))
+        #expect(urls.last == all.last?.url)
+    }
+
+    @Test func pileRepeatsUnderlayCoversOnlyWhenTooFewToFillIt() {
+        var random = SystemRandomNumberGenerator()
+        let all = covers(10)
+        let collage = PlaylistCollage.make(covers: all, layout: .pile, stroke: .none, using: &random)
+        #expect(collage.placements.count == 26)
+        let underlay = collage.placements.prefix(25)
+        // The nine earlier covers fill the underlay; the newest stays featured.
+        #expect(Set(underlay.map(\.url)) == Set(all.prefix(9).map(\.url)))
+        #expect(collage.placements.last?.url == all.last?.url)
+        #expect(collage.placements.filter { $0.url == all.last?.url }.count == 1)
     }
 
     @Test func underlayCoversCanvasEvenWithOneAlbum() {
@@ -136,6 +165,8 @@ struct PlaylistCollageTests {
         #expect(try JSONDecoder().decode(PlaylistCollage.self, from: JSONEncoder().encode(collage)) == collage)
         var legacy = collage
         legacy.orderingVersion = 1
+        #expect(legacy.needsRefresh(at: date, layout: .pile, stroke: .none))
+        legacy.orderingVersion = 2
         #expect(legacy.needsRefresh(at: date, layout: .pile, stroke: .none))
         legacy.orderingVersion = nil
         #expect(legacy.needsRefresh(at: date, layout: .pile, stroke: .none))
@@ -300,6 +331,35 @@ struct PlaylistCollageTests {
         #expect(!FileManager.default.fileExists(atPath: directory.path))
         #expect(await renderer.image(for: collage, playlistID: "offline") != nil)
         #expect(loads == 8) // Re-rendered, so the offline cover gets another try.
+    }
+
+    /// On iPhone the caches path is `/var/…` but directory listings report
+    /// `/private/var/…`. Cleanup compared whole URLs, so it deleted the PNG it
+    /// had just written and every launch redrew every collage (observed
+    /// 2026-10-06: all four collage folders empty, covers intact). `/tmp` is the
+    /// same kind of symlink on the Mac running the simulator.
+    @Test func savedPNGSurvivesCleanupThroughASymlinkedPath() async throws {
+        let directory = URL(fileURLWithPath: "/tmp", isDirectory: true)
+            .appendingPathComponent("overplay-collage-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = try #require(CGImageSourceCreateWithData(artworkTestData() as CFData, nil))
+        let artwork = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        let renderer = PlaylistCollageService(cacheDirectory: directory) { _, _, _ in artwork }
+        var random = SystemRandomNumberGenerator()
+        let collage = PlaylistCollage.make(covers: covers(4), layout: .grid3, stroke: .none, using: &random)
+        #expect(await renderer.image(for: collage, playlistID: "symlinked") != nil)
+
+        let folder = try #require(FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first)
+        let pngs = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "png" }
+        #expect(pngs.map(\.lastPathComponent) == ["\(collage.id).png"])
+
+        // A newer arrangement replaces the older image, and only that one.
+        let newer = PlaylistCollage.make(covers: covers(4), layout: .grid3, stroke: .white, using: &random)
+        #expect(await renderer.image(for: newer, playlistID: "symlinked") != nil)
+        let remaining = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "png" }
+        #expect(remaining.map(\.lastPathComponent) == ["\(newer.id).png"])
     }
 
     @Test func renderedPNGIsReusedAcrossServiceInstances() async throws {

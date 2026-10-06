@@ -40,11 +40,12 @@ nonisolated struct PlaylistCollage: Codable, Equatable {
     let layout: PlaylistCollageLayout
     let stroke: PlaylistCollageStroke
     let placements: [Placement]
-    /// Invalidate compositions from before role-specific artwork ranking.
-    var orderingVersion: Int? = 2
+    /// Invalidate older compositions: 2 added role-specific artwork ranking,
+    /// 3 draws each pile cover at most once.
+    var orderingVersion: Int? = 3
 
     func needsRefresh(at date: Date, layout: PlaylistCollageLayout, stroke: PlaylistCollageStroke) -> Bool {
-        orderingVersion != 2 || self.layout != layout || self.stroke != stroke || date.timeIntervalSince(generatedAt) >= 86_400
+        orderingVersion != 3 || self.layout != layout || self.stroke != stroke || date.timeIntervalSince(generatedAt) >= 86_400
     }
 
     @MainActor static func covers(
@@ -77,33 +78,44 @@ nonisolated struct PlaylistCollage: Codable, Equatable {
         var placements: [Placement] = []
         if !covers.isEmpty {
             if layout == .pile {
-                // 5 × 5 overlapping underlay: even at ±3°, every point is covered.
-                // Repeat the lowest-ranked covers here only, including outside the crop.
-                let background = Array(covers.prefix(5))
-                for row in 0..<5 {
-                    for column in 0..<5 {
-                        placements.append(Placement(
-                            url: background[(row * 5 + column) % background.count].url,
-                            x: Double(column) / 4, y: Double(row) / 4,
-                            side: Double.random(in: 0.30...0.60, using: &random),
-                            rotation: Double.random(in: -3...3, using: &random)
-                        ))
-                    }
+                // The newest cover is featured last, centred on top.
+                let featured = covers[covers.count - 1]
+                let earlier = covers.count > 1 ? Array(covers.dropLast()) : covers
+                // A 5 × 5 overlapping underlay covers every point, even at ±3°.
+                // The earliest covers fill it once each, the 16 edge cells first.
+                // A cover repeats only when there are too few to fill it.
+                let cells = (0..<25).map { (column: $0 % 5, row: $0 / 5) }
+                let onEdge = { (cell: (column: Int, row: Int)) in
+                    cell.column == 0 || cell.column == 4 || cell.row == 0 || cell.row == 4
                 }
-                for (index, cover) in covers.enumerated() {
-                    let last = index == covers.count - 1
-                    let side = last ? 0.50 : Double.random(in: 0.30...0.60, using: &random)
+                let underlay = cells.filter(onEdge).shuffled(using: &random)
+                    + cells.filter { !onEdge($0) }.shuffled(using: &random)
+                for (index, cell) in underlay.enumerated() {
+                    placements.append(Placement(
+                        url: earlier[index % earlier.count].url,
+                        x: Double(cell.column) / 4, y: Double(cell.row) / 4,
+                        side: Double.random(in: 0.30...0.60, using: &random),
+                        rotation: Double.random(in: -3...3, using: &random)
+                    ))
+                }
+                // Every remaining cover once, at a random size and position.
+                for cover in earlier.dropFirst(underlay.count) {
+                    let side = Double.random(in: 0.30...0.60, using: &random)
                     let rotation = Double.random(in: -3...3, using: &random)
                     let radians = rotation * .pi / 180
                     // Include the rotated corners when keeping covers within the canvas.
                     let margin = side * (abs(cos(radians)) + abs(sin(radians))) / 2
                     placements.append(Placement(
                         url: cover.url,
-                        x: last ? 0.5 : Double.random(in: margin...(1 - margin), using: &random),
-                        y: last ? 0.5 : Double.random(in: margin...(1 - margin), using: &random),
+                        x: Double.random(in: margin...(1 - margin), using: &random),
+                        y: Double.random(in: margin...(1 - margin), using: &random),
                         side: side, rotation: rotation
                     ))
                 }
+                placements.append(Placement(
+                    url: featured.url, x: 0.5, y: 0.5, side: 0.50,
+                    rotation: Double.random(in: -3...3, using: &random)
+                ))
             } else {
                 let dimension = layout == .grid3 ? 3 : 8
                 let count = dimension * dimension
