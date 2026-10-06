@@ -78,6 +78,8 @@ final class PlaybackController {
     @ObservationIgnored private let preparePlaybackTracks: @MainActor ([TrackRecord], Set<UUID>) async throws -> Void
     @ObservationIgnored private let refreshUnknownApplePlayCount: (@MainActor (UUID, ModelContext) async -> Int)?
     @ObservationIgnored var isLibraryReady: @MainActor () -> Bool = { true }
+    /// Apple Music membership of the One True Playlist (`PLAYLIST-008`); injectable for tests.
+    @ObservationIgnored var remoteMembership = OneTruePlaylistRemoteMembership()
     @ObservationIgnored private let sleep: @MainActor (Duration) async -> Void
 
     // MARK: - Internal state
@@ -1356,19 +1358,16 @@ final class PlaybackController {
         var message = "Merged tracks. Play and skip counts were combined."
         if let otp = result.previousOTP, !result.remoteRemovalIDs.isEmpty {
             if !otp.allowsRemoteWrites { return message + " The playlist is incoming only; Apple Music was unchanged." }
-            let itemID = result.itemID
-            let locationDate = (try PlaylistItemRepository.item(id: itemID, in: context))?.locationChangedAt
             do {
-                for musicID in result.remoteRemovalIDs {
-                    _ = try await PlaylistSyncService().removeTrackFromPlaylist(
-                        trackID: musicID, playlistID: otp.musicPlaylistID, isCurrent: {
-                            let fresh = ModelContext(context.container)
-                            guard let item = try? PlaylistItemRepository.item(id: itemID, in: fresh),
-                                  let liveOTP = try? PlaylistRepository.playlist(id: otp.id, in: fresh),
-                                  liveOTP.role == .oneTruePlaylist, liveOTP.allowsRemoteWrites else { return false }
-                            return item.locationChangedAt == locationDate && item.suppressedOTPMusicPlaylistIDs.contains(otp.musicPlaylistID)
-                        })
+                let outcome = try await remoteMembership.removeSongsHeldOutside(otp, in: context)
+                if outcome.deferredItemIDs.contains(result.itemID) {
+                    message += " Apple Music will be updated after the next sync."
+                } else if outcome.refusedItemIDs.contains(result.itemID) {
+                    message += " " + Self.editsRefusedMessage
+                } else if outcome.notEditableHereItemIDs.contains(result.itemID) {
+                    message += " " + Self.notEditableHereMessage
                 }
+                reconcileTrackMembership(context: context)
             } catch {
                 message += " Apple Music removal failed: \(error.localizedDescription)"
             }
@@ -1458,33 +1457,35 @@ final class PlaybackController {
         evaluatePlaythroughIfNeeded()
     }
 
+    static let editsRefusedMessage = "Retired. Apple Music won't let Overplay edit this playlist; rebuild it in Settings, or remove the song in the Music app."
+    static let notEditableHereMessage = "Retired. Apple Music will be updated from your iPhone or iPad."
+
+    /// Every One True Playlist retire, from any surface, removes the song from
+    /// the Apple Music playlist (`PLAYLIST-008`). The local retirement stands
+    /// whatever happens remotely.
     private func removeEvictedItemFromPlaylist(_ item: PlaylistItemRecord, playlist: PlaylistRecord, context: ModelContext) async {
         guard item.evictedAt != nil else { return }
         guard PlaylistRemoteMutationPolicy.shouldDeleteRemotelyAfterEviction(item: item, playlist: playlist) else {
             statusMessage = "Retired locally. \(playlist.name) is incoming only, so Apple Music was not changed."
             return
         }
-        let track = try? TrackRecordRepository.track(id: item.trackID, in: context)
-        guard let trackID = track?.catalogID ?? track?.libraryID else { return }
         let itemID = item.id
-        let playlistID = playlist.id
-        let locationChangedAt = item.locationChangedAt
-        let container = context.container
+        let title = (try? TrackRecordRepository.track(id: item.trackID, in: context))?.title ?? "track"
         do {
-            let removed = try await PlaylistSyncService().removeTrackFromPlaylist(
-                trackID: trackID, playlistID: playlist.musicPlaylistID,
-                isCurrent: {
-                    let fresh = ModelContext(container)
-                    guard let liveItem = try? PlaylistItemRepository.item(id: itemID, in: fresh),
-                          let livePlaylist = try? PlaylistRepository.playlist(id: playlistID, in: fresh) else { return false }
-                    return liveItem.evictedAt != nil && liveItem.locationChangedAt == locationChangedAt
-                        && PlaylistRemoteMutationPolicy.shouldDeleteRemotelyAfterEviction(item: liveItem, playlist: livePlaylist)
-                }
-            )
-            if removed { statusMessage = "Removed \(track?.title ?? "track") from the Apple Music playlist." }
+            let outcome = try await remoteMembership.removeSongsHeldOutside(playlist, in: context)
+            if outcome.removedItemIDs.contains(itemID) {
+                statusMessage = "Removed \(title) from the Apple Music playlist."
+            } else if outcome.deferredItemIDs.contains(itemID) {
+                statusMessage = "Retired. Apple Music will be updated after the next sync."
+            } else if outcome.refusedItemIDs.contains(itemID) {
+                statusMessage = Self.editsRefusedMessage
+            } else if outcome.notEditableHereItemIDs.contains(itemID) {
+                statusMessage = Self.notEditableHereMessage
+            }
         } catch {
             statusMessage = "Retired locally, but Apple Music playlist removal failed: \(error.localizedDescription)"
         }
+        reconcileTrackMembership(context: context)
     }
 
     /// `PLAY-015`: an entry whose member left the intent's scope is skipped

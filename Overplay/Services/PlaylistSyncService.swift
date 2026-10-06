@@ -6,7 +6,6 @@ import SwiftData
 enum PlaylistSyncError: LocalizedError {
     case playlistNotFound
     case playlistHasNoTracks
-    case trackNotFoundInPlaylist
     case unsupportedSourceForOneTruePlaylist
     case incompletePlaylist
 
@@ -16,8 +15,6 @@ enum PlaylistSyncError: LocalizedError {
             "The selected playlist could not be found."
         case .playlistHasNoTracks:
             "The selected playlist did not return any playable tracks."
-        case .trackNotFoundInPlaylist:
-            "The evicted track was not found in the selected Apple Music playlist."
         case .unsupportedSourceForOneTruePlaylist:
             "Only Apple Music playlists can be used as the One True Playlist."
         case .incompletePlaylist:
@@ -89,17 +86,33 @@ struct PlaylistSyncService {
     private let sourceRegistry: PlaylistSourceSyncRegistry
     private let appleMusicSource: AppleMusicPlaylistSourceSync
     private let yieldDuringReconciliation: @MainActor () async throws -> Void
+    private let removeSongsHeldOutside: @MainActor (PlaylistRecord, ModelContext) async throws -> Void
 
     init(
         sourceRegistry: PlaylistSourceSyncRegistry = PlaylistSourceSyncRegistry(),
         appleMusicSource: AppleMusicPlaylistSourceSync = AppleMusicPlaylistSourceSync(),
         yieldDuringReconciliation: @escaping @MainActor () async throws -> Void = {
             await Task.yield()
+        },
+        removeSongsHeldOutside: @escaping @MainActor (PlaylistRecord, ModelContext) async throws -> Void = { playlist, context in
+            try await OneTruePlaylistRemoteMembership().removeSongsHeldOutside(playlist, in: context)
         }
     ) {
         self.sourceRegistry = sourceRegistry
         self.appleMusicSource = appleMusicSource
         self.yieldDuringReconciliation = yieldDuringReconciliation
+        self.removeSongsHeldOutside = removeSongsHeldOutside
+    }
+
+    /// `PLAYLIST-008`: a completed sync of the One True Playlist retries
+    /// removals that could not run earlier. Best effort: it never fails the sync.
+    private func retryRemoteRemovals(after playlistRecord: PlaylistRecord, in context: ModelContext) async {
+        guard OneTruePlaylistRemoteMembership.managesRemoteMembership(of: playlistRecord) else { return }
+        do {
+            try await removeSongsHeldOutside(playlistRecord, context)
+        } catch {
+            TrackMetadataDiagnostics.log("remote removal retry failed playlist=\(playlistRecord.musicPlaylistID): \(error.localizedDescription)")
+        }
     }
 
     func fetchLibraryPlaylists(source: PlaylistSource) async throws -> [RemotePlaylistLink] {
@@ -199,6 +212,7 @@ struct PlaylistSyncService {
                 await ApplePlayCountSyncService.shared.refresh(in: context, playbackController: AppRuntime.shared.playbackController)
             }
             logSyncSummary(summary, playlistRecord: playlistRecord)
+            await retryRemoteRemovals(after: playlistRecord, in: context)
             return summary
         }
 
@@ -221,6 +235,7 @@ struct PlaylistSyncService {
             await ApplePlayCountSyncService.shared.refresh(in: context, playbackController: AppRuntime.shared.playbackController)
         }
         logSyncSummary(summary, playlistRecord: playlistRecord)
+        await retryRemoteRemovals(after: playlistRecord, in: context)
         return summary
     }
 
@@ -826,34 +841,6 @@ struct PlaylistSyncService {
     }
 
     @discardableResult
-    func removeTrackFromPlaylist(
-        trackID: String, playlistID: String, isCurrent: () -> Bool = { true }
-    ) async throws -> Bool {
-        try await PlaylistRemoteMutationCoordinator.shared.rewrite(
-            playlistID: playlistID,
-            isCurrent: isCurrent,
-            load: {
-                let playlist = try await loadPlaylist(id: playlistID)
-                return (playlist, try await loadTracks(for: playlist))
-            }
-        ) { playlist, tracks in
-            let remainingTracks = tracks.filter { $0.id.rawValue != trackID }
-
-            guard remainingTracks.count < tracks.count else {
-                throw PlaylistSyncError.trackNotFoundInPlaylist
-            }
-
-            // The loader requires a complete snapshot before this replacement.
-            try await MusicKitActivityLog.shared.measure(
-                .libraryPlaylistEdit,
-                magnitude: Double(remainingTracks.count),
-                detail: "rewrote playlist to remove 1 track"
-            ) {
-                try await MusicLibrary.shared.edit(playlist, items: remainingTracks)
-            }
-        }
-    }
-
     func loadPlaylist(
         id playlistID: String,
         name: String? = nil,
