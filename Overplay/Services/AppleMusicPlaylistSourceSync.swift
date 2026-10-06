@@ -11,14 +11,14 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
 
     private let playlistFetcher: any MusicLibraryPlaylistFetching
     private let entryLoader: (Playlist) async throws -> [Playlist.Entry]
-    private let songResolver: (Song) async throws -> MusicLibrarySongResolver.Resolution
+    private let songResolver: AppleMusicPlaylistTrackLoader.SongBatchResolver
     private let identityResolver: MusicIdentityResolver
     private let entryItem: (Playlist.Entry) -> Playlist.Entry.Item?
 
     init(
         playlistFetcher: any MusicLibraryPlaylistFetching = CachingMusicLibraryPlaylistFetcher.shared,
         entryLoader: @escaping (Playlist) async throws -> [Playlist.Entry] = AppleMusicPlaylistTrackLoader.loadEntries,
-        songResolver: @escaping (Song) async throws -> MusicLibrarySongResolver.Resolution = MusicLibrarySongResolver.resolve,
+        songResolver: @escaping AppleMusicPlaylistTrackLoader.SongBatchResolver = AppleMusicPlaylistTrackLoader.liveResolver,
         identityResolver: MusicIdentityResolver = .shared,
         entryItem: @escaping (Playlist.Entry) -> Playlist.Entry.Item? = { $0.item }
     ) {
@@ -27,6 +27,13 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
         self.songResolver = songResolver
         self.identityResolver = identityResolver
         self.entryItem = entryItem
+    }
+
+    /// Up to a fifth of a playlist's distinct songs may be skipped.
+    static let maximumUnresolvedShare = 0.2
+
+    static func allowsSkipping(_ unresolved: Int, of distinct: Int) -> Bool {
+        unresolved == 0 || Double(unresolved) <= Double(distinct) * maximumUnresolvedShare
     }
 
     func fetchLibraryPlaylists() async throws -> [RemotePlaylistLink] {
@@ -83,19 +90,26 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
         let entries = try await entryLoader(playlist)
         let items = entries.map(entryItem)
         let tracks = try AppleMusicPlaylistTrackLoader.completeTracks(from: items)
-        var snapshots = try await AppleMusicPlaylistTrackLoader.resolvedSongSnapshots(
-            from: tracks, playlistID: playlistID, resolve: songResolver
+        let resolved = try await AppleMusicPlaylistTrackLoader.resolveSongs(
+            from: tracks, playlistID: playlistID, resolveAll: songResolver
         )
+        // A few unidentifiable songs are skipped (`PLAYLIST-010`); many mean
+        // something wider is wrong, so the fetch stops as before.
+        guard Self.allowsSkipping(resolved.unresolvedIDs.count, of: resolved.distinctSongCount) else {
+            throw MusicLibrarySongResolver.ResolutionError.unresolved(resolved.unresolvedIDs[0])
+        }
         // Keep entry occurrence/count evidence separate from song identity.
         let songEntries = zip(entries, items).compactMap { entry, item in
             if case .song = item { entry } else { nil as Playlist.Entry? }
         }
-        for index in snapshots.indices {
-            let entry = songEntries[index]
-            snapshots[index].playlistEntryID = entry.id.rawValue.isEmpty ? nil : entry.id.rawValue
-            snapshots[index].remotePosition = entry.position
-            snapshots[index].entryPlayCount = entry.playCount
-            snapshots[index].entryLastPlayedDate = entry.lastPlayedDate
+        var snapshots: [TrackSnapshot] = []
+        for (entry, snapshot) in zip(songEntries, resolved.snapshots) {
+            guard var snapshot else { continue }
+            snapshot.playlistEntryID = entry.id.rawValue.isEmpty ? nil : entry.id.rawValue
+            snapshot.remotePosition = entry.position
+            snapshot.entryPlayCount = entry.playCount
+            snapshot.entryLastPlayedDate = entry.lastPlayedDate
+            snapshots.append(snapshot)
         }
         // Identity is required for import, not optional metadata enrichment.
         // A failed or incomplete lookup must not create a new shared track.
@@ -103,11 +117,13 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
         return PlaylistSourceFetchResult(
             snapshots: snapshots,
             skippedCount: entries.count - snapshots.count,
-            skippedReason: entries.count == snapshots.count ? nil : "nonSongEntries",
+            skippedReason: !resolved.unresolvedIDs.isEmpty ? "unresolvedSongs"
+                : entries.count == snapshots.count ? nil : "nonSongEntries",
             remoteLastModifiedAt: playlist.lastModifiedDate,
             didFetchTracks: true,
             didFetchEntries: true,
-            videoMusicItemIDs: AppleMusicPlaylistTrackLoader.videoMusicItemIDs(from: tracks)
+            videoMusicItemIDs: AppleMusicPlaylistTrackLoader.videoMusicItemIDs(from: tracks),
+            unresolvedSongIDs: resolved.unresolvedIDs
         )
     }
 
@@ -161,41 +177,73 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
 /// One complete entry boundary for sync, copies, and destructive rewrites.
 @MainActor
 enum AppleMusicPlaylistTrackLoader {
+    typealias SongBatchResolver = @MainActor ([Song]) async throws -> MusicLibrarySongResolver.BatchResolution
+
+    /// Songs observed in one playlist fetch, in order.
+    struct ResolvedSongs {
+        /// One per song track, in order; nil where nothing could identify it.
+        var snapshots: [TrackSnapshot?]
+        var unresolvedIDs: [String]
+        var distinctSongCount: Int
+
+        /// Copies and rewrites need every song: a partial result could look
+        /// like remote absence.
+        func requireAll() throws -> [TrackSnapshot] {
+            if let first = unresolvedIDs.first { throw MusicLibrarySongResolver.ResolutionError.unresolved(first) }
+            return snapshots.compactMap { $0 }
+        }
+    }
+
+    /// The batched resolver, with its web-library requests in the activity log.
+    static let liveResolver: SongBatchResolver = { songs in
+        try await MusicLibrarySongResolver.resolveAll(songs, webLibrary: { ids in
+            try await MusicKitActivityLog.shared.measure(
+                .catalogResourceFetch, magnitude: Double(ids.count), detail: "resolver web library batch"
+            ) {
+                try await MusicLibrarySongResolver.webLibrarySongIDs(ids)
+            }
+        })
+    }
+
     /// One intake boundary used by ordinary sync and playlist-copy creation.
     /// Resolve each distinct observed ID once per fetch; retain occurrences.
     /// Mappings remain scoped to this operation, never persisted as global aliases.
-    static func resolvedSongSnapshots(
+    static func resolveSongs(
         from tracks: [Track], playlistID: String,
-        resolve: (Song) async throws -> MusicLibrarySongResolver.Resolution = MusicLibrarySongResolver.resolve
-    ) async throws -> [TrackSnapshot] {
-        var resolutions: [MusicItemID: MusicLibrarySongResolver.Resolution] = [:]
-        var result: [TrackSnapshot] = []
-        for track in tracks {
-            guard case .song(let observed) = track else { continue }
-            try Task.checkCancellation()
-            let resolution: MusicLibrarySongResolver.Resolution
-            if let existing = resolutions[track.id] { resolution = existing }
-            else {
-                resolution = try await resolve(observed)
-                try Task.checkCancellation()
-                resolutions[track.id] = resolution
+        resolveAll: SongBatchResolver = liveResolver
+    ) async throws -> ResolvedSongs {
+        let observed = tracks.compactMap { track -> Song? in
+            if case .song(let song) = track { song } else { nil }
+        }
+        try Task.checkCancellation()
+        let batch = try await resolveAll(observed)
+        try Task.checkCancellation()
+        var snapshots: [TrackSnapshot?] = []
+        for song in observed {
+            guard let resolution = batch.resolutions[song.id] else {
+                snapshots.append(nil)
+                continue
             }
             // The request establishes the domain. Do not decode play parameters
             // or classify the raw identifier to choose persistent identity.
-            let song = resolution.song
-            result.append(TrackSnapshot(
-                id: song.id.rawValue,
+            let resolved = resolution.song
+            snapshots.append(TrackSnapshot(
+                id: resolved.id.rawValue,
                 catalogID: resolution.identity.catalogID,
                 libraryID: resolution.identity.libraryID,
                 playlistEntryID: nil, playlistID: playlistID,
-                title: song.title, artistName: song.artistName, albumTitle: song.albumTitle,
-                artworkURLTemplate: song.artwork?.url(width: 512, height: 512)?.absoluteString,
-                durationSeconds: song.duration,
-                musicKitPlaybackData: try JSONEncoder().encode(Track.song(song)),
-                isrc: song.isrc
+                title: resolved.title, artistName: resolved.artistName, albumTitle: resolved.albumTitle,
+                artworkURLTemplate: resolved.artwork?.url(width: 512, height: 512)?.absoluteString,
+                durationSeconds: resolved.duration,
+                musicKitPlaybackData: try JSONEncoder().encode(Track.song(resolved)),
+                isrc: resolved.isrc
             ))
         }
-        return result
+        return ResolvedSongs(
+            snapshots: snapshots,
+            unresolvedIDs: batch.unresolved.map(\.rawValue),
+            distinctSongCount: Set(observed.map(\.id)).count
+        )
     }
 
     static func loadEntries(for playlist: Playlist) async throws -> [Playlist.Entry] {

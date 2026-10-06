@@ -21,6 +21,7 @@ final class AppStartupViewModel {
         /// Counting is a layer: its failures are logged, never fatal to startup.
         var reconcileListenLedger: () -> Void = {}
         var repairTrackLocations: () -> Void = {}
+        var sweepRetention: () -> Void = {}
         var authorizationIsReady: (() -> Bool)? = nil
     }
 
@@ -119,6 +120,14 @@ final class AppStartupViewModel {
             }
         } repairTrackLocations: {
             runtime.repairTrackLocations(in: modelContext)
+        } sweepRetention: {
+            do {
+                if try TrackRetentionPolicy.sweep(in: modelContext) > 0 {
+                    playbackController.reconcileTrackMembership(context: modelContext)
+                }
+            } catch {
+                StartupProfiler.mark("Track retention sweep failed: \(error.localizedDescription)")
+            }
         } authorizationIsReady: {
             authorizationService.readiness.isReady
         }
@@ -178,6 +187,10 @@ final class AppStartupViewModel {
 
             StartupProfiler.measure("History retention") {
                 dependencies.compactHistory()
+            }
+
+            StartupProfiler.measure("Track retention sweep") {
+                dependencies.sweepRetention()
             }
         }
     }

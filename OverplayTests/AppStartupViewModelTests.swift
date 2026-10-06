@@ -134,6 +134,8 @@ struct AppStartupViewModelTests {
             events.append("ledger")
         } repairTrackLocations: {
             events.append("repair")
+        } sweepRetention: {
+            events.append("sweep")
         }
         await model.bootstrap(isReady: true, dependencies: dependencies)
         await model.authorizedServicesTask?.value
@@ -146,7 +148,7 @@ struct AppStartupViewModelTests {
         await model.authorizedServicesTask?.value
         // The ledger reconciles before any merge; it is non-throwing, so a
         // counting failure cannot stop startup (round 2, M5).
-        #expect(events == ["ledger", "repair", "settings", "cleanup", "migrate", "commands", "merge", "restore", "monitor", "sync", "compact"])
+        #expect(events == ["ledger", "repair", "settings", "cleanup", "migrate", "commands", "merge", "restore", "monitor", "sync", "compact", "sweep"])
         #expect(model.libraryPreparationError == nil)
     }
 

@@ -162,6 +162,13 @@ final class PeriodicPlaylistSyncService {
             try? await mergeDuplicateTrackIdentities(context)
         }
         await LibraryArtworkService.refreshMissingArtwork(in: context, playbackController: playbackController)
+        do {
+            if try TrackRetentionPolicy.sweep(in: context) > 0 {
+                playbackController?.reconcileTrackMembership(context: context)
+            }
+        } catch {
+            Self.logger.error("Retention sweep failed: \(error.localizedDescription, privacy: .public)")
+        }
         // Also refresh when playlist contents were unchanged: listening does
         // not necessarily change a playlist's modification date. Automatic
         // cycles leave Apple Music alone while it is playing (`LOAD-001`).

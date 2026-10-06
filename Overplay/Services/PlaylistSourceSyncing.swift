@@ -15,6 +15,8 @@ struct PlaylistSourceFetchResult: Equatable, Sendable {
     var didFetchTracks: Bool = true
     var didFetchEntries: Bool = false
     var videoMusicItemIDs: Set<String> = []
+    /// Songs nothing could identify; skipped, so the snapshot is incomplete.
+    var unresolvedSongIDs: [String] = []
 }
 
 protocol PlaylistSourceSyncing {
