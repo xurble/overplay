@@ -1072,7 +1072,11 @@ final class PlaybackController {
             do {
                 try await preparePlaybackTracks(records, refreshing)
             } catch {
-                TrackMetadataDiagnostics.log("playback preparation incomplete: \(error.localizedDescription)")
+                // Name the songs left out where they can be seen: the activity
+                // report and the unified log at normal level (#75).
+                MusicKitActivityLog.shared.record(
+                    .playbackQueuePreparation, detail: error.localizedDescription, error: error
+                )
             }
         }
         var resolved: [UUID: Track] = [:]

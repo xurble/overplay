@@ -91,7 +91,7 @@ Music's global play count or skip count.
 | `PLAY-014` | Failures are shared across surfaces and recovered only by a user Play press through a bounded ladder (play; prepare and play; resubmit the intent at the current member and position, looking that member's track up again). Pause is never disabled. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-015` | Membership changes never mutate the live queue. Retiring the current track issues Next; a member that left the scope is skipped when reached; additions appear at the next start. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-016` | Overplay does not write `MPNowPlayingInfoCenter` or register transport `MPRemoteCommandCenter` handlers; the `ApplicationMusicPlayer` host owns system Now Playing. A default-off diagnostic mirror exists only for device verification. | `Overplay/Services/SystemNowPlayingBridge.swift` |
-| `PLAY-017` | Native `Track` objects needed for playback are cached on disk per device; cold launches do not need to re-resolve the whole playlist, a cached track is reused only while it is the song its record names, and unresolvable songs are omitted rather than failing playback. | `Overplay/Services/DevicePlaybackCache.swift` |
+| `PLAY-017` | Native `Track` objects needed for playback are cached on disk per device; cold launches do not need to re-resolve the whole playlist, a cached track is reused only while it is the song its record names (its library or catalog ID), a library ID that no longer exists in the account library falls back to the record's catalog ID, and unresolvable songs are omitted rather than failing playback, with each omission recorded in the activity log. | `Overplay/Services/DevicePlaybackCache.swift` |
 | `COUNT-001` | Counting observes playback and never commands, delays or vetoes it. Skips require witnessed listening; playthroughs are position-based; suspended spans never produce skips. | `Overplay/Playback/ListeningSessionTracker.swift`, `Overplay/UseCases/PlaybackSessionEvaluationService.swift` |
 | `COUNT-002` | Counted outcomes are immutable ledger events with idempotent session IDs. Displayed counts are derived from the ledger, including absorbed track identities; merges and resets never edit counts. | `Overplay/Services/ListenLedger.swift`, `Overplay/Models/ListenEvent.swift` |
 | `LOAD-001` | Overplay adds no avoidable Apple Music load during playback: no steady-state queue enumeration, bulk Apple play-count refresh at most every 15 minutes and never while playing, library discovery scans at most every 6 hours, and no background MusicKit work while a playback failure is active. | `Overplay/Services/ApplePlayCountSyncService.swift`, `Overplay/Services/PeriodicPlaylistSyncService.swift` |
@@ -1035,9 +1035,11 @@ attribute normally.
    (newest-added first, or newest-retired first for Retired).
 2. Resolve each member's native `Track` from the device playback cache
    (`PLAY-017`), fetching missing library and catalog tracks in one batch
-   each. Members that cannot be
-   resolved are left out of the queue and the intent, with a diagnostic and a
-   non-blocking status message. Starting fails only when the requested start
+   each. A member whose library ID no longer exists in the account library
+   (not on device, not in iCloud) is resolved from its catalog ID in one more
+   batch; only a definite miss falls back, never a failed request. Members that
+   cannot be resolved are left out of the queue and the intent, with an
+   activity-log error naming them and a non-blocking status message. Starting fails only when the requested start
    member, or every member, cannot be resolved.
 3. Persist the new intent.
 4. Pause, submit the complete queue starting at the start member, and play.

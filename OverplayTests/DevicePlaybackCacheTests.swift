@@ -63,6 +63,66 @@ struct DevicePlaybackCacheTests {
         #expect(lookups == 1)
     }
 
+    private static func catalogSong(_ id: String) throws -> Song {
+        try JSONDecoder().decode(Song.self, from: JSONSerialization.data(withJSONObject: [
+            "id": id, "type": "songs",
+            "attributes": ["name": id, "artistName": "Artist", "albumName": "Album", "genreNames": [],
+                           "playParams": ["id": id, "kind": "song"]]
+        ]))
+    }
+
+    /// #75: on 2026-10-06 three Triage songs' library IDs no longer existed in
+    /// the on-device or iCloud library, but their catalog songs were playable.
+    @Test func aLibraryIDThatNoLongerExistsFallsBackToTheCatalog() async throws {
+        let gone = TrackRecord(catalogID: "1726662223", libraryID: "i.gone", title: "Boss Drum", artistName: "The Shamen")
+        let present = TrackRecord(catalogID: "111153641", libraryID: "i.present", title: "Mardy Bum", artistName: "Arctic Monkeys")
+        defer { for track in [gone, present] { DevicePlaybackCache.shared.set(nil, for: track.id) } }
+        let presentSong = try #require(try JSONDecoder().decode([String: Song].self, from: JSONSerialization.data(withJSONObject: [
+            "i.present": ["id": "i.present", "type": "library-songs",
+                          "attributes": ["name": "Mardy Bum", "artistName": "Arctic Monkeys", "albumName": "Album", "genreNames": [],
+                                         "playParams": ["id": "i.present", "kind": "song", "isLibrary": true]]]
+        ]))["i.present"])
+        var catalogRequests: [[String]] = []
+        let catalogLookup: ([String]) async throws -> [String: Song] = { ids in
+            catalogRequests.append(ids)
+            return try Dictionary(uniqueKeysWithValues: ids.map { ($0, try Self.catalogSong($0)) })
+        }
+
+        try await DevicePlaybackCache.prepare([gone, present], libraryLookup: { _ in ["i.present": presentSong] }, catalogLookup: catalogLookup)
+        #expect(catalogRequests == [["1726662223"]])
+        let prepared = try JSONDecoder().decode(Track.self, from: #require(DevicePlaybackCache.shared.data(for: gone.id)))
+        #expect(prepared.id.rawValue == "1726662223")
+        let library = try JSONDecoder().decode(Track.self, from: #require(DevicePlaybackCache.shared.data(for: present.id)))
+        #expect(library.id.rawValue == "i.present")
+
+        // The catalog-prepared track is current: it is not looked up on every play.
+        try await DevicePlaybackCache.prepare([gone, present], libraryLookup: { _ in
+            Issue.record("library looked up again"); return [:]
+        }, catalogLookup: catalogLookup)
+        #expect(catalogRequests.count == 1)
+    }
+
+    @Test func aMissingLibrarySongWithoutACatalogIDIsStillLeftOut() async throws {
+        let upload = TrackRecord(libraryID: "i.upload-gone", title: "Upload", artistName: "Me")
+        defer { DevicePlaybackCache.shared.set(nil, for: upload.id) }
+        await #expect(throws: DevicePlaybackCache.PreparationError.self) {
+            try await DevicePlaybackCache.prepare([upload], libraryLookup: { _ in [:] }, catalogLookup: { _ in
+                Issue.record("catalog consulted without a catalog ID"); return [:]
+            })
+        }
+        #expect(DevicePlaybackCache.shared.data(for: upload.id) == nil)
+    }
+
+    @Test func aFailedLibraryRequestDoesNotFallBackToTheCatalog() async throws {
+        let track = TrackRecord(catalogID: "222", libraryID: "i.unreachable", title: "Song", artistName: "Artist")
+        defer { DevicePlaybackCache.shared.set(nil, for: track.id) }
+        await #expect(throws: DevicePlaybackCache.PreparationError.self) {
+            try await DevicePlaybackCache.prepare([track], libraryLookup: { _ in throw URLError(.notConnectedToInternet) }, catalogLookup: { _ in
+                Issue.record("catalog consulted after a failed library request"); return [:]
+            })
+        }
+    }
+
     /// Round 2, L6: catalog-only tracks are fetched in one batch per preparation.
     @Test func catalogTracksAreFetchedInOneBatch() async throws {
         let tracks = (0..<4).map { TrackRecord(catalogID: "cat-batch-\($0)", title: "Song \($0)", artistName: "Artist") }
