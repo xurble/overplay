@@ -131,12 +131,12 @@ struct MusicLibraryIdentityImportTests {
         let native = try song(sample, id: sample.nativeID)
         let catalog = try song(sample, id: #require(sample.catalogID), type: "songs")
         var calls = 0
-        let snapshots = try await AppleMusicPlaylistTrackLoader.resolvedSongSnapshots(
-            from: [.song(native), .song(native)], playlistID: "copy", resolve: { _ in
+        let snapshots = try await AppleMusicPlaylistTrackLoader.resolveSongs(
+            from: [.song(native), .song(native)], playlistID: "copy", resolveAll: Self.perSong { _ in
                 calls += 1
                 return .catalog(catalog)
             }
-        )
+        ).requireAll()
         #expect(calls == 1)
         #expect(snapshots.count == 2)
         #expect(snapshots.allSatisfy { $0.libraryID == nil && $0.catalogID == sample.catalogID })
@@ -258,11 +258,124 @@ struct MusicLibraryIdentityImportTests {
         }
     }
 
+    // MARK: - #64: one unidentifiable song no longer blocks its playlist
+
+    private var fiveSamples: [Sample] {
+        samples + [
+            Sample(nativeID: "-4", libraryID: "i.four", catalogID: "444", title: "Four", artist: "Band"),
+            Sample(nativeID: "-5", libraryID: "i.five", catalogID: "555", title: "Five", artist: "Band")
+        ]
+    }
+
+    private func seededOTP(_ samples: [Sample], in context: ModelContext) throws -> (PlaylistRecord, [PlaylistItemRecord]) {
+        let record = PlaylistRecord(musicPlaylistID: "skips-\(UUID())", name: "Probe", role: .oneTruePlaylist)
+        context.insert(record)
+        var items: [PlaylistItemRecord] = []
+        for sample in samples {
+            let track = TrackRecord(catalogID: sample.catalogID, libraryID: sample.libraryID, title: sample.title, artistName: sample.artist)
+            let item = PlaylistItemRecord(playlistID: record.id, trackID: track.id, skipCount: 1, playthroughCount: 7)
+            context.insert(track); context.insert(item)
+            items.append(item)
+        }
+        try context.save()
+        return (record, items)
+    }
+
+    @Test("A song nothing can identify is skipped; the rest sync and the playlist keeps retrying")
+    func unidentifiableSongIsSkipped() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let samples = fiveSamples
+        let (record, items) = try seededOTP(samples, in: context)
+        // A retired song absent from the remote playlist: only a complete
+        // snapshot may release its stale-membership protection.
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let retiredTrack = TrackRecord(catalogID: "999", title: "Retired", artistName: "Band")
+        let retired = PlaylistItemRecord(playlistID: bucket.id, trackID: retiredTrack.id, skipCount: 2)
+        retired.evictedAt = .now
+        retired.suppressedOTPMusicPlaylistIDs = [record.musicPlaylistID]
+        context.insert(retiredTrack); context.insert(retired)
+        try context.save()
+
+        var unidentifiable: Set<String> = []
+        let adapter = try makeAdapter(playlistID: record.musicPlaylistID, using: samples, resolve: { observed in
+            let sample = try #require(samples.first { $0.nativeID == observed.id.rawValue })
+            if unidentifiable.contains(sample.nativeID) { throw MusicLibrarySongResolver.ResolutionError.unresolved(sample.nativeID) }
+            return .library(try song(sample, id: sample.libraryID))
+        })
+        let service = PlaylistSyncService(sourceRegistry: .init(adapters: [.appleMusic: adapter]))
+        // A complete sync records every song's entry provenance.
+        _ = try await service.syncPlaylist(record, in: context)
+        let provenance = items[4].entryProvenance
+        #expect(!provenance.isEmpty)
+        retired.suppressedOTPMusicPlaylistIDs = [record.musicPlaylistID]
+
+        unidentifiable = [samples[4].nativeID]
+        let summary = try await service.syncPlaylist(record, in: context)
+        #expect(summary.skippedReason == "unresolvedSongs")
+        #expect(record.lastSyncedAt != nil)
+        #expect(record.lastSyncError == PlaylistSyncService.unresolvedSongsMessage(1))
+        // The skipped song's row is untouched: not removed, retired or reset.
+        let skipped = items[4]
+        #expect(try PlaylistItemRepository.item(id: skipped.id, in: context) != nil)
+        #expect(skipped.evictedAt == nil && skipped.playthroughCount == 7 && skipped.skipCount == 1)
+        #expect(skipped.entryProvenance == provenance)
+        #expect(retired.suppressedOTPMusicPlaylistIDs == [record.musicPlaylistID])
+
+        unidentifiable = []
+        _ = try await service.syncPlaylist(record, in: context)
+        #expect(record.lastSyncError == nil)
+        #expect(retired.suppressedOTPMusicPlaylistIDs.isEmpty)
+    }
+
+    @Test("More than a fifth of a playlist unidentifiable still stops the sync, importing nothing")
+    func tooManyUnidentifiableSongsAbort() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let samples = fiveSamples
+        let record = PlaylistRecord(musicPlaylistID: "too-many", name: "Probe", role: .oneTruePlaylist)
+        context.insert(record)
+        try context.save()
+        let adapter = try makeAdapter(playlistID: record.musicPlaylistID, using: samples, resolve: { observed in
+            let sample = try #require(samples.first { $0.nativeID == observed.id.rawValue })
+            if sample.nativeID == "-4" || sample.nativeID == "-5" {
+                throw MusicLibrarySongResolver.ResolutionError.unresolved(sample.nativeID)
+            }
+            return .library(try song(sample, id: sample.libraryID))
+        })
+        let service = PlaylistSyncService(sourceRegistry: .init(adapters: [.appleMusic: adapter]))
+
+        await #expect(throws: MusicLibrarySongResolver.ResolutionError.self) {
+            try await service.syncPlaylist(record, in: context)
+        }
+        #expect(try TrackRecordRepository.allTracks(in: context).isEmpty)
+        #expect(record.lastSyncedAt == nil)
+        #expect(AppleMusicPlaylistSourceSync.allowsSkipping(1, of: 5))
+        #expect(!AppleMusicPlaylistSourceSync.allowsSkipping(2, of: 5))
+    }
+
+    /// Adapts a per-song resolver to the batched boundary; an unresolved song
+    /// is reported rather than thrown, as the live resolver does.
+    static func perSong(
+        _ resolve: @escaping (Song) async throws -> MusicLibrarySongResolver.Resolution
+    ) -> AppleMusicPlaylistTrackLoader.SongBatchResolver {
+        { songs in
+            var batch = MusicLibrarySongResolver.BatchResolution()
+            for song in songs where batch.resolutions[song.id] == nil && !batch.unresolved.contains(song.id) {
+                do { batch.resolutions[song.id] = try await resolve(song) }
+                catch is MusicLibrarySongResolver.ResolutionError { batch.unresolved.append(song.id) }
+            }
+            return batch
+        }
+    }
+
     private func makeAdapter(
         playlistID: String, identityResolver: MusicIdentityResolver? = nil,
         entrySongID: (Sample) -> String = \.nativeID,
+        using customSamples: [Sample]? = nil,
         resolve: @escaping (Song) async throws -> MusicLibrarySongResolver.Resolution
     ) throws -> AppleMusicPlaylistSourceSync {
+        let samples = customSamples ?? self.samples
         let playlist = try JSONDecoder().decode(Playlist.self, from: JSONSerialization.data(withJSONObject: [
             "id": playlistID, "type": "library-playlists", "attributes": ["name": "Probe", "canEdit": true]
         ]))
@@ -285,7 +398,7 @@ struct MusicLibraryIdentityImportTests {
         })
         return AppleMusicPlaylistSourceSync(
             playlistFetcher: ProbePlaylistFetcher(playlist: playlist), entryLoader: { _ in entries },
-            songResolver: resolve, identityResolver: resolver,
+            songResolver: Self.perSong(resolve), identityResolver: resolver,
             entryItem: { entry in songs[entry.id.rawValue].map { .song($0) } }
         )
     }

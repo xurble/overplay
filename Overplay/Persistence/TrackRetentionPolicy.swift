@@ -38,6 +38,33 @@ enum TrackRetentionPolicy {
         return legacyCleanup || !item.hasListeningHistory
     }
 
+    /// Re-applies the retention rule to rows that missed their trigger: a
+    /// deletion deferred by a playback lease the app never released, or a row
+    /// another device's stale write put back (`PLAYLIST-011`). Only retired
+    /// rows and deferred deletions; active Triage keeps its own triggers.
+    /// Each deletion is recorded in history so it can be traced.
+    @MainActor @discardableResult
+    static func sweep(in context: ModelContext) throws -> Int {
+        guard let bucket = try PlaylistRepository.existingTriageBucket(in: context) else { return 0 }
+        var deleted = 0
+        for item in try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
+        where item.evictedAt != nil || item.pendingRetentionCleanup {
+            let trackID = item.trackID
+            let skips = item.skipCount
+            guard try deleteIfUnowned(item, in: context) else { continue }
+            EventRepository.logHistory(
+                playlistID: bucket.id, trackID: trackID, eventType: .trackRemoved, source: .overplay,
+                skipCountAtEvent: skips, message: "Removed unused retired song (0 plays, 0 skips)", in: context
+            )
+            deleted += 1
+        }
+        if deleted > 0 {
+            try context.save()
+            TrackMetadataDiagnostics.log("retention sweep removed \(deleted) rows")
+        }
+        return deleted
+    }
+
     @discardableResult
     static func deleteIfUnowned(
         _ item: PlaylistItemRecord,

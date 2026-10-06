@@ -72,6 +72,8 @@ Music's global play count or skip count.
 | `PLAYLIST-007` | One item per track app-wide. OTP, Triage and global Retired are three top-level collections; every retired item belongs to the bucket. | `Overplay/Persistence/PlaylistItemRepository.swift`, `Overplay/Services/TrackLocationService.swift` |
 | `PLAYLIST-008` | Every retire or duplicate merge out of a managed One True Playlist removes the song from the Apple Music playlist, retried after each sync. A rewrite runs only when the device's copy matches iCloud's; removed or absent songs release suppression and get the retention rule. Promotion does not add a song iCloud already holds. | `Overplay/Services/OneTruePlaylistRemoteMembership.swift`, `OverplayTests/OneTruePlaylistRemoteMembershipTests.swift` |
 | `PLAYLIST-009` | From iPhone or iPad, the user can rebuild the One True Playlist's Apple Music playlist: Overplay creates a new playlist of the active songs in Overplay's order and relinks the same One True Playlist to it, keeping counts, retirements and history. Nothing is deleted from Apple Music. | `Overplay/Services/OneTruePlaylistRebuildService.swift`, `OverplayTests/OneTruePlaylistRebuildTests.swift` |
+| `PLAYLIST-010` | Ordinary sync skips a song no lookup can identify: the rest syncs; the skipped row is untouched; absence-dependent steps are skipped; the playlist keeps an error and retries. More than a fifth unidentifiable, or any in a copy, still stops the fetch. | `Overplay/Services/AppleMusicPlaylistSourceSync.swift`, `OverplayTests/MusicLibraryIdentityImportTests.swift` |
+| `PLAYLIST-011` | The retention rule is re-applied by a sweep at startup and after each background sync cycle, to retired rows and deferred deletions only, with every deletion recorded in history. | `Overplay/Persistence/TrackRetentionPolicy.swift`, `OverplayTests/SyncCleanupTests.swift` |
 | `LOC-001` | A retirement or restore survives another device's stale CloudKit write. After each import and at startup, a song's newest `evicted`/`restored` history event re-applies its decision when it is newer than the row's `locationChangedAt`; promotions are left to the next One True Playlist sync. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/TrackLocationRepairTests.swift` |
 | `PLAYLIST-006` | Pre-bucket triage data migrates onto the bucket at startup. The migration is idempotent and keyed on the stored legacy role value, not a local flag. | `Overplay/Persistence/TriageBucketMigrationService.swift`, `OverplayTests/TriageBucketTests.swift` |
 | `PLAYLIST-002` | Initial setup can create a managed playlist, copy an existing playlist into a managed playlist, or link an existing playlist as incoming-only. | `Overplay/ViewModels/PlaylistSelectionViewModel.swift`, `Overplay/Services/PlaylistSyncService.swift` |
@@ -247,7 +249,10 @@ After last-source removal, active Triage retains explicit manual/restore intent
 or any recorded play/skip history, even if counters were reset. Untouched active
 rows without explicit intent are deleted. Retired source-free rows with current
 0 plays and 0 skips are deleted, regardless of manual intent or prior resets.
-This also runs immediately on retirement and ordinary counter reset. Nonzero
+This also runs immediately on retirement and ordinary counter reset. A sweep
+re-applies it at startup and after every background sync cycle, for retired rows
+and deferred deletions that missed their trigger (`PLAYLIST-011`); each deletion
+is recorded in history. It never deletes active Triage rows. Nonzero
 counts and necessary stale-OTP suppression protect rows. Active OTP is never
 deleted by Triage cleanup. Deleted songs may return on later intake; independent
 history remains but offers no broken Restore action.
@@ -319,16 +324,33 @@ one song-resolution boundary: a native library-song lookup resolves the observed
 ID. A device's on-device library can lack songs that its account library and
 playlists still hold, so when the native lookup finds nothing, a web library
 request that returns exactly the observed ID resolves the song as that library
-song, keeping the observed entry as the device's representation of it. Only
+song, keeping the observed entry as the device's representation of it. Web
+library requests are batched, 25 songs per request (`LOAD-001`): a lagging
+device's library can miss a third of a playlist. An answer for an ID that was
+not requested stops the fetch, because it cannot be attributed. Only
 then does an explicit catalog request resolve songs absent from the library. The web
 library resource and its catalog relationship establish the corresponding shared
 identifiers. Native lookup mappings stay within the import operation; they are
 not persisted as global aliases.
 
 A missing library resource is unresolved identity. It is not equivalent to a
-returned library song with an explicitly empty catalog relationship. Unresolved
-identity stops the fetch before track or membership reconciliation, preserving
-the existing playlist and history. Optional ISRC/equivalent-recording suggestions
+returned library song with an explicitly empty catalog relationship. A song that
+none of the native lookup, the web library and the catalog can identify is
+skipped by ordinary sync (`PLAYLIST-010`):
+
+- The rest of the playlist syncs. The skipped song creates no track, and its
+  existing row is untouched: it is not removed, retired, reset or moved.
+- Reconciliation skips the steps that infer absence from a complete snapshot:
+  replacing this source's entry provenance, and releasing stale-OTP
+  suppression.
+- The playlist keeps a sync error naming the count. That keeps it retrying each
+  cycle and disables the remote-unchanged skip until every song resolves.
+- When more than a fifth of the playlist's distinct songs are unidentifiable,
+  something wider is wrong, and the fetch stops before reconciliation as before.
+- Copying a playlist, and any other operation that rewrites from the snapshot,
+  still stops on any unidentifiable song.
+
+Optional ISRC/equivalent-recording suggestions
 are resolved by duplicate review, not required for import; an unperformed candidate
 lookup must not erase earlier candidate evidence.
 

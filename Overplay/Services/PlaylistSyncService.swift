@@ -216,14 +216,20 @@ struct PlaylistSyncService {
             return summary
         }
 
+        let isComplete = fetchResult.unresolvedSongIDs.isEmpty
         var summary = try await reconcile(
             snapshots: fetchResult.snapshots,
             playlistRecord: playlistRecord,
             syncedAt: .now,
+            isComplete: isComplete,
             in: context
         )
         guard playlistRecord.isActive, playlistRecord.triageLinkedAt == requestedLinkDate else {
             return summary
+        }
+        if !isComplete {
+            // Not fully synced: the error keeps the playlist retrying each cycle.
+            playlistRecord.lastSyncError = Self.unresolvedSongsMessage(fetchResult.unresolvedSongIDs.count)
         }
         summary.skippedCount += fetchResult.skippedCount
         summary.skippedReason = fetchResult.skippedReason
@@ -355,9 +361,9 @@ struct PlaylistSyncService {
 
         // Resolve before the remote creation and before changing local roles.
         // An incomplete identity response must not leave a half-imported copy.
-        var snapshots = try await AppleMusicPlaylistTrackLoader.resolvedSongSnapshots(
+        var snapshots = try await AppleMusicPlaylistTrackLoader.resolveSongs(
             from: sourceTracks, playlistID: sourcePlaylistID ?? ""
-        )
+        ).requireAll()
         if !snapshots.isEmpty {
             snapshots = try await MusicIdentityResolver.shared.enrich(snapshots, includeCandidates: false)
         }
@@ -404,10 +410,19 @@ struct PlaylistSyncService {
     static let syncYieldStride = 25
 
     @discardableResult
+    static func unresolvedSongsMessage(_ count: Int) -> String {
+        let songs = count == 1 ? "1 song" : "\(count) songs"
+        return "Synced, but Apple Music couldn't identify \(songs), so \(count == 1 ? "it was" : "they were") skipped. Overplay will try again on the next sync."
+    }
+
+    /// - Parameter isComplete: False when some remote songs could not be
+    ///   identified (`PLAYLIST-010`). Steps that infer absence from the
+    ///   snapshot are skipped, so a skipped song is never treated as removed.
     func reconcile(
         snapshots: [TrackSnapshot],
         playlistRecord: PlaylistRecord,
         syncedAt: Date,
+        isComplete: Bool = true,
         in context: ModelContext
     ) async throws -> PlaylistSyncSummary {
         guard playlistRecord.isActive else {
@@ -598,7 +613,7 @@ struct PlaylistSyncService {
         // Replace only this source's occurrence observations, after the full
         // reconcile succeeds. Historical source attachments and travelling
         // statistics are independent of current remote occurrence membership.
-        for item in try PlaylistItemRepository.allItems(in: context) {
+        for item in isComplete ? try PlaylistItemRepository.allItems(in: context) : [] {
             let otherSources = item.entryProvenance.filter { $0.playlistID != playlistRecord.musicPlaylistID }
             let observations = observationsByTrackID[item.trackID] ?? []
             let updated = PlaylistEntryProvenance.merging(otherSources + observations)
@@ -607,7 +622,7 @@ struct PlaylistSyncService {
 
         // Only a complete snapshot can release stale remote-membership
         // protection. A failed/partial fetch must never resurrect a retirement.
-        if playlistRecord.role == .oneTruePlaylist {
+        if isComplete, playlistRecord.role == .oneTruePlaylist {
             for item in try PlaylistItemRepository.allItems(in: context)
             where item.suppressedOTPMusicPlaylistIDs.contains(playlistRecord.musicPlaylistID)
                 && !processedTrackIDs.contains(item.trackID) {
