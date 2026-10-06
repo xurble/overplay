@@ -1043,9 +1043,14 @@ attribute normally.
    member, or every member, cannot be resolved.
 3. Persist the new intent.
 4. Pause, submit the complete queue starting at the start member, and play.
-   **Shuffle and Play** picks a random start member and then writes shuffle
-   off and on to the loaded queue. MusicKit ignores shuffle written before the
-   queue loads.
+   **Shuffle and Play** (#76) submits the queue in playlist order and does not
+   play it yet. It prepares the queue, writes shuffle off and then on to the
+   loaded queue (MusicKit ignores shuffle written before the queue loads),
+   skips to the next entry, which is now a random song, and only then plays.
+   Until play starts, player observation is held: the loading queue's interim
+   first entry is neither shown, nor given a listening session, nor taken as
+   the start member. The first observed entry is attributed by its item. The
+   app and CarPlay both use this shared action.
 
 The device playback cache stores encoded native `Track` objects in the caches
 directory, keyed by local track UUID. It survives relaunch, is never synced,

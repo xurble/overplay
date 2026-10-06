@@ -31,6 +31,11 @@ final class FakePlaybackPlayer: PlaybackPlayer {
     /// Replaces the starting entry's item on the next submission only.
     var nextSubmissionStartItem: PlayerItemSnapshot?
     var playFailuresRemaining = 0
+    /// MusicKit reorders the upcoming entries when shuffle is enabled on a
+    /// loaded queue; reversing them makes that order visible to tests.
+    var reordersUpcomingOnShuffle = false
+    /// Runs inside `prepareToPlay`, e.g. to report the interim entry (#76).
+    var onPrepare: (@MainActor () async -> Void)?
     var prepareFailuresRemaining = 0
     var nextFailuresRemaining = 0
 
@@ -53,6 +58,9 @@ final class FakePlaybackPlayer: PlaybackPlayer {
     func setShuffleMode(_ mode: MusicPlayer.ShuffleMode) {
         commands.append("shuffle=\(mode)")
         reportedShuffleMode = mode
+        if mode == .songs, reordersUpcomingOnShuffle, let currentIndex, currentIndex + 1 < entries.count {
+            entries = Array(entries[...currentIndex]) + entries[(currentIndex + 1)...].reversed()
+        }
     }
 
     func setRepeatMode(_ mode: MusicPlayer.RepeatMode) {
@@ -86,6 +94,7 @@ final class FakePlaybackPlayer: PlaybackPlayer {
 
     func prepareToPlay() async throws {
         commands.append("prepare")
+        if let onPrepare { await onPrepare() }
         if prepareFailuresRemaining > 0 {
             prepareFailuresRemaining -= 1
             throw Failure.commandFailed
