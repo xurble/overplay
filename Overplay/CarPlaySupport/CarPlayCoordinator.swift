@@ -111,6 +111,7 @@ final class CarPlayCoordinator: NSObject {
 
     func connect(interfaceController: CPInterfaceController, runtime: AppRuntime) {
         self.interfaceController = interfaceController
+        interfaceController.delegate = self
         self.runtime = runtime
         playbackController = runtime.playbackController
         modelContext = runtime.mainModelContext
@@ -138,6 +139,7 @@ final class CarPlayCoordinator: NSObject {
     }
 
     func disconnect() {
+        isPlacingPlayingPlaylist = false
         rootRenderer.stop()
         playlistRenderer.stop()
         libraryRefreshTask?.cancel()
@@ -271,26 +273,67 @@ final class CarPlayCoordinator: NSObject {
         guard runtime?.libraryRestoration.isReady == true, let interfaceController, let modelContext else { return }
 
         do {
-            guard let storedPlaylist = try PlaylistRepository.playlist(id: summary.id, in: modelContext) else {
+            guard try PlaylistRepository.playlist(id: summary.id, in: modelContext) != nil else {
                 setRootTemplate(animated: true)
                 return
             }
-            let playlist = try PlaylistRepository.canonicalPlaylist(
-                for: storedPlaylist,
-                in: modelContext
-            )
-
-            visiblePlaylistID = playlist.id
-            visiblePlaylistScope = summary.playbackScope
-            try PlaylistCollageService.prepareSnapshots(in: modelContext)
-            playlistRenderer.stop()
-            playlistRenderer = CarPlayListRenderer()
-            let template = CPListTemplate(title: summary.title, sections: [])
-            try updatePlaylistList(template, playlist: playlist)
-            visiblePlaylistTemplate = template
-            interfaceController.pushTemplate(template, animated: true, completion: nil)
+            interfaceController.pushTemplate(try makePlaylistTemplate(summary), animated: true, completion: nil)
         } catch {
             showError(title: "Playlist failed", message: error.localizedDescription)
+        }
+    }
+
+    /// Builds a playlist's list and makes it the visible playlist template.
+    private func makePlaylistTemplate(_ summary: PlaylistSummaryPresentation) throws -> CPListTemplate {
+        guard let modelContext,
+              let storedPlaylist = try PlaylistRepository.playlist(id: summary.id, in: modelContext) else {
+            throw PlaylistSyncError.playlistNotFound
+        }
+        let playlist = try PlaylistRepository.canonicalPlaylist(for: storedPlaylist, in: modelContext)
+        visiblePlaylistID = playlist.id
+        visiblePlaylistScope = summary.playbackScope
+        try PlaylistCollageService.prepareSnapshots(in: modelContext)
+        playlistRenderer.stop()
+        playlistRenderer = CarPlayListRenderer()
+        let template = CPListTemplate(title: summary.title, sections: [])
+        try updatePlaylistList(template, playlist: playlist)
+        visiblePlaylistTemplate = template
+        return template
+    }
+
+    /// CarPlay's back arrow on Now Playing pops one template. When CarPlay
+    /// opens Now Playing itself (its Now Playing button, or audio already
+    /// playing on connect) that template is the root list. Put the playing
+    /// playlist underneath instead, so Back always returns to it.
+    private func placePlayingPlaylistBeneathNowPlaying() {
+        guard !isPlacingPlayingPlaylist, runtime?.libraryRestoration.isReady == true,
+              let interfaceController, let modelContext,
+              interfaceController.topTemplate === CPNowPlayingTemplate.shared,
+              let playing = (try? playlistSummaries())?.first(where: isCurrentPlaylist),
+              let stored = try? PlaylistRepository.playlist(id: playing.id, in: modelContext),
+              let canonical = try? PlaylistRepository.canonicalPlaylist(for: stored, in: modelContext) else { return }
+        let templates = interfaceController.templates
+        let beneath = templates.count >= 2 ? templates[templates.count - 2] : nil
+        let beneathIsVisiblePlaylist = beneath != nil && beneath === visiblePlaylistTemplate
+        guard CarPlayNowPlayingBackStack.needsPlayingPlaylist(
+            beneathPlaylistID: beneathIsVisiblePlaylist ? visiblePlaylistID : nil,
+            beneathScope: beneathIsVisiblePlaylist ? visiblePlaylistScope : nil,
+            playingPlaylistID: canonical.id,
+            playingScope: playing.playbackScope
+        ), let playlistTemplate = try? makePlaylistTemplate(playing) else { return }
+
+        isPlacingPlayingPlaylist = true
+        interfaceController.popToRootTemplate(animated: false) { [weak self, weak interfaceController] _, _ in
+            Task { @MainActor in
+                guard let interfaceController else { self?.isPlacingPlayingPlaylist = false; return }
+                interfaceController.pushTemplate(playlistTemplate, animated: false) { _, _ in
+                    Task { @MainActor in
+                        interfaceController.pushTemplate(CPNowPlayingTemplate.shared, animated: false) { _, _ in
+                            Task { @MainActor in self?.isPlacingPlayingPlaylist = false }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -338,6 +381,7 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private var visiblePlaylistScope: PlaylistPlaybackScope = .active
+    private var isPlacingPlayingPlaylist = false
 
     private func carPlayDisplayScope(for playlist: PlaylistRecord) -> PlaylistPlaybackScope {
         visiblePlaylistID == playlist.id ? visiblePlaylistScope : .active
@@ -728,6 +772,13 @@ final class CarPlayCoordinator: NSObject {
         }
         let template = CPAlertTemplate(titleVariants: ["\(title): \(message)", title], actions: [action])
         interfaceController.presentTemplate(template, animated: true, completion: nil)
+    }
+}
+
+extension CarPlayCoordinator: CPInterfaceControllerDelegate {
+    func templateDidAppear(_ aTemplate: CPTemplate, animated: Bool) {
+        guard aTemplate === CPNowPlayingTemplate.shared else { return }
+        placePlayingPlaylistBeneathNowPlaying()
     }
 }
 

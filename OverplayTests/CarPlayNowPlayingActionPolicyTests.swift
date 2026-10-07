@@ -51,4 +51,24 @@ struct CarPlayNowPlayingActionPolicyTests {
                 .contains(.promote))
         }
     }
+
+    // MARK: - Back arrow
+
+    @Test("Back from Now Playing goes to the playing playlist: root or another playlist underneath is replaced")
+    func backGoesToThePlayingPlaylist() {
+        let playing = UUID()
+        // Opened by CarPlay over the root list.
+        #expect(CarPlayNowPlayingBackStack.needsPlayingPlaylist(
+            beneathPlaylistID: nil, beneathScope: nil, playingPlaylistID: playing, playingScope: .active))
+        // Browsing another playlist, or the same playlist's Retired list.
+        #expect(CarPlayNowPlayingBackStack.needsPlayingPlaylist(
+            beneathPlaylistID: UUID(), beneathScope: .active, playingPlaylistID: playing, playingScope: .active))
+        #expect(CarPlayNowPlayingBackStack.needsPlayingPlaylist(
+            beneathPlaylistID: playing, beneathScope: .retired, playingPlaylistID: playing, playingScope: .active))
+        // Already right, or nothing known to be playing: leave the stack alone.
+        #expect(!CarPlayNowPlayingBackStack.needsPlayingPlaylist(
+            beneathPlaylistID: playing, beneathScope: .active, playingPlaylistID: playing, playingScope: .active))
+        #expect(!CarPlayNowPlayingBackStack.needsPlayingPlaylist(
+            beneathPlaylistID: nil, beneathScope: nil, playingPlaylistID: nil, playingScope: .active))
+    }
 }

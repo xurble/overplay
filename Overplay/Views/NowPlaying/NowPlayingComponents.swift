@@ -371,7 +371,8 @@ struct TrackActionControlsView: View {
 /// with the accent and its text is always the background colour. Every other
 /// button is a tonal surface, the background tinted toward the accent, and
 /// its text is the accent, never the background colour. Both pairs keep the
-/// same minimum contrast, sheen included.
+/// same minimum contrast, with a margin for the Liquid Glass drawn over the
+/// fill, whose specular highlight follows the device's motion.
 struct FullScreenPlayerControlPalette: Equatable {
     static let minimumContrast: CGFloat = 4.5
     /// Screen white and black. The theme's named colours stop short of them.
@@ -386,17 +387,23 @@ struct FullScreenPlayerControlPalette: Equatable {
     let surfaceRGB: AlbumArtworkRGBColor
     /// Unpushed fill for the primary transport control: more tint, same rule.
     let primarySurfaceRGB: AlbumArtworkRGBColor
-    /// The pushed fill's highlight at its corner, as strong as the contrast
-    /// allows. The label sits mid-gradient, where it is half as strong.
-    let selectedSheenOpacity: Double
+    /// False when no accent keeps the contrast margin under glass, as on a
+    /// mid-grey background: buttons then show the exact fill without glass.
+    let usesGlass: Bool
 
     init?(theme: AlbumArtworkTheme?) {
         guard let theme, !theme.isFallback else { return nil }
         let background = theme.backgroundRGB
         let isLight = background.relativeLuminance > 0.34
-        let surfaceSheen = Self.surfaceSheenAtLabel(isLight: isLight)
-        let accent = Self.accent(theme.trackTitleRGB, against: background, surfaceSheen: surfaceSheen)
+        let glassAccent = Self.accent(
+            theme.trackTitleRGB, against: background,
+            surfaceSheen: Self.glassLightening(isLight: isLight), pushedSheen: Self.pushedGlassLightening
+        )
+        let accent = glassAccent ?? Self.accent(theme.trackTitleRGB, against: background, surfaceSheen: 0, pushedSheen: 0)
+            ?? Self.bestExtreme(against: background)
+        let surfaceSheen = glassAccent == nil ? 0 : Self.glassLightening(isLight: isLight)
 
+        usesGlass = glassAccent != nil
         backgroundRGB = background
         accentRGB = accent
         surfaceRGB = Self.tonalSurface(
@@ -405,15 +412,16 @@ struct FullScreenPlayerControlPalette: Equatable {
         primarySurfaceRGB = Self.tonalSurface(
             background, accent: accent, preferredTint: isLight ? 0.24 : 0.32, sheen: surfaceSheen
         )
-        selectedSheenOpacity = [0.22, 0.12, 0.06].first {
-            background.contrastRatio(against: accent.mixed(with: Self.white, amount: $0 / 2)) >= Self.minimumContrast
-        }.map(Double.init) ?? 0
     }
 
-    /// The unpushed sheen's middle stop, where the label sits.
-    static func surfaceSheenAtLabel(isLight: Bool) -> CGFloat {
+    /// Margin for the glass lightening an unpushed fill under its label,
+    /// modelled as a mix toward white.
+    static func glassLightening(isLight: Bool) -> CGFloat {
         isLight ? 0.03 : 0.08
     }
+
+    /// The same margin for the pushed fill.
+    static let pushedGlassLightening: CGFloat = 0.08
 
     /// Text on unpushed buttons and other themed surfaces.
     var foregroundRGB: AlbumArtworkRGBColor { accentRGB }
@@ -447,17 +455,24 @@ struct FullScreenPlayerControlPalette: Equatable {
         isLightBackground ? 0.14 : 0.34
     }
 
-    /// Readable on the background, and on the background under the unpushed
-    /// sheen, so an untinted surface always passes. Moves toward black or
-    /// white, the further from the background first, never to it.
+    /// Readable on the background, and on the background under the glass
+    /// margin, so an untinted surface always passes; and readable under the
+    /// background colour when it is the pushed fill under glass. Moves toward
+    /// black or white, the further from the background first, never to it.
+    /// Nil when no colour meets those margins.
     private static func accent(
         _ preferred: AlbumArtworkRGBColor,
         against background: AlbumArtworkRGBColor,
-        surfaceSheen: CGFloat
-    ) -> AlbumArtworkRGBColor {
+        surfaceSheen: CGFloat,
+        pushedSheen: CGFloat
+    ) -> AlbumArtworkRGBColor? {
         let sheened = background.mixed(with: white, amount: surfaceSheen)
         func worstContrast(_ color: AlbumArtworkRGBColor) -> CGFloat {
-            min(color.contrastRatio(against: background), color.contrastRatio(against: sheened))
+            min(
+                color.contrastRatio(against: background),
+                color.contrastRatio(against: sheened),
+                background.contrastRatio(against: color.mixed(with: white, amount: pushedSheen))
+            )
         }
         let extremes = [white, black].sorted { $0.contrastRatio(against: background) > $1.contrastRatio(against: background) }
         for extreme in extremes {
@@ -466,7 +481,11 @@ struct FullScreenPlayerControlPalette: Equatable {
                 if worstContrast(candidate) >= minimumContrast { return candidate }
             }
         }
-        return extremes.max { worstContrast($0) < worstContrast($1) } ?? black
+        return nil
+    }
+
+    private static func bestExtreme(against background: AlbumArtworkRGBColor) -> AlbumArtworkRGBColor {
+        white.contrastRatio(against: background) >= black.contrastRatio(against: background) ? white : black
     }
 
     /// The background tinted toward the accent, as far as the accent text
@@ -551,7 +570,8 @@ struct FullScreenPlayerGlassButtonStyle: ButtonStyle {
                 palette,
                 shape: Capsule(),
                 prominence: prominence,
-                isPressed: configuration.isPressed
+                isPressed: configuration.isPressed,
+                isInteractive: true
             )
             .scaleEffect(configuration.isPressed ? 0.975 : 1)
             .opacity(isEnabled ? 1 : 0.46)
@@ -601,6 +621,7 @@ private struct FullScreenPlayerGlassBackdropModifier<S: InsettableShape>: ViewMo
     var shape: S
     var prominence: FullScreenPlayerControlProminence
     var isPressed: Bool
+    var isInteractive: Bool
 
     func body(content: Content) -> some View {
         if let palette {
@@ -608,7 +629,8 @@ private struct FullScreenPlayerGlassBackdropModifier<S: InsettableShape>: ViewMo
                 palette,
                 shape: shape,
                 prominence: prominence,
-                isPressed: isPressed
+                isPressed: isPressed,
+                isInteractive: isInteractive
             )
         } else {
             content.background(.thinMaterial, in: shape)
@@ -618,80 +640,63 @@ private struct FullScreenPlayerGlassBackdropModifier<S: InsettableShape>: ViewMo
 
 private extension View {
     @ViewBuilder
+    func fullScreenPlayerGlass<S: InsettableShape>(
+        _ palette: FullScreenPlayerControlPalette,
+        tint: Color,
+        in shape: S,
+        isInteractive: Bool
+    ) -> some View {
+        if palette.usesGlass {
+            glassEffect(.regular.tint(tint).interactive(isInteractive), in: shape)
+        } else {
+            self
+        }
+    }
+
+    /// Liquid Glass over the exact palette fill: the glass supplies the
+    /// motion-reactive highlight, the fill underneath keeps the colour that
+    /// the contrast rules were checked against.
+    @ViewBuilder
     func fullScreenPlayerGlassBackdropContent<S: InsettableShape>(
         _ palette: FullScreenPlayerControlPalette,
         shape: S,
         prominence: FullScreenPlayerControlProminence,
-        isPressed: Bool
+        isPressed: Bool,
+        isInteractive: Bool
     ) -> some View {
         if prominence == .selected {
-            background {
-                // Opaque, so the background-coloured text keeps its contrast.
-                shape
-                    .fill(palette.tint)
-                    .overlay {
-                        shape.fill(
-                            LinearGradient(
-                                colors: [
-                                    .white.opacity(isPressed ? palette.selectedSheenOpacity / 2 : palette.selectedSheenOpacity),
-                                    .clear
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                    }
-            }
-            .overlay {
-                shape
-                    .strokeBorder(palette.selectedForeground.opacity(isPressed ? 0.42 : 0.58), lineWidth: 1)
-            }
-            .shadow(
-                color: .black.opacity(palette.shadowOpacity),
-                radius: 12,
-                y: 7
-            )
+            fullScreenPlayerGlass(palette, tint: palette.tint, in: shape, isInteractive: isInteractive)
+                .background { shape.fill(palette.tint) }
+                .overlay {
+                    shape
+                        .strokeBorder(palette.selectedForeground.opacity(isPressed ? 0.42 : 0.58), lineWidth: 1)
+                }
+                .shadow(
+                    color: .black.opacity(palette.shadowOpacity),
+                    radius: 12,
+                    y: 7
+                )
         } else {
-            background {
-                shape
-                    .fill(.ultraThinMaterial)
-                    .overlay {
-                        shape.fill((prominence == .primary ? palette.primarySurface : palette.surface)
-                            .opacity(isPressed ? 0.94 : 0.76))
-                    }
-                    .overlay {
-                        shape.fill(
-                            LinearGradient(
-                                colors: [
-                                    .white.opacity(palette.isLightBackground ? 0.12 : 0.22),
-                                    .white.opacity(Double(FullScreenPlayerControlPalette.surfaceSheenAtLabel(
-                                        isLight: palette.isLightBackground
-                                    ))),
-                                    .clear
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
+            let fill = (prominence == .primary ? palette.primarySurface : palette.surface)
+                .opacity(isPressed ? 0.94 : 0.76)
+            fullScreenPlayerGlass(palette, tint: fill, in: shape, isInteractive: isInteractive)
+                .background { shape.fill(fill) }
+                .overlay {
+                    shape
+                        .strokeBorder(
+                            palette.tint.opacity(isPressed ? min(prominence.strokeOpacity + 0.20, 0.90) : max(prominence.strokeOpacity, 0.62)),
+                            lineWidth: 1
                         )
-                        .blendMode(.screen)
-                    }
-            }
-            .overlay {
-                shape
-                    .strokeBorder(
-                        palette.tint.opacity(isPressed ? min(prominence.strokeOpacity + 0.20, 0.90) : max(prominence.strokeOpacity, 0.62)),
-                        lineWidth: 1
-                    )
-                    .overlay {
-                        shape
-                            .strokeBorder(palette.selectedForeground.opacity(0.16), lineWidth: 0.5)
-                    }
-            }
-            .shadow(
-                color: .black.opacity(palette.shadowOpacity),
-                radius: prominence == .primary ? 18 : 12,
-                y: prominence == .primary ? 10 : 7
-            )
+                        .overlay {
+                            shape
+                                .strokeBorder(palette.selectedForeground.opacity(0.16), lineWidth: 0.5)
+                        }
+                }
+                .shadow(
+                    color: .black.opacity(palette.shadowOpacity),
+                    radius: prominence == .primary ? 18 : 12,
+                    y: prominence == .primary ? 10 : 7
+                )
         }
     }
 }
@@ -715,13 +720,15 @@ extension View {
         _ palette: FullScreenPlayerControlPalette?,
         shape: S,
         prominence: FullScreenPlayerControlProminence = .secondary,
-        isPressed: Bool = false
+        isPressed: Bool = false,
+        isInteractive: Bool = false
     ) -> some View {
         modifier(FullScreenPlayerGlassBackdropModifier(
             palette: palette,
             shape: shape,
             prominence: prominence,
-            isPressed: isPressed
+            isPressed: isPressed,
+            isInteractive: isInteractive
         ))
     }
 }

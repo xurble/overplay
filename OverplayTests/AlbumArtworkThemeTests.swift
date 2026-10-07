@@ -621,7 +621,7 @@ struct AlbumArtworkThemeTests {
     }
 
     /// Pushed buttons always use the background colour for text; unpushed
-    /// buttons never do. Both keep 4.5:1, with the sheen drawn over them.
+    /// buttons never do. Both keep 4.5:1, with a margin for the glass over them.
     @Test("pushed text is always the background colour, unpushed never is, and both stay readable", arguments: [
         (AlbumArtworkRGBColor.white, AlbumArtworkRGBColor.black),
         (AlbumArtworkRGBColor(0.04, 0.04, 0.08), AlbumArtworkRGBColor(0.95, 0.69, 0.61)),
@@ -637,12 +637,14 @@ struct AlbumArtworkThemeTests {
 
         #expect(palette.selectedForegroundRGB == background)
         #expect(background.contrastRatio(against: palette.accentRGB) >= minimum)
-        let sheenedFill = palette.accentRGB.mixed(with: FullScreenPlayerControlPalette.white, amount: CGFloat(palette.selectedSheenOpacity) / 2)
+        // Without glass the fill is exact, so no margin applies.
+        let pushedSheen = palette.usesGlass ? FullScreenPlayerControlPalette.pushedGlassLightening : 0
+        let sheenedFill = palette.accentRGB.mixed(with: FullScreenPlayerControlPalette.white, amount: pushedSheen)
         #expect(background.contrastRatio(against: sheenedFill) >= minimum)
 
         #expect(palette.foregroundRGB != background)
         #expect(palette.foregroundRGB.contrastRatio(against: background) >= minimum)
-        let sheen = FullScreenPlayerControlPalette.surfaceSheenAtLabel(isLight: palette.isLightBackground)
+        let sheen = palette.usesGlass ? FullScreenPlayerControlPalette.glassLightening(isLight: palette.isLightBackground) : 0
         for surface in [palette.surfaceRGB, palette.primarySurfaceRGB] {
             #expect(palette.foregroundRGB.contrastRatio(against: surface) >= minimum)
             #expect(palette.foregroundRGB.contrastRatio(against: surface.mixed(with: FullScreenPlayerControlPalette.white, amount: sheen)) >= minimum)
@@ -657,6 +659,18 @@ struct AlbumArtworkThemeTests {
         #expect(palette.selectedForegroundRGB == .white)
         #expect(palette.surfaceRGB.relativeLuminance > 0.5)
         #expect(palette.primarySurfaceRGB.relativeLuminance < palette.surfaceRGB.relativeLuminance)
+    }
+
+    @Test("buttons use glass unless no colour keeps the contrast margin under it")
+    func glassOnlyWhereContrastAllows() throws {
+        func palette(_ background: AlbumArtworkRGBColor, _ title: AlbumArtworkRGBColor) throws -> FullScreenPlayerControlPalette {
+            try #require(FullScreenPlayerControlPalette(theme: Self.controlTheme(background: background, title: title)))
+        }
+        #expect(try palette(.white, .black).usesGlass)
+        #expect(try palette(AlbumArtworkRGBColor(0.04, 0.04, 0.08), AlbumArtworkRGBColor(0.95, 0.69, 0.61)).usesGlass)
+        let midGrey = try palette(AlbumArtworkRGBColor(0.46, 0.46, 0.46), AlbumArtworkRGBColor(0.62, 0.62, 0.62))
+        #expect(!midGrey.usesGlass)
+        #expect(midGrey.backgroundRGB.contrastRatio(against: midGrey.accentRGB) >= FullScreenPlayerControlPalette.minimumContrast)
     }
 
     @Test("a readable title colour is kept as the button accent")

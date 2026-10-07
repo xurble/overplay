@@ -217,7 +217,8 @@ private struct PlaybackControlBackdropModifier: ViewModifier {
                 palette,
                 shape: Circle(),
                 prominence: prominence,
-                isPressed: isPressed
+                isPressed: isPressed,
+                isInteractive: true
             )
         } else {
             content
