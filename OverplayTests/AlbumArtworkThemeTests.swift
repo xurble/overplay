@@ -645,7 +645,7 @@ struct AlbumArtworkThemeTests {
         #expect(palette.foregroundRGB != background)
         #expect(palette.foregroundRGB.contrastRatio(against: background) >= minimum)
         let sheen = palette.usesGlass ? FullScreenPlayerControlPalette.glassLightening(isLight: palette.isLightBackground) : 0
-        for surface in [palette.surfaceRGB, palette.primarySurfaceRGB] {
+        for surface in [palette.surfaceRGB, palette.backgroundRGB] {
             #expect(palette.foregroundRGB.contrastRatio(against: surface) >= minimum)
             #expect(palette.foregroundRGB.contrastRatio(against: surface.mixed(with: FullScreenPlayerControlPalette.white, amount: sheen)) >= minimum)
         }
@@ -658,7 +658,6 @@ struct AlbumArtworkThemeTests {
         #expect(palette.foregroundRGB == .black)
         #expect(palette.selectedForegroundRGB == .white)
         #expect(palette.surfaceRGB.relativeLuminance > 0.5)
-        #expect(palette.primarySurfaceRGB.relativeLuminance < palette.surfaceRGB.relativeLuminance)
     }
 
     @Test("buttons use glass unless no colour keeps the contrast margin under it")

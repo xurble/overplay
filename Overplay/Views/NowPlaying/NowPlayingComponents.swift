@@ -385,8 +385,6 @@ struct FullScreenPlayerControlPalette: Equatable {
     let accentRGB: AlbumArtworkRGBColor
     /// Unpushed fill.
     let surfaceRGB: AlbumArtworkRGBColor
-    /// Unpushed fill for the primary transport control: more tint, same rule.
-    let primarySurfaceRGB: AlbumArtworkRGBColor
     /// False when no accent keeps the contrast margin under glass, as on a
     /// mid-grey background: buttons then show the exact fill without glass.
     let usesGlass: Bool
@@ -408,9 +406,6 @@ struct FullScreenPlayerControlPalette: Equatable {
         accentRGB = accent
         surfaceRGB = Self.tonalSurface(
             background, accent: accent, preferredTint: isLight ? 0.14 : 0.20, sheen: surfaceSheen
-        )
-        primarySurfaceRGB = Self.tonalSurface(
-            background, accent: accent, preferredTint: isLight ? 0.24 : 0.32, sheen: surfaceSheen
         )
     }
 
@@ -441,10 +436,6 @@ struct FullScreenPlayerControlPalette: Equatable {
 
     var surface: Color {
         surfaceRGB.color
-    }
-
-    var primarySurface: Color {
-        primarySurfaceRGB.color
     }
 
     var isLightBackground: Bool {
@@ -639,23 +630,11 @@ private struct FullScreenPlayerGlassBackdropModifier<S: InsettableShape>: ViewMo
 }
 
 private extension View {
-    @ViewBuilder
-    func fullScreenPlayerGlass<S: InsettableShape>(
-        _ palette: FullScreenPlayerControlPalette,
-        tint: Color,
-        in shape: S,
-        isInteractive: Bool
-    ) -> some View {
-        if palette.usesGlass {
-            glassEffect(.regular.tint(tint).interactive(isInteractive), in: shape)
-        } else {
-            self
-        }
-    }
-
-    /// Liquid Glass over the exact palette fill: the glass supplies the
-    /// motion-reactive highlight, the fill underneath keeps the colour that
-    /// the contrast rules were checked against.
+    /// Liquid Glass supplies the motion-reactive highlight. A pushed button
+    /// keeps its exact accent fill under the glass, because its text is the
+    /// background colour. An unpushed button is clear glass tinted toward
+    /// its surface over the plain player background, so its colour stays
+    /// between the background and the surface, both already checked.
     @ViewBuilder
     func fullScreenPlayerGlassBackdropContent<S: InsettableShape>(
         _ palette: FullScreenPlayerControlPalette,
@@ -665,7 +644,13 @@ private extension View {
         isInteractive: Bool
     ) -> some View {
         if prominence == .selected {
-            fullScreenPlayerGlass(palette, tint: palette.tint, in: shape, isInteractive: isInteractive)
+            Group {
+                if palette.usesGlass {
+                    glassEffect(.regular.tint(palette.tint).interactive(isInteractive), in: shape)
+                } else {
+                    self
+                }
+            }
                 .background { shape.fill(palette.tint) }
                 .overlay {
                     shape
@@ -677,10 +662,16 @@ private extension View {
                     y: 7
                 )
         } else {
-            let fill = (prominence == .primary ? palette.primarySurface : palette.surface)
-                .opacity(isPressed ? 0.94 : 0.76)
-            fullScreenPlayerGlass(palette, tint: fill, in: shape, isInteractive: isInteractive)
-                .background { shape.fill(fill) }
+            Group {
+                if palette.usesGlass {
+                    glassEffect(
+                        .clear.tint(palette.surface.opacity(isPressed ? 0.62 : 0.38)).interactive(isInteractive),
+                        in: shape
+                    )
+                } else {
+                    background { shape.fill(palette.surface.opacity(isPressed ? 0.94 : 0.76)) }
+                }
+            }
                 .overlay {
                     shape
                         .strokeBorder(
