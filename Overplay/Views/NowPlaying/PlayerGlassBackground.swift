@@ -24,7 +24,8 @@ final class PlayerGlassBackdrop {
     private nonisolated static let gridSize = 24
 
     private(set) var grid: [AlbumArtworkRGBColor] = []
-    var canvasSize: CGSize = .zero
+    /// Where the art is drawn, in the player's coordinate space.
+    var artFrame: CGRect = .zero
     var tint = AlbumArtworkRGBColor(0, 0, 0)
     @ObservationIgnored private var loadedURL: String?
 
@@ -43,10 +44,10 @@ final class PlayerGlassBackdrop {
     /// The colour under a rectangle in the player's coordinate space.
     func colour(under rect: CGRect) -> AlbumArtworkRGBColor? {
         let n = Self.gridSize
-        guard grid.count == n * n, canvasSize.height > 0, !rect.isEmpty else { return nil }
-        let side: CGFloat = canvasSize.height * PlayerGlassArtBackground.oversize
-        let originX: CGFloat = (canvasSize.width - side) / 2
-        let originY: CGFloat = (canvasSize.height - side) / 2
+        guard grid.count == n * n, artFrame.height > 0, !rect.isEmpty else { return nil }
+        let side: CGFloat = artFrame.height
+        let originX: CGFloat = artFrame.minX
+        let originY: CGFloat = artFrame.minY
         func cell(_ value: CGFloat, _ origin: CGFloat) -> Int {
             let position: CGFloat = (value - origin) / side * CGFloat(n)
             return min(max(Int(position), 0), n - 1)
@@ -221,30 +222,45 @@ struct PlayerGlassArtBackground: View {
     private static let parallax: CGFloat = 0.22
     static let wash: Double = 0.5
 
+    /// The tallest the player has been: the art keeps the full-size player's
+    /// size and position, and a shrinking sheet crops it rather than
+    /// shrinking it, so its edges never show.
+    @State private var fullHeight: CGFloat = 0
+
+    /// The art square for a player of this size.
+    static func artFrame(for size: CGSize, fullHeight: CGFloat) -> CGRect {
+        let reference = max(fullHeight, size.height)
+        let side = max(reference, size.width) * oversize
+        return CGRect(x: (size.width - side) / 2, y: (reference - side) / 2, width: side, height: side)
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let size = proxy.size
-            let side = size.height * Self.oversize
-            let margin = (side - size.height) / 2
-            ZStack {
+            let frame = Self.artFrame(for: size, fullHeight: fullHeight)
+            let margin = (frame.height - max(fullHeight, size.height)) / 2
+            ZStack(alignment: .topLeading) {
                 tint
                 if let artwork {
                     NowPlayingArtworkView(urlString: artwork.urlString, playlistID: artwork.playlistID, cornerRadius: 0)
-                        .frame(width: side, height: side)
+                        .frame(width: frame.width, height: frame.height)
                         .blur(radius: Self.blur)
                         .offset(
-                            x: motion.tilt.width * margin * Self.parallax,
-                            y: motion.tilt.height * margin * Self.parallax
+                            x: frame.minX + motion.tilt.width * margin * Self.parallax,
+                            y: frame.minY + motion.tilt.height * margin * Self.parallax
                         )
                 }
                 tint.opacity(Self.wash)
             }
-            .frame(width: size.width, height: size.height)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
             .clipped()
             // One flattened layer, so the glass samples art and wash together.
             .drawingGroup()
         }
-        .onGeometryChange(for: CGSize.self) { $0.size } action: { backdrop?.canvasSize = $0 }
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+            fullHeight = max(fullHeight, size.height)
+            backdrop?.artFrame = Self.artFrame(for: size, fullHeight: fullHeight)
+        }
         .onAppear { motion.start() }
         .onDisappear { motion.stop() }
     }
