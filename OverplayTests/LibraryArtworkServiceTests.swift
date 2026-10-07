@@ -45,6 +45,90 @@ struct LibraryArtworkServiceTests {
         #expect(!container.mainContext.hasChanges)
     }
 
+    // MARK: - Confirmed absence (#60)
+
+    private func absenceStore() -> (ArtworkAbsenceStore, () -> Void) {
+        let suite = "LibraryArtworkServiceTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        return (ArtworkAbsenceStore(defaults: defaults), { defaults.removePersistentDomain(forName: suite) })
+    }
+
+    private func noArtwork(_ snapshots: [TrackSnapshot]) -> [TrackSnapshot] { snapshots }
+
+    @Test func aConfirmedAbsenceIsNotAskedAgainAcrossCyclesOrRestart() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let upload = TrackRecord(libraryID: "i.upload", title: "Bigger Boys And Stolen Sweethearts", artistName: "Arctic Monkeys")
+        context.insert(upload)
+        let item = PlaylistItemRecord(playlistID: UUID(), trackID: upload.id, skipCount: 3)
+        context.insert(item)
+        try context.save()
+        let (store, cleanUp) = absenceStore(); defer { cleanUp() }
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+
+        var asked: [[String?]] = []
+        #expect(try await LibraryArtworkService.repair(in: context, absences: store, now: start) {
+            asked.append($0.map(\.libraryID)); return noArtwork($0)
+        } == 0)
+        #expect(asked == [["i.upload"]])
+
+        // A later cycle, and a fresh store reading the same defaults after relaunch.
+        let relaunched = ArtworkAbsenceStore(defaults: store.defaults)
+        for absences in [store, relaunched] {
+            #expect(try await LibraryArtworkService.repair(in: context, absences: absences, now: start.addingTimeInterval(86_400)) { _ in
+                Issue.record("A confirmed absence must not be fetched again"); return []
+            } == 0)
+        }
+        #expect(upload.artworkURLTemplate == nil && upload.libraryID == "i.upload")
+        #expect(item.skipCount == 3)
+    }
+
+    @Test func aFailedLookupIsNotRecordedAsAbsence() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        context.insert(TrackRecord(libraryID: "i.upload", title: "Song", artistName: "Artist"))
+        try context.save()
+        let (store, cleanUp) = absenceStore(); defer { cleanUp() }
+
+        await #expect(throws: URLError.self) {
+            try await LibraryArtworkService.repair(in: context, absences: store) { _ in throw URLError(.timedOut) }
+        }
+        #expect(store.entries().isEmpty)
+        var asked = 0
+        _ = try await LibraryArtworkService.repair(in: context, absences: store) { asked += 1; return noArtwork($0) }
+        #expect(asked == 1)
+    }
+
+    @Test func artworkAddedLaterIsFoundAfterTheRecheckIntervalOrAnIdentityChange() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let aged = TrackRecord(libraryID: "i.aged", title: "Aged", artistName: "Artist")
+        let rematched = TrackRecord(libraryID: "i.old", title: "Rematched", artistName: "Artist")
+        context.insert(aged)
+        context.insert(rematched)
+        try context.save()
+        let (store, cleanUp) = absenceStore(); defer { cleanUp() }
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        _ = try await LibraryArtworkService.repair(in: context, absences: store, now: start) { noArtwork($0) }
+
+        rematched.libraryID = "i.new"
+        try context.save()
+        let art = "https://example.com/art/{w}x{h}.jpg"
+        var asked: [String?] = []
+        let withArt: ([TrackSnapshot]) -> [TrackSnapshot] = { snapshots in
+            asked += snapshots.map(\.libraryID)
+            return snapshots.map { var copy = $0; copy.artworkURLTemplate = art; return copy }
+        }
+        #expect(try await LibraryArtworkService.repair(in: context, absences: store, now: start.addingTimeInterval(60), fetch: withArt) == 1)
+        #expect(asked == ["i.new"])
+        #expect(rematched.artworkURLTemplate == art && aged.artworkURLTemplate == nil)
+
+        let later = start.addingTimeInterval(ArtworkAbsenceStore.recheckInterval)
+        #expect(try await LibraryArtworkService.repair(in: context, absences: store, now: later, fetch: withArt) == 1)
+        #expect(aged.artworkURLTemplate == art)
+        #expect(store.entries().isEmpty)
+    }
+
     @Test func anExpiredArtworkCredentialIsDroppedSoItCanBeResolvedAgain() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext

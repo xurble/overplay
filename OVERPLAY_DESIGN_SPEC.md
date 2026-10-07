@@ -2162,7 +2162,11 @@ match is not a prerequisite for a cover. Persist only portable artwork URLs;
 MusicKit-native artwork handles remain device-local. Missing artwork can be
 refreshed separately from playlist contents without resetting identities,
 memberships or activity. A library upload with no supplied artwork keeps the
-normal placeholder.
+normal placeholder. A lookup that succeeds without usable artwork is
+remembered on that device, so the repair stops asking each cycle (#60). It is
+asked again after 30 days, which is how artwork added later is found, or as
+soon as the track's library or catalog ID changes. A failed lookup is never
+remembered as absence.
 
 The shared now-playing display prefers the actual player-reported track. Once
 it matches the reconciled current song, its cover uses the same portable

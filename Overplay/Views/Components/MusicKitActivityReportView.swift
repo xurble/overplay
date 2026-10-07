@@ -128,11 +128,11 @@ extension MusicKitActivityReport.Summary {
                     maximumMagnitude: 1_204
                 ),
                 MusicKitActivityReport.OperationRate(
-                    operation: .nowPlayingInfoWrite,
-                    lastMinute: 58,
-                    lastFiveMinutes: 290,
-                    lastHour: 3_140,
-                    total: 4_512,
+                    operation: .playlistTrackFetch,
+                    lastMinute: 2,
+                    lastFiveMinutes: 9,
+                    lastHour: 40,
+                    total: 112,
                     failures: 0,
                     maximumMagnitude: nil
                 )

@@ -18,13 +18,8 @@ nonisolated enum MusicKitActivityReport {
     static let libraryWriteBurstCount = 5
     static let repeatedFailureWindowMinutes = 10
     static let repeatedFailureCount = 3
-    /// Now Playing writes per minute above which Overplay is churning the
-    /// system Now Playing session rather than reporting state changes.
-    static let nowPlayingWritesPerMinuteLimit = 20
-    static let idleNowPlayingWriteWindowMinutes = 60
-    static let idleNowPlayingWriteCount = 60
-    static let automaticRetryWindowMinutes = 10
-    static let automaticRetryCount = 4
+    static let recoveryAttemptWindowMinutes = 10
+    static let recoveryAttemptCount = 4
     /// How much slower a call has to get, against its own earlier baseline,
     /// before the slowdown is worth reporting. Apple Music degrading under
     /// Overplay is visible here long before playback actually fails.
@@ -332,45 +327,6 @@ nonisolated enum MusicKitActivityReport {
             ))
         }
 
-        let nowPlayingWrites: Set<MusicKitActivityOperation> = [
-            .nowPlayingInfoWrite, .nowPlayingInfoWriteWhilePaused, .nowPlayingInfoClear
-        ]
-        let nowPlayingLastMinute = nowPlayingWrites.reduce(0) {
-            $0 + (ratesByOperation[$1]?.lastMinute ?? 0)
-        }
-        if nowPlayingLastMinute >= nowPlayingWritesPerMinuteLimit {
-            concerns.append(Concern(
-                severity: .warning,
-                title: "Now Playing session churn",
-                detail: """
-                \(nowPlayingWrites.reduce(0) { $0 + (ratesByOperation[$1]?.lastMinute ?? 0) }) \
-                MPNowPlayingInfoCenter writes in the last minute. Overplay drives playback \
-                through ApplicationMusicPlayer, so the Music app already publishes Now Playing \
-                for the same audio; a second origin rewriting it every tick is the pattern most \
-                likely to confuse the system Now Playing session.
-                """
-            ))
-        }
-
-        let idleNowPlayingWrites = count(
-            of: [.nowPlayingInfoWriteWhilePaused, .nowPlayingInfoClear],
-            in: tallies,
-            withinLastMinutes: idleNowPlayingWriteWindowMinutes,
-            now: now
-        )
-        if idleNowPlayingWrites >= idleNowPlayingWriteCount {
-            concerns.append(Concern(
-                severity: .warning,
-                title: "Now Playing written while Overplay is not playing",
-                detail: """
-                \(idleNowPlayingWrites) Now Playing writes or clears in the last \
-                \(idleNowPlayingWriteWindowMinutes) minutes happened while Overplay was not \
-                playing. Publishing or clearing Now Playing when Overplay owns no audio \
-                competes with whatever is actually playing, including the Music app itself.
-                """
-            ))
-        }
-
         if let queueRate = ratesByOperation[.queueReplace] {
             if let maximum = queueRate.maximumMagnitude, maximum >= largeQueueEntryCount {
                 concerns.append(Concern(
@@ -445,21 +401,20 @@ nonisolated enum MusicKitActivityReport {
 
         concerns.append(contentsOf: latencyConcerns(events: events, now: now))
 
-        let automaticRetries = count(
+        let recoveryAttempts = count(
             of: [.playbackRecoveryAttempt],
             in: tallies,
-            withinLastMinutes: automaticRetryWindowMinutes,
+            withinLastMinutes: recoveryAttemptWindowMinutes,
             now: now
         )
-        if automaticRetries >= automaticRetryCount {
+        if recoveryAttempts >= recoveryAttemptCount {
             concerns.append(Concern(
                 severity: .warning,
-                title: "Automatic playback recovery loop",
+                title: "Repeated playback recovery",
                 detail: """
-                \(automaticRetries) automatic delivery-recovery attempts in the last \
-                \(automaticRetryWindowMinutes) minutes. The per-episode budget resets on any \
-                single tick of forward progress, so a player that stutters can be re-prodded \
-                indefinitely.
+                \(recoveryAttempts) recovery attempts from Play presses in the last \
+                \(recoveryAttemptWindowMinutes) minutes. Overplay never retries by itself, \
+                so playback kept failing after the user pressed Play.
                 """
             ))
         }
@@ -648,13 +603,11 @@ nonisolated enum MusicKitActivityReport {
 
         // Sync reads can displace the incident from the general last-60 list.
         // Keep a bounded view of queue evidence from the retained event buffer.
-        let queueDecisions = summary.recentEvents.filter {
-            [.queueCorrelationCleared, .queueCorrelationRebuilt, .queueCorrelationRejected].contains($0.operation)
-        }.suffix(20)
-        if !queueDecisions.isEmpty {
+        let attribution = summary.recentEvents.filter(Self.isAttributionEvidence).suffix(20)
+        if !attribution.isEmpty {
             lines.append("")
-            lines.append("Queue correlation decisions (latest 20 retained, newest last):")
-            lines.append(contentsOf: queueDecisions.map(eventText))
+            lines.append("Playback attribution (latest 20 retained, newest last):")
+            lines.append(contentsOf: attribution.map(eventText))
         }
 
         lines.append("")
@@ -666,6 +619,17 @@ nonisolated enum MusicKitActivityReport {
         }
 
         return lines.joined(separator: "\n")
+    }
+
+    /// Unattributed entries, session carry-overs and skip-on-reach: how the
+    /// player's entries were matched to the playback intent (`PLAY-011`).
+    static func isAttributionEvidence(_ event: MusicKitActivityEvent) -> Bool {
+        switch event.operation {
+        case .queueCorrelationRejected: true
+        case .playbackSelectionPath:
+            event.detail.map { $0.hasPrefix("sessionCarriedOver") || $0 == "skipOnReach" } ?? false
+        default: false
+        }
     }
 
     private static func eventText(_ event: MusicKitActivityEvent) -> String {

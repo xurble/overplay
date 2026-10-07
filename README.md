@@ -193,8 +193,11 @@ relaunch. The same events go to the unified log under category
    timings overlap, so never add operation totals together.
 4. For playback, start with the playback selection paths (`resumeCurrent`,
    `inIntentJump`, `newIntent`, `resubmitFromMember`, `sessionCarriedOver`,
-   `skipOnReach`), then stall detections, recovery attempts and unattributed
-   entries.
+   `skipOnReach`), then **Delivery stall detected**, **Recovery attempt (user
+   Play)** and **Unattributed player entry**. The report's **Playback
+   attribution** section keeps the latest unattributed entries, session
+   carry-overs and skips on reach even when sync reads crowd them out of the
+   recent calls.
 5. For stutter, attach Instruments to a physical-device Development build and
    record Time Profiler, SwiftUI and Points of Interest, filtered to the
    `Performance` category; use Allocations for image memory. The activity

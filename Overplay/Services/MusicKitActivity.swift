@@ -2,8 +2,8 @@ import Foundation
 
 /// Every distinct way Overplay touches Apple Music's out-of-process
 /// services: the MusicKit request APIs, the shared library, the shared
-/// application player, and the system media surfaces (`MPNowPlayingInfoCenter`
-/// and `MPRemoteCommandCenter`).
+/// application player, and the CarPlay templates. Overplay writes no system
+/// Now Playing and registers no remote commands (`PLAY-016`).
 ///
 /// These are the only calls that can plausibly overload Apple Music, so each
 /// one is recorded through `MusicKitActivityLog` and summarised by
@@ -29,29 +29,22 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
 
     // Shared application player commands.
     case queueReplace
-    case queueAppend
     case playerPrepare
     case playerPlay
     case playerPause
     case playerSkipNext
     case playerSkipPrevious
     case playerSkipToEntry
+    /// Any shuffle or repeat write, whichever surface asked for it.
     case playerModeReset
-    /// The mode reset the guard skipped because both modes already read off.
-    /// Recorded so the report can tell a working guard from a path that
-    /// never ran.
-    case playerModeResetSkipped
     case playbackRecoveryAttempt
 
     // Overplay's own playback decisions. Not Apple Music calls, but they
     // cause the calls above, and diagnosing a failure from the call log
     // alone means guessing at them.
-    case queueCorrelationCleared
-    /// Correlation recovered from the player's own live queue instead of
-    /// being cleared. Paired with the case above so the report shows which
-    /// way an uncorrelated entry was resolved.
-    case queueCorrelationRebuilt
-    /// A live queue could not be mapped back to the current playlist.
+    /// The player reported an entry Overplay could not attribute to the
+    /// playback intent (`PLAY-011`). The raw value predates the removal of
+    /// queue correlation; it is kept so retained logs still decode.
     case queueCorrelationRejected
     case deliveryStallDetected
     case queueEndObserved
@@ -62,11 +55,6 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     case playbackStateInvalidation
     case playbackQueueObservationRebound
     case playbackObservationCoalesced
-    case playbackEventReconciliation
-    case playbackPeriodicReconciliation
-    case playbackExplicitReconciliation
-    case playbackReconciliationDeferred
-    case playbackPeriodicStateChange
     case playCountLookupResult
 
 
@@ -83,27 +71,14 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     case playCountEvidenceRead
     case playCountRefreshSkipped
     case playCountDiscovery
-    case playbackSelection
     case playbackSelectionPath
     case playbackQueuePreparation
-    case playbackScopeResolution
-    case playbackSnapshot
-    case playbackConfirmation
-    case playerEntryAssignment
-    case playerSelectionPlay
-    case playlistSnapshotBuild
-    case playlistSnapshotUnchanged
     case playlistPresentation
-    case playbackAssociationWrite
     case artworkThemeGeneration
     case artworkThemePersistence
     case videoCleanup
 
     // System media surfaces.
-    case nowPlayingInfoWrite
-    case nowPlayingInfoWriteWhilePaused
-    case nowPlayingInfoClear
-    case remoteCommandReceived
     /// CarPlay replaced the Now Playing action array. Recorded separately
     /// from mode publication so a visual reset can be correlated with a track
     /// transition even when MusicKit's shuffle mode never changed.
@@ -112,7 +87,6 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     case carPlayListMutation
     case carPlayArtworkUpdate
     case carPlayNowPlayingButtonState
-    case remoteCommandPublication
 
     // Artwork asset downloads from Apple's image CDN.
     case artworkDownload
@@ -141,7 +115,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
 
     var category: Category {
         switch self {
-        case .artworkMemoryHit, .artworkDiskHit, .artworkDecode, .artworkWorkWait, .artworkCacheWrite, .artworkRequestCoalesced, .artworkRetrySkipped, .playCountRefresh, .playCountApply, .playCountEvidenceRead, .playCountRefreshSkipped, .playCountDiscovery, .playbackSelection, .playbackSelectionPath, .playbackQueuePreparation, .playbackScopeResolution, .playbackSnapshot, .playbackConfirmation, .playerEntryAssignment, .playerSelectionPlay, .playlistSnapshotBuild, .playlistSnapshotUnchanged, .playlistPresentation, .playbackAssociationWrite, .artworkThemeGeneration, .artworkThemePersistence, .videoCleanup:
+        case .artworkMemoryHit, .artworkDiskHit, .artworkDecode, .artworkWorkWait, .artworkCacheWrite, .artworkRequestCoalesced, .artworkRetrySkipped, .playCountRefresh, .playCountApply, .playCountEvidenceRead, .playCountRefreshSkipped, .playCountDiscovery, .playbackSelectionPath, .playbackQueuePreparation, .playlistPresentation, .artworkThemeGeneration, .artworkThemePersistence, .videoCleanup:
             .performance
         case .libraryPlaylistEnumeration, .libraryPlaylistLookup, .playlistTrackFetch,
              .catalogSearch, .catalogResourceFetch, .libraryTrackQuery, .recentlyPlayedQuery, .subscriptionCheck,
@@ -149,21 +123,18 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
             .read
         case .libraryPlaylistCreate, .libraryPlaylistEdit, .libraryPlaylistAddItem:
             .libraryWrite
-        case .queueReplace, .queueAppend, .playerPrepare, .playerPlay, .playerPause,
+        case .queueReplace, .playerPrepare, .playerPlay, .playerPause,
              .playerSkipNext, .playerSkipPrevious, .playerSkipToEntry, .playerModeReset,
-             .playerModeResetSkipped, .playbackRecoveryAttempt:
+             .playbackRecoveryAttempt:
             .player
-        case .nowPlayingInfoWrite, .nowPlayingInfoWriteWhilePaused, .nowPlayingInfoClear,
-             .remoteCommandReceived, .carPlayNowPlayingButtonsUpdate, .carPlayRefreshRequested, .carPlayListMutation, .carPlayArtworkUpdate, .carPlayNowPlayingButtonState, .remoteCommandPublication:
+        case .carPlayNowPlayingButtonsUpdate, .carPlayRefreshRequested, .carPlayListMutation, .carPlayArtworkUpdate, .carPlayNowPlayingButtonState:
             .systemMediaSurface
         case .artworkDownload:
             .asset
-        case .queueCorrelationCleared, .queueCorrelationRebuilt, .queueCorrelationRejected, .deliveryStallDetected,
+        case .queueCorrelationRejected, .deliveryStallDetected,
              .queueEndObserved, .playerModeObserved,
              .playbackQueueInvalidation, .playbackStateInvalidation, .playbackQueueObservationRebound,
-             .playbackObservationCoalesced, .playbackEventReconciliation, .playbackPeriodicReconciliation,
-             .playbackExplicitReconciliation, .playbackReconciliationDeferred, .playbackPeriodicStateChange,
-             .playCountLookupResult:
+             .playbackObservationCoalesced, .playCountLookupResult:
             .playbackDecision
         }
     }
@@ -182,18 +153,9 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case .playCountEvidenceRead: "Play count evidence read"
         case .playCountRefreshSkipped: "Play count refresh skipped"
         case .playCountDiscovery: "Play count discovery"
-        case .playbackSelection: "Playback selection"
         case .playbackSelectionPath: "Playback selection path"
         case .playbackQueuePreparation: "Playback queue preparation"
-        case .playbackScopeResolution: "Playback scope resolution"
-        case .playbackSnapshot: "Playback snapshot"
-        case .playbackConfirmation: "Playback confirmation"
-        case .playerEntryAssignment: "Player entry assignment"
-        case .playerSelectionPlay: "Player selection play"
-        case .playlistSnapshotBuild: "Playlist snapshot build"
-        case .playlistSnapshotUnchanged: "Playlist snapshot unchanged"
         case .playlistPresentation: "Playlist presentation"
-        case .playbackAssociationWrite: "Playback association write"
         case .artworkThemeGeneration: "Artwork theme generation"
         case .artworkThemePersistence: "Artwork theme persistence"
         case .videoCleanup: "Video cleanup"
@@ -208,10 +170,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case .playCountLookupResult: "Apple play count lookup result"
         case .subscriptionCheck: "Subscription check"
         case .authorizationRequest: "Authorization request"
-        case .playerModeResetSkipped: "Player mode reset (skipped)"
-        case .queueCorrelationCleared: "Queue correlation cleared"
-        case .queueCorrelationRebuilt: "Queue correlation rebuilt"
-        case .queueCorrelationRejected: "Queue correlation rejected"
+        case .queueCorrelationRejected: "Unattributed player entry"
         case .deliveryStallDetected: "Delivery stall detected"
         case .queueEndObserved: "Queue end observed"
         case .playerModeObserved: "Playback mode changed elsewhere"
@@ -219,53 +178,38 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case .playbackStateInvalidation: "Player state invalidation"
         case .playbackQueueObservationRebound: "Player queue observation rebound"
         case .playbackObservationCoalesced: "Player invalidation coalesced"
-        case .playbackEventReconciliation: "Playback reconciliation (event)"
-        case .playbackPeriodicReconciliation: "Playback reconciliation (timer)"
-        case .playbackExplicitReconciliation: "Playback reconciliation (explicit)"
-        case .playbackReconciliationDeferred: "Playback reconciliation deferred"
-        case .playbackPeriodicStateChange: "Timer discovered playback state change"
 
         case .libraryPlaylistCreate: "Playlist create"
         case .libraryPlaylistEdit: "Playlist rewrite"
         case .libraryPlaylistAddItem: "Playlist add item"
         case .queueReplace: "Queue replace"
-        case .queueAppend: "Queue append"
         case .playerPrepare: "Player prepare"
         case .playerPlay: "Player play"
         case .playerPause: "Player pause"
         case .playerSkipNext: "Player skip next"
         case .playerSkipPrevious: "Player skip previous"
         case .playerSkipToEntry: "Player skip to entry"
-        case .playerModeReset: "Player mode reset"
-        case .playbackRecoveryAttempt: "Automatic delivery recovery"
-        case .nowPlayingInfoWrite: "Now Playing write (playing)"
-        case .nowPlayingInfoWriteWhilePaused: "Now Playing write (not playing)"
-        case .nowPlayingInfoClear: "Now Playing clear"
-        case .remoteCommandReceived: "Remote command received"
+        case .playerModeReset: "Player mode write"
+        case .playbackRecoveryAttempt: "Recovery attempt (user Play)"
         case .carPlayNowPlayingButtonsUpdate: "CarPlay Now Playing buttons update"
         case .carPlayRefreshRequested: "CarPlay refresh requested"
         case .carPlayListMutation: "CarPlay list mutation"
         case .carPlayArtworkUpdate: "CarPlay artwork update"
         case .carPlayNowPlayingButtonState: "CarPlay button availability"
-        case .remoteCommandPublication: "Remote command state publication"
         case .artworkDownload: "Artwork download"
         }
     }
 
-    /// Operations that fire fast enough to flood a bounded event list — the
-    /// 1 Hz monitor writes and per-track artwork fetches. They are always
+    /// Operations that fire fast enough to flood a bounded event list — player
+    /// invalidations, mode writes and per-track artwork fetches. They are always
     /// counted, but only listed individually when they fail or carry a note.
     var isHighFrequency: Bool {
         if category == .performance {
-            return self != .playbackSelection && self != .playbackSelectionPath
-                && self != .playbackScopeResolution && self != .playbackConfirmation
+            return self != .playbackSelectionPath
         }
         return switch self {
-        case .nowPlayingInfoWrite, .nowPlayingInfoWriteWhilePaused, .nowPlayingInfoClear,
-             .playerModeReset, .playerModeResetSkipped, .artworkDownload,
-             .playbackQueueInvalidation, .playbackStateInvalidation, .playbackObservationCoalesced,
-             .playbackEventReconciliation, .playbackPeriodicReconciliation,
-             .playbackExplicitReconciliation, .playbackReconciliationDeferred:
+        case .playerModeReset, .artworkDownload,
+             .playbackQueueInvalidation, .playbackStateInvalidation, .playbackObservationCoalesced:
             true
         default:
             false
@@ -389,4 +333,26 @@ nonisolated struct MusicKitActivitySnapshot: Codable, Equatable, Sendable {
     var tallies: [MusicKitActivityTally] = []
     var events: [MusicKitActivityEvent] = []
     var observationStartedAt: Date?
+
+    init(tallies: [MusicKitActivityTally] = [], events: [MusicKitActivityEvent] = [], observationStartedAt: Date? = nil) {
+        self.tallies = tallies
+        self.events = events
+        self.observationStartedAt = observationStartedAt
+    }
+
+    /// A retained log can name operations a later build removed. Only those
+    /// entries are dropped; the rest of the history survives.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        tallies = try container.decodeIfPresent([Retained<MusicKitActivityTally>].self, forKey: .tallies)?
+            .compactMap(\.value) ?? []
+        events = try container.decodeIfPresent([Retained<MusicKitActivityEvent>].self, forKey: .events)?
+            .compactMap(\.value) ?? []
+        observationStartedAt = try container.decodeIfPresent(Date.self, forKey: .observationStartedAt)
+    }
+
+    private struct Retained<Value: Decodable>: Decodable {
+        let value: Value?
+        init(from decoder: Decoder) throws { value = try? Value(from: decoder) }
+    }
 }

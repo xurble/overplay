@@ -52,10 +52,14 @@ enum LibraryArtworkService {
 
     @discardableResult
     static func repair(in context: ModelContext,
+                       absences: ArtworkAbsenceStore = ArtworkAbsenceStore(),
+                       now: Date = .now,
                        fetch: ([TrackSnapshot]) async throws -> [TrackSnapshot]) async throws -> Int {
+        var known = absences.entries().filter { !$0.value.isExpired(at: now) }
         let targets = try TrackRecordRepository.allTracks(in: context).filter {
             PortableArtworkReference.validated($0.artworkURLTemplate) == nil
                 && ($0.libraryID != nil || $0.catalogID != nil)
+                && known[$0.id]?.matches($0) != true
         }
         guard !targets.isEmpty else { return 0 }
         let inputs = targets.map { track in
@@ -66,6 +70,15 @@ enum LibraryArtworkService {
         let results = try await fetch(inputs)
         try Task.checkCancellation()
         let byID = results.firstValueDictionary(keyedBy: \.id)
+        // `fetch` throws on any failed lookup, so a returned result without
+        // usable artwork is a confirmed absence, not a transient failure.
+        for input in inputs {
+            guard let id = UUID(uuidString: input.id), let result = byID[input.id] else { continue }
+            known[id] = PortableArtworkReference.validated(result.artworkURLTemplate) == nil
+                ? ArtworkAbsenceStore.Entry(checkedAt: now, libraryID: input.libraryID, catalogID: input.catalogID)
+                : nil
+        }
+        absences.save(known)
         var previous: [(TrackRecord, String?, Date)] = []
         for input in inputs {
             guard let id = UUID(uuidString: input.id), let result = byID[input.id],
@@ -84,5 +97,40 @@ enum LibraryArtworkService {
             throw error
         }
         return previous.count
+    }
+}
+
+/// Tracks whose artwork lookup succeeded but returned none, such as an
+/// upload never given artwork (#60), so the repair stops asking each cycle.
+/// Kept on this device only. An entry lapses after `recheckInterval`, which
+/// is how artwork added later is found, or as soon as the track's library or
+/// catalog ID changes.
+@MainActor
+struct ArtworkAbsenceStore {
+    struct Entry: Codable, Equatable {
+        var checkedAt: Date
+        var libraryID: String?
+        var catalogID: String?
+
+        func isExpired(at date: Date) -> Bool {
+            date.timeIntervalSince(checkedAt) >= ArtworkAbsenceStore.recheckInterval
+        }
+
+        func matches(_ track: TrackRecord) -> Bool {
+            libraryID == track.libraryID && catalogID == track.catalogID
+        }
+    }
+
+    nonisolated static let recheckInterval: TimeInterval = 30 * 24 * 60 * 60
+    private static let key = "LibraryArtworkService.confirmedAbsences"
+    var defaults: UserDefaults = .standard
+
+    func entries() -> [UUID: Entry] {
+        guard let data = defaults.data(forKey: Self.key) else { return [:] }
+        return (try? JSONDecoder().decode([UUID: Entry].self, from: data)) ?? [:]
+    }
+
+    func save(_ entries: [UUID: Entry]) {
+        defaults.set(try? JSONEncoder().encode(entries), forKey: Self.key)
     }
 }

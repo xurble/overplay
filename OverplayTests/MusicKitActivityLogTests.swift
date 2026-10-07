@@ -5,25 +5,23 @@ import Testing
 
 @Suite("MusicKit activity log")
 struct MusicKitActivityLogTests {
-    @Test("reconciliation origins retain separate tallies without flooding the event list")
+    @Test("player invalidations retain separate tallies without flooding the event list")
     func reconciliationOriginsRemainVisible() {
         let log = makeLog()
         let frequent: [MusicKitActivityOperation] = [
             .playbackQueueInvalidation, .playbackStateInvalidation,
-            .playbackObservationCoalesced, .playbackEventReconciliation,
-            .playbackPeriodicReconciliation, .playbackExplicitReconciliation,
-            .playbackReconciliationDeferred
+            .playbackObservationCoalesced, .playerModeReset
         ]
         for operation in frequent {
             for _ in 0..<20 { log.record(operation) }
         }
-        log.record(.playbackPeriodicStateChange, detail: "timer caught an entry change")
+        log.record(.queueCorrelationRejected, detail: "unattributed entry")
         log.record(.playbackQueueObservationRebound)
         let snapshot = log.snapshot()
         for operation in frequent {
             #expect(snapshot.tallies.first { $0.operation == operation }?.count == 20)
         }
-        #expect(snapshot.events.map(\.operation) == [.playbackPeriodicStateChange, .playbackQueueObservationRebound])
+        #expect(snapshot.events.map(\.operation) == [.queueCorrelationRejected, .playbackQueueObservationRebound])
     }
 
     @Test("performance timings survive aggregation without inflating API call totals")
@@ -98,13 +96,13 @@ struct MusicKitActivityLogTests {
         let log = makeLog()
 
         for _ in 0..<50 {
-            log.record(.nowPlayingInfoWrite)
+            log.record(.playerModeReset)
         }
 
         let snapshot = log.snapshot()
 
         #expect(snapshot.events.isEmpty)
-        #expect(snapshot.tallies.first { $0.operation == .nowPlayingInfoWrite }?.count == 50)
+        #expect(snapshot.tallies.first { $0.operation == .playerModeReset }?.count == 50)
     }
 
     @Test("a high-frequency call is still listed when it fails or carries a note")
@@ -113,7 +111,7 @@ struct MusicKitActivityLogTests {
 
         log.record(.artworkDownload)
         log.record(.artworkDownload, error: error(domain: "OverplayArtworkHTTP", code: 429))
-        log.record(.nowPlayingInfoWrite, notes: [.automaticRetry])
+        log.record(.playerModeReset, notes: [.automaticRetry])
 
         let events = log.snapshot().events
 
@@ -210,7 +208,7 @@ struct MusicKitActivityLogTests {
         let clock = TestClock(start: Date(timeIntervalSince1970: 1_800_000_000))
         let log = MusicKitActivityLog(fileURL: fileURL, now: clock.read)
         log.record(.libraryPlaylistEdit, magnitude: 400, detail: "rewrote playlist")
-        log.record(.nowPlayingInfoWrite)
+        log.record(.playerModeReset)
         log.flush()
 
         let restored = MusicKitActivityLog(fileURL: fileURL, now: clock.read).snapshot()
@@ -218,8 +216,33 @@ struct MusicKitActivityLogTests {
         #expect(restored.events.count == 1)
         #expect(restored.events.first?.operation == .libraryPlaylistEdit)
         #expect(restored.events.first?.detail == "rewrote playlist")
-        #expect(restored.tallies.contains { $0.operation == .nowPlayingInfoWrite && $0.count == 1 })
+        #expect(restored.tallies.contains { $0.operation == .playerModeReset && $0.count == 1 })
         #expect(restored.observationStartedAt == clock.now)
+    }
+
+    @Test("a retained log naming a removed operation keeps everything else (#63)")
+    func removedOperationsAreDroppedNotTheWholeLog() throws {
+        let fileURL = temporaryFileURL()
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let clock = TestClock(start: Date(timeIntervalSince1970: 1_800_000_000))
+        let minute = MusicKitActivityTally.minuteIndex(for: clock.now)
+        let json = """
+        {"observationStartedAt": "2027-01-15T08:00:00Z",
+         "tallies": [
+           {"minute": \(minute), "operation": "nowPlayingInfoWrite", "count": 9, "failureCount": 0},
+           {"minute": \(minute), "operation": "queueReplace", "count": 2, "failureCount": 0}],
+         "events": [
+           {"operation": "queueCorrelationCleared", "startedAt": "2027-01-15T08:00:00Z", "notes": []},
+           {"operation": "queueReplace", "startedAt": "2027-01-15T08:00:01Z", "notes": [], "detail": "kept"}]}
+        """
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(json.utf8).write(to: fileURL)
+
+        let restored = MusicKitActivityLog(fileURL: fileURL, now: clock.read).snapshot()
+
+        #expect(restored.tallies.map(\.operation) == [.queueReplace])
+        #expect(restored.events.map(\.detail) == ["kept"])
+        #expect(restored.observationStartedAt == ISO8601DateFormatter().date(from: "2027-01-15T08:00:00Z"))
     }
 
     @Test("restoring drops tallies that aged out while the app was gone")
