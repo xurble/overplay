@@ -31,6 +31,18 @@ final class FakePlaybackPlayer: PlaybackPlayer {
     /// Replaces the starting entry's item on the next submission only.
     var nextSubmissionStartItem: PlayerItemSnapshot?
     var playFailuresRemaining = 0
+    /// MusicKit reorders the upcoming entries when shuffle is enabled on a
+    /// loaded queue; reversing them makes that order visible to tests.
+    var reordersUpcomingOnShuffle = false
+    /// Runs inside `prepareToPlay`, e.g. to report the interim entry (#76).
+    var onPrepare: (@MainActor () async -> Void)?
+    /// MusicKit loads a prepared queue over a fraction of a second, and
+    /// shuffle then covers only the loaded entries (#76). When set, prepare
+    /// loads this many and each read of `loadedEntryCount` loads this many
+    /// more, until `stopsLoading`.
+    var loadsEntriesInSteps: Int?
+    var stopsLoading = false
+    private var loadedCount: Int?
     var prepareFailuresRemaining = 0
     var nextFailuresRemaining = 0
 
@@ -50,9 +62,19 @@ final class FakePlaybackPlayer: PlaybackPlayer {
 
     var queueEntries: [PlayerEntrySnapshot] { entries }
 
+    var loadedEntryCount: Int {
+        guard let step = loadsEntriesInSteps, let loaded = loadedCount else { return entries.count }
+        if !stopsLoading { loadedCount = min(entries.count, loaded + step) }
+        return loaded
+    }
+
     func setShuffleMode(_ mode: MusicPlayer.ShuffleMode) {
         commands.append("shuffle=\(mode)")
         reportedShuffleMode = mode
+        let loaded = min(loadedCount ?? entries.count, entries.count)
+        if mode == .songs, reordersUpcomingOnShuffle, let currentIndex, currentIndex + 1 < loaded {
+            entries = Array(entries[...currentIndex]) + entries[(currentIndex + 1)..<loaded].reversed() + entries[loaded...]
+        }
     }
 
     func setRepeatMode(_ mode: MusicPlayer.RepeatMode) {
@@ -65,6 +87,7 @@ final class FakePlaybackPlayer: PlaybackPlayer {
         submittedTitles.append(tracks.map(\.title))
         submittedStartIndices.append(index)
         hiddenItems = [:]
+        loadedCount = nil
         entries = tracks.map { track in
             entryCounter += 1
             let entryID = "entry-\(entryCounter)"
@@ -86,6 +109,8 @@ final class FakePlaybackPlayer: PlaybackPlayer {
 
     func prepareToPlay() async throws {
         commands.append("prepare")
+        loadedCount = loadsEntriesInSteps.map { min($0, entries.count) }
+        if let onPrepare { await onPrepare() }
         if prepareFailuresRemaining > 0 {
             prepareFailuresRemaining -= 1
             throw Failure.commandFailed

@@ -271,12 +271,82 @@ struct PlaybackControllerTests {
         #expect(fixture.player.playbackStatus == .playing)
     }
 
+    /// #76: load in playlist order, enable shuffle on the loaded queue, skip
+    /// to a random song, and only then play.
     @Test func shuffleAndPlayAppliesShuffleToTheLoadedQueue() async throws {
         let fixture = try PlaybackFixture()
         defer { fixture.cleanUp() }
         await fixture.controller.playPlaylist(fixture.playlist, settings: fixture.settings, context: fixture.context)
-        #expect(Array(fixture.player.commands.suffix(2)) == ["shuffle=off", "shuffle=songs"])
+        #expect(Array(fixture.player.commands.suffix(7)) == ["pause", "submit", "prepare", "shuffle=off", "shuffle=songs", "next", "play"])
+        #expect(fixture.player.submittedStartIndices.last == 0)
         #expect(fixture.controller.shuffleEnabled)
+        #expect(fixture.player.playbackStatus == .playing)
+    }
+
+    /// Owner report (#76): Next after Shuffle and Play went to the next song
+    /// in playlist order. The skip must follow shuffle on the loaded queue.
+    @Test func shuffleAndPlayLandsOnTheShuffledNextSong() async throws {
+        let fixture = try PlaybackFixture(trackCount: 5)
+        defer { fixture.cleanUp() }
+        fixture.player.reordersUpcomingOnShuffle = true
+        await fixture.controller.playPlaylist(fixture.playlist, settings: fixture.settings, context: fixture.context)
+
+        let submitted = try #require(fixture.player.submittedTitles.last)
+        let current = try #require(fixture.player.currentEntry?.item?.title)
+        #expect(current == submitted.last)
+        #expect(fixture.controller.currentTrack?.title == current)
+    }
+
+    /// Device probe (#76): after prepare MusicKit reported 2, then 70, then
+    /// 96 entries, and shuffle written at 2 mixed only the first few songs.
+    @Test func shuffleAndPlayWaitsForTheLoadedQueueBeforeShuffling() async throws {
+        let fixture = try PlaybackFixture(trackCount: 8)
+        defer { fixture.cleanUp() }
+        fixture.player.reordersUpcomingOnShuffle = true
+        fixture.player.loadsEntriesInSteps = 2
+        await fixture.controller.playPlaylist(fixture.playlist, settings: fixture.settings, context: fixture.context)
+
+        let submitted = try #require(fixture.player.submittedTitles.last)
+        #expect(fixture.player.currentEntry?.item?.title == submitted.last)
+        #expect(Array(fixture.player.commands.suffix(4)) == ["shuffle=off", "shuffle=songs", "next", "play"])
+        #expect(fixture.player.playbackStatus == .playing)
+    }
+
+    @Test func shuffleAndPlayStillPlaysWhenTheQueueNeverFinishesLoading() async throws {
+        let fixture = try PlaybackFixture(trackCount: 8)
+        defer { fixture.cleanUp() }
+        fixture.player.loadsEntriesInSteps = 2
+        fixture.player.stopsLoading = true
+        fixture.controller.shuffleQueueLoadLimit = .milliseconds(200)
+        await fixture.controller.playPlaylist(fixture.playlist, settings: fixture.settings, context: fixture.context)
+
+        #expect(Array(fixture.player.commands.suffix(4)) == ["shuffle=off", "shuffle=songs", "next", "play"])
+        #expect(fixture.player.playbackStatus == .playing)
+        #expect(fixture.controller.playbackFailure == nil)
+    }
+
+    /// Owner report (#76): Agape, track 1, flashed up before the chosen song.
+    @Test func shuffleAndPlayNeverShowsOrCountsTrackOne() async throws {
+        let fixture = try PlaybackFixture(trackCount: 4)
+        defer { fixture.cleanUp() }
+        var shownWhileLoading: [String?] = []
+        fixture.player.onPrepare = {
+            // The loading queue reports its first entry as current, and a
+            // background sync refreshes membership meanwhile.
+            await fixture.player.notify()
+            shownWhileLoading.append(fixture.controller.currentTrack?.title)
+            fixture.controller.reconcileTrackMembership(context: fixture.context)
+            shownWhileLoading.append(fixture.controller.currentTrack?.title)
+        }
+        let before = fixture.controller.currentTrack?.title
+        await fixture.controller.playPlaylist(fixture.playlist, settings: fixture.settings, context: fixture.context)
+
+        let trackOne = try #require(fixture.player.submittedTitles.last?.first)
+        #expect(shownWhileLoading == [before, before])
+        #expect(fixture.controller.currentTrack?.title != trackOne)
+        let trackOneID = try #require(fixture.tracks.first { $0.title == trackOne }).id
+        let events = try fixture.context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(!events.contains { $0.trackID == trackOneID })
     }
 
     @Test func oneUnpreparableTrackDoesNotPreventPlayback() async throws {
