@@ -213,7 +213,36 @@ If on-device catch-up sync still hitches:
 
 Do not undertake this refactor without profiling evidence.
 
-## 13. Add the Native Mac Target
+## 13. Build the Mac Helper
+
+Build the menu bar helper in **Mac Helper — Planned** (`HELPER-001`–`HELPER-011`)
+before the native Mac target, which stays the long-term goal.
+
+1. Close the spec's open checks with throwaway scripts: song IDs in
+   `Library.musicdb`, script adds of playlist-only songs, and iCloud
+   propagation of script edits.
+2. Read-only first: the target, the CloudKit zone, `HelperStatus`, library
+   facts, playlist snapshots, backups and stamp history, and the Settings →
+   Mac Helper screen.
+3. Fast Triage intake.
+4. The One True Playlist writer, starting in plan-only mode.
+5. Source cleanup (default off), after the writer has run cleanly for a while.
+
+Verification:
+
+- Unit tests cover desired-state merging, the reconcile plan (removals only
+  for suppressed songs, no guessing, collapse, approval thresholds) and the
+  iPhone/iPad changes while the writer is on.
+- Source cleanup tests cover: restores only from the helper's own removal
+  log, skipped sources that cannot be edited, no fighting a source that
+  re-adds a song, and putting songs back when the option is turned off or a
+  source is unlinked.
+- On the owner's Mac and iPhone: a retirement on iPhone leaves Apple Music's
+  playlist after the Mac wakes; a promotion appears; a stale device cannot add
+  a retired song back; nothing changes in playback. With source cleanup on, a
+  retired TikTok song leaves TikTok Songs, and moving it to Triage puts it back.
+
+## 14. Add the Native Mac Target
 
 - Add a native SwiftUI macOS target sharing models, repositories, services, and
   reusable views.
@@ -227,14 +256,14 @@ Verification:
 - Shared unit tests still pass.
 - No iOS-only APIs leak into shared code.
 
-## 14. Add Mac Interaction Polish
+## 15. Add Mac Interaction Polish
 
 - Add menu commands, keyboard shortcuts, and context menus.
 - Use table-style history and playlist lists where useful.
 - Add media-key and Now Playing support where available.
 - Support a compact mini-player window if practical.
 
-## 15. Consider CarPlay Skip-History Browsing
+## 16. Consider CarPlay Skip-History Browsing
 
 Add skip-history browsing only if it fits safely within CarPlay templates and
 does not make the primary playlists → tracks → Now Playing flow harder to use.

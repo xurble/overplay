@@ -109,6 +109,9 @@ Withdrawn requirements: `PLAY-001` (Overplay-owned shuffle/repeat) and `PLAY-002
 retention during pending transitions) is superseded by `PLAY-004` and
 `PLAY-013`, because there are no pending transitions any more.
 
+Planned requirements `HELPER-001`–`HELPER-011` are specified in **Mac Helper —
+Planned**. They are not current behaviour and have no evidence yet.
+
 ## Platform
 
 - Current platforms:
@@ -181,6 +184,11 @@ Mac is the power-user library management and background playback experience.
 - Support media keys and Now Playing metadata where available.
 - Use Mac-appropriate spacing, hover affordances, focus rings, and selection
   behaviour.
+
+The native Mac target is the long-term goal and is shelved for now. The first
+Mac work is the smaller **Mac Helper — Planned**: a menu bar app that does the
+Apple Music library work iPhone and iPad cannot. The native target may later
+absorb it.
 
 ### Shared target expectations
 
@@ -593,6 +601,326 @@ If MusicKit reports a different library playlist ID than the one Overplay
 stored (for example after `createPlaylist`), sync may heal the linked
 `musicPlaylistID` when the playlist name uniquely matches a library playlist.
 Ambiguous duplicate names should fail rather than relink silently.
+
+## Mac Helper — Planned
+
+Specified 2026-10-07. Nothing in this section is current behaviour.
+
+The Mac helper is a small native macOS menu bar app on the user's own Mac. It
+does the Apple Music library work that MusicKit cannot do on iPhone or iPad. It
+complements Overplay; it is not Overplay for Mac.
+
+MusicKit edits only playlists the app created, and Apple Music can stop
+recognising Overplay as the creator (`PLAYLIST-008`). An iPad app on a Mac
+cannot edit playlists at all. MusicKit also cannot say where a song came from
+or whether Apple has withdrawn it. On a Mac, Music.app scripting can edit any
+user playlist, and the library database records each song's origin, status and
+identifiers.
+
+### Principles (`HELPER-001`)
+
+- Overplay's iCloud store stays the source of truth for membership,
+  retirement, order and counts. The helper never reads or writes the SwiftData
+  store or its CloudKit mirror.
+- The helper never plays, pauses, queues or otherwise touches playback, on the
+  Mac or anywhere else. Nothing on iPhone, iPad or CarPlay waits for it
+  (Product priorities 1 and 2).
+- Helper work is catch-up work. The Mac is a laptop that is often asleep, so
+  there is no freshness promise: Apple Music's copy of a change can lag by days.
+- In this version the helper writes only to the managed One True Playlist
+  (`HELPER-003`) and, when the user turns on source cleanup, to watched source
+  playlists (`HELPER-011`). It never creates or deletes a playlist. It never
+  changes ratings, Favourite or Dislike, song metadata, artwork, or any other
+  playlist.
+- Overplay works fully without the helper. Turning the helper off returns
+  Overplay to current behaviour.
+
+### Distribution and runtime (`HELPER-002`)
+
+- A native SwiftUI macOS target (`OverplayHelper`) in `Overplay.xcodeproj`,
+  macOS 26+. It is not Catalyst and not sandboxed. It is signed with the
+  personal team and not distributed through the App Store.
+- A menu bar extra with no Dock icon, registered as a login item
+  (`SMAppService`).
+- It joins Overplay's iCloud container but uses its own CloudKit zone
+  (`HELPER-004`).
+- It needs Automation permission for Music and read access to the Music
+  library folder. The menu shows any missing permission and which features it
+  blocks.
+- It runs a pass at launch, on wake, after a library change (`HELPER-007`) and
+  on a CloudKit push for its zone. Otherwise it is idle.
+- It reads the library database without launching Music.app. It launches
+  Music.app, in the background without activating it, only when it has a write
+  to make. It never changes what Music.app is playing or showing.
+
+### Communication through CloudKit (`HELPER-004`)
+
+Overplay and the helper exchange records in a dedicated `OverplayHelper` zone
+of the private database. The zone is separate from the SwiftData mirror, so
+neither side depends on the other's schema. The record types are defined once,
+in Swift sources compiled into both targets. Each record has exactly one
+writer, so no two devices save the same record.
+
+| Record | Writer | Contents |
+| --- | --- | --- |
+| `HelperConfiguration` (one) | iPhone or iPad | Whether the helper writes the One True Playlist, and which helper; whether source cleanup is on; the playlists to watch (Apple Music playlist ID, role, name). |
+| `DesiredState` (one per Overplay device) | Each iPhone or iPad | The One True Playlist's Apple Music ID; its active songs in Overplay's order; its suppressed songs. For source cleanup, every song with source attachments: whether it is retired, and its sources' Apple Music IDs. Each song carries its identity references, title, artist, duration and `locationChangedAt`. |
+| `SourceRemovals` | Helper | Every song the helper removed from a source and has not put back: the source, when, and any restore that is waiting or failed (`HELPER-011`). |
+| `HelperStatus` (one per helper Mac) | Helper | Mac name, version, last seen, permission problems, library database status, last pass result. |
+| `ReconcileReport` | Helper | The last One True Playlist pass (`HELPER-003`). |
+| `LibraryFacts` | Helper | Per-song facts (`HELPER-006`), as one compressed asset. |
+| `PlaylistSnapshot` (one per watched playlist) | Helper | Apple Music's copy of the playlist (`HELPER-008`). |
+| `SourceChanged` (one per watched source) | Helper | The source's entry count and when it last changed (`HELPER-007`). |
+
+Both sides subscribe to the zone. A push is only a hint: each side re-reads the
+records at launch and on wake, so a missed push only delays work.
+
+### Reading the Mac library (`HELPER-005`)
+
+- Music.app scripting reads playlist membership and makes writes.
+- A read-only decode of `~/Music/Music/Music Library.musiclibrary/Library.musicdb`
+  supplies what scripting does not. This includes each playlist's Apple Music
+  ID (`universal-library-id`, the `p.` ID Overplay stores) and its vendor
+  fields, and each song's web library (`i.`) and catalog IDs.
+- The database format is undocumented. The helper decodes a copy and never
+  writes the original. It records the format version. On an unknown version or
+  a parse failure, it turns off the features that need the database, reports
+  that in `HelperStatus` and the menu, and does not guess.
+- Songs and playlists are matched by identifier only. A playlist is matched by
+  its Apple Music ID. A song is matched by web library ID, then catalog ID.
+  Title and artist appear only in reports.
+
+### One True Playlist writer (`HELPER-003`)
+
+The user turns this on in Settings → Mac Helper on iPhone or iPad. It is
+offered only for a managed One True Playlist, and only after a helper has
+reported in. Turning it on names that helper as the single writer of the
+playlist.
+
+While it is on, iPhone and iPad:
+
+- Never edit the One True Playlist's Apple Music playlist through MusicKit.
+  There are no removal rewrites (`PLAYLIST-008`) and no adds on promotion or
+  search add. Rebuild (`PLAYLIST-009`) is hidden.
+- Keep local retirement, promotion and suppression exactly as today. Apple
+  Music's copy is left to the helper.
+- Handle a search add to the One True Playlist differently: add the song to the
+  user's library, not to a playlist, which needs no ownership. Then insert the
+  local item. The helper places the song once it reaches the Mac's library.
+- Publish their `DesiredState` after any change to One True Playlist
+  membership, suppression or order (debounced by about 10 seconds), and after
+  every One True Playlist sync.
+- Keep syncing the One True Playlist from iCloud as today. Songs added in the
+  Music app are still imported, and helper removals release suppression.
+- Say that Apple Music will update "when your Mac helper next runs" wherever
+  they now say it will update after the next sync.
+
+On each pass with work to do, the helper:
+
+1. **Merges** every device's desired state song by song. The entry with the
+   newest `locationChangedAt` wins, so a device that has not yet imported a
+   retirement cannot add the song back (the same rule as `LOC-001`).
+2. **Finds** the One True Playlist in Music.app by its Apple Music ID. If it is
+   missing, the helper reports that and stops. It never recreates the
+   playlist.
+3. **Removes** every occurrence of songs the merged state marks as
+   suppressed. Songs Overplay does not know about are left alone: they were
+   added somewhere else, and Overplay's One True Playlist sync will import
+   them.
+4. **Adds** active songs that are missing from the playlist, at the end,
+   matched by identifier in the Mac library, including songs that are only in
+   playlists. A song it cannot match is reported and retried on the next pass.
+   It is never guessed.
+5. **Collapses** extra occurrences of an active song to its first occurrence.
+6. **Does not reorder** the playlist in this version. Overplay's own order
+   never depends on Apple Music's order.
+
+A song removed from the Apple Music playlist by hand while it is still active
+in Overplay is added back. Local retirement is the only way to leave the One
+True Playlist.
+
+Safety:
+
+- The helper backs up the playlist before every write (`HELPER-009`).
+- Some passes only report their plan, and nothing changes until the user
+  approves it from the helper menu. This applies to the first pass after the
+  writer is turned on, and to any pass that would remove more than 10 songs or
+  more than a fifth of the playlist.
+- A merged state with no active songs never removes anything.
+- After launch or wake, the helper writes only once the library database has
+  been unchanged for 2 minutes, so the Mac's copy has had time to catch up
+  with iCloud.
+
+`ReconcileReport` records the time; the counts of songs added, removed and
+collapsed; any songs that could not be matched; any plan awaiting approval;
+and any errors.
+
+Turning the writer off returns iPhone and iPad to current behaviour, where
+their edits may be refused as today. A silent helper never causes an automatic
+fallback. Settings warns when the writer is on and the helper has not run a
+pass for 7 days.
+
+### Source cleanup (`HELPER-011`)
+
+An option in Settings → Mac Helper, off by default. It keeps retired songs out
+of the Apple Music playlists that feed Triage, such as TikTok Songs, and puts
+them back if they leave Retired. It works independently of the One True
+Playlist writer. It is offered only after a helper has reported in.
+
+While it is on:
+
+- A source should not hold a retired song. The helper removes every occurrence
+  of a retired song from each watched source the song is attached to. This
+  applies however the song was retired, from Triage or from the One True
+  Playlist.
+- When a song the helper removed stops being retired, whether it was moved to
+  Triage or to the One True Playlist, the helper adds it back at the end of each
+  source it removed it from. Its original position is not kept.
+- iPhone and iPad publish the source cleanup part of `DesiredState` after any
+  retirement, restore, promotion or source change, debounced like the One
+  True Playlist part. Desired states merge song by song, newest
+  `locationChangedAt` first (`HELPER-003`).
+
+The helper:
+
+- Puts back only songs it removed itself, as recorded in `SourceRemovals`. It
+  never adds a song to a source that was not there before.
+- Skips sources it cannot edit and reports them. These include smart
+  playlists and playlists Apple maintains, such as Favourite Songs.
+- Does not fight a source that re-adds a song it removed. Some apps, such as
+  Shazam, keep their playlist in step with their own list. If a removed song
+  reappears, the helper leaves it there for that source and reports it.
+- Matches songs by identifier only (`HELPER-005`). If it cannot find a song to
+  put back in the Mac library, it reports it as waiting. Overplay then adds that song to the user's library by catalog ID,
+  which needs no ownership, and the helper retries. A song that was only in
+  playlists may leave the library when its last playlist loses it.
+- Uses the same safety rules as the One True Playlist writer: a backup before
+  every write, and plan-only passes that wait for approval. The first pass
+  after the option is turned on waits for approval. So does any pass that
+  would remove more than 10 songs, or more than a fifth of a source.
+
+Overplay's own data does not change. Source attachments survive remote
+removal, so a removed song keeps its sources. Retired songs stay retired and
+playable from Retired. Retiring from Triage stays a local decision in
+Overplay; only Apple Music's copy of the source changes.
+
+Turning the option off puts back every song the helper removed, and unlinking
+a source puts back the songs removed from that source. Both wait for approval.
+Turning the One True Playlist writer off does not affect sources.
+
+A deliberate source re-link (`PLAYLIST-004`) sees only songs still in the
+source, so it does not revive songs the helper removed. To revive them, the
+user moves them to Triage.
+
+### Library facts (`HELPER-006`)
+
+The helper publishes facts for every song in the Mac library. Each song is
+keyed by web library ID, with its catalog ID, title, artist, album, duration
+and date added, plus:
+
+- **Origin**, from Apple's cloud status: subscription, matched, uploaded (the
+  user's own file, not in the catalog) or purchased.
+- **Health**: no longer available, removed, error, ineligible or waiting.
+- **Playlist-only**: the song is in playlists but was never added to the
+  library.
+
+The facts are refreshed after library changes, debounced by 5 minutes.
+
+In this version Overplay uses the facts for display and diagnostics only.
+Settings → Mac Helper lists One True Playlist and Triage songs that are
+uploaded or unhealthy. Facts never gate, delay or change playback. They are
+never written into track identity: the fill-and-heal rules in **Track
+identity** apply only to MusicKit evidence.
+
+### Fast Triage intake (`HELPER-007`)
+
+- The helper watches the Music library folder. After 30 seconds without a
+  change, it compares each watched source playlist's entries with what it last
+  published. If they differ, it updates that source's `SourceChanged` record.
+- A newer `SourceChanged` makes that source due: the next periodic cycle syncs
+  it even if its last sync is fresh (`SYNC-001`). On a push, Overplay may start
+  that cycle early, in the foreground or in background time, with existing
+  pacing. It does this at most once per source every 5 minutes, and never
+  while a playback failure is active (`LOAD-001`).
+- This signal never syncs the One True Playlist.
+
+### Snapshots and drift (`HELPER-008`)
+
+- After each pass, the helper publishes a `PlaylistSnapshot` for each watched
+  playlist. It holds the ordered entries with their web library and catalog
+  IDs, titles and artists, and the playlist's vendor fields, such as
+  `external-vendor-identifier`.
+- Settings → Mac Helper works out drift on the device. It lists:
+  - songs in Apple Music's One True Playlist that are not in Overplay's
+  - active One True Playlist songs missing from Apple Music's copy
+  - suppressed songs still in Apple Music's copy
+  - source songs Overplay has not seen yet
+- Drift is information only. Overplay acts on Apple Music's contents only
+  through its normal sync.
+
+### Backups and stamp history (`HELPER-009`)
+
+- Before each write, and once a day while running, the helper saves a JSON
+  snapshot of every watched playlist to
+  `~/Library/Application Support/OverplayHelper/Backups/`. Pre-write snapshots
+  are kept for 90 days and daily ones for 30 days.
+- It keeps a local log of every change to a watched playlist's vendor fields
+  or Apple Music ID, with the time it was seen. The log is evidence for
+  investigating lost ownership.
+- Restoring is manual in this version. The menu reveals the backups folder.
+
+### Overplay settings (`HELPER-010`)
+
+Settings → Mac Helper on iPhone and iPad shows:
+
+- The helper's status: Mac name, when it was last seen, its last pass, and any
+  permission or library database problem.
+- The toggle that makes the helper write the One True Playlist (`HELPER-003`).
+- The source cleanup toggle, off by default (`HELPER-011`). Below it: songs
+  removed from each source, restores waiting or failed, sources skipped
+  because they cannot be edited, and songs a source re-added.
+- Pending work: changes not yet in Apple Music, songs the helper could not
+  match, and any plan awaiting approval on the Mac.
+- Library facts (`HELPER-006`) and drift (`HELPER-008`).
+- The 7-day warning (`HELPER-003`).
+
+### Evidence and open checks
+
+Confirmed on the owner's Mac on 2026-10-07:
+
+- A script added a song to the One True Playlist (`p.mmRlB6XTlee3Q0`), even
+  though that playlist's vendor stamp names Overplay.
+- Playlist records in `Library.musicdb` hold `universal-library-id` and, for
+  Overplay-created playlists, `external-vendor-identifier`. TikTok Songs and My
+  Shazam Tracks carry no vendor fields.
+- Scripting reports each song's cloud status, which separates uploaded songs
+  (422 in that library) from matched and subscription ones.
+- Scripting cannot set playlist artwork.
+
+To check before building:
+
+- Song records in `Library.musicdb` hold web library (`i.`) and catalog IDs
+  equal to the ones Overplay stores.
+- Scripting can add a playlist-only song (Music's hidden "Cloud PlaylistOnly"
+  playlist) to another playlist.
+- Script edits reach iPhone through iCloud and show up in the web library API.
+- Adding a catalog song to the library on iPhone needs no playlist ownership
+  and reaches the Mac's library.
+- Which privacy permissions an unsandboxed helper needs to read `~/Music`.
+- Whether removing a playlist-only song from its last playlist removes it from
+  the library, and whether a script can then add it back (`HELPER-011`).
+- Whether TikTok, Shazam or Apple re-add songs removed from their playlists.
+
+### Later, not in this version
+
+- Favourite, Dislike or star ratings driven by promotion and retirement.
+- Playlist folders, song metadata fixes, and reordering Apple Music's copy.
+- Playlist artwork by scripting Music.app's interface.
+- Reading smart playlist rules.
+- Using the Mac as an AirPlay jukebox.
+- Recording plays made in Music.app on the Mac as best-effort statistics. This
+  must never become a writable synced counter (History H-11).
+- Healing track identity from library facts, and restoring from a backup.
 
 ## Promotion and Manual Add
 
