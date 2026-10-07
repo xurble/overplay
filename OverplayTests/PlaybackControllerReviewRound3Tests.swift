@@ -86,7 +86,10 @@ struct PlaybackControllerReviewRound3Tests {
         gate.release()
         await firstPress.value
 
-        #expect(fixture.player.commands.filter { $0 == "prepare" }.count == 1)
+        // Every start prepares after its submit (#76); rung two prepares alone.
+        let commands = fixture.player.commands
+        let rungTwoPrepares = commands.indices.filter { commands[$0] == "prepare" && ($0 == 0 || commands[$0 - 1] != "submit") }
+        #expect(rungTwoPrepares.count == 1)
         #expect(fixture.player.submitCount == 2)
         #expect(fixture.controller.playbackFailure == nil)
     }

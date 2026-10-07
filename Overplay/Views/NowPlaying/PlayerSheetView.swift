@@ -8,6 +8,7 @@ struct PlayerSheetView: View {
     var collapsedHeight: CGFloat
 
     @State private var artworkTheme = AlbumArtworkTheme.fallback
+    @State private var glassBackdrop = PlayerGlassBackdrop()
 
     var body: some View {
         GeometryReader { proxy in
@@ -27,8 +28,9 @@ struct PlayerSheetView: View {
                     applyArtworkTheme(refreshedTheme, source: "debug-refresh")
                 }
                     .padding(.bottom, collapsedHeight + proxy.safeAreaInsets.bottom)
-                    .opacity(contentOpacity)
+                    .modifier(PlayerGlassFade(opacity: contentOpacity))
                     .allowsHitTesting(contentOpacity > 0.5)
+
 
                 MiniPlayerLozengeView(
                     settings: settings,
@@ -40,10 +42,25 @@ struct PlayerSheetView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             .ignoresSafeArea(edges: .bottom)
+            .coordinateSpace(.named(PlayerGlassBackdrop.coordinateSpace))
+            .environment(\.playerGlassArtwork, glassArtwork)
+            .environment(\.playerGlassBackdrop, artworkTheme.isFallback ? nil : glassBackdrop)
             .animation(.easeInOut(duration: 0.35), value: artworkTheme)
         }
         .task(id: artworkThemeIdentity) {
             await loadArtworkTheme()
+        }
+        .task(id: glassArtwork) {
+            await glassBackdrop.load(glassArtwork)
+        }
+        .onChange(of: artworkTheme, initial: true) {
+            glassBackdrop.tint = artworkTheme.backgroundRGB
+        }
+    }
+
+    private var glassArtwork: PlayerGlassArtwork? {
+        playbackController.nowPlayingDisplayTrack?.artworkURLTemplate.map {
+            PlayerGlassArtwork(urlString: $0, playlistID: playbackController.currentPlaylistID)
         }
     }
 
@@ -140,7 +157,7 @@ private struct PlayerSheetBackground: View {
                     .fill(.background)
                     .opacity(1 - opaqueProgress)
 
-                artworkTheme.background
+                PlayerGlassArtBackground(tint: artworkTheme.background)
                     .opacity(opaqueProgress)
             }
         }

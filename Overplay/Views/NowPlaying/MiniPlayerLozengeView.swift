@@ -14,7 +14,7 @@ struct MiniPlayerLozengeView: View {
                 .allowsHitTesting(expandedProgress < 0.5)
 
             expandedContent
-                .opacity(expandedProgress)
+                .modifier(PlayerGlassFade(opacity: expandedProgress))
                 .allowsHitTesting(expandedProgress >= 0.5)
         }
         .frame(maxHeight: .infinity, alignment: .center)

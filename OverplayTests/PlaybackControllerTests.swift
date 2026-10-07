@@ -317,7 +317,7 @@ struct PlaybackControllerTests {
         defer { fixture.cleanUp() }
         fixture.player.loadsEntriesInSteps = 2
         fixture.player.stopsLoading = true
-        fixture.controller.shuffleQueueLoadLimit = .milliseconds(200)
+        fixture.controller.queueLoadLimit = .milliseconds(200)
         await fixture.controller.playPlaylist(fixture.playlist, settings: fixture.settings, context: fixture.context)
 
         #expect(Array(fixture.player.commands.suffix(4)) == ["shuffle=off", "shuffle=songs", "next", "play"])
@@ -347,6 +347,117 @@ struct PlaybackControllerTests {
         let trackOneID = try #require(fixture.tracks.first { $0.title == trackOne }).id
         let events = try fixture.context.fetch(FetchDescriptor<HistoryEvent>())
         #expect(!events.contains { $0.trackID == trackOneID })
+    }
+
+    /// Device probe, 2026-10-07: until MusicKit has loaded as far as the start
+    /// entry it reports track 1 as current and playing. Playing only once the
+    /// queue has loaded means track 1 is never shown, heard or counted.
+    @Test func startingAtASongWaitsForTheQueueAndNeverShowsTrackOne() async throws {
+        let fixture = try PlaybackFixture(trackCount: 6)
+        defer { fixture.cleanUp() }
+        fixture.player.reportsFirstEntryUntilLoaded = true
+        fixture.player.loadsEntriesInSteps = 2
+        var shownWhileLoading: [String?] = []
+        fixture.player.onPrepare = {
+            await fixture.player.notify()
+            shownWhileLoading.append(fixture.controller.currentTrack?.title)
+        }
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[4],
+                                              settings: fixture.settings, context: fixture.context)
+
+        #expect(shownWhileLoading == ["Song 4"])
+        #expect(Array(fixture.player.commands.suffix(4)) == ["pause", "submit", "prepare", "play"])
+        #expect(fixture.player.currentEntry?.item?.title == "Song 4")
+        #expect(fixture.controller.currentTrack?.title == "Song 4")
+        let trackOneID = fixture.tracks[0].id
+        let events = try fixture.context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(!events.contains { $0.trackID == trackOneID })
+    }
+
+    // MARK: - A start when Apple Music never prepares
+
+    private static func waitUntil(timeout: Duration = .seconds(5), _ condition: () -> Bool) async {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !condition(), ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+    }
+
+    /// Owner's iPhone, 2026-10-07: prepareToPlay never returned. The hold
+    /// kept the controller believing it was playing, so Play only paused,
+    /// until relaunch.
+    @Test func aShuffledStartThatNeverPreparesStopsHidingThePlayer() async throws {
+        let fixture = try PlaybackFixture(trackCount: 4)
+        defer { fixture.cleanUp() }
+        fixture.controller.startHoldLimit = .milliseconds(150)
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[2],
+                                              settings: fixture.settings, context: fixture.context)
+        #expect(fixture.controller.isPlaying)
+        var releasePrepare: CheckedContinuation<Void, Never>?
+        fixture.player.onPrepare = { await withCheckedContinuation { releasePrepare = $0 } }
+        let start = Task {
+            await fixture.controller.playPlaylist(fixture.playlist, settings: fixture.settings, context: fixture.context)
+        }
+        await Self.waitUntil { releasePrepare != nil }
+        // The player was paused for the start, so Pause is not offered.
+        #expect(!fixture.controller.isPlaying)
+        #expect(fixture.controller.currentTrack?.title == "Song 2")
+
+        // Past the limit the player is observed again, so Play plays.
+        await Self.waitUntil { fixture.controller.currentTrack?.title == "Song 0" }
+        #expect(fixture.controller.currentTrack?.title == fixture.player.currentEntry?.item?.title)
+        await fixture.controller.performPrimaryPlaybackAction(settings: fixture.settings, context: fixture.context)
+        #expect(fixture.player.commands.last == "play")
+
+        // A prepare that finally returns does not resume the abandoned start.
+        let afterPlay = fixture.player.commands
+        releasePrepare?.resume()
+        await start.value
+        #expect(fixture.player.commands == afterPlay)
+    }
+
+    @Test func playDuringAShuffledStartTakesOver() async throws {
+        let fixture = try PlaybackFixture(trackCount: 4)
+        defer { fixture.cleanUp() }
+        fixture.controller.startHoldLimit = .seconds(30)
+        var releasePrepare: CheckedContinuation<Void, Never>?
+        fixture.player.onPrepare = { await withCheckedContinuation { releasePrepare = $0 } }
+        let start = Task {
+            await fixture.controller.playPlaylist(fixture.playlist, settings: fixture.settings, context: fixture.context)
+        }
+        await Self.waitUntil { releasePrepare != nil }
+
+        await fixture.controller.play(context: fixture.context)
+        #expect(fixture.player.commands.last == "play")
+        #expect(fixture.controller.currentTrack?.title == fixture.player.currentEntry?.item?.title)
+
+        releasePrepare?.resume()
+        await start.value
+        #expect(!fixture.player.commands.contains("shuffle=songs"))
+    }
+
+    @Test func aNewerStartReplacesAStuckShuffledStart() async throws {
+        let fixture = try PlaybackFixture(trackCount: 4)
+        defer { fixture.cleanUp() }
+        fixture.controller.startHoldLimit = .seconds(30)
+        var releasePrepare: CheckedContinuation<Void, Never>?
+        fixture.player.onPrepare = { await withCheckedContinuation { releasePrepare = $0 } }
+        let start = Task {
+            await fixture.controller.playPlaylist(fixture.playlist, settings: fixture.settings, context: fixture.context)
+        }
+        await Self.waitUntil { releasePrepare != nil }
+        fixture.player.onPrepare = nil
+
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[2],
+                                              settings: fixture.settings, context: fixture.context)
+        await fixture.player.notify()
+        #expect(fixture.controller.currentTrack?.title == "Song 2")
+        #expect(fixture.controller.isPlaying)
+
+        releasePrepare?.resume()
+        await start.value
+        #expect(!fixture.player.commands.contains("shuffle=songs"))
+        #expect(fixture.controller.currentTrack?.title == "Song 2")
     }
 
     @Test func oneUnpreparableTrackDoesNotPreventPlayback() async throws {

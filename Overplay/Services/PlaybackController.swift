@@ -113,12 +113,18 @@ final class PlaybackController {
     /// The member Overplay asked the latest submission to start at, until the
     /// first entry of that submission is observed.
     @ObservationIgnored private var awaitingFirstEntryOfSubmission: String?
-    /// Shuffle and Play loads the queue, enables shuffle and skips before
-    /// playing (#76). Until play starts, the player's interim entries (track 1
-    /// while the queue loads) are not observed: never shown, never a session.
-    @ObservationIgnored private var isStartingShuffledQueue = false
-    /// The longest Shuffle and Play waits for MusicKit to load the queue.
-    @ObservationIgnored var shuffleQueueLoadLimit: Duration = .seconds(3)
+    /// Every start loads the queue before playing (#76). While MusicKit loads,
+    /// it reports track 1 as current, even playing, until it reaches the start
+    /// entry. Until play starts those interim entries are not observed: never
+    /// shown, never a session. The hold belongs to one start and ends when it
+    /// plays, when a newer start replaces it, when the user presses Play, or
+    /// at the limit.
+    @ObservationIgnored private var startHold: Int?
+    private var isHoldingStart: Bool { startHold == startGeneration }
+    /// How long the hold may last if Apple Music never finishes preparing.
+    @ObservationIgnored var startHoldLimit: Duration = .seconds(8)
+    /// The longest a start waits for MusicKit to load the queue.
+    @ObservationIgnored var queueLoadLimit: Duration = .seconds(3)
     /// A session continuing across a resubmission of the same track.
     @ObservationIgnored private var pendingCarriedSession: ObservedSession?
     /// Bumped by every start or selection; a slower, older start yields.
@@ -327,7 +333,7 @@ final class PlaybackController {
     /// The one path by which player changes reach Overplay, whichever surface
     /// or MusicKit itself caused them.
     func observePlayer() async {
-        guard !isStartingShuffledQueue else { return }
+        guard !isHoldingStart else { return }
         player.refreshObservationBindings()
         observeModes()
         let status = player.playbackStatus
@@ -711,6 +717,8 @@ final class PlaybackController {
 
     func play(context: ModelContext) async {
         adopt(context)
+        // Play takes over from a start still preparing.
+        startHold = nil
         if playbackFailure != nil {
             await recover()
         } else if player.currentEntryID != nil {
@@ -1031,11 +1039,7 @@ final class PlaybackController {
         player.pause()
         player.submitQueue(tracks, startingAt: startIndex)
         do {
-            if shuffle {
-                try await startShuffled(trackCount: tracks.count, generation: generation)
-            } else {
-                try await player.play()
-            }
+            try await startLoaded(trackCount: tracks.count, shuffle: shuffle, generation: generation)
             // A newer start replaced this queue while play was in flight.
             guard generation == startGeneration else { return }
             if let duration = currentMember?.durationSeconds, position > 5, position < duration - 5 {
@@ -1050,27 +1054,52 @@ final class PlaybackController {
         saveResumePoint(force: true)
     }
 
-    /// Shuffle and Play (#76): load the queue in playlist order without
-    /// playing, enable shuffle on the loaded queue, skip to a random song,
-    /// then play. Nothing is heard or shown before that song.
-    private func startShuffled(trackCount: Int, generation: Int) async throws {
-        isStartingShuffledQueue = true
-        defer { isStartingShuffledQueue = false }
+    /// Every start (#76): load the queue without playing, wait until MusicKit
+    /// has loaded every entry, then play. Played sooner, MusicKit reports and
+    /// briefly plays track 1 until it reaches the start entry (device probe,
+    /// 2026-10-07). Shuffle and Play also enables shuffle on the loaded queue
+    /// and skips to a random song first; shuffle written earlier mixes only
+    /// the first few songs. Nothing is heard or shown before the chosen song.
+    private func startLoaded(trackCount: Int, shuffle: Bool, generation: Int) async throws {
+        startHold = generation
+        // The player was paused for this start; never offer Pause meanwhile.
+        isPlaying = false
+        // On 2026-10-07 prepareToPlay never returned, and the hold left the
+        // controller believing it was playing until relaunch.
+        let watchdog = Task { [weak self, limit = startHoldLimit] in
+            try? await Task.sleep(for: limit)
+            guard !Task.isCancelled, let self, self.startHold == generation else { return }
+            // Stop hiding the player; Play recovers as usual, and a late
+            // prepare does not resume this start.
+            self.startHold = nil
+            MusicKitActivityLog.shared.record(.playbackSelectionPath, detail: "startTimedOut")
+            await self.observePlayer()
+        }
+        defer {
+            watchdog.cancel()
+            if startHold == generation { startHold = nil }
+        }
         try await player.prepareToPlay()
-        // Shuffle written before the queue has loaded mixes only the first
-        // few songs. Nothing is playing yet; past the limit, start anyway.
+        guard isHoldingStart(generation) else { return }
+        // Nothing is playing yet; past the limit, start anyway.
         let clock = ContinuousClock()
-        let limit = clock.now.advanced(by: shuffleQueueLoadLimit)
+        let limit = clock.now.advanced(by: queueLoadLimit)
         while player.loadedEntryCount < trackCount, clock.now < limit {
             try? await Task.sleep(for: .milliseconds(50))
-            guard generation == startGeneration else { return }
+            guard isHoldingStart(generation) else { return }
         }
-        guard generation == startGeneration else { return }
-        player.setShuffleMode(.off)
-        player.setShuffleMode(.songs)
-        if trackCount > 1 { try await player.skipToNextEntry() }
-        guard generation == startGeneration else { return }
+        guard isHoldingStart(generation) else { return }
+        if shuffle {
+            player.setShuffleMode(.off)
+            player.setShuffleMode(.songs)
+            if trackCount > 1 { try await player.skipToNextEntry() }
+            guard isHoldingStart(generation) else { return }
+        }
         try await player.play()
+    }
+
+    private func isHoldingStart(_ generation: Int) -> Bool {
+        generation == startGeneration && startHold == generation
     }
 
     private func install(_ intent: PlaybackIntent, persist: Bool) {
@@ -1577,7 +1606,7 @@ final class PlaybackController {
 
     private func applyDisplay(entry: PlayerEntrySnapshot?, member: PlaybackIntent.Member?) {
         // Membership refreshes from sync can land while the queue loads.
-        guard !isStartingShuffledQueue else { return }
+        guard !isHoldingStart else { return }
         let item = currentPlaylistItem
         var track: CurrentPlaybackTrack?
         if let reported = entry?.item {

@@ -70,6 +70,7 @@ enum PlaybackQueueEntryError: LocalizedError, Equatable {
 @MainActor
 final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
     private let player = ApplicationMusicPlayer.shared
+    private var submittedEntryCount = 0
     private lazy var observation = PlaybackPlayerObservation(
         queueSource: { [player] in
             let queue = player.queue
@@ -108,7 +109,10 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
     var reportedRepeatMode: MusicPlayer.RepeatMode? { player.state.repeatMode }
 
     func setShuffleMode(_ mode: MusicPlayer.ShuffleMode) {
-        MusicKitActivityLog.shared.measure(.playerModeReset, detail: "shuffle=\(mode)") {
+        // Shuffle covers only the entries MusicKit has loaded (#76), so each
+        // write records how far the queue had loaded.
+        let detail = "shuffle=\(mode) loaded=\(player.queue.entries.count)/\(submittedEntryCount)"
+        MusicKitActivityLog.shared.measure(.playerModeReset, detail: detail) {
             player.state.shuffleMode = mode
         }
     }
@@ -121,6 +125,7 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
 
     func submitQueue(_ tracks: [Track], startingAt index: Int) {
         let entries = tracks.map { MusicPlayer.Queue.Entry($0) }
+        submittedEntryCount = entries.count
         let start = entries.indices.contains(index) ? entries[index] : entries.first
         MusicKitActivityLog.shared.measure(.queueReplace, magnitude: Double(entries.count)) {
             player.queue = ApplicationMusicPlayer.Queue(entries, startingAt: start)
