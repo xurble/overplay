@@ -116,7 +116,12 @@ final class PlaybackController {
     /// Shuffle and Play loads the queue, enables shuffle and skips before
     /// playing (#76). Until play starts, the player's interim entries (track 1
     /// while the queue loads) are not observed: never shown, never a session.
-    @ObservationIgnored private var isStartingShuffledQueue = false
+    /// The hold belongs to one start and ends when it plays, when a newer
+    /// start replaces it, when the user presses Play, or at the limit.
+    @ObservationIgnored private var shuffledStartHold: Int?
+    private var isStartingShuffledQueue: Bool { shuffledStartHold == startGeneration }
+    /// How long the hold may last if Apple Music never finishes preparing.
+    @ObservationIgnored var shuffleStartHoldLimit: Duration = .seconds(8)
     /// The longest Shuffle and Play waits for MusicKit to load the queue.
     @ObservationIgnored var shuffleQueueLoadLimit: Duration = .seconds(3)
     /// A session continuing across a resubmission of the same track.
@@ -711,6 +716,8 @@ final class PlaybackController {
 
     func play(context: ModelContext) async {
         adopt(context)
+        // Play takes over from a Shuffle and Play still preparing.
+        shuffledStartHold = nil
         if playbackFailure != nil {
             await recover()
         } else if player.currentEntryID != nil {
@@ -1054,23 +1061,44 @@ final class PlaybackController {
     /// playing, enable shuffle on the loaded queue, skip to a random song,
     /// then play. Nothing is heard or shown before that song.
     private func startShuffled(trackCount: Int, generation: Int) async throws {
-        isStartingShuffledQueue = true
-        defer { isStartingShuffledQueue = false }
+        shuffledStartHold = generation
+        // The player was paused for this start; never offer Pause meanwhile.
+        isPlaying = false
+        // On 2026-10-07 prepareToPlay never returned, and the hold left the
+        // controller believing it was playing until relaunch.
+        let watchdog = Task { [weak self, limit = shuffleStartHoldLimit] in
+            try? await Task.sleep(for: limit)
+            guard !Task.isCancelled, let self, self.shuffledStartHold == generation else { return }
+            // Stop hiding the player; Play recovers as usual, and a late
+            // prepare does not resume this start.
+            self.shuffledStartHold = nil
+            MusicKitActivityLog.shared.record(.playbackSelectionPath, detail: "shuffleStartTimedOut")
+            await self.observePlayer()
+        }
+        defer {
+            watchdog.cancel()
+            if shuffledStartHold == generation { shuffledStartHold = nil }
+        }
         try await player.prepareToPlay()
+        guard isHoldingShuffledStart(generation) else { return }
         // Shuffle written before the queue has loaded mixes only the first
         // few songs. Nothing is playing yet; past the limit, start anyway.
         let clock = ContinuousClock()
         let limit = clock.now.advanced(by: shuffleQueueLoadLimit)
         while player.loadedEntryCount < trackCount, clock.now < limit {
             try? await Task.sleep(for: .milliseconds(50))
-            guard generation == startGeneration else { return }
+            guard isHoldingShuffledStart(generation) else { return }
         }
-        guard generation == startGeneration else { return }
+        guard isHoldingShuffledStart(generation) else { return }
         player.setShuffleMode(.off)
         player.setShuffleMode(.songs)
         if trackCount > 1 { try await player.skipToNextEntry() }
-        guard generation == startGeneration else { return }
+        guard isHoldingShuffledStart(generation) else { return }
         try await player.play()
+    }
+
+    private func isHoldingShuffledStart(_ generation: Int) -> Bool {
+        generation == startGeneration && shuffledStartHold == generation
     }
 
     private func install(_ intent: PlaybackIntent, persist: Bool) {

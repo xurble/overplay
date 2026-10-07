@@ -1382,7 +1382,15 @@ attribute normally.
    Until play starts, player observation and every display refresh are held:
    the loading queue's interim first entry is neither shown, nor given a
    listening session, nor taken as the start member, even when a background
-   sync refreshes membership meanwhile. The first observed entry is attributed
+   sync refreshes membership meanwhile. The hold belongs to that one start
+   and ends when it plays, when a newer start or selection replaces it, when
+   the user presses Play (which takes over), or after 8 seconds. On device,
+   `prepareToPlay` once never returned, and an unbounded hold left Overplay
+   believing it was playing until relaunch. At the limit Overplay observes
+   the player again and records `shuffleStartTimedOut`; a prepare that
+   returns later does not resume the start, and nothing is retried.
+   Overplay paused the player for the start, so it does not offer Pause
+   while the start is held. The first observed entry is attributed
    by its item. The app and CarPlay both use this shared action.
 
 The device playback cache stores encoded native `Track` objects in the caches
