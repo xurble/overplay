@@ -159,10 +159,10 @@ struct MusicKitActivityOriginTests {
             tallies: [],
             events: [
                 MusicKitActivityEvent(
-                    operation: .queueCorrelationCleared,
+                    operation: .queueCorrelationRejected,
                     startedAt: start,
                     magnitude: 50,
-                    detail: "diverged transition"
+                    detail: "unattributed entry"
                 ),
                 MusicKitActivityEvent(
                     operation: .deliveryStallDetected,
@@ -185,38 +185,30 @@ struct MusicKitActivityOriginTests {
         // Interleaved with the Apple Music calls, which is the point: the
         // causal link between a decision and the calls it produced was only
         // reconstructable by guesswork before.
-        #expect(text.contains("queueCorrelationCleared size=50 diverged transition"))
+        #expect(text.contains("queueCorrelationRejected size=50 unattributed entry"))
         #expect(text.contains("deliveryStallDetected playback stalled"))
         #expect(text.contains("queueEndObserved no restart"))
 
         // The rates table groups them under their own heading once tallied.
-        #expect(MusicKitActivityOperation.queueCorrelationCleared.category.title
+        #expect(MusicKitActivityOperation.queueCorrelationRejected.category.title
             == "Overplay playback decisions")
         #expect(MusicKitActivityOperation.deliveryStallDetected.category == .playbackDecision)
         #expect(MusicKitActivityOperation.queueEndObserved.category == .playbackDecision)
         #expect(MusicKitActivityOperation.carPlayNowPlayingButtonsUpdate.category == .systemMediaSurface)
         // These must be listed individually, never collapsed into a tally.
-        #expect(!MusicKitActivityOperation.queueCorrelationCleared.isHighFrequency)
+        #expect(!MusicKitActivityOperation.queueCorrelationRejected.isHighFrequency)
         #expect(!MusicKitActivityOperation.carPlayNowPlayingButtonsUpdate.isHighFrequency)
     }
 
-    @Test("a skipped mode reset is counted apart from one that wrote")
-    func skippedModeResetIsCountedApart() {
-        let snapshot = MusicKitActivitySnapshot(
-            tallies: [],
-            events: [
-                MusicKitActivityEvent(operation: .playerModeReset, startedAt: start),
-                MusicKitActivityEvent(operation: .playerModeResetSkipped, startedAt: start)
-            ],
-            observationStartedAt: start
-        )
-
-        let summary = MusicKitActivityReport.summary(for: snapshot, now: start.addingTimeInterval(60))
-
-        // Otherwise a working guard and a path that never ran look identical.
-        #expect(MusicKitActivityOperation.playerModeResetSkipped.title == "Player mode reset (skipped)")
-        #expect(MusicKitActivityOperation.playerModeResetSkipped.category == .player)
-        #expect(summary.totalCalls >= 0)
+    @Test("labels name what the current playback core does (#63)")
+    func labelsNameCurrentBehaviour() {
+        #expect(MusicKitActivityOperation.playbackRecoveryAttempt.title == "Recovery attempt (user Play)")
+        #expect(MusicKitActivityOperation.queueCorrelationRejected.title == "Unattributed player entry")
+        #expect(MusicKitActivityOperation.playerModeReset.title == "Player mode write")
+        for operation in MusicKitActivityOperation.allCases {
+            #expect(!operation.title.localizedCaseInsensitiveContains("automatic"))
+            #expect(!operation.title.localizedCaseInsensitiveContains("correlation"))
+        }
     }
 
     @Test("an event recorded before origins existed still decodes")

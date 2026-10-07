@@ -47,14 +47,14 @@ struct MusicKitActivityReportTests {
     func ratesAreOrderedByTheOperationDeclarationOrder() {
         let currentMinute = MusicKitActivityTally.minuteIndex(for: Self.now)
         let tallies = [
-            tally(.nowPlayingInfoWrite, minutesAgo: 0, count: 1, from: currentMinute),
+            tally(.carPlayRefreshRequested, minutesAgo: 0, count: 1, from: currentMinute),
             tally(.catalogSearch, minutesAgo: 0, count: 1, from: currentMinute)
         ]
 
         let operations = MusicKitActivityReport.operationRates(for: tallies, now: Self.now)
             .map(\.operation)
 
-        #expect(operations == [.catalogSearch, .nowPlayingInfoWrite])
+        #expect(operations == [.catalogSearch, .carPlayRefreshRequested])
     }
 
     // MARK: - Failure grouping and classification
@@ -149,7 +149,7 @@ struct MusicKitActivityReportTests {
             tallies: [
                 tally(.catalogSearch, minutesAgo: 0, count: 1, from: currentMinute),
                 tally(.queueReplace, minutesAgo: 2, count: 1, from: currentMinute, maximumMagnitude: 60),
-                tally(.nowPlayingInfoWrite, minutesAgo: 0, count: 3, from: currentMinute)
+                tally(.playerModeReset, minutesAgo: 0, count: 3, from: currentMinute)
             ],
             events: [event(.queueReplace, magnitude: 60, secondsAgo: 120)],
             observationStartedAt: Self.now.addingTimeInterval(-3_600)
@@ -250,47 +250,6 @@ struct MusicKitActivityReportTests {
         #expect(concerns.contains { $0.title == "Rapid Apple Music library writes" })
     }
 
-    @Test("Now Playing churn in the last minute is flagged")
-    func nowPlayingChurnInTheLastMinuteIsFlagged() {
-        let currentMinute = MusicKitActivityTally.minuteIndex(for: Self.now)
-        let snapshot = MusicKitActivitySnapshot(
-            tallies: [
-                tally(
-                    .nowPlayingInfoWrite,
-                    minutesAgo: 0,
-                    count: MusicKitActivityReport.nowPlayingWritesPerMinuteLimit,
-                    from: currentMinute
-                )
-            ]
-        )
-
-        let concerns = MusicKitActivityReport.summary(for: snapshot, now: Self.now).concerns
-
-        #expect(concerns.contains { $0.title == "Now Playing session churn" })
-    }
-
-    @Test("Now Playing writes while not playing are flagged separately")
-    func nowPlayingWritesWhileNotPlayingAreFlaggedSeparately() {
-        let currentMinute = MusicKitActivityTally.minuteIndex(for: Self.now)
-        let snapshot = MusicKitActivitySnapshot(
-            tallies: [
-                tally(
-                    .nowPlayingInfoWriteWhilePaused,
-                    minutesAgo: 10,
-                    count: MusicKitActivityReport.idleNowPlayingWriteCount - 1,
-                    from: currentMinute
-                ),
-                tally(.nowPlayingInfoClear, minutesAgo: 20, count: 1, from: currentMinute)
-            ]
-        )
-
-        let concerns = MusicKitActivityReport.summary(for: snapshot, now: Self.now).concerns
-
-        #expect(concerns.contains { $0.title == "Now Playing written while Overplay is not playing" })
-        // These are spread across an hour, so the per-minute rule stays quiet.
-        #expect(!concerns.contains { $0.title == "Now Playing session churn" })
-    }
-
     @Test("a repeated identical non-refusal failure is flagged as a retry storm")
     func aRepeatedIdenticalNonRefusalFailureIsFlaggedAsARetryStorm() {
         let snapshot = MusicKitActivitySnapshot(
@@ -353,7 +312,7 @@ struct MusicKitActivityReportTests {
         #expect(!concerns.contains { $0.isActive && $0.title.hasPrefix("Repeated identical failure") })
     }
 
-    @Test("an automatic recovery loop is flagged")
+    @Test("repeated recovery from Play presses is flagged")
     func anAutomaticRecoveryLoopIsFlagged() {
         let currentMinute = MusicKitActivityTally.minuteIndex(for: Self.now)
         let snapshot = MusicKitActivitySnapshot(
@@ -361,7 +320,7 @@ struct MusicKitActivityReportTests {
                 tally(
                     .playbackRecoveryAttempt,
                     minutesAgo: 2,
-                    count: MusicKitActivityReport.automaticRetryCount,
+                    count: MusicKitActivityReport.recoveryAttemptCount,
                     from: currentMinute
                 )
             ]
@@ -369,7 +328,7 @@ struct MusicKitActivityReportTests {
 
         let concerns = MusicKitActivityReport.summary(for: snapshot, now: Self.now).concerns
 
-        #expect(concerns.contains { $0.title == "Automatic playback recovery loop" })
+        #expect(concerns.contains { $0.title == "Repeated playback recovery" })
     }
 
     @Test("a truncated paginated collection is critical")
@@ -430,13 +389,12 @@ struct MusicKitActivityReportTests {
 
     // MARK: - Fixtures
 
-    @Test("queue evidence survives later sync events in the copied report")
+    @Test("attribution evidence survives later sync events in the copied report")
     func queueEvidenceSurvivesLaterSyncEvents() {
         let incidentAt = Date(timeIntervalSince1970: 1_700_000_000.125)
-        let diagnostic = "reason=unmappedCurrentEntry playlist=local entry=entry-7 music=i.runtime "
-            + "storedAliasClaims=1 previousLocal=track-6 rawShuffle=songs"
+        let diagnostic = "unattributed entry=entry-7 title=Song intent=local"
         let incident = MusicKitActivityEvent(
-            operation: .queueCorrelationCleared,
+            operation: .queueCorrelationRejected,
             startedAt: incidentAt,
             magnitude: 79,
             detail: diagnostic
@@ -453,34 +411,37 @@ struct MusicKitActivityReportTests {
         ).text
 
         #expect(text.contains("Generated at 2023-11-15T22:13:20.125Z"))
-        #expect(text.contains("2023-11-14T22:13:20.125Z queueCorrelationCleared size=79"))
+        #expect(text.contains("2023-11-14T22:13:20.125Z queueCorrelationRejected size=79"))
         #expect(text.contains(diagnostic))
-        #expect(text.contains("Queue correlation decisions (latest 20 retained, newest last):"))
+        #expect(text.contains("Playback attribution (latest 20 retained, newest last):"))
+        #expect(!text.contains("Queue correlation"))
         let recentCalls = text.components(separatedBy: "Recent notable calls (newest last):").last ?? ""
-        #expect(!recentCalls.contains("queueCorrelationCleared"))
+        #expect(!recentCalls.contains("queueCorrelationRejected"))
     }
 
-    @Test("queue diagnostics are bounded and preserve rejection and alias evidence")
+    @Test("attribution evidence is bounded and keeps unattributed entries, carry-overs and skips on reach")
     func queueDiagnosticsAreBounded() {
         let events = (0..<25).map { index in
-            MusicKitActivityEvent(
-                operation: index.isMultiple(of: 2) ? .queueCorrelationRebuilt : .queueCorrelationRejected,
-                startedAt: Self.now.addingTimeInterval(Double(index)),
-                detail: "decision=\(index) currentMatch=runtimeAlias runtimeAliasMatches=8"
-            )
-        }
+            let (operation, detail): (MusicKitActivityOperation, String) = switch index % 3 {
+            case 0: (.queueCorrelationRejected, "unattributed entry=\(index)")
+            case 1: (.playbackSelectionPath, "sessionCarriedOver confirmed=true decision=\(index)")
+            default: (.playbackSelectionPath, "skipOnReach")
+            }
+            return MusicKitActivityEvent(operation: operation, startedAt: Self.now.addingTimeInterval(Double(index)), detail: detail)
+        } + [MusicKitActivityEvent(operation: .playbackSelectionPath, startedAt: Self.now.addingTimeInterval(30), detail: "newIntent")]
         let text = MusicKitActivityReport.summary(
             for: MusicKitActivitySnapshot(events: events), now: Self.now
         ).text
-        let queueSection = text.components(separatedBy: "Queue correlation decisions (latest 20 retained, newest last):")
+        let section = text.components(separatedBy: "Playback attribution (latest 20 retained, newest last):")
             .last?.components(separatedBy: "Recent notable calls (newest last):").first ?? ""
 
-        #expect(queueSection.split(separator: "\n").count == 20)
-        #expect(!queueSection.contains("decision=4 "))
-        #expect(queueSection.contains("decision=5 "))
-        #expect(queueSection.contains("decision=24 "))
-        #expect(queueSection.contains("queueCorrelationRejected"))
-        #expect(queueSection.contains("currentMatch=runtimeAlias runtimeAliasMatches=8"))
+        let lines = section.split(separator: "\n")
+        #expect(lines.count == 20)
+        #expect(!lines.contains { $0.hasSuffix("entry=3") })
+        #expect(lines.contains { $0.hasSuffix("entry=24") })
+        #expect(lines.contains { $0.hasSuffix("decision=22") })
+        #expect(section.contains("skipOnReach"))
+        #expect(!section.contains("newIntent"))
     }
 
     private func tally(
