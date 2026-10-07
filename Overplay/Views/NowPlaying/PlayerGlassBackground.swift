@@ -254,8 +254,6 @@ struct PlayerGlassArtBackground: View {
             }
             .frame(width: size.width, height: size.height, alignment: .topLeading)
             .clipped()
-            // One flattened layer, so the glass samples art and wash together.
-            .drawingGroup()
         }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
             fullHeight = max(fullHeight, size.height)
