@@ -367,52 +367,65 @@ struct TrackActionControlsView: View {
     }
 }
 
+/// Button colours from an artwork theme. A pushed (selected) button is filled
+/// with the accent and its text is always the background colour. Every other
+/// button is a tonal surface, the background tinted toward the accent, and
+/// its text is the accent, never the background colour. Both pairs keep the
+/// same minimum contrast, sheen included.
 struct FullScreenPlayerControlPalette: Equatable {
+    static let minimumContrast: CGFloat = 4.5
+    /// Screen white and black. The theme's named colours stop short of them.
+    static let white = AlbumArtworkRGBColor(1, 1, 1)
+    static let black = AlbumArtworkRGBColor(0, 0, 0)
+
     let backgroundRGB: AlbumArtworkRGBColor
+    /// The track title colour, moved away from the background only when it
+    /// would otherwise miss the minimum contrast.
     let accentRGB: AlbumArtworkRGBColor
-    let foregroundRGB: AlbumArtworkRGBColor
+    /// Unpushed fill.
     let surfaceRGB: AlbumArtworkRGBColor
-    let surfaceForegroundRGB: AlbumArtworkRGBColor
-    let selectedForegroundRGB: AlbumArtworkRGBColor
+    /// Unpushed fill for the primary transport control: more tint, same rule.
+    let primarySurfaceRGB: AlbumArtworkRGBColor
+    /// The pushed fill's highlight at its corner, as strong as the contrast
+    /// allows. The label sits mid-gradient, where it is half as strong.
+    let selectedSheenOpacity: Double
 
     init?(theme: AlbumArtworkTheme?) {
         guard let theme, !theme.isFallback else { return nil }
-        let backgroundRGB = theme.backgroundRGB
-        let accentRGB = theme.trackTitleRGB
-        let surfaceAmount: CGFloat = backgroundRGB.relativeLuminance < 0.34 ? 0.18 : 0.12
-        let surfaceRGB = accentRGB.mixed(with: backgroundRGB, amount: surfaceAmount)
+        let background = theme.backgroundRGB
+        let isLight = background.relativeLuminance > 0.34
+        let surfaceSheen = Self.surfaceSheenAtLabel(isLight: isLight)
+        let accent = Self.accent(theme.trackTitleRGB, against: background, surfaceSheen: surfaceSheen)
 
-        self.backgroundRGB = backgroundRGB
-        self.accentRGB = accentRGB
-        self.foregroundRGB = Self.readableForeground(
-            preferred: accentRGB,
-            against: surfaceRGB,
-            minimumContrast: 4.5
+        backgroundRGB = background
+        accentRGB = accent
+        surfaceRGB = Self.tonalSurface(
+            background, accent: accent, preferredTint: isLight ? 0.14 : 0.20, sheen: surfaceSheen
         )
-        self.surfaceRGB = surfaceRGB
-        self.surfaceForegroundRGB = Self.readableForeground(
-            preferred: backgroundRGB,
-            against: surfaceRGB,
-            minimumContrast: 4.5
+        primarySurfaceRGB = Self.tonalSurface(
+            background, accent: accent, preferredTint: isLight ? 0.24 : 0.32, sheen: surfaceSheen
         )
-        self.selectedForegroundRGB = Self.readableForeground(
-            preferred: backgroundRGB,
-            against: accentRGB,
-            minimumContrast: 4.5
-        )
+        selectedSheenOpacity = [0.22, 0.12, 0.06].first {
+            background.contrastRatio(against: accent.mixed(with: Self.white, amount: $0 / 2)) >= Self.minimumContrast
+        }.map(Double.init) ?? 0
     }
 
-    var foreground: Color {
-        surfaceForegroundRGB.color
+    /// The unpushed sheen's middle stop, where the label sits.
+    static func surfaceSheenAtLabel(isLight: Bool) -> CGFloat {
+        isLight ? 0.03 : 0.08
     }
 
-    var secondaryForeground: Color {
-        surfaceForegroundRGB.color
-    }
+    /// Text on unpushed buttons and other themed surfaces.
+    var foregroundRGB: AlbumArtworkRGBColor { accentRGB }
+    var foreground: Color { accentRGB.color }
 
     var disabledForeground: Color {
-        surfaceForegroundRGB.mixed(with: surfaceRGB, amount: 0.44).color
+        accentRGB.mixed(with: surfaceRGB, amount: 0.44).color
     }
+
+    /// Text on pushed buttons: always the background colour.
+    var selectedForegroundRGB: AlbumArtworkRGBColor { backgroundRGB }
+    var selectedForeground: Color { backgroundRGB.color }
 
     var tint: Color {
         accentRGB.color
@@ -422,8 +435,8 @@ struct FullScreenPlayerControlPalette: Equatable {
         surfaceRGB.color
     }
 
-    var selectedForeground: Color {
-        selectedForegroundRGB.color
+    var primarySurface: Color {
+        primarySurfaceRGB.color
     }
 
     var isLightBackground: Bool {
@@ -434,25 +447,44 @@ struct FullScreenPlayerControlPalette: Equatable {
         isLightBackground ? 0.14 : 0.34
     }
 
-    private func subduedForeground(amount: CGFloat) -> AlbumArtworkRGBColor {
-        let mixed = foregroundRGB.mixed(with: backgroundRGB, amount: amount)
-        if mixed.contrastRatio(against: backgroundRGB) >= 3.0 {
-            return mixed
+    /// Readable on the background, and on the background under the unpushed
+    /// sheen, so an untinted surface always passes. Moves toward black or
+    /// white, the further from the background first, never to it.
+    private static func accent(
+        _ preferred: AlbumArtworkRGBColor,
+        against background: AlbumArtworkRGBColor,
+        surfaceSheen: CGFloat
+    ) -> AlbumArtworkRGBColor {
+        let sheened = background.mixed(with: white, amount: surfaceSheen)
+        func worstContrast(_ color: AlbumArtworkRGBColor) -> CGFloat {
+            min(color.contrastRatio(against: background), color.contrastRatio(against: sheened))
         }
-        return foregroundRGB
+        let extremes = [white, black].sorted { $0.contrastRatio(against: background) > $1.contrastRatio(against: background) }
+        for extreme in extremes {
+            for step in 0...10 {
+                let candidate = preferred.mixed(with: extreme, amount: CGFloat(step) / 10)
+                if worstContrast(candidate) >= minimumContrast { return candidate }
+            }
+        }
+        return extremes.max { worstContrast($0) < worstContrast($1) } ?? black
     }
 
-    private static func readableForeground(
-        preferred: AlbumArtworkRGBColor,
-        against background: AlbumArtworkRGBColor,
-        minimumContrast: CGFloat
+    /// The background tinted toward the accent, as far as the accent text
+    /// stays readable on it with and without the sheen.
+    private static func tonalSurface(
+        _ background: AlbumArtworkRGBColor,
+        accent: AlbumArtworkRGBColor,
+        preferredTint: CGFloat,
+        sheen: CGFloat
     ) -> AlbumArtworkRGBColor {
-        if preferred.contrastRatio(against: background) >= minimumContrast {
-            return preferred
+        for step in stride(from: 4, through: 0, by: -1) {
+            let surface = background.mixed(with: accent, amount: preferredTint * CGFloat(step) / 4)
+            if accent.contrastRatio(against: surface) >= minimumContrast,
+               accent.contrastRatio(against: surface.mixed(with: white, amount: sheen)) >= minimumContrast {
+                return surface
+            }
         }
-        let whiteContrast = AlbumArtworkRGBColor.white.contrastRatio(against: background)
-        let blackContrast = AlbumArtworkRGBColor.black.contrastRatio(against: background)
-        return whiteContrast >= blackContrast ? .white : .black
+        return background
     }
 }
 
@@ -528,15 +560,10 @@ struct FullScreenPlayerGlassButtonStyle: ButtonStyle {
     }
 
     private var foregroundColor: Color {
-        guard isEnabled else { return palette.disabledForeground }
-        switch prominence {
-        case .selected:
-            return palette.selectedForeground
-        case .secondary:
-            return palette.secondaryForeground
-        default:
-            return palette.foreground
-        }
+        // A pushed button keeps the background colour even when disabled;
+        // the button's opacity dims it.
+        if prominence == .selected { return palette.selectedForeground }
+        return isEnabled ? palette.foreground : palette.disabledForeground
     }
 }
 
@@ -599,13 +626,14 @@ private extension View {
     ) -> some View {
         if prominence == .selected {
             background {
+                // Opaque, so the background-coloured text keeps its contrast.
                 shape
-                    .fill(palette.tint.opacity(isPressed ? 0.78 : 0.92))
+                    .fill(palette.tint)
                     .overlay {
                         shape.fill(
                             LinearGradient(
                                 colors: [
-                                    .white.opacity(isPressed ? 0.10 : 0.22),
+                                    .white.opacity(isPressed ? palette.selectedSheenOpacity / 2 : palette.selectedSheenOpacity),
                                     .clear
                                 ],
                                 startPoint: .topLeading,
@@ -628,14 +656,17 @@ private extension View {
                 shape
                     .fill(.ultraThinMaterial)
                     .overlay {
-                        shape.fill(palette.surface.opacity(isPressed ? 0.86 : 0.76))
+                        shape.fill((prominence == .primary ? palette.primarySurface : palette.surface)
+                            .opacity(isPressed ? 0.94 : 0.76))
                     }
                     .overlay {
                         shape.fill(
                             LinearGradient(
                                 colors: [
                                     .white.opacity(palette.isLightBackground ? 0.12 : 0.22),
-                                    .white.opacity(palette.isLightBackground ? 0.03 : 0.08),
+                                    .white.opacity(Double(FullScreenPlayerControlPalette.surfaceSheenAtLabel(
+                                        isLight: palette.isLightBackground
+                                    ))),
                                     .clear
                                 ],
                                 startPoint: .topLeading,
@@ -653,7 +684,7 @@ private extension View {
                     )
                     .overlay {
                         shape
-                            .strokeBorder(palette.surfaceForegroundRGB.color.opacity(0.16), lineWidth: 0.5)
+                            .strokeBorder(palette.selectedForeground.opacity(0.16), lineWidth: 0.5)
                     }
             }
             .shadow(

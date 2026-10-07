@@ -22,6 +22,11 @@ struct CarPlayNowPlayingButtonImageFactoryTests {
         }
     }
 
+    @Test("Promote, Restore and Archive symbols are regular weight, one step heavier than light (#50)")
+    func symbolsAreRegularWeight() {
+        #expect(CarPlayNowPlayingButtonImageFactory.symbolWeight == .regular)
+    }
+
     @Test("scales symbols down to a smaller supplied maximum")
     func respectsSuppliedMaximum() throws {
         let maximumSize = CGSize(width: 12, height: 10)

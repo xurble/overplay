@@ -27,6 +27,8 @@ enum CarPlayListTemplateUpdater {
 @MainActor
 enum CarPlayNowPlayingButtonImageFactory {
     private static let preferredPointSize: CGFloat = 24
+    /// One step heavier than `.light`, which read as too thin in the car (#50).
+    static let symbolWeight: UIImage.SymbolWeight = .regular
 
     static func image(
         systemName: String,
@@ -35,7 +37,7 @@ enum CarPlayNowPlayingButtonImageFactory {
     ) -> UIImage? {
         let symbolConfiguration = UIImage.SymbolConfiguration(
             pointSize: preferredPointSize,
-            weight: .light
+            weight: symbolWeight
         )
         guard let symbol = UIImage(systemName: systemName, compatibleWith: traitCollection)?
             .applyingSymbolConfiguration(symbolConfiguration) else {
