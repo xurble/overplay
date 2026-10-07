@@ -10,7 +10,7 @@ struct MusicKitActivityLogTests {
         let log = makeLog()
         let frequent: [MusicKitActivityOperation] = [
             .playbackQueueInvalidation, .playbackStateInvalidation,
-            .playbackObservationCoalesced, .playerModeReset
+            .playbackObservationCoalesced
         ]
         for operation in frequent {
             for _ in 0..<20 { log.record(operation) }
@@ -91,18 +91,25 @@ struct MusicKitActivityLogTests {
         #expect(events.first?.magnitude == 900)
     }
 
+    @Test("shuffle and repeat writes are listed, with their detail (#76)")
+    func modeWritesAreListed() {
+        let log = makeLog()
+        log.record(.playerModeReset, detail: "shuffle=songs loaded=12/97")
+        #expect(log.snapshot().events.map(\.detail) == ["shuffle=songs loaded=12/97"])
+    }
+
     @Test("high-frequency calls are tallied but not listed")
     func highFrequencyCallsAreTalliedButNotListed() {
         let log = makeLog()
 
         for _ in 0..<50 {
-            log.record(.playerModeReset)
+            log.record(.playbackQueueInvalidation)
         }
 
         let snapshot = log.snapshot()
 
         #expect(snapshot.events.isEmpty)
-        #expect(snapshot.tallies.first { $0.operation == .playerModeReset }?.count == 50)
+        #expect(snapshot.tallies.first { $0.operation == .playbackQueueInvalidation }?.count == 50)
     }
 
     @Test("a high-frequency call is still listed when it fails or carries a note")
@@ -111,7 +118,7 @@ struct MusicKitActivityLogTests {
 
         log.record(.artworkDownload)
         log.record(.artworkDownload, error: error(domain: "OverplayArtworkHTTP", code: 429))
-        log.record(.playerModeReset, notes: [.automaticRetry])
+        log.record(.playbackQueueInvalidation, notes: [.automaticRetry])
 
         let events = log.snapshot().events
 
@@ -208,7 +215,7 @@ struct MusicKitActivityLogTests {
         let clock = TestClock(start: Date(timeIntervalSince1970: 1_800_000_000))
         let log = MusicKitActivityLog(fileURL: fileURL, now: clock.read)
         log.record(.libraryPlaylistEdit, magnitude: 400, detail: "rewrote playlist")
-        log.record(.playerModeReset)
+        log.record(.playbackQueueInvalidation)
         log.flush()
 
         let restored = MusicKitActivityLog(fileURL: fileURL, now: clock.read).snapshot()
@@ -216,7 +223,7 @@ struct MusicKitActivityLogTests {
         #expect(restored.events.count == 1)
         #expect(restored.events.first?.operation == .libraryPlaylistEdit)
         #expect(restored.events.first?.detail == "rewrote playlist")
-        #expect(restored.tallies.contains { $0.operation == .playerModeReset && $0.count == 1 })
+        #expect(restored.tallies.contains { $0.operation == .playbackQueueInvalidation && $0.count == 1 })
         #expect(restored.observationStartedAt == clock.now)
     }
 

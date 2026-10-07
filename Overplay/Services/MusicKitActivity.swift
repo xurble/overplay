@@ -201,14 +201,15 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     }
 
     /// Operations that fire fast enough to flood a bounded event list — player
-    /// invalidations, mode writes and per-track artwork fetches. They are always
+    /// invalidations and per-track artwork fetches. Mode writes are listed:
+    /// they are rare, and their loaded count matters (#76). They are always
     /// counted, but only listed individually when they fail or carry a note.
     var isHighFrequency: Bool {
         if category == .performance {
             return self != .playbackSelectionPath
         }
         return switch self {
-        case .playerModeReset, .artworkDownload,
+        case .artworkDownload,
              .playbackQueueInvalidation, .playbackStateInvalidation, .playbackObservationCoalesced:
             true
         default:

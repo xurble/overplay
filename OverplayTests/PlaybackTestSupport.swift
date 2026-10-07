@@ -42,6 +42,9 @@ final class FakePlaybackPlayer: PlaybackPlayer {
     /// more, until `stopsLoading`.
     var loadsEntriesInSteps: Int?
     var stopsLoading = false
+    /// MusicKit reports the first entry as current, even playing, until it
+    /// has loaded as far as the start entry (device probe, 2026-10-07).
+    var reportsFirstEntryUntilLoaded = false
     private var loadedCount: Int?
     var prepareFailuresRemaining = 0
     var nextFailuresRemaining = 0
@@ -57,7 +60,9 @@ final class FakePlaybackPlayer: PlaybackPlayer {
     var currentEntryID: String? { currentEntry?.entryID }
 
     var currentEntry: PlayerEntrySnapshot? {
-        currentIndex.flatMap { entries.indices.contains($0) ? entries[$0] : nil }
+        guard let currentIndex, entries.indices.contains(currentIndex) else { return nil }
+        if reportsFirstEntryUntilLoaded, let loaded = loadedCount, loaded <= currentIndex { return entries.first }
+        return entries[currentIndex]
     }
 
     var queueEntries: [PlayerEntrySnapshot] { entries }

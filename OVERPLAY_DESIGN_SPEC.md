@@ -1370,15 +1370,20 @@ attribute normally.
    activity-log error naming them and a non-blocking status message. Starting fails only when the requested start
    member, or every member, cannot be resolved.
 3. Persist the new intent.
-4. Pause, submit the complete queue starting at the start member, and play.
-   **Shuffle and Play** (#76) submits the queue in playlist order and does not
-   play it yet. It prepares the queue and waits, with nothing playing, until
-   MusicKit reports every submitted entry loaded, for at most 3 seconds. On
-   device the loaded count went 2, 70, 96 within about 0.3 seconds, and
-   shuffle written at 2 mixed only the first few songs. It then writes
-   shuffle off and then on, skips to the next entry, which is now a random
-   song from the whole queue, and only then plays. Past the limit it carries
-   on regardless: the wait never retries, rejects or blocks playback.
+4. Pause, submit the complete queue starting at the start member, prepare it,
+   and wait, with nothing playing, until MusicKit reports every submitted
+   entry loaded (at most 3 seconds), then play (#76). MusicKit loads a new
+   queue in stages: on device the loaded count went 2, 70, 96 within about
+   0.3 seconds. Until it has loaded as far as the start entry it reports
+   track 1 as current, and as playing; a queue starting at song 50 showed
+   track 1 for about 0.3 seconds (probe, 2026-10-07). Playing only once the
+   queue has loaded means track 1 is never heard or shown. Past the limit
+   the start carries on regardless: the wait never retries, rejects or
+   blocks playback.
+   **Shuffle and Play** submits the queue in playlist order. Once it has
+   loaded, it writes shuffle off and then on (shuffle written earlier mixes
+   only the first few songs), skips to the next entry, which is now a random
+   song from the whole queue, and only then plays.
    Until play starts, player observation and every display refresh are held:
    the loading queue's interim first entry is neither shown, nor given a
    listening session, nor taken as the start member, even when a background
@@ -1387,11 +1392,14 @@ attribute normally.
    the user presses Play (which takes over), or after 8 seconds. On device,
    `prepareToPlay` once never returned, and an unbounded hold left Overplay
    believing it was playing until relaunch. At the limit Overplay observes
-   the player again and records `shuffleStartTimedOut`; a prepare that
-   returns later does not resume the start, and nothing is retried.
-   Overplay paused the player for the start, so it does not offer Pause
-   while the start is held. The first observed entry is attributed
-   by its item. The app and CarPlay both use this shared action.
+   the player again and records `startTimedOut`; a prepare that returns
+   later does not resume the start, and nothing is retried. Overplay paused
+   the player for the start, so it does not offer Pause while the start is
+   held. The first observed entry is attributed by its item. The app and
+   CarPlay both use this shared action.
+   Each shuffle or repeat write is listed in the activity log with how far
+   the queue had loaded (`loaded=12/97`), to explain a shuffle that does not
+   take while a queue is still loading.
 
 The device playback cache stores encoded native `Track` objects in the caches
 directory, keyed by local track UUID. It survives relaunch, is never synced,
