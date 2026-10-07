@@ -117,6 +117,8 @@ final class PlaybackController {
     /// playing (#76). Until play starts, the player's interim entries (track 1
     /// while the queue loads) are not observed: never shown, never a session.
     @ObservationIgnored private var isStartingShuffledQueue = false
+    /// The longest Shuffle and Play waits for MusicKit to load the queue.
+    @ObservationIgnored var shuffleQueueLoadLimit: Duration = .seconds(3)
     /// A session continuing across a resubmission of the same track.
     @ObservationIgnored private var pendingCarriedSession: ObservedSession?
     /// Bumped by every start or selection; a slower, older start yields.
@@ -1055,8 +1057,15 @@ final class PlaybackController {
         isStartingShuffledQueue = true
         defer { isStartingShuffledQueue = false }
         try await player.prepareToPlay()
+        // Shuffle written before the queue has loaded mixes only the first
+        // few songs. Nothing is playing yet; past the limit, start anyway.
+        let clock = ContinuousClock()
+        let limit = clock.now.advanced(by: shuffleQueueLoadLimit)
+        while player.loadedEntryCount < trackCount, clock.now < limit {
+            try? await Task.sleep(for: .milliseconds(50))
+            guard generation == startGeneration else { return }
+        }
         guard generation == startGeneration else { return }
-        // MusicKit ignores shuffle written before the queue loads.
         player.setShuffleMode(.off)
         player.setShuffleMode(.songs)
         if trackCount > 1 { try await player.skipToNextEntry() }
@@ -1567,6 +1576,8 @@ final class PlaybackController {
     // MARK: - Display
 
     private func applyDisplay(entry: PlayerEntrySnapshot?, member: PlaybackIntent.Member?) {
+        // Membership refreshes from sync can land while the queue loads.
+        guard !isStartingShuffledQueue else { return }
         let item = currentPlaylistItem
         var track: CurrentPlaybackTrack?
         if let reported = entry?.item {

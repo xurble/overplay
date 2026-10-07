@@ -31,6 +31,10 @@ protocol PlaybackPlayer: AnyObject {
     /// Enumerates the whole queue. Only for selection and transition direction,
     /// never on the sampling path (`LOAD-001`).
     var queueEntries: [PlayerEntrySnapshot] { get }
+    /// How many entries MusicKit has loaded. After `prepareToPlay` it fills
+    /// in over a fraction of a second (2, then 70, then 96 on device), and
+    /// shuffle covers only what is loaded (#76).
+    var loadedEntryCount: Int { get }
     var playbackStatus: MusicPlayer.PlaybackStatus { get }
     var playbackTime: TimeInterval { get set }
     /// Raw reports: nil means MusicKit has not said, which is not "off".
@@ -90,6 +94,8 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
     var queueEntries: [PlayerEntrySnapshot] {
         player.queue.entries.map(Self.snapshot(of:))
     }
+
+    var loadedEntryCount: Int { player.queue.entries.count }
 
     var playbackStatus: MusicPlayer.PlaybackStatus { player.state.playbackStatus }
 
