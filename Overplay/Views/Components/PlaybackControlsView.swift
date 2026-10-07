@@ -188,12 +188,7 @@ private struct PlaybackControlButtonStyle: ButtonStyle {
             return palette.disabledForeground
         }
 
-        switch prominence {
-        case .primary:
-            return palette.foreground
-        case .secondary:
-            return palette.secondaryForeground
-        }
+        return palette.foreground
     }
 
     private var glassProminence: FullScreenPlayerControlProminence {
@@ -222,7 +217,8 @@ private struct PlaybackControlBackdropModifier: ViewModifier {
                 palette,
                 shape: Circle(),
                 prominence: prominence,
-                isPressed: isPressed
+                isPressed: isPressed,
+                isInteractive: true
             )
         } else {
             content

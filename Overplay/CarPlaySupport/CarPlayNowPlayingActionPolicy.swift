@@ -73,3 +73,17 @@ enum CarPlayPlaybackOutcome: Equatable, Sendable {
         return .nowPlaying
     }
 }
+
+/// What sits under Now Playing decides where CarPlay's back arrow goes: it
+/// must be the playlist that is playing, however Now Playing was opened.
+enum CarPlayNowPlayingBackStack {
+    static func needsPlayingPlaylist(
+        beneathPlaylistID: UUID?,
+        beneathScope: PlaylistPlaybackScope?,
+        playingPlaylistID: UUID?,
+        playingScope: PlaylistPlaybackScope
+    ) -> Bool {
+        guard let playingPlaylistID else { return false }
+        return beneathPlaylistID != playingPlaylistID || beneathScope != playingScope
+    }
+}
