@@ -29,14 +29,14 @@ struct NowPlayingTrackTextView: View {
         VStack(spacing: 8) {
             Text(presentation.title)
                 .font(titleFont)
-                .foregroundStyle(artworkTheme?.trackTitle ?? .primary)
+                .playerLegibleForeground(artworkTheme?.trackTitleRGB, fallback: artworkTheme?.trackTitle ?? .primary)
                 .multilineTextAlignment(.center)
                 .lineLimit(titleLineLimit)
                 .minimumScaleFactor(0.78)
 
             Text(presentation.artistName)
                 .font(artistFont)
-                .foregroundStyle(artworkTheme?.artistName ?? .secondary)
+                .playerLegibleForeground(artworkTheme?.artistNameRGB, fallback: artworkTheme?.artistName ?? .secondary)
                 .multilineTextAlignment(.center)
                 .lineLimit(detailLineLimit)
                 .minimumScaleFactor(0.82)
@@ -52,7 +52,7 @@ struct NowPlayingTrackTextView: View {
         if let artworkTheme {
             Text(albumTitle)
                 .font(.subheadline)
-                .foregroundStyle(artworkTheme.albumName)
+                .playerLegibleForeground(artworkTheme.albumNameRGB, fallback: artworkTheme.albumName)
                 .multilineTextAlignment(.center)
                 .lineLimit(detailLineLimit)
                 .minimumScaleFactor(0.82)
@@ -70,6 +70,7 @@ struct NowPlayingTrackTextView: View {
 struct NowPlayingProgressView: View {
     var presentation: NowPlayingPresentation
     var foreground: Color? = nil
+    var foregroundRGB: AlbumArtworkRGBColor? = nil
 
     var body: some View {
         VStack(spacing: 6) {
@@ -83,11 +84,12 @@ struct NowPlayingProgressView: View {
 
             HStack {
                 Text(presentation.elapsedText)
+                    .playerLegibleForeground(foregroundRGB, fallback: foreground ?? .secondary)
                 Spacer()
                 Text(presentation.durationText)
+                    .playerLegibleForeground(foregroundRGB, fallback: foreground ?? .secondary)
             }
             .font(.caption.monospacedDigit())
-            .foregroundStyle(foreground ?? .secondary)
         }
     }
 }
@@ -111,21 +113,10 @@ private struct NowPlayingProgressBar: View {
                 let fillWidth = max(innerWidth * clampedProgress, clampedProgress > 0 ? 6 : 0)
 
                 ZStack(alignment: .leading) {
+                    // The same clear glass as an unpushed button, no outline.
                     Capsule()
-                        .fill(.ultraThinMaterial)
-                        .overlay {
-                            Capsule()
-                                .fill(.white.opacity(0.08))
-                        }
-                        .overlay {
-                            Capsule()
-                                .strokeBorder(.white.opacity(0.34), lineWidth: 1)
-                        }
-                        .overlay {
-                            Capsule()
-                                .strokeBorder(.black.opacity(0.18), lineWidth: 0.5)
-                                .padding(1)
-                        }
+                        .fill(.clear)
+                        .glassEffect(.clear, in: Capsule())
 
                     Capsule()
                         .fill(fillColor)
@@ -224,10 +215,14 @@ struct TrackPlaybackFactsView: View {
             }
         }
         .font(.subheadline.weight(.semibold))
-        .foregroundStyle(controlPalette?.foreground ?? .primary)
+        // Plain text, not a capsule: it is not a button.
+        .playerLegibleForeground(
+            controlPalette?.foregroundRGB,
+            fallback: controlPalette?.foreground ?? .primary,
+            isActive: controlPalette != nil
+        )
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .fullScreenPlayerGlassBackdrop(controlPalette, shape: Capsule(), prominence: .secondary)
     }
 
     private var controlPalette: FullScreenPlayerControlPalette? {
@@ -434,6 +429,13 @@ struct FullScreenPlayerControlPalette: Equatable {
         accentRGB.color
     }
 
+    /// The glass over the art for a prominence, for text that adapts to it.
+    func glassTint(for prominence: FullScreenPlayerControlProminence) -> PlayerGlassTint {
+        prominence == .selected
+            ? PlayerGlassTint(colour: accentRGB, opacity: 0.5)
+            : PlayerGlassTint(colour: surfaceRGB, opacity: 0)
+    }
+
     var surface: Color {
         surfaceRGB.color
     }
@@ -553,7 +555,15 @@ struct FullScreenPlayerGlassButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.callout.weight(.semibold))
-            .foregroundStyle(foregroundColor)
+            .playerLegibleForeground(
+                prominence == .selected ? palette.selectedForegroundRGB : palette.foregroundRGB,
+                fallback: foregroundColor,
+                glass: palette.glassTint(for: prominence),
+                isActive: isEnabled && palette.usesGlass
+            )
+            // Dim the label, not the glass: opacity around glass hides what
+            // is behind it.
+            .opacity(isEnabled ? 1 : 0.46)
             .padding(.horizontal, 14)
             .padding(.vertical, 11)
             .contentShape(Capsule())
@@ -564,8 +574,7 @@ struct FullScreenPlayerGlassButtonStyle: ButtonStyle {
                 isPressed: configuration.isPressed,
                 isInteractive: true
             )
-            .scaleEffect(configuration.isPressed ? 0.975 : 1)
-            .opacity(isEnabled ? 1 : 0.46)
+            .scaleEffect(configuration.isPressed && !palette.usesGlass ? 0.975 : 1)
             .animation(.smooth(duration: 0.16), value: configuration.isPressed)
             .animation(.smooth(duration: 0.16), value: isEnabled)
     }
@@ -630,11 +639,10 @@ private struct FullScreenPlayerGlassBackdropModifier<S: InsettableShape>: ViewMo
 }
 
 private extension View {
-    /// Liquid Glass supplies the motion-reactive highlight. A pushed button
-    /// keeps its exact accent fill under the glass, because its text is the
-    /// background colour. An unpushed button is clear glass tinted toward
-    /// its surface over the plain player background, so its colour stays
-    /// between the background and the surface, both already checked.
+    /// Clear Liquid Glass over the player's art background
+    /// (`PlayerGlassArtBackground`): accent-tinted when pushed, untinted
+    /// otherwise. Labels pick a readable colour for the art under them
+    /// (`PlayerLegibleForeground`).
     @ViewBuilder
     func fullScreenPlayerGlassBackdropContent<S: InsettableShape>(
         _ palette: FullScreenPlayerControlPalette,
@@ -643,35 +651,26 @@ private extension View {
         isPressed: Bool,
         isInteractive: Bool
     ) -> some View {
-        if prominence == .selected {
-            Group {
-                if palette.usesGlass {
-                    glassEffect(.regular.tint(palette.tint).interactive(isInteractive), in: shape)
-                } else {
-                    self
-                }
+        if palette.usesGlass {
+            // No outline or drop shadow: the glass's own rim, where it
+            // lenses what is behind it, has to stay visible.
+            if prominence == .selected {
+                // Glass has no selected state; on is the accent tint, as
+                // with the system's prominent glass buttons.
+                glassEffect(.clear.tint(palette.tint.opacity(0.5)).interactive(isInteractive), in: shape)
+            } else {
+                // Pressing is the glass's own interactive response.
+                glassEffect(.clear.interactive(isInteractive), in: shape)
             }
-                .background { shape.fill(palette.tint) }
+        } else if prominence == .selected {
+            background { shape.fill(palette.tint) }
                 .overlay {
                     shape
                         .strokeBorder(palette.selectedForeground.opacity(isPressed ? 0.42 : 0.58), lineWidth: 1)
                 }
-                .shadow(
-                    color: .black.opacity(palette.shadowOpacity),
-                    radius: 12,
-                    y: 7
-                )
+                .shadow(color: .black.opacity(palette.shadowOpacity), radius: 12, y: 7)
         } else {
-            Group {
-                if palette.usesGlass {
-                    glassEffect(
-                        .clear.tint(palette.surface.opacity(isPressed ? 0.62 : 0.38)).interactive(isInteractive),
-                        in: shape
-                    )
-                } else {
-                    background { shape.fill(palette.surface.opacity(isPressed ? 0.94 : 0.76)) }
-                }
-            }
+            background { shape.fill(palette.surface.opacity(isPressed ? 0.94 : 0.76)) }
                 .overlay {
                     shape
                         .strokeBorder(

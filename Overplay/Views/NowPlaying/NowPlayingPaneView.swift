@@ -17,11 +17,13 @@ struct NowPlayingPaneView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let compactLayout = proxy.size.height < 620
+            // Blend from the compact layout to the regular one as the sheet
+            // grows, so nothing steps while it is dragged (0 = compact).
+            let roominess = Self.roominess(forHeight: proxy.size.height)
             let artworkSize = min(
                 proxy.size.width - 56,
-                compactLayout ? 170 : 260,
-                max(proxy.size.height * (compactLayout ? 0.26 : 0.34), 112)
+                Self.blend(170, 260, roominess),
+                max(proxy.size.height * Self.blend(0.26, 0.34, roominess), 112)
             )
             let presentation = NowPlayingPresentationFactory.presentation(
                 playbackController: playbackController,
@@ -31,7 +33,7 @@ struct NowPlayingPaneView: View {
             let displayTrack = playbackController.nowPlayingDisplayTrack
             let activeArtworkTheme = artworkTheme?.isFallback == false ? artworkTheme : nil
 
-            VStack(spacing: compactLayout ? 12 : 18) {
+            VStack(spacing: Self.blend(12, 18, roominess)) {
                 NowPlayingArtworkView(
                     urlString: displayTrack?.artworkURLTemplate,
                     playlistID: playbackController.currentPlaylistID
@@ -47,7 +49,8 @@ struct NowPlayingPaneView: View {
                 )
                 NowPlayingProgressView(
                     presentation: presentation,
-                    foreground: activeArtworkTheme?.artistName
+                    foreground: activeArtworkTheme?.artistName,
+                    foregroundRGB: activeArtworkTheme?.artistNameRGB
                 )
                 TrackPlaybackFactsView(presentation: presentation, artworkTheme: activeArtworkTheme)
                 PlaybackModeControlsView(artworkTheme: activeArtworkTheme)
@@ -74,8 +77,8 @@ struct NowPlayingPaneView: View {
                 PlaybackFailureRetryView()
             }
             .padding(.horizontal, 24)
-            .padding(.top, compactLayout ? 16 : 24)
-            .padding(.bottom, compactLayout ? 12 : 20)
+            .padding(.top, Self.blend(16, 24, roominess))
+            .padding(.bottom, Self.blend(12, 20, roominess))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
         .sheet(isPresented: $isShowingThemeDiagnostics) {
@@ -121,6 +124,16 @@ struct NowPlayingPaneView: View {
             onArtworkThemeUpdated(report.theme)
         }
         isThemeDiagnosticsLoading = false
+    }
+
+    /// 0 at 560 points tall or less, 1 at 680 or more, eased between.
+    private static func roominess(forHeight height: CGFloat) -> CGFloat {
+        let progress = min(max((height - 560) / 120, 0), 1)
+        return progress * progress * (3 - 2 * progress)
+    }
+
+    private static func blend(_ compact: CGFloat, _ regular: CGFloat, _ roominess: CGFloat) -> CGFloat {
+        compact + (regular - compact) * roominess
     }
 }
 

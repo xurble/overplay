@@ -138,7 +138,14 @@ private struct PlaybackControlButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: iconSize, weight: iconWeight))
-            .foregroundStyle(foregroundStyle)
+            .playerLegibleForeground(
+                palette?.foregroundRGB,
+                fallback: foregroundStyle,
+                glass: palette?.glassTint(for: .secondary),
+                isActive: isEnabled && palette?.usesGlass == true
+            )
+            // Dim the icon, not the glass.
+            .opacity(isEnabled ? 1 : 0.42)
             .frame(width: buttonSize, height: buttonSize)
             .contentShape(Circle())
             .playbackControlBackdrop(
@@ -147,8 +154,7 @@ private struct PlaybackControlButtonStyle: ButtonStyle {
                 isPressed: configuration.isPressed,
                 fallbackOpacity: backgroundOpacity(isPressed: configuration.isPressed)
             )
-            .scaleEffect(configuration.isPressed ? 0.92 : 1)
-            .opacity(isEnabled ? 1 : 0.42)
+            .scaleEffect(configuration.isPressed && palette?.usesGlass != true ? 0.92 : 1)
             .animation(.smooth(duration: 0.16), value: configuration.isPressed)
             .animation(.smooth(duration: 0.16), value: isEnabled)
     }
