@@ -36,6 +36,9 @@ struct OverplayApp: App {
     init() {
         do {
             modelContainer = try Self.makeModelContainer()
+            #if targetEnvironment(simulator)
+            if !Self.isRunningTests { SimulatorDemoLibrary.seedIfEmpty(modelContainer.mainContext) }
+            #endif
             AppRuntime.shared.configure(modelContainer: modelContainer)
         } catch {
             fatalError("Could not create Overplay model container: \(error)")

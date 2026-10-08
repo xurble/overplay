@@ -14,7 +14,7 @@ enum AppPersistence {
     }
 
     static var cloudEnabled: Bool {
-        #if OVERPLAY_DEVELOPMENT
+        #if OVERPLAY_DEVELOPMENT || targetEnvironment(simulator)
         false
         #else
         true
@@ -47,7 +47,17 @@ enum AppPersistence {
             )
         }
 
-        #if DEBUG && OVERPLAY_DEVELOPMENT
+        #if targetEnvironment(simulator)
+        // The simulator has no Apple Music library and must never touch the
+        // owner's iCloud data: a separate local store, seeded with a sample
+        // library when empty (`SimulatorDemoLibrary`), for navigation testing.
+        return ModelConfiguration(
+            "OverplaySimulator",
+            schema: schema,
+            groupContainer: .none,
+            cloudKitDatabase: .none
+        )
+        #elseif DEBUG && OVERPLAY_DEVELOPMENT
         // Fail closed if local build settings accidentally reuse the everyday
         // app identifier. The separate sandbox also isolates UserDefaults,
         // playback restoration, onboarding history, and diagnostic files.
