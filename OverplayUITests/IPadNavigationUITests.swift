@@ -73,7 +73,8 @@ final class IPadNavigationUITests: XCTestCase {
 
     @MainActor private func openOverplayFromDashboard() {
         let row = detail("dashboard").buttons.matching(NSPredicate(format: "label BEGINSWITH 'Overplay'")).firstMatch
-        XCTAssertTrue(row.waitForExistence(timeout: 10), "The dashboard should list Overplay")
+        // The first launch after an install can take a while to fill the list.
+        XCTAssertTrue(row.waitForExistence(timeout: 30), "The dashboard should list Overplay")
         tap(row)
         XCTAssertTrue(app.buttons["Shuffle and Play"].waitForExistence(timeout: 10), "The Overplay playlist should open")
     }
