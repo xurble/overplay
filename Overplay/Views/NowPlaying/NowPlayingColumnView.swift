@@ -46,7 +46,8 @@ struct NowPlayingColumnView: View {
 
 /// The draggable edge between the list and the Now Playing column.
 struct NowPlayingColumnDivider: View {
-    static let minimumListWidth: CGFloat = 320
+    /// Room left for the sidebar and list beside the column.
+    static let minimumSplitWidth: CGFloat = 640
 
     @Binding var width: Double
     var range: ClosedRange<CGFloat>

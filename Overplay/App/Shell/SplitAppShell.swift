@@ -12,10 +12,28 @@ struct SplitAppShell: View {
     @SceneStorage("overplay.splitSelection") private var storedSelection = AppShellDestination.dashboard.storageValue
     @SceneStorage("overplay.showsNowPlayingColumn") private var showsNowPlaying = true
     @SceneStorage("overplay.nowPlayingColumnWidth") private var nowPlayingWidth = 380.0
-    @State private var detailWidth: CGFloat = 0
+    @State private var totalWidth: CGFloat = 0
     @State private var detailPath = NavigationPath()
 
     var body: some View {
+        // The player beside the whole split view, never over it. The detail
+        // column's root stays its NavigationStack, so pushes stay in the list.
+        HStack(spacing: 0) {
+            splitView
+            if showsNowPlaying {
+                NowPlayingColumnDivider(width: $nowPlayingWidth, range: nowPlayingWidthRange)
+                NowPlayingColumnView(settings: settings)
+                    .frame(width: clampedNowPlayingWidth)
+                    .transition(.move(edge: .trailing))
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { totalWidth = $0 }
+        .onChange(of: "\(showsNowPlaying) \(Int(totalWidth)) \(Int(clampedNowPlayingWidth))", initial: true) { _, state in
+            Self.logger.info("Now Playing column shown/total/column: \(state, privacy: .public)")
+        }
+    }
+
+    private var splitView: some View {
         NavigationSplitView {
             List(selection: selection) {
                 Section {
@@ -43,32 +61,18 @@ struct SplitAppShell: View {
             .listStyle(.sidebar)
             .navigationTitle("Overplay")
         } detail: {
-            // The player beside the list, never over it: one row, resized
-            // by dragging the divider between them.
-            HStack(spacing: 0) {
-                NavigationStack(path: $detailPath) {
-                    detailView
-                        .toolbar {
-                            ToolbarItem(placement: .primaryAction) {
-                                Button {
-                                    withAnimation(.smooth) { showsNowPlaying.toggle() }
-                                } label: {
-                                    Label(showsNowPlaying ? "Hide Now Playing" : "Show Now Playing", systemImage: "sidebar.trailing")
-                                }
-                                .help(showsNowPlaying ? "Hide Now Playing" : "Show Now Playing")
+            NavigationStack(path: $detailPath) {
+                detailView
+                    .toolbar {
+                        ToolbarItem(placement: .primaryAction) {
+                            Button {
+                                withAnimation(.smooth) { showsNowPlaying.toggle() }
+                            } label: {
+                                Label(showsNowPlaying ? "Hide Now Playing" : "Show Now Playing", systemImage: "sidebar.trailing")
                             }
+                            .help(showsNowPlaying ? "Hide Now Playing" : "Show Now Playing")
                         }
-                }
-                if showsNowPlaying {
-                    NowPlayingColumnDivider(width: $nowPlayingWidth, range: nowPlayingWidthRange)
-                    NowPlayingColumnView(settings: settings)
-                        .frame(width: clampedNowPlayingWidth)
-                        .transition(.move(edge: .trailing))
-                }
-            }
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
-            .onChange(of: "\(showsNowPlaying) \(Int(detailWidth)) \(Int(clampedNowPlayingWidth))", initial: true) { _, state in
-                Self.logger.info("Now Playing column shown/detail/column: \(state, privacy: .public)")
+                    }
             }
         }
         .onChange(of: storedSelection) { _, _ in
@@ -110,10 +114,10 @@ struct SplitAppShell: View {
         }
     }
 
-    /// The column never squeezes the list below a usable width.
+    /// The column never squeezes the sidebar and list below a usable width.
     private var nowPlayingWidthRange: ClosedRange<CGFloat> {
         let minimum: CGFloat = 280
-        let maximum = max(minimum, detailWidth - NowPlayingColumnDivider.minimumListWidth)
+        let maximum = max(minimum, totalWidth - NowPlayingColumnDivider.minimumSplitWidth)
         return minimum...maximum
     }
 
