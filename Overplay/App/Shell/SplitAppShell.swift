@@ -11,7 +11,6 @@ struct SplitAppShell: View {
 
     @SceneStorage("overplay.splitSelection") private var storedSelection = AppShellDestination.dashboard.storageValue
     @SceneStorage("overplay.showsNowPlayingColumn") private var showsNowPlaying = true
-    @SceneStorage("overplay.nowPlayingColumnWidth") private var nowPlayingWidth = 380.0
     @State private var totalWidth: CGFloat = 0
     @State private var detailPath = NavigationPath()
 
@@ -21,14 +20,15 @@ struct SplitAppShell: View {
         HStack(spacing: 0) {
             splitView
             if showsNowPlaying {
-                NowPlayingColumnDivider(width: $nowPlayingWidth, range: nowPlayingWidthRange)
+                Divider()
+                    .ignoresSafeArea()
                 NowPlayingColumnView(settings: settings)
-                    .frame(width: clampedNowPlayingWidth)
+                    .frame(width: nowPlayingWidth)
                     .transition(.move(edge: .trailing))
             }
         }
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { totalWidth = $0 }
-        .onChange(of: "\(showsNowPlaying) \(Int(totalWidth)) \(Int(clampedNowPlayingWidth))", initial: true) { _, state in
+        .onChange(of: "\(showsNowPlaying) \(Int(totalWidth)) \(Int(nowPlayingWidth))", initial: true) { _, state in
             Self.logger.info("Now Playing column shown/total/column: \(state, privacy: .public)")
         }
     }
@@ -114,15 +114,10 @@ struct SplitAppShell: View {
         }
     }
 
-    /// The column never squeezes the sidebar and list below a usable width.
-    private var nowPlayingWidthRange: ClosedRange<CGFloat> {
-        let minimum: CGFloat = 280
-        let maximum = max(minimum, totalWidth - NowPlayingColumnDivider.minimumSplitWidth)
-        return minimum...maximum
-    }
-
-    private var clampedNowPlayingWidth: CGFloat {
-        min(max(CGFloat(nowPlayingWidth), nowPlayingWidthRange.lowerBound), nowPlayingWidthRange.upperBound)
+    /// A fixed width, narrowed only when the window leaves the sidebar and
+    /// list less than 640 points beside it, and never below 280.
+    private var nowPlayingWidth: CGFloat {
+        min(380, max(280, totalWidth - 640))
     }
 
     private var activePlaylists: [PlaylistRecord] {
