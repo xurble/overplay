@@ -7,12 +7,18 @@ struct CarPlayNowPlayingButtonSignature: Equatable {
     var hasCurrentTrack: Bool
     var playlistRole: PlaylistRole? = nil
     var isEvicted: Bool
+    /// The current song is from an album or artist and Overplay does not
+    /// track it (`PLAY-018`).
+    var canAddToOverplay = false
+    var canAddToOneTruePlaylist = false
 
     func resolvingLayout(previous: Self?, samePlaylist: Bool) -> Self {
-        guard samePlaylist, playlistRole == nil, let previous else { return self }
+        guard samePlaylist, playlistRole == nil, !canAddToOverplay, let previous else { return self }
         var layout = self
         layout.playlistRole = previous.playlistRole
         layout.isEvicted = previous.isEvicted
+        layout.canAddToOverplay = previous.canAddToOverplay
+        layout.canAddToOneTruePlaylist = previous.canAddToOneTruePlaylist
         return layout
     }
 

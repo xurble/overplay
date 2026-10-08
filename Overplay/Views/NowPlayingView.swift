@@ -20,7 +20,8 @@ struct NowPlayingView: View {
                         .aspectRatio(1, contentMode: .fit)
                         .shadow(color: .black.opacity(0.35), radius: 24, y: 18)
 
-                    NowPlayingTrackTextView(presentation: nowPlayingPresentation)
+                    PlaybackCollectionContextView()
+                    NowPlayingTrackTextView(presentation: nowPlayingPresentation, offersCollectionMenu: true)
                     NowPlayingProgressView(presentation: nowPlayingPresentation)
                     TrackPlaybackFactsView(presentation: nowPlayingPresentation)
                     PlaybackControlsView(settings: settings)

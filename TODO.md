@@ -36,6 +36,13 @@ Rewrite-specific checks:
 - Relaunch while music is still playing: Overplay re-attaches without
   restarting the queue.
 - Cold launch before iCloud restoration: CarPlay offers Resume and plays.
+- Play Album and Play Artist (`PLAY-018`, #83) from the app and from the
+  CarPlay album/artist button: the album starts at track 1; an artist plays
+  Essentials, or Top Songs without repeated versions, in more than one
+  storefront language; untracked songs offer Add to Triage and Add to One
+  True Playlist and are not counted; tracked songs count; Play after a
+  relaunch resumes the album. Check whether Add to One True Playlist works on
+  My Mac (Designed for iPad).
 
 For every supported action origin — SwiftUI, CarPlay, and the system
 transport controls (Lock Screen, Control Center, headset, or media key) — and

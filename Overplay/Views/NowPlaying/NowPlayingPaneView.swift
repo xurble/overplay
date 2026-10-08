@@ -41,11 +41,13 @@ struct NowPlayingPaneView: View {
                 .frame(width: artworkSize, height: artworkSize)
                 .shadow(color: .black.opacity(0.28), radius: 22, y: 16)
 
+                PlaybackCollectionContextView(foreground: activeArtworkTheme?.albumName ?? .secondary)
                 NowPlayingTrackTextView(
                     presentation: presentation,
                     titleLineLimit: 2,
                     detailLineLimit: 1,
-                    artworkTheme: activeArtworkTheme
+                    artworkTheme: activeArtworkTheme,
+                    offersCollectionMenu: true
                 )
                 NowPlayingProgressView(
                     presentation: presentation,

@@ -470,6 +470,7 @@ final class CarPlayCoordinator: NSObject {
         nowPlayingTemplate.isUpNextButtonEnabled = true
         nowPlayingTemplate.isAlbumArtistButtonEnabled = false
         updateNowPlayingButtons()
+        updateAlbumArtistButton()
     }
 
     /// Playlist linking, One True Playlist role changes, and sync only touch
@@ -542,6 +543,7 @@ final class CarPlayCoordinator: NSObject {
             _ = playbackController.displayedIsEvicted
             _ = playbackController.activePlaylistSnapshot?.updatedAt
             _ = playbackController.playbackFailure
+            _ = playbackController.intent?.id
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, generation == self.playbackObservationGeneration else { return }
@@ -554,6 +556,7 @@ final class CarPlayCoordinator: NSObject {
                             authorizationService: runtime.authorizationService, playbackController: runtime.playbackController))
                 }
                 self.updateNowPlayingButtons()
+                self.updateAlbumArtistButton()
                 self.scheduleLibraryRefresh(reason: "playback")
                 self.presentDeliveryStallAlertIfNeeded()
                 self.observePlaybackController(generation: generation)
@@ -608,7 +611,9 @@ final class CarPlayCoordinator: NSObject {
             samePlaylist: playbackController.currentPlaylistID != nil
                 && playbackController.currentPlaylistID == lastNowPlayingPlaylistID
         )
-        let actions = CarPlayNowPlayingActionPolicy.actions(playlistRole: layout.playlistRole, isRetired: layout.isEvicted)
+        let actions = CarPlayNowPlayingActionPolicy.actions(
+            playlistRole: layout.playlistRole, isRetired: layout.isEvicted, canAddToOverplay: layout.canAddToOverplay
+        )
         lastNowPlayingButtonSignature = layout
         lastNowPlayingPlaylistID = playbackController.currentPlaylistID
         let needsLayout = actions != displayedActions
@@ -621,13 +626,18 @@ final class CarPlayCoordinator: NSObject {
                 case .promote: makePromoteButton()
                 case .retire: makeEvictButton()
                 case .restore: makeRestoreButton()
+                case .addToTriage: makeAddButton(systemImage: "tray.and.arrow.down", toOneTruePlaylist: false)
+                case .addToOneTruePlaylist: makeAddButton(systemImage: "plus.circle", toOneTruePlaylist: true)
                 }
             }
         }
         for (action, button) in zip(displayedActions, displayedActionButtons) {
-            let enabled = action == .shuffle || action == .repeatMode
-                ? playbackController.hasLiveQueue
-                : signature.hasCurrentTrack && signature.playlistRole != nil
+            let enabled = switch action {
+            case .shuffle, .repeatMode: playbackController.hasLiveQueue
+            case .addToTriage: signature.hasCurrentTrack && signature.canAddToOverplay
+            case .addToOneTruePlaylist: signature.hasCurrentTrack && signature.canAddToOneTruePlaylist
+            case .promote, .retire, .restore: signature.hasCurrentTrack && signature.playlistRole != nil
+            }
             if button.isEnabled != enabled {
                 button.isEnabled = enabled
                 MusicKitActivityLog.shared.record(.carPlayNowPlayingButtonState,
@@ -671,6 +681,16 @@ final class CarPlayCoordinator: NSObject {
         return button
     }
 
+    private func makeAddButton(systemImage: String, toOneTruePlaylist: Bool) -> CPNowPlayingImageButton {
+        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: systemImage)) { [weak self] _ in
+            Task { @MainActor in
+                await self?.addCurrentTrack(toOneTruePlaylist: toOneTruePlaylist)
+            }
+        }
+        button.isEnabled = playbackController?.canAddCurrentToOverplay == true
+        return button
+    }
+
     private func buttonImage(systemImage: String) -> UIImage {
         let traitCollection = interfaceController?.carTraitCollection
             ?? UITraitCollection(displayScale: 1)
@@ -701,6 +721,69 @@ final class CarPlayCoordinator: NSObject {
             refreshAfterTrackAction()
         } catch {
             showError(title: "Track action failed", message: error.localizedDescription)
+        }
+    }
+
+    private func addCurrentTrack(toOneTruePlaylist: Bool) async {
+        guard runtime?.libraryRestoration.isReady == true, let playbackController, let modelContext else { return }
+        await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+            if toOneTruePlaylist {
+                await playbackController.addCurrentToOneTruePlaylist(context: modelContext)
+            } else {
+                await playbackController.addCurrentToTriage(context: modelContext)
+            }
+        }
+        refreshAfterTrackAction()
+        if playbackController.canAddCurrentToOverplay {
+            showError(title: "Couldn't add", message: playbackController.statusMessage ?? "Apple Music didn't respond.")
+        }
+    }
+
+    // MARK: - Play Album and Play Artist (`PLAY-018`)
+
+    /// CarPlay's own album/artist button on Now Playing opens them.
+    private func updateAlbumArtistButton() {
+        let enabled = playbackController?.canPlayCurrentCollection == true
+        if CPNowPlayingTemplate.shared.isAlbumArtistButtonEnabled != enabled {
+            CPNowPlayingTemplate.shared.isAlbumArtistButtonEnabled = enabled
+        }
+    }
+
+    /// Two rows above Now Playing: an action list, not a browse level
+    /// (the one exception to `CAR-001`).
+    private func showCollectionActions() {
+        guard let interfaceController, let track = playbackController?.currentTrack else { return }
+        let album = CPListItem(text: track.albumTitle.map { "Play album \($0)" } ?? "Play album", detailText: nil,
+                               image: UIImage(systemName: "square.stack"))
+        album.handler = { [weak self] _, completion in
+            Task { @MainActor in
+                await self?.playCollection(.album)
+                completion()
+            }
+        }
+        let artist = CPListItem(text: track.artistName.isEmpty ? "Play artist" : "Play \(track.artistName)", detailText: nil,
+                                image: UIImage(systemName: "music.mic"))
+        artist.handler = { [weak self] _, completion in
+            Task { @MainActor in
+                await self?.playCollection(.artist)
+                completion()
+            }
+        }
+        let template = CPListTemplate(title: track.title, sections: [CPListSection(items: [album, artist])])
+        interfaceController.pushTemplate(template, animated: true, completion: nil)
+    }
+
+    private func playCollection(_ request: PlaybackCollection.Request) async {
+        guard let playbackController, let modelContext, let interfaceController else { return }
+        let started = await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+            await playbackController.playCurrentCollection(request, context: modelContext)
+        }
+        if interfaceController.topTemplate !== CPNowPlayingTemplate.shared {
+            interfaceController.popTemplate(animated: true, completion: nil)
+        }
+        // A shared failure presents its own alert with Try Again.
+        if !started, playbackController.playbackFailure == nil {
+            showPlaybackFailure(title: "Playback failed")
         }
     }
 
@@ -785,5 +868,9 @@ extension CarPlayCoordinator: CPInterfaceControllerDelegate {
 extension CarPlayCoordinator: CPNowPlayingTemplateObserver {
     func nowPlayingTemplateUpNextButtonTapped(_ nowPlayingTemplate: CPNowPlayingTemplate) {
         popToRootMenu()
+    }
+
+    func nowPlayingTemplateAlbumArtistButtonTapped(_ nowPlayingTemplate: CPNowPlayingTemplate) {
+        showCollectionActions()
     }
 }

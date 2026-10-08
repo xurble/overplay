@@ -13,6 +13,9 @@ enum CarPlayNowPlayingAction: Equatable, Sendable {
     case retire
     /// Undo a retirement.
     case restore
+    /// A song Overplay does not track, from an album or artist (`PLAY-018`).
+    case addToTriage
+    case addToOneTruePlaylist
 }
 
 /// Chooses the Now Playing actions for CarPlay.
@@ -22,7 +25,9 @@ enum CarPlayNowPlayingAction: Equatable, Sendable {
 /// factory, a cached signature and a role lookup, which is how promote came
 /// to be missing from triage playback.
 enum CarPlayNowPlayingActionPolicy {
-    static func actions(playlistRole: PlaylistRole?, isRetired: Bool) -> [CarPlayNowPlayingAction] {
+    static func actions(playlistRole: PlaylistRole?, isRetired: Bool, canAddToOverplay: Bool = false) -> [CarPlayNowPlayingAction] {
+        // An album or artist song Overplay does not track can only be added.
+        if canAddToOverplay { return [.shuffle, .repeatMode, .addToTriage, .addToOneTruePlaylist] }
         // With nothing playing from a known playlist there is no track to act
         // on, but the playback modes still apply to whatever comes next.
         guard let playlistRole else { return [.shuffle, .repeatMode] }
