@@ -6,7 +6,7 @@ struct PlatformShell: View {
     var settings: OverplaySettings
 
     var body: some View {
-        if horizontalSizeClass == .compact {
+        if PlayerPlacement(horizontalSizeClass) == .sheet {
             CompactAppShell(settings: settings)
         } else {
             SplitAppShell(settings: settings)

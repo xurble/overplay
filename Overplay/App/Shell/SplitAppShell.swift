@@ -8,6 +8,7 @@ struct SplitAppShell: View {
     var settings: OverplaySettings
 
     @SceneStorage("overplay.splitSelection") private var storedSelection = AppShellDestination.dashboard.storageValue
+    @SceneStorage("overplay.showsNowPlayingColumn") private var showsNowPlaying = true
     @State private var detailPath = NavigationPath()
 
     var body: some View {
@@ -40,7 +41,23 @@ struct SplitAppShell: View {
         } detail: {
             NavigationStack(path: $detailPath) {
                 detailView
+                    .toolbar {
+                        ToolbarItem(placement: .primaryAction) {
+                            Button {
+                                withAnimation(.smooth) { showsNowPlaying.toggle() }
+                            } label: {
+                                Label(showsNowPlaying ? "Hide Now Playing" : "Show Now Playing", systemImage: "sidebar.trailing")
+                            }
+                            .help(showsNowPlaying ? "Hide Now Playing" : "Show Now Playing")
+                        }
+                    }
             }
+        }
+        // The player beside the list, never over it. Its width flexes, so it
+        // still fits a smaller regular-width screen next to the list.
+        .inspector(isPresented: $showsNowPlaying) {
+            NowPlayingColumnView(settings: settings)
+                .inspectorColumnWidth(min: 300, ideal: 360, max: 460)
         }
         .onChange(of: storedSelection) { _, _ in
             detailPath = NavigationPath()
