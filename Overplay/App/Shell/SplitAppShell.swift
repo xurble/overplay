@@ -9,6 +9,8 @@ struct SplitAppShell: View {
 
     @SceneStorage("overplay.splitSelection") private var storedSelection = AppShellDestination.dashboard.storageValue
     @SceneStorage("overplay.showsNowPlayingColumn") private var showsNowPlaying = true
+    @SceneStorage("overplay.nowPlayingColumnWidth") private var nowPlayingWidth = 380.0
+    @State private var detailWidth: CGFloat = 0
     @State private var detailPath = NavigationPath()
 
     var body: some View {
@@ -39,25 +41,30 @@ struct SplitAppShell: View {
             .listStyle(.sidebar)
             .navigationTitle("Overplay")
         } detail: {
-            NavigationStack(path: $detailPath) {
-                detailView
-                    .toolbar {
-                        ToolbarItem(placement: .primaryAction) {
-                            Button {
-                                withAnimation(.smooth) { showsNowPlaying.toggle() }
-                            } label: {
-                                Label(showsNowPlaying ? "Hide Now Playing" : "Show Now Playing", systemImage: "sidebar.trailing")
+            // The player beside the list, never over it: one row, resized
+            // by dragging the divider between them.
+            HStack(spacing: 0) {
+                NavigationStack(path: $detailPath) {
+                    detailView
+                        .toolbar {
+                            ToolbarItem(placement: .primaryAction) {
+                                Button {
+                                    withAnimation(.smooth) { showsNowPlaying.toggle() }
+                                } label: {
+                                    Label(showsNowPlaying ? "Hide Now Playing" : "Show Now Playing", systemImage: "sidebar.trailing")
+                                }
+                                .help(showsNowPlaying ? "Hide Now Playing" : "Show Now Playing")
                             }
-                            .help(showsNowPlaying ? "Hide Now Playing" : "Show Now Playing")
                         }
-                    }
+                }
+                if showsNowPlaying {
+                    NowPlayingColumnDivider(width: $nowPlayingWidth, range: nowPlayingWidthRange)
+                    NowPlayingColumnView(settings: settings)
+                        .frame(width: clampedNowPlayingWidth)
+                        .transition(.move(edge: .trailing))
+                }
             }
-        }
-        // The player beside the list, never over it. Its width flexes, so it
-        // still fits a smaller regular-width screen next to the list.
-        .inspector(isPresented: $showsNowPlaying) {
-            NowPlayingColumnView(settings: settings)
-                .inspectorColumnWidth(min: 300, ideal: 360, max: 460)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
         }
         .onChange(of: storedSelection) { _, _ in
             detailPath = NavigationPath()
@@ -96,6 +103,17 @@ struct SplitAppShell: View {
         case .settings:
             SettingsView(settings: settings)
         }
+    }
+
+    /// The column never squeezes the list below a usable width.
+    private var nowPlayingWidthRange: ClosedRange<CGFloat> {
+        let minimum: CGFloat = 280
+        let maximum = max(minimum, detailWidth - NowPlayingColumnDivider.minimumListWidth)
+        return minimum...maximum
+    }
+
+    private var clampedNowPlayingWidth: CGFloat {
+        min(max(CGFloat(nowPlayingWidth), nowPlayingWidthRange.lowerBound), nowPlayingWidthRange.upperBound)
     }
 
     private var activePlaylists: [PlaylistRecord] {
