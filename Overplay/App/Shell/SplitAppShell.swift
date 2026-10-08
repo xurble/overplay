@@ -12,6 +12,7 @@ struct SplitAppShell: View {
     @SceneStorage("overplay.splitSelection") private var storedSelection = AppShellDestination.dashboard.storageValue
     @SceneStorage("overplay.showsNowPlayingColumn") private var showsNowPlaying = true
     @State private var totalWidth: CGFloat = 0
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var detailPath = NavigationPath()
 
     var body: some View {
@@ -34,7 +35,7 @@ struct SplitAppShell: View {
     }
 
     private var splitView: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             List(selection: selection) {
                 Section {
                     Label("Dashboard", systemImage: "rectangle.grid.2x2")
@@ -78,6 +79,12 @@ struct SplitAppShell: View {
         .onChange(of: storedSelection) { _, _ in
             detailPath = NavigationPath()
         }
+        .modifier(SplitStyle(sidebarOverlaysList: isNarrow))
+        .onChange(of: isNarrow, initial: true) {
+            // Narrow: list and player share the width; the sidebar slides
+            // in over the list when asked for.
+            columnVisibility = isNarrow ? .detailOnly : .all
+        }
     }
 
     @ViewBuilder
@@ -114,10 +121,19 @@ struct SplitAppShell: View {
         }
     }
 
-    /// A fixed width, narrowed only when the window leaves the sidebar and
-    /// list less than 640 points beside it, and never below 280.
+    /// Below this width (portrait on any iPad, a narrower window, likely an
+    /// unfolded phone) three side-by-side columns are too narrow to use.
+    private static let narrowWidth: CGFloat = 1100
+
+    private var isNarrow: Bool {
+        totalWidth > 0 && totalWidth < Self.narrowWidth
+    }
+
+    /// Narrow: 40% of the width, the list taking the other 60%. Wide: a fixed
+    /// 380 beside the sidebar and list, narrowed only when they would have
+    /// less than 640, never below 280.
     private var nowPlayingWidth: CGFloat {
-        min(380, max(280, totalWidth - 640))
+        isNarrow ? (totalWidth * 0.4).rounded() : min(380, max(280, totalWidth - 640))
     }
 
     private var activePlaylists: [PlaylistRecord] {
@@ -170,6 +186,19 @@ struct SplitAppShell: View {
         } set: { newSelection in
             detailPath = NavigationPath()
             storedSelection = (newSelection ?? .dashboard).storageValue
+        }
+    }
+}
+
+/// Overlays the sidebar on the list in narrow widths; side by side otherwise.
+private struct SplitStyle: ViewModifier {
+    var sidebarOverlaysList: Bool
+
+    func body(content: Content) -> some View {
+        if sidebarOverlaysList {
+            content.navigationSplitViewStyle(.prominentDetail)
+        } else {
+            content.navigationSplitViewStyle(.automatic)
         }
     }
 }
