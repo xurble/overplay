@@ -11,12 +11,22 @@ final class AppRuntime {
     let startupViewModel = AppStartupViewModel()
 
     let authorizationService = MusicAuthorizationService()
-    let playbackController = PlaybackController()
+    let playbackController = AppRuntime.makePlaybackController()
     let nowPlayingBridge = SystemNowPlayingBridge()
     let periodicPlaylistSyncService = PeriodicPlaylistSyncService()
 
     @ObservationIgnored private var modelContainer: ModelContainer?
     @ObservationIgnored private var cloudImportObserver: NSObjectProtocol?
+
+    private static func makePlaybackController() -> PlaybackController {
+        #if targetEnvironment(simulator)
+        // No Apple Music in the simulator: play the library on a clock.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+            return PlaybackController(player: SimulatorPlaybackPlayer(), preparePlaybackTracks: SimulatorPlaybackPlayer.prepare)
+        }
+        #endif
+        return PlaybackController()
+    }
 
     private init() {
         // Counting and item reads wait for restoration; playback does not.

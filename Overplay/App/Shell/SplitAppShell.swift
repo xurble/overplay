@@ -1,7 +1,9 @@
+import OSLog
 import SwiftData
 import SwiftUI
 
 struct SplitAppShell: View {
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Overplay", category: "Layout")
     @Environment(PlaybackController.self) private var playbackController
     @Query(sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
 
@@ -65,6 +67,9 @@ struct SplitAppShell: View {
                 }
             }
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
+            .onChange(of: "\(showsNowPlaying) \(Int(detailWidth)) \(Int(clampedNowPlayingWidth))", initial: true) { _, state in
+                Self.logger.info("Now Playing column shown/detail/column: \(state, privacy: .public)")
+            }
         }
         .onChange(of: storedSelection) { _, _ in
             detailPath = NavigationPath()
