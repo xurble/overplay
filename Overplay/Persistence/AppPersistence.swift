@@ -13,8 +13,30 @@ enum AppPersistence {
         case missingCloudKitContainerIdentifier
     }
 
+    /// The simulator has no Apple Music library and must never touch the
+    /// owner's iCloud data: the app there uses a separate local store, seeded
+    /// with a sample library when empty (`SimulatorDemoLibrary`).
+    static let simulatorConfiguration = ModelConfiguration(
+        "OverplaySimulator",
+        schema: schema,
+        groupContainer: .none,
+        cloudKitDatabase: .none
+    )
+
+    /// UI tests launch the simulator build with this argument: a fresh
+    /// in-memory sample library each launch, never the simulator's copy.
+    static let uiTestingArgument = "-OverplayUITesting"
+
+    static let uiTestingConfiguration = ModelConfiguration(
+        "OverplayUITests",
+        schema: schema,
+        isStoredInMemoryOnly: true,
+        groupContainer: .none,
+        cloudKitDatabase: .none
+    )
+
     static var cloudEnabled: Bool {
-        #if OVERPLAY_DEVELOPMENT
+        #if OVERPLAY_DEVELOPMENT || targetEnvironment(simulator)
         false
         #else
         true

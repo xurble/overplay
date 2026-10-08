@@ -90,6 +90,10 @@ final class AppStartupViewModel {
         } startPlaybackMonitoring: {
             playbackController.startMonitoring(context: modelContext)
         } startPeriodicPlaylistSync: {
+            #if targetEnvironment(simulator)
+            // No Apple Music library to sync against in the simulator.
+            return
+            #endif
             runtime.periodicPlaylistSyncService.start(
                 context: modelContext,
                 playbackController: playbackController

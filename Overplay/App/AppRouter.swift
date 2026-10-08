@@ -6,6 +6,7 @@ struct AppRouter: View {
     @Environment(AppRuntime.self) private var runtime
     @Environment(MusicAuthorizationService.self) private var authorizationService
     @Environment(PlaybackController.self) private var playbackController
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     @AppStorage("overplay.hasPresentedAuthorizedUI") private var hasPresentedAuthorizedUI = false
 
@@ -124,7 +125,9 @@ struct AppRouter: View {
 
     private var playerSheetPresentation: Binding<Bool> {
         Binding {
-            authorizationService.readiness.isReady && runtime.libraryRestoration.isReady && settings != nil
+            // In regular width the player is a column beside the list instead.
+            PlayerPlacement(horizontalSizeClass) == .sheet
+                && authorizationService.readiness.isReady && runtime.libraryRestoration.isReady && settings != nil
                 && !startupViewModel.isPreparingLibrary && startupViewModel.libraryPreparationError == nil
         } set: { _ in
             playerSheetDetent = .height(playerSheetCollapsedHeight)
