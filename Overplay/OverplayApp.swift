@@ -19,6 +19,11 @@ struct OverplayApp: App {
 
     private static func makeModelContainer() throws -> ModelContainer {
         try StartupProfiler.measure("SwiftData model container") {
+            #if targetEnvironment(simulator)
+            if !isRunningTests {
+                return try ModelContainer(for: AppPersistence.schema, configurations: [AppPersistence.simulatorConfiguration])
+            }
+            #endif
             let configuration = try AppPersistence.configuration(
                 isRunningTests: isRunningTests,
                 bundleIdentifier: Bundle.main.bundleIdentifier,
