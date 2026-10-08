@@ -12,50 +12,64 @@ struct SplitAppShell: View {
     @SceneStorage("overplay.splitSelection") private var storedSelection = AppShellDestination.dashboard.storageValue
     @SceneStorage("overplay.showsNowPlayingColumn") private var showsNowPlaying = true
     @State private var totalWidth: CGFloat = 0
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    /// Narrow: whether the sidebar has been slid over the list. Wide: the
+    /// split view's own choice. Visibility is derived from the width each
+    /// time it is read, so a rotation never leaves a stale value behind.
+    @State private var narrowSidebarShown = false
+    @State private var wideVisibility: NavigationSplitViewVisibility = .all
     @State private var detailPath = NavigationPath()
 
     var body: some View {
-        // The player beside the whole split view, never over it. The detail
-        // column's root stays its NavigationStack, so pushes stay in the list.
-        HStack(spacing: 0) {
-            splitView
-            if showsNowPlaying {
-                Divider()
+        // The split view stays the window's root container, which navigation
+        // needs; it is inset by the player's width and the player is drawn in
+        // that space, beside the sidebar and list, never over them.
+        splitView
+            .padding(.trailing, showsNowPlaying ? nowPlayingWidth + 1 : 0)
+            .overlay(alignment: .trailing) {
+                if showsNowPlaying {
+                    HStack(spacing: 0) {
+                        Divider()
+                        NowPlayingColumnView(settings: settings)
+                            .frame(width: nowPlayingWidth)
+                    }
                     .ignoresSafeArea()
-                NowPlayingColumnView(settings: settings)
-                    .frame(width: nowPlayingWidth)
                     .transition(.move(edge: .trailing))
+                }
             }
-        }
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { totalWidth = $0 }
-        .onChange(of: "\(showsNowPlaying) \(Int(totalWidth)) \(Int(nowPlayingWidth))", initial: true) { _, state in
-            Self.logger.info("Now Playing column shown/total/column: \(state, privacy: .public)")
-        }
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { totalWidth = $0 }
+            .onChange(of: "\(showsNowPlaying) \(Int(totalWidth)) \(Int(nowPlayingWidth))", initial: true) { _, state in
+                Self.logger.info("Now Playing column shown/total/column: \(state, privacy: .public)")
+            }
     }
 
     private var splitView: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
+        NavigationSplitView(columnVisibility: columnVisibility) {
             List(selection: selection) {
                 Section {
                     Label("Dashboard", systemImage: "rectangle.grid.2x2")
                         .tag(AppShellDestination.dashboard)
+                        .accessibilityIdentifier("sidebar-dashboard")
                     Label("Search", systemImage: "magnifyingglass")
                         .tag(AppShellDestination.search)
+                        .accessibilityIdentifier("sidebar-search")
                     Label("History", systemImage: "clock.arrow.circlepath")
                         .tag(AppShellDestination.history)
+                        .accessibilityIdentifier("sidebar-history")
                     Label("Settings", systemImage: "gearshape")
                         .tag(AppShellDestination.settings)
+                        .accessibilityIdentifier("sidebar-settings")
                 }
 
                 Section("Playlists") {
                     ForEach(activePlaylists) { playlist in
                         Label(playlist.name, systemImage: playlistIcon(for: playlist))
                             .tag(AppShellDestination.playlist(playlist.id))
+                            .accessibilityIdentifier("sidebar-playlist-\(playlist.name)")
                     }
 
                     Label("Retired", systemImage: "archivebox.fill")
                         .tag(AppShellDestination.retired)
+                        .accessibilityIdentifier("sidebar-retired")
                 }
             }
             .miniPlayerScrollContentInset()
@@ -64,6 +78,8 @@ struct SplitAppShell: View {
         } detail: {
             NavigationStack(path: $detailPath) {
                 detailView
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("detail-\(selectedDestination.storageValue)")
                     .toolbar {
                         ToolbarItem(placement: .primaryAction) {
                             Button {
@@ -76,15 +92,14 @@ struct SplitAppShell: View {
                     }
             }
         }
-        .onChange(of: storedSelection) { _, _ in
+        .onChange(of: storedSelection) { _, newValue in
+            Self.logger.info("Sidebar selection: \(newValue, privacy: .public)")
             detailPath = NavigationPath()
         }
-        .modifier(SplitStyle(sidebarOverlaysList: isNarrow))
-        .onChange(of: isNarrow, initial: true) {
-            // Narrow: list and player share the width; the sidebar slides
-            // in over the list when asked for.
-            columnVisibility = isNarrow ? .detailOnly : .all
+        .onChange(of: detailPath.count) { _, count in
+            Self.logger.info("Detail navigation depth: \(count, privacy: .public)")
         }
+        .modifier(SplitStyle(sidebarOverlaysList: isNarrow))
     }
 
     @ViewBuilder
@@ -121,19 +136,22 @@ struct SplitAppShell: View {
         }
     }
 
-    /// Below this width (portrait on any iPad, a narrower window, likely an
-    /// unfolded phone) three side-by-side columns are too narrow to use.
-    private static let narrowWidth: CGFloat = 1100
+    private var isNarrow: Bool { SplitLayoutPolicy.isNarrow(totalWidth) }
 
-    private var isNarrow: Bool {
-        totalWidth > 0 && totalWidth < Self.narrowWidth
-    }
+    private var nowPlayingWidth: CGFloat { SplitLayoutPolicy.playerWidth(for: totalWidth) }
 
-    /// Narrow: 40% of the width, the list taking the other 60%. Wide: a fixed
-    /// 380 beside the sidebar and list, narrowed only when they would have
-    /// less than 640, never below 280.
-    private var nowPlayingWidth: CGFloat {
-        isNarrow ? (totalWidth * 0.4).rounded() : min(380, max(280, totalWidth - 640))
+    /// Narrow: list and player share the width and the sidebar slides in
+    /// over the list when asked for. Wide: sidebar, list and player.
+    private var columnVisibility: Binding<NavigationSplitViewVisibility> {
+        Binding {
+            SplitLayoutPolicy.visibility(isNarrow: isNarrow, narrowSidebarShown: narrowSidebarShown, wideVisibility: wideVisibility)
+        } set: { newValue in
+            if isNarrow {
+                narrowSidebarShown = newValue != .detailOnly
+            } else {
+                wideVisibility = newValue
+            }
+        }
     }
 
     private var activePlaylists: [PlaylistRecord] {
@@ -186,6 +204,8 @@ struct SplitAppShell: View {
         } set: { newSelection in
             detailPath = NavigationPath()
             storedSelection = (newSelection ?? .dashboard).storageValue
+            // Narrow: the sidebar was slid over the list to choose; close it.
+            if isNarrow { narrowSidebarShown = false }
         }
     }
 }

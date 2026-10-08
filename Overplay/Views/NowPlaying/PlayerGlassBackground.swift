@@ -243,6 +243,8 @@ struct PlayerGlassArtBackground: View {
                 tint
                 if let artwork {
                     NowPlayingArtworkView(urlString: artwork.urlString, playlistID: artwork.playlistID, cornerRadius: 0)
+                        .accessibilityHidden(true)
+                        .allowsHitTesting(false)
                         .frame(width: frame.width, height: frame.height)
                         .blur(radius: Self.blur)
                         .offset(
@@ -255,6 +257,11 @@ struct PlayerGlassArtBackground: View {
             .frame(width: size.width, height: size.height, alignment: .topLeading)
             .clipped()
         }
+        // Decoration only. The art is drawn larger than the player and
+        // clipped, but clipping does not stop it taking taps: without this
+        // it swallowed every tap on the list and sidebar beside the column.
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
             fullHeight = max(fullHeight, size.height)
             backdrop?.artFrame = Self.artFrame(for: size, fullHeight: fullHeight)

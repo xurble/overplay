@@ -28,6 +28,7 @@ struct NowPlayingTrackTextView: View {
     var body: some View {
         VStack(spacing: 8) {
             Text(presentation.title)
+                .accessibilityIdentifier("now-playing-title")
                 .font(titleFont)
                 .playerLegibleForeground(artworkTheme?.trackTitleRGB, fallback: artworkTheme?.trackTitle ?? .primary)
                 .multilineTextAlignment(.center)

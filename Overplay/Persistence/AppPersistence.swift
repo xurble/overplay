@@ -23,6 +23,18 @@ enum AppPersistence {
         cloudKitDatabase: .none
     )
 
+    /// UI tests launch the simulator build with this argument: a fresh
+    /// in-memory sample library each launch, never the simulator's copy.
+    static let uiTestingArgument = "-OverplayUITesting"
+
+    static let uiTestingConfiguration = ModelConfiguration(
+        "OverplayUITests",
+        schema: schema,
+        isStoredInMemoryOnly: true,
+        groupContainer: .none,
+        cloudKitDatabase: .none
+    )
+
     static var cloudEnabled: Bool {
         #if OVERPLAY_DEVELOPMENT || targetEnvironment(simulator)
         false

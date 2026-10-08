@@ -31,7 +31,11 @@ struct NowPlayingColumnView: View {
                     }
                 }
                 .ignoresSafeArea()
+                .accessibilityHidden(true)
+                .allowsHitTesting(false)
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("now-playing-column")
         }
     }
 }
