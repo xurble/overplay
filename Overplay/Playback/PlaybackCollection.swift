@@ -3,7 +3,7 @@ import Foundation
 
 /// An Apple Music collection Overplay plays instead of one of its own
 /// playlists: the current song's album, or its artist (`PLAY-018`).
-struct PlaybackCollection: Codable, Equatable, Sendable {
+nonisolated struct PlaybackCollection: Codable, Equatable, Sendable {
     enum Kind: String, Codable, Sendable {
         case album
         case artistEssentials
@@ -32,6 +32,15 @@ struct PlaybackCollection: Codable, Equatable, Sendable {
         }
     }
 
+    /// One Recents entry per album or artist, whichever artist collection
+    /// played (`PLAY-019`).
+    var groupKey: String {
+        switch kind {
+        case .album: "album:\(catalogID)"
+        case .artistEssentials, .artistTopSongs: "artist:\(catalogID)"
+        }
+    }
+
     /// Reserved, so the intent's playlist reference never matches an
     /// Overplay playlist.
     var reservedPlaylistID: String { "overplay.collection.\(kind.rawValue).\(catalogID)" }
@@ -41,6 +50,8 @@ struct PlaybackCollection: Codable, Equatable, Sendable {
 struct PlaybackCollectionContents {
     var collection: PlaybackCollection
     var tracks: [Track]
+    /// The album cover or artist image, for Recents (`PLAY-019`).
+    var artworkURLTemplate: String? = nil
 }
 
 enum PlaybackCollectionError: LocalizedError, Equatable {
@@ -141,7 +152,8 @@ private enum MusicKitPlaybackCatalog {
             let tracks = try await allTracks(detailed.tracks)
             return PlaybackCollectionContents(
                 collection: PlaybackCollection(kind: .album, catalogID: album.id.rawValue, title: album.title),
-                tracks: tracks
+                tracks: tracks,
+                artworkURLTemplate: artworkURL(album.artwork)
             )
         case .artist:
             guard let artist = song.artists?.first else { throw PlaybackCollectionError.artistNotFound }
@@ -160,7 +172,8 @@ private enum MusicKitPlaybackCatalog {
                 if !tracks.isEmpty {
                     return PlaybackCollectionContents(
                         collection: PlaybackCollection(kind: .artistEssentials, catalogID: artist.id.rawValue, title: artist.name),
-                        tracks: tracks
+                        tracks: tracks,
+                        artworkURLTemplate: artworkURL(artist.artwork)
                     )
                 }
             }
@@ -173,7 +186,8 @@ private enum MusicKitPlaybackCatalog {
             let collapsed = PlaybackCollectionPolicy.collapsingVersions(songs, title: \.title, isrc: \.isrc)
             return PlaybackCollectionContents(
                 collection: PlaybackCollection(kind: .artistTopSongs, catalogID: artist.id.rawValue, title: artist.name),
-                tracks: collapsed.map(Track.song)
+                tracks: collapsed.map(Track.song),
+                artworkURLTemplate: artworkURL(artist.artwork)
             )
         }
     }
@@ -186,6 +200,10 @@ private enum MusicKitPlaybackCatalog {
             for song in songs { result[song.id.rawValue] = .song(song) }
         }
         return result
+    }
+
+    private static func artworkURL(_ artwork: Artwork?) -> String? {
+        artwork?.url(width: 512, height: 512)?.absoluteString
     }
 
     private static func catalogSong(id: String, properties: [PartialMusicAsyncProperty<Song>]) async throws -> Song {

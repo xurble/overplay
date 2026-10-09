@@ -91,4 +91,15 @@ enum CarPlayNowPlayingBackStack {
         guard let playingPlaylistID else { return false }
         return beneathPlaylistID != playingPlaylistID || beneathScope != playingScope
     }
+
+    /// While a Recents entry plays (`PLAY-019`), Back goes to its list and
+    /// then to Recents: the stack must be Recents, the entry, Now Playing.
+    static func needsPlayingRecent(
+        beneathRecentID: UUID?,
+        recentsListBeneathThat: Bool,
+        playingRecentID: UUID?
+    ) -> Bool {
+        guard let playingRecentID else { return false }
+        return beneathRecentID != playingRecentID || !recentsListBeneathThat
+    }
 }

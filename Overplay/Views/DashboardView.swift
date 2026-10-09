@@ -7,6 +7,7 @@ struct DashboardView: View {
 
     @Query(filter: #Predicate<PlaylistRecord> { $0.isActive }, sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
     @Query private var playlistItems: [PlaylistItemRecord]
+    @Query(sort: \RecentCollectionRecord.lastPlayedAt, order: .reverse) private var recentRecords: [RecentCollectionRecord]
     @State private var tracks: [TrackRecord] = []
 
     var settings: OverplaySettings
@@ -69,6 +70,14 @@ struct DashboardView: View {
                         )
                     }
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                }
+            }
+
+            let recents = RecentCollectionRepository.distinct(recentRecords)
+            if !recents.isEmpty {
+                Section("Recents") {
+                    RecentsRowView(recents: recents)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 8, trailing: 0))
                 }
             }
         }

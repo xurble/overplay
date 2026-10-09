@@ -89,6 +89,12 @@ final class CarPlayCoordinator: NSObject {
     // a playlist can be called "Overplay".
     private weak var rootListTemplate: CPListTemplate?
     private weak var visiblePlaylistTemplate: CPListTemplate?
+    // Recents (`PLAY-019`): the list of albums and artists, and the one open.
+    private var recentsRenderer = CarPlayListRenderer()
+    private var recentRenderer = CarPlayListRenderer()
+    private weak var recentsTemplate: CPListTemplate?
+    private weak var visibleRecentTemplate: CPListTemplate?
+    private var visibleRecentID: UUID?
     private var didPresentDeliveryStallAlert = false
     private var libraryChangeObserver: NSObjectProtocol?
     // Shuffle and repeat are player modes; they work before the library is restored.
@@ -142,6 +148,8 @@ final class CarPlayCoordinator: NSObject {
         isPlacingPlayingPlaylist = false
         rootRenderer.stop()
         playlistRenderer.stop()
+        recentsRenderer.stop()
+        recentRenderer.stop()
         libraryRefreshTask?.cancel()
         libraryRefreshTask = nil
         refreshTask?.cancel()
@@ -156,6 +164,9 @@ final class CarPlayCoordinator: NSObject {
         visiblePlaylistID = nil
         rootListTemplate = nil
         visiblePlaylistTemplate = nil
+        recentsTemplate = nil
+        visibleRecentTemplate = nil
+        visibleRecentID = nil
         lastNowPlayingButtonSignature = nil
         lastNowPlayingPlaylistID = nil
         displayedActions = []
@@ -168,6 +179,11 @@ final class CarPlayCoordinator: NSObject {
         playlistRenderer.stop()
         visiblePlaylistID = nil
         visiblePlaylistTemplate = nil
+        recentsRenderer.stop()
+        recentRenderer.stop()
+        recentsTemplate = nil
+        visibleRecentTemplate = nil
+        visibleRecentID = nil
         rootRenderer.stop()
         rootRenderer = CarPlayListRenderer()
         let template = CPListTemplate(title: "Overplay", sections: [])
@@ -213,6 +229,15 @@ final class CarPlayCoordinator: NSObject {
             if let retired = summaries.first(where: { $0.playbackScope == .retired }) {
                 sections.append(Section(id: "retired", header: "Retired", rows: [row(retired)]))
             }
+            // Recents (`PLAY-019`): one row, like the playlists, opening the list.
+            if let modelContext, let recents = try? RecentCollectionRepository.recents(in: modelContext), !recents.isEmpty {
+                actions["recents"] = { [weak self] in self?.showRecents() }
+                let count = recents.count == 1 ? "1 album or artist" : "\(recents.count) albums and artists"
+                sections.append(Section(id: "recents", header: "Recents", rows: [Row(
+                    id: "recents", title: "Recents", detail: count, isPlaying: isPlayingRecent, disclosure: true,
+                    artwork: .track(url: recents[0].artworkURLTemplate, playlistID: recents[0].collection.reservedPlaylistID)
+                )]))
+            }
             if sections.isEmpty {
                 sections = [Section(id: "empty", rows: [Row(id: "empty", title: "No linked playlists",
                     detail: "Open Overplay on iPhone to choose playlists.", isEnabled: false)])]
@@ -233,6 +258,143 @@ final class CarPlayCoordinator: NSObject {
             title: title,
             message: playbackController?.statusMessage ?? "Apple Music playback could not start."
         )
+    }
+
+    private var isPlayingRecent: Bool {
+        playbackController?.currentTrack != nil && playbackController?.playingCollectionGroupKey != nil
+    }
+
+    // MARK: - Recents (`PLAY-019`)
+
+    private func showRecents() {
+        guard runtime?.libraryRestoration.isReady == true, let interfaceController else { return }
+        interfaceController.pushTemplate(makeRecentsTemplate(), animated: true, completion: nil)
+    }
+
+    private func makeRecentsTemplate() -> CPListTemplate {
+        recentsRenderer.stop()
+        recentsRenderer = CarPlayListRenderer()
+        let template = CPListTemplate(title: "Recents", sections: [])
+        updateRecentsList(template)
+        recentsTemplate = template
+        return template
+    }
+
+    private func updateRecentsList(_ template: CPListTemplate) {
+        guard let modelContext, let playbackController else { return }
+        typealias Row = CarPlayListPresentation.Row
+        var actions: [String: @MainActor () async -> Void] = [:]
+        let recents = (try? RecentCollectionRepository.recents(in: modelContext)) ?? []
+        let rows = recents.map { recent -> Row in
+            let recentID = recent.id
+            actions[recent.groupKey] = { [weak self] in self?.showRecent(recentID) }
+            return Row(id: recent.groupKey, title: recent.title, detail: RecentCollectionPresentation.subtitle(for: recent),
+                isPlaying: RecentCollectionPresentation.isPlaying(recent, controller: playbackController), disclosure: true,
+                artwork: .track(url: recent.artworkURLTemplate, playlistID: recent.collection.reservedPlaylistID))
+        }
+        recentsRenderer.update(.init(sections: [.init(id: "recents", rows: rows.isEmpty
+            ? [Row(id: "empty", title: "No recent albums or artists", isEnabled: false)] : rows)]),
+            on: template, actions: actions)
+    }
+
+    private func showRecent(_ id: UUID) {
+        guard runtime?.libraryRestoration.isReady == true, let interfaceController, let modelContext,
+              let recent = try? RecentCollectionRepository.recent(id: id, in: modelContext) else {
+            refreshLibraryLists()
+            return
+        }
+        interfaceController.pushTemplate(makeRecentTemplate(recent), animated: true, completion: nil)
+    }
+
+    private func makeRecentTemplate(_ recent: RecentCollectionRecord) -> CPListTemplate {
+        recentRenderer.stop()
+        recentRenderer = CarPlayListRenderer()
+        let template = CPListTemplate(title: recent.title, sections: [])
+        visibleRecentID = recent.id
+        updateRecentList(template, recent: recent)
+        visibleRecentTemplate = template
+        return template
+    }
+
+    /// Shuffle and Play, then the saved songs, like a playlist's list.
+    private func updateRecentList(_ template: CPListTemplate, recent: RecentCollectionRecord) {
+        guard let modelContext, let playbackController else { return }
+        typealias Row = CarPlayListPresentation.Row
+        let recentID = recent.id
+        let playlistID = recent.collection.reservedPlaylistID
+        var actions: [String: @MainActor () async -> Void] = [
+            "shuffle": { [weak self] in await self?.playRecent(recentID, startingAt: nil) }
+        ]
+        let songs = RecentCollectionPresentation.songs(for: recent, in: modelContext)
+        let rows: [Row] = songs.prefix(max(0, CPListTemplate.maximumItemCount - 1)).map { song in
+            actions[song.catalogID] = { [weak self] in await self?.playRecent(recentID, startingAt: song.catalogID) }
+            return Row(id: song.catalogID, title: song.summary.title, detail: song.summary.detailText,
+                isPlaying: RecentCollectionPresentation.isCurrent(song, in: recent, controller: playbackController),
+                artwork: .track(url: song.summary.artworkURLString, playlistID: playlistID))
+        }
+        recentRenderer.update(.init(sections: [
+            .init(id: "actions", rows: [Row(id: "shuffle", title: "Shuffle and Play",
+                isEnabled: !rows.isEmpty, artwork: .symbol("shuffle"))]),
+            .init(id: "tracks", rows: rows.isEmpty
+                ? [Row(id: "empty", title: "No songs saved", isEnabled: false)] : rows)
+        ]), on: template, actions: actions)
+    }
+
+    /// The shared Recents action (`SURFACE-003`); CarPlay only presents the outcome.
+    private func playRecent(_ id: UUID, startingAt catalogSongID: String?) async {
+        guard runtime?.libraryRestoration.isReady == true, let playbackController, let modelContext,
+              let recent = try? RecentCollectionRepository.recent(id: id, in: modelContext) else {
+            refreshLibraryLists()
+            return
+        }
+        let started = await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+            await playbackController.playRecent(recent, startingAt: catalogSongID, context: modelContext)
+        }
+        refreshAfterTrackAction()
+        if started {
+            showNowPlaying()
+        } else if playbackController.playbackFailure == nil {
+            showPlaybackFailure(title: "Playback failed")
+        }
+    }
+
+    /// Back from Now Playing while an album or artist plays goes to its list,
+    /// then Recents, then the root, however Now Playing was opened.
+    private func placePlayingRecentBeneathNowPlaying(_ groupKey: String) {
+        guard !isPlacingPlayingPlaylist, runtime?.libraryRestoration.isReady == true,
+              let interfaceController, let modelContext,
+              interfaceController.topTemplate === CPNowPlayingTemplate.shared,
+              let recent = (try? RecentCollectionRepository.recents(in: modelContext))?.first(where: { $0.groupKey == groupKey })
+        else { return }
+        let templates = interfaceController.templates
+        let beneath = templates.count >= 2 ? templates[templates.count - 2] : nil
+        let belowThat = templates.count >= 3 ? templates[templates.count - 3] : nil
+        let beneathIsVisibleRecent = beneath != nil && beneath === visibleRecentTemplate
+        guard CarPlayNowPlayingBackStack.needsPlayingRecent(
+            beneathRecentID: beneathIsVisibleRecent ? visibleRecentID : nil,
+            recentsListBeneathThat: belowThat != nil && belowThat === recentsTemplate,
+            playingRecentID: recent.id
+        ) else { return }
+
+        let recentsList = makeRecentsTemplate()
+        let recentList = makeRecentTemplate(recent)
+        isPlacingPlayingPlaylist = true
+        interfaceController.popToRootTemplate(animated: false) { [weak self, weak interfaceController] _, _ in
+            Task { @MainActor in
+                guard let interfaceController else { self?.isPlacingPlayingPlaylist = false; return }
+                interfaceController.pushTemplate(recentsList, animated: false) { _, _ in
+                    Task { @MainActor in
+                        interfaceController.pushTemplate(recentList, animated: false) { _, _ in
+                            Task { @MainActor in
+                                interfaceController.pushTemplate(CPNowPlayingTemplate.shared, animated: false) { _, _ in
+                                    Task { @MainActor in self?.isPlacingPlayingPlaylist = false }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func isCurrentPlaylist(_ summary: PlaylistSummaryPresentation) -> Bool {
@@ -306,6 +468,10 @@ final class CarPlayCoordinator: NSObject {
     /// playing on connect) that template is the root list. Put the playing
     /// playlist underneath instead, so Back always returns to it.
     private func placePlayingPlaylistBeneathNowPlaying() {
+        if let groupKey = playbackController?.playingCollectionGroupKey {
+            placePlayingRecentBeneathNowPlaying(groupKey)
+            return
+        }
         guard !isPlacingPlayingPlaylist, runtime?.libraryRestoration.isReady == true,
               let interfaceController, let modelContext,
               interfaceController.topTemplate === CPNowPlayingTemplate.shared,
@@ -815,6 +981,17 @@ final class CarPlayCoordinator: NSObject {
 
         if let rootListTemplate {
             updateRootList(rootListTemplate)
+        }
+
+        if listTemplate === recentsTemplate {
+            updateRecentsList(listTemplate)
+            return
+        }
+        if listTemplate === visibleRecentTemplate {
+            guard let visibleRecentID, let modelContext,
+                  let recent = try? RecentCollectionRepository.recent(id: visibleRecentID, in: modelContext) else { return }
+            updateRecentList(listTemplate, recent: recent)
+            return
         }
 
         guard listTemplate === visiblePlaylistTemplate,

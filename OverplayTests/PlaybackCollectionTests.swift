@@ -58,6 +58,7 @@ struct PlaybackCollectionTests {
         let catalog = FakePlaybackCatalog()
         catalog.contents[.album] = try album ?? FakePlaybackCatalog.album()
         fixture.controller.playbackCatalog = catalog.catalog
+        fixture.controller.collectionTrackCache = DevicePlaybackCache(directory: nil)
         return catalog
     }
 
@@ -278,6 +279,8 @@ struct PlaybackCollectionTests {
                                             preparePlaybackTracks: { _, _ in }, sleep: PlaybackFixture.manualSampling)
         let catalog = try catalog(for: fixture)
         relaunched.playbackCatalog = catalog.catalog
+        // A device that has not played these songs looks them up.
+        relaunched.collectionTrackCache = DevicePlaybackCache(directory: nil)
         defer { relaunched.stopMonitoring() }
         relaunched.restoreLocalPlaybackDisplay(context: fixture.context)
         relaunched.startMonitoring(context: fixture.context)

@@ -31,6 +31,7 @@ nonisolated struct LibraryPresentationChange: Sendable {
 
     var affectsLibrary: Bool {
         affectsArtwork || entityNames?.contains("ApplePlayCountRecord") == true
+            || entityNames?.contains("RecentCollectionRecord") == true
     }
 
     var affectsArtwork: Bool {

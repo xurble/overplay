@@ -97,7 +97,8 @@ Music's global play count or skip count.
 | `LOAD-001` | Overplay adds no avoidable Apple Music load during playback: no steady-state queue enumeration, bulk Apple play-count refresh at most every 15 minutes and never while playing, library discovery scans at most every 6 hours, and no background MusicKit work while a playback failure is active. | `Overplay/Services/ApplePlayCountSyncService.swift`, `Overplay/Services/PeriodicPlaylistSyncService.swift` |
 | `CAR-002` | Presented menus retain row and artwork identity. Only changed visible values are published; section replacement requires structural change. Presentation reads never mutate playback or persistence. | `Overplay/CarPlaySupport/CarPlayListRenderer.swift` |
 | `PLAY-018` | Now Playing in the app and CarPlay plays the current song's album from track 1, or its artist's Essentials playlist, else its Top Songs with versions collapsed, through one shared start. Tracked songs are counted and curated as usual; untracked songs offer Add to Triage and Add to One True Playlist. A failed lookup changes nothing. | `Overplay/Playback/PlaybackCollection.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/PlaybackCollectionTests.swift` |
-| `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing; Play Album and Play Artist add one action list above it (`PLAY-018`). | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
+| `PLAY-019` | Recents keeps the 10 most recently played albums and artists, synced through iCloud, one per album or artist, newest first. The main screen shows them as one scrolling row of artwork and CarPlay as a Recents menu; each opens its saved songs with Shuffle and Play, played through the shared selection action and from this device's saved tracks. | `Overplay/Persistence/RecentCollectionRepository.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/RecentsTests.swift` |
+| `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing; Play Album and Play Artist add one action list above it (`PLAY-018`), and Recents adds one level under the root (`PLAY-019`). | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
 | `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
 | `HISTORY-001` | History is filterable and paged. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. History is never the source of counts. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
 | `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, playlist selection, MusicKit diagnostics, and the diagnostic Now Playing mirror. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
@@ -1063,8 +1064,9 @@ Titles never decide it.
   the actions are available. It pushes a list titled with the song, with two
   rows, "Play album *title*" and "Play *artist*". Choosing a row runs the
   shared action and returns to Now Playing; a failed lookup shows an alert,
-  and a shared playback failure its own alert. This action
-  list is the one exception to the three-level navigation of `CAR-001`. Add to
+  and a shared playback failure its own alert. This action list is an
+  exception to the three-level navigation of `CAR-001`; Recents is the other
+  (`PLAY-019`). Add to
   Triage and Add to One True Playlist are Now Playing custom buttons in the
   slots Promote and Retire use (see `TODO.md` §3).
 - **Siri:** "play this album" and "play this artist" belong with Siri Playlist
@@ -1085,6 +1087,72 @@ Titles never decide it.
 - Whether adding to a playlist works on My Mac (Designed for iPad), where
   playlist edits crash. If it does not, Add to One True Playlist is disabled
   there.
+
+## Recents
+
+Specified and implemented 2026-10-09 (`PLAY-019`, #87).
+
+Recents keeps the albums and artists the user played most recently, so they can
+be played again from the main screen or CarPlay.
+
+### The list (`PLAY-019`)
+
+- An album or artist is added when it starts playing, from Play Album or Play
+  Artist on Now Playing, or from Recents itself. Playing one already listed
+  moves it to first place. The list holds 10; adding an eleventh removes the
+  oldest.
+- There is one entry per album or artist. An artist is one entry whether its
+  Essentials or its Top Songs played.
+- Each entry saves its songs (catalog ID, title, artist, album, artwork,
+  duration) and the album cover or artist image. A later play without an image
+  keeps the saved one; an artist without one uses its first song's cover.
+- There is no manual remove or clear. An empty list is not shown.
+
+### Sync
+
+Entries are `RecentCollectionRecord`s in the CloudKit-backed SwiftData store,
+so every device shows the same list. CloudKit cannot enforce uniqueness, so two
+devices can each insert the same album: reads show the newest copy of each
+album or artist, and the next entry recorded on any device deletes the older
+copies and anything past 10. Reads never write. A database reset deletes the
+list.
+
+**Before release:** the record type must be deployed to the production
+CloudKit schema.
+
+### Playing an entry
+
+- **Shuffle and Play** starts the entry's saved songs shuffled, as a
+  playlist's does.
+- **A song** follows the playlist selection rules (`SURFACE-003`), through the
+  same shared decision: the current song resumes, a song in the live queue is
+  selected in place, and anything else starts the entry at that song.
+- Recents plays the saved songs. Only Play Album and Play Artist on Now Playing
+  look the album or artist up again, replacing the saved songs.
+- Each device keeps the native tracks of the album and artist songs it has
+  queued, keyed by catalog song ID, in the device playback cache. An entry
+  this device has played, and its recovery, needs no network. Songs it has not
+  played are looked up once; if that fails, nothing changes and the reason is
+  shown.
+- Recording an entry is additive: a failure to record never affects playback.
+
+### Surfaces
+
+- **iPhone and iPad:** a Recents section under the One True Playlist, Triage
+  and Retired: one horizontally scrolling row of artwork tiles (album covers
+  square, artist images round) with the title and "Album" or "Artist", and a
+  marker on the one playing. A tile opens the entry's song list: Shuffle and
+  Play at the top, then the songs, with counts and retired state for songs
+  Overplay tracks.
+- **CarPlay:** a Recents row under the playlists on the root (hidden when
+  empty) opens the list of up to 10 entries, each opening its songs with
+  Shuffle and Play at the top, and then Now Playing.
+- **CarPlay Back:** while an entry plays, Back from Now Playing goes to that
+  entry's songs, then to Recents, then to the root, however Now Playing was
+  opened: from Recents, from CarPlay's Now Playing button or on connect, or
+  after Play Album or Play Artist. When the stack is not already Recents, the
+  entry and Now Playing, Overplay rebuilds it without animation, as it does
+  for the playing playlist.
 
 ## Play/Skip History
 
@@ -2341,7 +2409,9 @@ and transport commands belong to the `ApplicationMusicPlayer` host
 
 Navigation is three levels and nothing more (`CAR-001`): the root lists the
 One True Playlist, Triage and Retired, a collection lists its
-tracks, and a track opens Now Playing. There are no shuffle rows and no
+tracks, and a track opens Now Playing. Two exceptions: Recents adds one level
+(root, Recents, an album or artist, Now Playing; `PLAY-019`), and Play Album
+and Play Artist open an action list over Now Playing (`PLAY-018`). There are no shuffle rows and no
 one-tap play row — a driver should not have to read a menu to tell two
 similar entries apart.
 

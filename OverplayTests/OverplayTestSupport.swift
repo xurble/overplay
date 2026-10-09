@@ -13,7 +13,8 @@ enum OverplayTestSupport {
             PlaylistItemRecord.self,
             ApplePlayCountRecord.self,
             HistoryEvent.self,
-            ListenEvent.self
+            ListenEvent.self,
+            RecentCollectionRecord.self
         ])
         let configuration = ModelConfiguration(
             schema: schema,

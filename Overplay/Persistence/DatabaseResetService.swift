@@ -19,6 +19,7 @@ enum DatabaseResetService {
 
     @MainActor
     private static func deleteAllRecords(in context: ModelContext) throws {
+        try context.delete(model: RecentCollectionRecord.self)
         try context.delete(model: ApplePlayCountRecord.self)
         try context.delete(model: ListenEvent.self)
         try context.delete(model: HistoryEvent.self)
