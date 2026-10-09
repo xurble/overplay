@@ -40,13 +40,15 @@ struct PlaylistTrackRowView: View {
                         ),
                         lineLimit: 2
                     )
-                    Text(summary.playSkipMetricLabel)
-                        .lineLimit(1)
-                        .layoutPriority(1)
-                        .help("Plays: Overplay / Apple Music")
-                        .accessibilityLabel(PlayCountPresentation.accessibilityLabel(
-                            overplay: summary.playthroughCount, apple: summary.applePlayCount, skips: summary.skipCount
-                        ))
+                    if summary.isTracked {
+                        Text(summary.playSkipMetricLabel)
+                            .lineLimit(1)
+                            .layoutPriority(1)
+                            .help("Plays: Overplay / Apple Music")
+                            .accessibilityLabel(PlayCountPresentation.accessibilityLabel(
+                                overplay: summary.playthroughCount, apple: summary.applePlayCount, skips: summary.skipCount
+                            ))
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)

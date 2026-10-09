@@ -260,6 +260,10 @@ struct TrackPlaybackFactsView: View {
                 .accessibilityLabel(PlayCountPresentation.accessibilityLabel(
                     overplay: presentation.playthroughCount, apple: presentation.applePlayCount, skips: presentation.skipCount
                 ))
+                // A song Overplay does not track has no counts. The space is
+                // kept so the controls do not move between songs.
+                .opacity(presentation.isTracked ? 1 : 0)
+                .accessibilityHidden(!presentation.isTracked)
 
             if presentation.isEvicted {
                 let badge = TrackStateBadgePresentation(isEvicted: true)

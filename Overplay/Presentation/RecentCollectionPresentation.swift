@@ -38,7 +38,8 @@ enum RecentCollectionPresentation {
                 skipCount: item?.skipCount ?? 0,
                 playthroughCount: item?.playthroughCount ?? 0,
                 applePlayCount: item?.applePlayCount,
-                isRetired: item?.evictedAt != nil
+                isRetired: item?.evictedAt != nil,
+                isTracked: item != nil
             ))
         }
     }

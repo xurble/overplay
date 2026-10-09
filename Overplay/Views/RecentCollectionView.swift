@@ -12,18 +12,46 @@ struct RecentCollectionView: View {
 
     var body: some View {
         List {
+            // The same header as a playlist: artwork, kind, title, Shuffle and Play.
             Section {
-                Button {
-                    Task { await playbackController.playRecent(recent, startingAt: nil, context: modelContext) }
-                } label: {
-                    Label("Shuffle and Play", systemImage: "shuffle")
-                        .font(.headline)
+                VStack(alignment: .leading, spacing: 14) {
+                    ArtworkView(urlString: recent.artworkURLTemplate, pixelSize: 512,
+                                playlistID: recent.collection.reservedPlaylistID, cornerRadius: 16)
+                        .aspectRatio(1, contentMode: .fit)
+                        .frame(maxWidth: 420)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(RecentCollectionPresentation.subtitle(for: recent),
+                              systemImage: recent.collection.kind == .album ? "square.stack" : "music.mic")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(recent.title)
+                            .font(.title2.bold())
+                    }
+
+                    Button {
+                        Task { await playbackController.playRecent(recent, startingAt: nil, context: modelContext) }
+                    } label: {
+                        Label("Shuffle and Play", systemImage: "shuffle")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(songs.isEmpty)
+                    .accessibilityIdentifier("recent-shuffle-and-play")
+
+                    if let statusMessage = playbackController.statusMessage {
+                        Text(statusMessage)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .disabled(songs.isEmpty)
-                .accessibilityIdentifier("recent-shuffle-and-play")
+                .padding(.vertical, 4)
             }
 
-            Section(RecentCollectionPresentation.subtitle(for: recent)) {
+            Section("Songs") {
                 ForEach(songs) { song in
                     Button {
                         Task { await playbackController.playRecent(recent, startingAt: song.catalogID, context: modelContext) }
@@ -35,13 +63,7 @@ struct RecentCollectionView: View {
                         )
                     }
                     .buttonStyle(.plain)
-                }
-            }
-
-            if let statusMessage = playbackController.statusMessage {
-                Section {
-                    Text(statusMessage)
-                        .foregroundStyle(.secondary)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
                 }
             }
         }

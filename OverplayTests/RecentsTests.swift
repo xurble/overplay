@@ -163,6 +163,24 @@ struct RecentsTests {
         #expect(try RecentCollectionRepository.recents(in: fixture.context).map(\.catalogID) == ["album-1", "later"])
     }
 
+    @Test func onlySongsOverplayTracksShowCounts() async throws {
+        let (fixture, _) = try await playingAlbum()
+        defer { fixture.cleanUp() }
+        let recent = try #require(try RecentCollectionRepository.recents(in: fixture.context).first)
+
+        let songs = RecentCollectionPresentation.songs(for: recent, in: fixture.context)
+
+        #expect(songs.map(\.summary.isTracked) == [true, false, false])
+        #expect(songs[0].summary.detailText.contains(songs[0].summary.playSkipMetricLabel))
+        #expect(songs[1].summary.detailText == "Artist 0")
+        // Now Playing: the tracked song shows counts; the next, untracked, does not.
+        #expect(NowPlayingPresentationFactory.presentation(playbackController: fixture.controller, settings: fixture.settings,
+                                                           context: fixture.context).isTracked)
+        await fixture.player.externallyAdvance()
+        #expect(!NowPlayingPresentationFactory.presentation(playbackController: fixture.controller, settings: fixture.settings,
+                                                            context: fixture.context).isTracked)
+    }
+
     @Test func unreachableUnplayedSongsChangeNothing() async throws {
         let (fixture, catalog) = try await playingAlbum()
         defer { fixture.cleanUp() }

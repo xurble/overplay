@@ -14,6 +14,9 @@ struct TrackSummaryPresentation: Equatable, Identifiable, Sendable {
     var provenanceText: String? = nil
     var isPlayable: Bool = true
     var isRetired: Bool = false
+    /// False for an album or artist song Overplay does not track: it has no
+    /// counts to show (`PLAY-019`).
+    var isTracked: Bool = true
 
     var subtitle: String {
         guard let albumTitle, !albumTitle.isEmpty else {
@@ -36,7 +39,7 @@ struct TrackSummaryPresentation: Equatable, Identifiable, Sendable {
         var details = [artistName]
         if isRetired { details.append("Retired") }
         if let provenanceText { details.append(provenanceText) }
-        details.append(playSkipMetricLabel)
+        if isTracked { details.append(playSkipMetricLabel) }
         return details.joined(separator: " - ")
     }
 
