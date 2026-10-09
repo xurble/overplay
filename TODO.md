@@ -43,6 +43,12 @@ Rewrite-specific checks:
   True Playlist and are not counted; tracked songs count; Play after a
   relaunch resumes the album. Check whether Add to One True Playlist works on
   My Mac (Designed for iPad).
+- Recents (`PLAY-019`, #87): an entry plays from the main screen and CarPlay;
+  Back from Now Playing goes to the entry and then Recents, including after
+  Play Album / Play Artist and when CarPlay opens Now Playing itself; an
+  entry played once plays in airplane mode; a second device shows the same
+  list. Deploy `RecentCollectionRecord` to the production CloudKit schema
+  before release.
 
 For every supported action origin — SwiftUI, CarPlay, and the system
 transport controls (Lock Screen, Control Center, headset, or media key) — and

@@ -15,23 +15,35 @@ nonisolated final class DevicePlaybackCache: Sendable {
     static let shared = DevicePlaybackCache(
         directory: URL.cachesDirectory.appendingPathComponent("Overplay/PlaybackTracks", isDirectory: true)
     )
-    private let resources = Mutex<[UUID: Data]>([:])
+    /// Keyed by track UUID, or by `catalog-<song ID>` for album and artist
+    /// songs Overplay does not track (`PLAY-018`).
+    private let resources = Mutex<[String: Data]>([:])
     private let directory: URL?
 
     init(directory: URL? = nil) {
         self.directory = directory
     }
 
-    func data(for id: UUID) -> Data? {
-        if let cached = resources.withLock({ $0[id] }) { return cached }
-        guard let url = fileURL(for: id), let data = try? Data(contentsOf: url) else { return nil }
-        resources.withLock { $0[id] = data }
+    func data(for id: UUID) -> Data? { data(forKey: id.uuidString) }
+
+    func set(_ data: Data?, for id: UUID) { set(data, forKey: id.uuidString) }
+
+    /// A catalog song's native track, so an album or artist plays and
+    /// recovers without the network once played on this device.
+    func data(forCatalogSongID id: String) -> Data? { data(forKey: "catalog-\(id)") }
+
+    func set(_ data: Data?, forCatalogSongID id: String) { set(data, forKey: "catalog-\(id)") }
+
+    private func data(forKey key: String) -> Data? {
+        if let cached = resources.withLock({ $0[key] }) { return cached }
+        guard let url = fileURL(for: key), let data = try? Data(contentsOf: url) else { return nil }
+        resources.withLock { $0[key] = data }
         return data
     }
 
-    func set(_ data: Data?, for id: UUID) {
-        resources.withLock { $0[id] = data }
-        guard let url = fileURL(for: id) else { return }
+    private func set(_ data: Data?, forKey key: String) {
+        resources.withLock { $0[key] = data }
+        guard let url = fileURL(for: key) else { return }
         if let data {
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: url, options: .atomic)
@@ -45,8 +57,9 @@ nonisolated final class DevicePlaybackCache: Sendable {
         if let directory { try? FileManager.default.removeItem(at: directory) }
     }
 
-    private func fileURL(for id: UUID) -> URL? {
-        directory?.appendingPathComponent("\(id.uuidString).json")
+    private func fileURL(for key: String) -> URL? {
+        let safe = key.replacingOccurrences(of: "/", with: "_")
+        return directory?.appendingPathComponent("\(safe).json")
     }
 
     /// A cached track is current only when it decodes and is the song its

@@ -67,6 +67,19 @@ enum TrackRecordRepository {
         return try allTracks(in: context).first { !references.isDisjoint(with: $0.confirmedAliases) }
     }
 
+    /// Tracks by catalog song ID and confirmed catalog alias, for matching a
+    /// whole album or artist in one pass. Titles never match (`PLAY-018`).
+    static func tracksByCatalogID(in context: ModelContext) throws -> [String: TrackRecord] {
+        var records: [String: TrackRecord] = [:]
+        for record in try allTracks(in: context) {
+            let aliases = record.confirmedAliases.filter { $0.domain == .catalogSong }.map(\.value)
+            for id in [record.catalogID].compactMap({ $0 }) + aliases where records[id] == nil {
+                records[id] = record
+            }
+        }
+        return records
+    }
+
     static func track(musicItemID: String, in context: ModelContext) throws -> TrackRecord? {
         try track(catalogID: musicItemID, libraryID: musicItemID, in: context)
     }

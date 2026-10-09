@@ -87,6 +87,8 @@ final class PlaybackController {
     @ObservationIgnored var playlistRebuild = OneTruePlaylistRebuildService()
     /// The Apple Music catalog behind Play Album and Play Artist (`PLAY-018`); injectable for tests.
     @ObservationIgnored var playbackCatalog = PlaybackCatalog.live
+    /// Album and artist songs' native tracks on this device (`PLAY-019`); injectable for tests.
+    @ObservationIgnored var collectionTrackCache = DevicePlaybackCache.shared
     /// Adds a catalog song to an Apple Music playlist; injectable for tests.
     @ObservationIgnored var addCatalogSongToPlaylist: @MainActor (String, PlaylistRecord, ModelContext) async throws -> Void = {
         try await PlaylistMutationService().addCatalogSong(id: $0, to: $1, in: $2)
@@ -179,6 +181,8 @@ final class PlaybackController {
     var currentPlaylistScope: PlaylistPlaybackScope { intent?.scope ?? .active }
     /// The playback context of an album or artist intent (`PLAY-018`).
     var playbackCollectionTitle: String? { intent?.collection?.contextTitle }
+    /// The Recents entry being played, if any (`PLAY-019`).
+    var playingCollectionGroupKey: String? { intent?.collection?.groupKey }
     var nowPlayingDisplayTrack: CurrentPlaybackTrack? { currentTrack }
     var nowPlayingDisplayLocalTrackID: String? { currentMember?.localTrackID }
     var isDeliveryStalled: Bool { playbackFailure != nil }
@@ -908,11 +912,19 @@ final class PlaybackController {
             await startPlayback(playlist, scope: scope, startingTrackID: localTrackID, shuffle: false, context: context)
             return
         }
+        await select(member, in: intent)
+    }
 
+    /// Selecting a member of the live intent, for playlists and Recents alike
+    /// (`SURFACE-003`): the current song resumes, never restarts; another is
+    /// selected in the live queue; one the queue no longer holds is
+    /// resubmitted from.
+    private func select(_ member: PlaybackIntent.Member, in intent: PlaybackIntent) async {
+        let localTrackID = member.localTrackID
         if currentMember?.localTrackID == localTrackID {
             // The current track resumes, never restarts, live queue or not.
             activityLog.record(.playbackSelectionPath, detail: "resumeCurrent")
-            if player.currentEntryID == nil || player.playbackStatus != .playing { await play(context: context) }
+            if let context, player.currentEntryID == nil || player.playbackStatus != .playing { await play(context: context) }
             return
         }
 
@@ -1216,13 +1228,7 @@ final class PlaybackController {
     }
 
     private func resolveCollectionTracks(_ members: [PlaybackIntent.Member]) async -> [String: Track] {
-        let songs: [String: Track]
-        do {
-            songs = try await playbackCatalog.songs(members.compactMap(\.catalogSongID))
-        } catch {
-            activityLog.record(.playbackQueuePreparation, detail: error.localizedDescription, error: error)
-            return [:]
-        }
+        let songs = await collectionTracks(members.compactMap(\.catalogSongID))
         var resolved: [String: Track] = [:]
         for member in members {
             if let id = member.catalogSongID, let track = songs[id], Self.isQueueable(track) {
@@ -1295,20 +1301,117 @@ final class PlaybackController {
             statusMessage = Self.collectionFailureMessage(request, PlaybackCollectionError.empty)
             return false
         }
+        let started = await startCollection(contents.collection, playable: playable, startIndex: 0, shuffle: false)
+        if started {
+            let songs = playable.map { Self.savedSong($0.0) }
+            recordRecent(contents.collection, songs: songs,
+                         artworkURLTemplate: contents.artworkURLTemplate ?? songs.first?.artworkURLTemplate)
+        }
+        return started
+    }
+
+    /// Plays a Recents entry from its saved songs, from any surface
+    /// (`PLAY-019`). Shuffle and Play when `catalogSongID` is nil; otherwise
+    /// the same selection rules as a playlist (`SURFACE-003`): the current song
+    /// resumes, a song in the live intent is selected in place, and anything
+    /// else starts the entry at that song. Songs this device has not played
+    /// are looked up once; a failed lookup changes nothing.
+    @discardableResult
+    func playRecent(_ recent: RecentCollectionRecord, startingAt catalogSongID: String?, context: ModelContext) async -> Bool {
+        adopt(context)
+        let collection = recent.collection
+        let songs = recent.songs
+        let shuffle = catalogSongID == nil
+        if let catalogSongID, let intent, intent.collection?.groupKey == collection.groupKey,
+           let member = intent.members.first(where: { $0.catalogSongID == catalogSongID }) {
+            await select(member, in: intent)
+            recordRecent(collection, songs: songs, artworkURLTemplate: nil)
+            return playbackFailure == nil
+        }
+        activityLog.record(.playbackSelectionPath, detail: "playRecent \(collection.groupKey) shuffle=\(shuffle)")
+        let generationBeforeLookup = startGeneration
+        let resolved = await collectionTracks(songs.map(\.catalogID))
+        guard startGeneration == generationBeforeLookup else { return false }
+        let playable = collectionPlayable(songs.compactMap { resolved[$0.catalogID] })
+        guard !playable.isEmpty else {
+            statusMessage = "Couldn't play \(collection.title): Apple Music didn't return its songs. Check your connection."
+            return false
+        }
+        var startIndex = 0
+        if let catalogSongID {
+            guard let index = playable.firstIndex(where: { $0.0.catalogSongID == catalogSongID }) else {
+                statusMessage = "That song is unavailable in Apple Music right now."
+                return false
+            }
+            startIndex = index
+        }
+        let started = await startCollection(collection, playable: playable, startIndex: startIndex, shuffle: shuffle)
+        if started { recordRecent(collection, songs: songs, artworkURLTemplate: nil) }
+        return started
+    }
+
+    private func startCollection(
+        _ collection: PlaybackCollection, playable: [(PlaybackIntent.Member, Track)], startIndex: Int, shuffle: Bool
+    ) async -> Bool {
         startGeneration &+= 1
         let generation = startGeneration
         let intent = PlaybackIntent(
             id: UUID(),
             createdAt: .now,
-            musicPlaylistID: contents.collection.reservedPlaylistID,
+            musicPlaylistID: collection.reservedPlaylistID,
             scope: .active,
             members: playable.map(\.0),
-            startingLocalTrackID: playable[0].0.localTrackID,
-            collection: contents.collection
+            startingLocalTrackID: shuffle ? nil : playable[startIndex].0.localTrackID,
+            collection: collection
         )
-        await submit(intent, tracks: playable.map(\.1), startIndex: 0, position: 0, shuffle: false, generation: generation)
+        await submit(intent, tracks: playable.map(\.1), startIndex: startIndex, position: 0, shuffle: shuffle,
+                     generation: generation)
         await observePlayer()
         return generation == startGeneration && playbackFailure == nil
+    }
+
+    /// Recents are additive: a failure to record never affects playback.
+    private func recordRecent(_ collection: PlaybackCollection, songs: [PlaybackCollectionSong], artworkURLTemplate: String?) {
+        guard let context = countingContext(), !songs.isEmpty else { return }
+        do {
+            try RecentCollectionRepository.record(collection, songs: songs, artworkURLTemplate: artworkURLTemplate, in: context)
+        } catch {
+            TrackMetadataDiagnostics.log("recents record failed: \(error.localizedDescription)")
+        }
+    }
+
+    private static func savedSong(_ member: PlaybackIntent.Member) -> PlaybackCollectionSong {
+        PlaybackCollectionSong(
+            catalogID: member.catalogSongID ?? member.localTrackID,
+            title: member.title,
+            artistName: member.artistName,
+            albumTitle: member.albumTitle,
+            artworkURLTemplate: member.artworkURLTemplate,
+            durationSeconds: member.durationSeconds
+        )
+    }
+
+    /// Native tracks for catalog songs: this device's cache first, then one
+    /// catalog lookup for the rest, which are then cached (`PLAY-019`).
+    private func collectionTracks(_ catalogIDs: [String]) async -> [String: Track] {
+        var resolved: [String: Track] = [:]
+        for id in catalogIDs {
+            if let data = collectionTrackCache.data(forCatalogSongID: id),
+               let track = try? JSONDecoder().decode(Track.self, from: data), Self.isQueueable(track) {
+                resolved[id] = track
+            }
+        }
+        let missing = catalogIDs.filter { resolved[$0] == nil }
+        guard !missing.isEmpty else { return resolved }
+        do {
+            for (id, track) in try await playbackCatalog.songs(missing) where Self.isQueueable(track) {
+                resolved[id] = track
+                collectionTrackCache.set(try? JSONEncoder().encode(track), forCatalogSongID: id)
+            }
+        } catch {
+            activityLog.record(.playbackQueuePreparation, detail: error.localizedDescription, error: error)
+        }
+        return resolved
     }
 
     static func collectionFailureMessage(_ request: PlaybackCollection.Request, _ error: Error) -> String {
@@ -1321,10 +1424,13 @@ final class PlaybackController {
     /// catalog ID only, never by title.
     private func collectionPlayable(_ tracks: [Track]) -> [(PlaybackIntent.Member, Track)] {
         let context = countingContext()
-        let tracked = context.flatMap { try? Self.trackedRecordsByCatalogID(in: $0) } ?? [:]
+        let tracked = context.flatMap { try? TrackRecordRepository.tracksByCatalogID(in: $0) } ?? [:]
         var seen: Set<String> = []
         return tracks.compactMap { track in
             let catalogID = track.id.rawValue
+            if collectionTrackCache.data(forCatalogSongID: catalogID) == nil {
+                collectionTrackCache.set(try? JSONEncoder().encode(track), forCatalogSongID: catalogID)
+            }
             var member: PlaybackIntent.Member
             if let record = tracked[catalogID], let context,
                let item = try? PlaylistItemRepository.item(trackID: record.id, in: context) {
@@ -1346,17 +1452,6 @@ final class PlaybackController {
             guard seen.insert(member.localTrackID).inserted else { return nil }
             return (member, track)
         }
-    }
-
-    private static func trackedRecordsByCatalogID(in context: ModelContext) throws -> [String: TrackRecord] {
-        var records: [String: TrackRecord] = [:]
-        for record in try TrackRecordRepository.allTracks(in: context) {
-            let aliases = record.confirmedAliases.filter { $0.domain == .catalogSong }.map(\.value)
-            for id in [record.catalogID].compactMap({ $0 }) + aliases where records[id] == nil {
-                records[id] = record
-            }
-        }
-        return records
     }
 
     /// The current song is one Overplay does not track, playing from an
