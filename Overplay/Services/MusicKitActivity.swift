@@ -56,6 +56,18 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     case playbackQueueObservationRebound
     case playbackObservationCoalesced
     case playCountLookupResult
+    /// A player call Overplay is about to wait on. Its completion is listed
+    /// under the call's own operation, so a start with no completion is a
+    /// call that never returned (#84).
+    case playerCallStarted
+    /// An entry change the controller handled: the reported item, the intent
+    /// member it was attributed to, and how (#84).
+    case playerEntryObserved
+    /// The track every Overplay surface shows changed (#84).
+    case nowPlayingDisplayChanged
+    /// Player observation set aside while a start loads its queue (#76),
+    /// listed once per start (#84).
+    case observationHeld
 
 
     // Local performance work; distinct from Apple Music API calls.
@@ -134,7 +146,8 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case .queueCorrelationRejected, .deliveryStallDetected,
              .queueEndObserved, .playerModeObserved,
              .playbackQueueInvalidation, .playbackStateInvalidation, .playbackQueueObservationRebound,
-             .playbackObservationCoalesced, .playCountLookupResult:
+             .playbackObservationCoalesced, .playCountLookupResult,
+             .playerCallStarted, .playerEntryObserved, .nowPlayingDisplayChanged, .observationHeld:
             .playbackDecision
         }
     }
@@ -178,6 +191,10 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case .playbackStateInvalidation: "Player state invalidation"
         case .playbackQueueObservationRebound: "Player queue observation rebound"
         case .playbackObservationCoalesced: "Player invalidation coalesced"
+        case .playerCallStarted: "Player call started"
+        case .playerEntryObserved: "Player entry handled"
+        case .nowPlayingDisplayChanged: "Now Playing display changed"
+        case .observationHeld: "Observation held during start"
 
         case .libraryPlaylistCreate: "Playlist create"
         case .libraryPlaylistEdit: "Playlist rewrite"

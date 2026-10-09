@@ -31,8 +31,9 @@ nonisolated final class MusicKitActivityLog: Sendable {
 
     /// Individually listed calls retained. High-frequency operations are
     /// tallied instead of listed, so this holds a long narrative of the
-    /// calls worth reading one by one.
-    static let defaultMaximumEvents = 250
+    /// calls worth reading one by one. Large enough to hold a listening
+    /// session's entry changes and the failure that ended it (#84).
+    static let defaultMaximumEvents = 1_000
     /// Minutes of tallies retained — long enough to cover a listening
     /// session leading up to a failure.
     static let defaultRetainedMinutes = 240
