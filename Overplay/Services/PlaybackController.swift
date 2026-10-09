@@ -40,6 +40,9 @@ final class PlaybackController {
         /// different song still splits the session.
         var carriedLocalTrackID: String?
         var isAttributed: Bool { play.localTrackID != nil }
+        /// Attributed to a song Overplay tracks. An album or artist intent
+        /// also plays songs it does not, which are never counted (`PLAY-018`).
+        var isTracked: Bool { play.localTrackID.flatMap(UUID.init(uuidString:)) != nil }
     }
 
     private enum SessionEnd {
@@ -82,6 +85,12 @@ final class PlaybackController {
     @ObservationIgnored var remoteMembership = OneTruePlaylistRemoteMembership()
     /// Rebuilds the One True Playlist's Apple Music playlist (`PLAYLIST-009`); injectable for tests.
     @ObservationIgnored var playlistRebuild = OneTruePlaylistRebuildService()
+    /// The Apple Music catalog behind Play Album and Play Artist (`PLAY-018`); injectable for tests.
+    @ObservationIgnored var playbackCatalog = PlaybackCatalog.live
+    /// Adds a catalog song to an Apple Music playlist; injectable for tests.
+    @ObservationIgnored var addCatalogSongToPlaylist: @MainActor (String, PlaylistRecord, ModelContext) async throws -> Void = {
+        try await PlaylistMutationService().addCatalogSong(id: $0, to: $1, in: $2)
+    }
     @ObservationIgnored private let sleep: @MainActor (Duration) async -> Void
 
     // MARK: - Internal state
@@ -162,6 +171,8 @@ final class PlaybackController {
 
     var currentPlaylistID: String? { intent?.musicPlaylistID }
     var currentPlaylistScope: PlaylistPlaybackScope { intent?.scope ?? .active }
+    /// The playback context of an album or artist intent (`PLAY-018`).
+    var playbackCollectionTitle: String? { intent?.collection?.contextTitle }
     var nowPlayingDisplayTrack: CurrentPlaybackTrack? { currentTrack }
     var nowPlayingDisplayLocalTrackID: String? { currentMember?.localTrackID }
     var isDeliveryStalled: Bool { playbackFailure != nil }
@@ -605,7 +616,7 @@ final class PlaybackController {
     }
 
     private func evaluatePlaythroughIfNeeded() {
-        guard let current = session, current.isAttributed, !current.play.hasEvaluated,
+        guard let current = session, current.isTracked, !current.play.hasEvaluated,
               let progress = current.play.progressPercentage,
               let context = countingContext(), let settings = settings(in: context),
               progress >= settings.playthroughThresholdPercentage else { return }
@@ -617,7 +628,7 @@ final class PlaybackController {
             let outcome = try PlaybackSessionEvaluationService.evaluatePlaythroughIfNeeded(
                 session: current.play,
                 currentPlaylistItem: item(for: current, in: context),
-                playlist: try currentPlaylist(in: context),
+                playlist: try countingPlaylist(for: current, in: context),
                 settings: settings,
                 context: context,
                 fallbackLocalTrackID: current.play.localTrackID
@@ -640,6 +651,7 @@ final class PlaybackController {
             TrackMetadataDiagnostics.log("listening not counted: entry \(ended.entryID) was never attributed")
             return
         }
+        guard ended.isTracked else { return }
         if case .changedTrack(backward: true) = end { return }
         guard let context = countingContext(), let settings = settings(in: context) else {
             TrackMetadataDiagnostics.log("listening not counted: library unavailable")
@@ -653,7 +665,7 @@ final class PlaybackController {
                 elapsedSeconds: ended.play.lastObservedPlaybackTime,
                 durationSeconds: ended.play.durationSeconds,
                 currentPlaylistItem: item(for: ended, in: context),
-                playlist: try currentPlaylist(in: context),
+                playlist: try countingPlaylist(for: ended, in: context),
                 settings: settings,
                 naturalCompletion: {
                     if case .queueEnded = end { return true }
@@ -688,6 +700,14 @@ final class PlaybackController {
             -(session.play.lastObservedPlaybackTime + PlaybackReconciliationPolicy.baseToleranceSeconds)
         )
         return lastPlayedAt >= estimatedStart
+    }
+
+    /// The playlist a listen is credited to: the one playing, or for an album
+    /// or artist intent the one that owns the song (`PLAY-018`).
+    private func countingPlaylist(for session: ObservedSession, in context: ModelContext) throws -> PlaylistRecord? {
+        guard intent?.collection != nil else { return try currentPlaylist(in: context) }
+        guard let item = item(for: session, in: context) else { return nil }
+        return try PlaylistRepository.playlist(id: item.playlistID, in: context)
     }
 
     private func item(for session: ObservedSession, in context: ModelContext) -> PlaylistItemRecord? {
@@ -980,18 +1000,26 @@ final class PlaybackController {
     ) async {
         startGeneration &+= 1
         let generation = startGeneration
-        let records = intent.members.compactMap { member -> TrackRecord? in
-            guard let id = UUID(uuidString: member.localTrackID), let context = countingContext() else { return nil }
-            return try? TrackRecordRepository.track(id: id, in: context)
+        let resolved: [String: Track]
+        if intent.collection != nil {
+            // An album or artist is looked up in the catalog again (`PLAY-018`).
+            resolved = await resolveCollectionTracks(intent.members)
+        } else {
+            let records = intent.members.compactMap { member -> TrackRecord? in
+                guard let id = member.trackID, let context = countingContext() else { return nil }
+                return try? TrackRecordRepository.track(id: id, in: context)
+            }
+            var refreshing: Set<UUID> = []
+            if refreshingStart, let id = member?.trackID { refreshing.insert(id) }
+            let tracks = await resolvePlayableTracks(records, refreshing: refreshing,
+                                                     fallbackLocalTrackIDs: intent.members.map(\.localTrackID))
+            resolved = intent.members.reduce(into: [:]) { result, member in
+                if let id = member.trackID, let track = tracks[id] { result[member.localTrackID] = track }
+            }
         }
-        var refreshing: Set<UUID> = []
-        if refreshingStart, let id = member.flatMap({ UUID(uuidString: $0.localTrackID) }) { refreshing.insert(id) }
-        let resolved = await resolvePlayableTracks(records, refreshing: refreshing,
-                                                   fallbackLocalTrackIDs: intent.members.map(\.localTrackID))
         guard generation == startGeneration else { return }
         let playable = intent.members.compactMap { member -> (PlaybackIntent.Member, Track)? in
-            guard let id = UUID(uuidString: member.localTrackID), let track = resolved[id] else { return nil }
-            return (member, track)
+            resolved[member.localTrackID].map { (member, $0) }
         }
         guard !playable.isEmpty else {
             fail(kind: .command, message: "Overplay couldn't prepare this playlist for Apple Music. Check your connection and press Play again.")
@@ -1155,6 +1183,23 @@ final class PlaybackController {
         return resolved
     }
 
+    private func resolveCollectionTracks(_ members: [PlaybackIntent.Member]) async -> [String: Track] {
+        let songs: [String: Track]
+        do {
+            songs = try await playbackCatalog.songs(members.compactMap(\.catalogSongID))
+        } catch {
+            MusicKitActivityLog.shared.record(.playbackQueuePreparation, detail: error.localizedDescription, error: error)
+            return [:]
+        }
+        var resolved: [String: Track] = [:]
+        for member in members {
+            if let id = member.catalogSongID, let track = songs[id], Self.isQueueable(track) {
+                resolved[member.localTrackID] = track
+            }
+        }
+        return resolved
+    }
+
     /// Music videos never enter a playback queue.
     static func isQueueable(_ track: Track) -> Bool {
         VideoTrackPolicy.isSong(track)
@@ -1176,6 +1221,175 @@ final class PlaybackController {
             artworkURLTemplate: record.artworkURLTemplate,
             durationSeconds: record.durationSeconds ?? track.duration
         )
+    }
+
+    // MARK: - Album and artist (`PLAY-018`)
+
+    /// The current song's catalog ID, which Play Album and Play Artist look up.
+    var currentCatalogSongID: String? {
+        if let catalogSongID = currentMember?.catalogSongID { return catalogSongID }
+        let ids = currentMember?.musicItemIDs ?? player.currentEntry?.item.map { $0.identifiers.sorted() } ?? []
+        return ids.first { !$0.isEmpty && !MusicTrackIdentity.isLibraryID($0) }
+    }
+
+    var canPlayCurrentCollection: Bool { currentTrack != nil && currentCatalogSongID != nil }
+
+    /// Play Album or Play Artist for the current song, the one action every
+    /// surface uses. It looks the songs up, then starts a new intent through
+    /// the shared start path. A failed lookup changes nothing and is reported
+    /// through `statusMessage`. Returns whether playback started.
+    @discardableResult
+    func playCurrentCollection(_ request: PlaybackCollection.Request, context: ModelContext) async -> Bool {
+        adopt(context)
+        guard let songID = currentCatalogSongID else {
+            statusMessage = PlaybackCollectionError.songNotInCatalog.localizedDescription
+            return false
+        }
+        MusicKitActivityLog.shared.record(.playbackSelectionPath, detail: "playCollection request=\(request.rawValue)")
+        // Nothing is replaced until the lookup succeeds, so a start in
+        // progress is not disturbed by one that fails.
+        let generationBeforeLookup = startGeneration
+        let contents: PlaybackCollectionContents
+        do {
+            contents = try await playbackCatalog.collection(request, songID)
+        } catch {
+            if startGeneration == generationBeforeLookup { statusMessage = Self.collectionFailureMessage(request, error) }
+            return false
+        }
+        // A newer start or selection happened during the lookup.
+        guard startGeneration == generationBeforeLookup else { return false }
+        let playable = collectionPlayable(contents.tracks.filter(Self.isQueueable))
+        guard !playable.isEmpty else {
+            statusMessage = Self.collectionFailureMessage(request, PlaybackCollectionError.empty)
+            return false
+        }
+        startGeneration &+= 1
+        let generation = startGeneration
+        let intent = PlaybackIntent(
+            id: UUID(),
+            createdAt: .now,
+            musicPlaylistID: contents.collection.reservedPlaylistID,
+            scope: .active,
+            members: playable.map(\.0),
+            startingLocalTrackID: playable[0].0.localTrackID,
+            collection: contents.collection
+        )
+        await submit(intent, tracks: playable.map(\.1), startIndex: 0, position: 0, shuffle: false, generation: generation)
+        await observePlayer()
+        return generation == startGeneration && playbackFailure == nil
+    }
+
+    static func collectionFailureMessage(_ request: PlaybackCollection.Request, _ error: Error) -> String {
+        let what = request == .album ? "the album" : "the artist"
+        return "Couldn't play \(what): \(error.localizedDescription)"
+    }
+
+    /// Members for catalog tracks, in order. A song Overplay tracks carries
+    /// its track ID, so it is counted and curated as usual. Identity is by
+    /// catalog ID only, never by title.
+    private func collectionPlayable(_ tracks: [Track]) -> [(PlaybackIntent.Member, Track)] {
+        let context = countingContext()
+        let tracked = context.flatMap { try? Self.trackedRecordsByCatalogID(in: $0) } ?? [:]
+        var seen: Set<String> = []
+        return tracks.compactMap { track in
+            let catalogID = track.id.rawValue
+            var member: PlaybackIntent.Member
+            if let record = tracked[catalogID], let context,
+               let item = try? PlaylistItemRepository.item(trackID: record.id, in: context) {
+                member = Self.member(for: record, item: item, track: track)
+            } else {
+                member = PlaybackIntent.Member(
+                    localTrackID: PlaybackIntent.Member.untrackedID(catalogID: catalogID),
+                    playlistItemID: nil,
+                    musicItemIDs: [catalogID],
+                    title: track.title,
+                    artistName: track.artistName,
+                    albumTitle: track.albumTitle,
+                    artworkURLTemplate: track.artwork?.url(width: 512, height: 512)?.absoluteString,
+                    durationSeconds: track.duration
+                )
+            }
+            member.catalogSongID = catalogID
+            // A song the collection lists twice plays once.
+            guard seen.insert(member.localTrackID).inserted else { return nil }
+            return (member, track)
+        }
+    }
+
+    private static func trackedRecordsByCatalogID(in context: ModelContext) throws -> [String: TrackRecord] {
+        var records: [String: TrackRecord] = [:]
+        for record in try TrackRecordRepository.allTracks(in: context) {
+            let aliases = record.confirmedAliases.filter { $0.domain == .catalogSong }.map(\.value)
+            for id in [record.catalogID].compactMap({ $0 }) + aliases where records[id] == nil {
+                records[id] = record
+            }
+        }
+        return records
+    }
+
+    /// The current song is one Overplay does not track, playing from an
+    /// album or artist: it offers Add instead of curation.
+    var canAddCurrentToOverplay: Bool {
+        _ = playbackItemMetadataVersion
+        guard intent?.collection != nil, let member = currentMember else { return false }
+        return member.trackID == nil
+    }
+
+    /// Adding to the One True Playlist writes to Apple Music, so it needs a
+    /// managed playlist.
+    func canAddCurrentToOneTruePlaylist(context: ModelContext) -> Bool {
+        canAddCurrentToOverplay && (try? PlaylistRepository.oneTruePlaylist(in: context))?.allowsRemoteWrites == true
+    }
+
+    func addCurrentToTriage(context: ModelContext) async {
+        await addCurrent(toOneTruePlaylist: false, context: context)
+    }
+
+    func addCurrentToOneTruePlaylist(context: ModelContext) async {
+        await addCurrent(toOneTruePlaylist: true, context: context)
+    }
+
+    /// The shared manual-add boundary: Triage is local with explicit keep;
+    /// the One True Playlist is added in Apple Music first. Playback goes on,
+    /// and counting starts with the song's next listening session.
+    private func addCurrent(toOneTruePlaylist: Bool, context: ModelContext) async {
+        adopt(context)
+        guard canAddCurrentToOverplay, let member = currentMember, let catalogID = member.catalogSongID,
+              let context = countingContext() else {
+            statusMessage = "Only a song Overplay doesn't track yet can be added."
+            return
+        }
+        let destination: PlaylistRecord
+        do {
+            if toOneTruePlaylist {
+                guard let otp = try PlaylistRepository.oneTruePlaylist(in: context) else {
+                    throw PlaylistMutationError.oneTruePlaylistMissing
+                }
+                guard otp.allowsRemoteWrites else { throw PlaylistMutationError.playlistIncomingOnly }
+                destination = otp
+            } else {
+                destination = try PlaylistRepository.triageBucket(in: context)
+            }
+        } catch {
+            statusMessage = error.localizedDescription
+            return
+        }
+        let song = SearchSongResult(id: catalogID, title: member.title, artistName: member.artistName,
+                                    albumTitle: member.albumTitle, artworkURL: member.artworkURLTemplate)
+        let mutations = PlaylistMutationService()
+        do {
+            if toOneTruePlaylist { try await addCatalogSongToPlaylist(catalogID, destination, context) }
+            let item = try mutations.recordSuccessfulManualAdd(song, to: destination, in: context)
+            if session?.play.localTrackID == member.localTrackID { markSessionEvaluatedWithoutSkip() }
+            rekeyIntent([member.localTrackID: item.trackID.uuidString])
+            reconcileTrackMembership(context: context)
+            statusMessage = toOneTruePlaylist ? "Added to the One True Playlist." : "Added to Triage."
+        } catch {
+            if toOneTruePlaylist {
+                mutations.recordFailedManualAdd(song, to: destination, message: error.localizedDescription, in: context)
+            }
+            statusMessage = "Couldn't add \(member.title): \(error.localizedDescription)"
+        }
     }
 
     // MARK: - Failure and recovery (`PLAY-014`)
@@ -1569,7 +1783,8 @@ final class PlaybackController {
     /// `PLAY-015`: an entry whose member left the intent's scope is skipped
     /// when it becomes current, rather than mutating the queue in advance.
     private func skipIfMemberLeftScope(entry: PlayerEntrySnapshot) async {
-        guard let member = currentMember, intent != nil, scopeCheckedVisitEntryID != entry.entryID,
+        // An album or artist plays everything in it, retired songs included (`PLAY-018`).
+        guard let member = currentMember, intent != nil, intent?.collection == nil, scopeCheckedVisitEntryID != entry.entryID,
               !skippedEntryIDs.contains(entry.entryID),
               let context = countingContext(), let trackID = UUID(uuidString: member.localTrackID) else { return }
         // Only a definite answer skips: a failed fetch is not "out of scope".
@@ -1648,8 +1863,13 @@ final class PlaybackController {
     }
 
     private func refreshCurrentItem() {
-        guard let member = currentMember, let context = countingContext(), let trackID = UUID(uuidString: member.localTrackID) else {
+        guard let member = currentMember, let context = countingContext() else {
             if currentMember == nil { currentPlaylistItem = nil }
+            return
+        }
+        guard let trackID = member.trackID else {
+            // A song Overplay does not track has no item (`PLAY-018`).
+            currentPlaylistItem = nil
             return
         }
         currentPlaylistItem = try? PlaylistItemRepository.item(trackID: trackID, in: context)
@@ -1743,7 +1963,7 @@ final class PlaybackController {
 
     func capturePlaybackObservation(context: ModelContext) -> PlaybackReconciliationPolicy.Observation? {
         observeModes()
-        guard let intent, let entry = player.currentEntry,
+        guard let intent, intent.collection == nil, let entry = player.currentEntry,
               let member = member(for: entry) ?? attribution?.member(localTrackID: attributedEntries[entry.entryID]) else {
             return nil
         }
@@ -1761,7 +1981,8 @@ final class PlaybackController {
     /// The submitted order. It is the played order only while shuffle is
     /// confirmed off, which the caller checks separately.
     func capturePlaybackOrder(context: ModelContext) -> [PlaybackReconciliationPolicy.OrderedTrack] {
-        intent?.members.map {
+        guard intent?.collection == nil else { return [] }
+        return intent?.members.map {
             PlaybackReconciliationPolicy.OrderedTrack(localTrackID: $0.localTrackID, durationSeconds: $0.durationSeconds)
         } ?? []
     }

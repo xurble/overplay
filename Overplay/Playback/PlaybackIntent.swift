@@ -16,8 +16,17 @@ struct PlaybackIntent: Codable, Equatable, Sendable {
         var albumTitle: String?
         var artworkURLTemplate: String?
         var durationSeconds: Double?
+        /// The catalog song an album or artist intent queued (`PLAY-018`).
+        var catalogSongID: String? = nil
 
         var id: String { localTrackID }
+
+        /// The Overplay track this member is, or nil for a song Overplay does
+        /// not track, which only an album or artist intent holds (`PLAY-018`).
+        var trackID: UUID? { UUID(uuidString: localTrackID) }
+
+        /// The member ID of a song Overplay does not track.
+        static func untrackedID(catalogID: String) -> String { "catalog:\(catalogID)" }
     }
 
     var id: UUID
@@ -26,6 +35,9 @@ struct PlaybackIntent: Codable, Equatable, Sendable {
     var scope: PlaylistPlaybackScope
     var members: [Member]
     var startingLocalTrackID: String?
+    /// Set when the intent plays an album or artist rather than an Overplay
+    /// playlist (`PLAY-018`).
+    var collection: PlaybackCollection? = nil
 
     func member(localTrackID: String?) -> Member? {
         guard let localTrackID else { return nil }

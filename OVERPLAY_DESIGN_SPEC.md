@@ -96,7 +96,8 @@ Music's global play count or skip count.
 | `COUNT-002` | Counted outcomes are immutable ledger events with idempotent session IDs. Displayed counts are derived from the ledger, including absorbed track identities; merges and resets never edit counts. | `Overplay/Services/ListenLedger.swift`, `Overplay/Models/ListenEvent.swift` |
 | `LOAD-001` | Overplay adds no avoidable Apple Music load during playback: no steady-state queue enumeration, bulk Apple play-count refresh at most every 15 minutes and never while playing, library discovery scans at most every 6 hours, and no background MusicKit work while a playback failure is active. | `Overplay/Services/ApplePlayCountSyncService.swift`, `Overplay/Services/PeriodicPlaylistSyncService.swift` |
 | `CAR-002` | Presented menus retain row and artwork identity. Only changed visible values are published; section replacement requires structural change. Presentation reads never mutate playback or persistence. | `Overplay/CarPlaySupport/CarPlayListRenderer.swift` |
-| `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing. | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
+| `PLAY-018` | Now Playing in the app and CarPlay plays the current song's album from track 1, or its artist's Essentials playlist, else its Top Songs with versions collapsed, through one shared start. Tracked songs are counted and curated as usual; untracked songs offer Add to Triage and Add to One True Playlist. A failed lookup changes nothing. | `Overplay/Playback/PlaybackCollection.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/PlaybackCollectionTests.swift` |
+| `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing; Play Album and Play Artist add one action list above it (`PLAY-018`). | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
 | `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
 | `HISTORY-001` | History is filterable and paged. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. History is never the source of counts. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
 | `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, playlist selection, MusicKit diagnostics, and the diagnostic Now Playing mirror. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
@@ -966,6 +967,124 @@ retirement, including failed or incoming-only remote removal, keeps suppression
 until a complete successful OTP snapshot proves absence, or explicit promotion
 supersedes it. Missing MusicKit track relationships or promised next pages are
 errors, not complete empty snapshots. Reviving into Triage does not clear that protection.
+
+## Play Album and Play Artist
+
+Specified and implemented 2026-10-08 (`PLAY-018`, #83). The device evidence at
+the end of this section is still open.
+
+While a song is playing, the user can switch to the album it comes from, or to
+the artist's best-known songs, from Now Playing in the app or in CarPlay.
+
+### Actions (`PLAY-018`)
+
+- **Play Album** plays the current song's catalog album in album order, from
+  its first track.
+- **Play Artist** plays the current song's primary artist:
+  1. the artist's Apple Music **Essentials** playlist, as published, when the
+     catalog has one;
+  2. otherwise the artist's **Top Songs** in Apple's order, deduplicated:
+     versions of one song (remasters, deluxe, single and compilation copies,
+     live recordings, remixes) collapse to the highest-ranked one.
+- Both play everything they contain, including songs retired in Overplay.
+
+Both are one shared controller action used by the app and CarPlay
+(`SURFACE-001`, `SURFACE-003`). It looks up the songs, then starts a new intent
+through the shared start path (`PLAY-005`): pause, submit, wait for the queue
+to load, play, under the same bounded hold. Songs that cannot be prepared are
+left out. Shuffle and repeat are left as they are (`PLAY-004`).
+
+The actions apply to the player-reported current song (`PLAY-011`), whether or
+not it is attributed. They are disabled, not hidden, when nothing is playing or
+the song has no catalog ID. A song the catalog has no album or artist for is a
+failed lookup.
+
+Each lookup is a handful of catalog requests (`LOAD-001`): the song with its
+album or artists; the album's tracks, or the artist's featured playlists,
+playlists and Top Songs; and the Essentials tracks. Paging stops at 200 songs,
+and Top Songs pages stop once 40 songs are in hand.
+
+If the lookup fails or finds no songs, the surface that asked reports it and
+nothing changes: the current queue and intent keep playing. Nothing is retried
+(`PLAY-013`).
+
+### Intent and context
+
+An intent's context is an Overplay playlist and scope, an album (catalog album
+ID and title) or an artist (catalog artist ID, name, and whether Essentials or
+Top Songs was played), with a reserved playlist reference that matches no
+Overplay playlist. Album and artist members carry their catalog song ID. A
+member that is a tracked song carries its local track UUID; an untracked one
+carries `catalog:<song ID>` in its place. A song listed twice is queued once.
+The `PLAY-010` rules are unchanged: only a new submission replaces the intent.
+Play after a relaunch, a queue end or a failure looks the members up in the
+catalog again by their song IDs, rather than in the device playback cache.
+
+Playlist context reads "Album · *title*", "*Artist* Essentials" or
+"*Artist* · Top Songs". An album or artist intent is never the live intent of
+an Overplay list, so selecting a track from a list afterwards starts a new
+playlist intent (`SURFACE-003`).
+
+### Tracked and untracked songs
+
+A song is **tracked** when its catalog song ID is a track's catalog ID or
+confirmed catalog alias (**Track identity**) and that track has an item in the
+One True Playlist, Triage or Retired. This is decided when the intent starts.
+Titles never decide it.
+
+- **Tracked songs** count plays and skips under the normal rules (`COUNT-001`,
+  `COUNT-002`), credited to the playlist that owns the item. Suspended-playback
+  reconciliation does not run for album or artist intents. Now Playing offers
+  the curation actions the song's location
+  normally offers: Retire for an active song, Promote for a Triage song, and
+  Move to Triage or Move to One True Playlist for a retired song. Retiring the
+  current song issues Next (`PLAY-015`).
+- **Untracked songs** are not counted. Now Playing offers **Add to Triage** and
+  **Add to One True Playlist**:
+  - Add to Triage uses the shared manual-add boundary (**Search and manual
+    add**): no remote write, explicit keep intent.
+  - Add to One True Playlist adds the song to the linked Apple Music playlist,
+    then inserts the local item, as Search does. It is offered only when the
+    One True Playlist's write policy is `managed`. On failure it shows a clear
+    error and adds nothing.
+  - Once added, the intent member takes the new track's UUID, the song is
+    tracked and Now Playing shows its new location's actions. Playback goes on.
+    Counting starts with its next listening session.
+- **Unattributed entries** (`PLAY-012`) have curation and add actions disabled
+  and are not counted, as today.
+
+### Surfaces
+
+- **iPhone and iPad:** Now Playing offers Play Album and Play Artist in a menu
+  on its artist and album lines, and shows the album or artist context above
+  the title. Add to Triage and Add to One True Playlist take the place of the
+  curation buttons.
+- **CarPlay:** Now Playing enables the template's album/artist button while
+  the actions are available. It pushes a list titled with the song, with two
+  rows, "Play album *title*" and "Play *artist*". Choosing a row runs the
+  shared action and returns to Now Playing; a failed lookup shows an alert,
+  and a shared playback failure its own alert. This action
+  list is the one exception to the three-level navigation of `CAR-001`. Add to
+  Triage and Add to One True Playlist are Now Playing custom buttons in the
+  slots Promote and Retire use (see `TODO.md` §3).
+- **Siri:** "play this album" and "play this artist" belong with Siri Playlist
+  Management and are not part of `PLAY-018`.
+
+### Open device evidence
+
+- MusicKit has no Essentials field. Overplay looks among the artist's featured
+  playlists and playlists for the one named "*Artist* Essentials" (case- and
+  diacritic-insensitive) that is editorial or curated by Apple Music. Verify on
+  device, in more than one storefront language, that this finds it and nothing
+  else. A miss falls back to Top Songs.
+- How many Top Songs one request returns.
+- Versions collapse by ISRC, or by the title with anything in brackets and
+  anything after " - " removed ("Hey Jude - Remastered 2015", "Let It Be
+  (Live)"). Check this on real artists for songs wrongly merged or missed. It
+  only builds this list. It never establishes Overplay track identity.
+- Whether adding to a playlist works on My Mac (Designed for iPad), where
+  playlist edits crash. If it does not, Add to One True Playlist is disabled
+  there.
 
 ## Play/Skip History
 

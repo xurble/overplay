@@ -119,7 +119,9 @@ enum NowPlayingPresentationFactory {
         return CarPlayNowPlayingButtonSignature(
             hasCurrentTrack: playbackController.currentTrack != nil,
             playlistRole: playbackController.currentPlaylistRole(context: context),
-            isEvicted: playbackController.displayedIsEvicted(context: context)
+            isEvicted: playbackController.displayedIsEvicted(context: context),
+            canAddToOverplay: playbackController.canAddCurrentToOverplay,
+            canAddToOneTruePlaylist: playbackController.canAddCurrentToOneTruePlaylist(context: context)
         )
     }
 

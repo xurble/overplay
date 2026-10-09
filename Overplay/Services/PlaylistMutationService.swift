@@ -227,6 +227,24 @@ struct PlaylistMutationService {
         }
     }
 
+    /// Adds a catalog song Overplay does not track yet to a writable Apple
+    /// Music playlist, as Search does (`PLAY-018`).
+    func addCatalogSong(id songID: String, to playlistRecord: PlaylistRecord, in context: ModelContext) async throws {
+        guard playlistRecord.allowsRemoteWrites else { throw PlaylistMutationError.playlistIncomingOnly }
+        try await PlaylistRemoteMutationCoordinator.shared.perform(playlistID: playlistRecord.musicPlaylistID) {
+            let playlist = try await PlaylistSyncService().loadPlaylist(
+                id: playlistRecord.musicPlaylistID,
+                name: playlistRecord.name,
+                playlistRecord: playlistRecord,
+                in: context
+            )
+            let song = try await song(id: songID)
+            try await MusicKitActivityLog.shared.measure(.libraryPlaylistAddItem) {
+                try await MusicLibrary.shared.add(song, to: playlist)
+            }
+        }
+    }
+
     /// A song already in iCloud's copy, for example one whose earlier
     /// removal could not run, is not added a second time (`PLAYLIST-008`).
     /// When iCloud cannot be checked, adding is the safe default.

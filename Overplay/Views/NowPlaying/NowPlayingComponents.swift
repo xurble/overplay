@@ -24,6 +24,8 @@ struct NowPlayingTrackTextView: View {
     var titleLineLimit: Int? = nil
     var detailLineLimit: Int? = nil
     var artworkTheme: AlbumArtworkTheme?
+    /// The artist and album line opens Play Album and Play Artist (`PLAY-018`).
+    var offersCollectionMenu = false
 
     var body: some View {
         VStack(spacing: 8) {
@@ -35,6 +37,16 @@ struct NowPlayingTrackTextView: View {
                 .lineLimit(titleLineLimit)
                 .minimumScaleFactor(0.78)
 
+            if offersCollectionMenu {
+                PlayCollectionMenuView { artistAndAlbum }
+            } else {
+                artistAndAlbum
+            }
+        }
+    }
+
+    private var artistAndAlbum: some View {
+        VStack(spacing: 8) {
             Text(presentation.artistName)
                 .font(artistFont)
                 .playerLegibleForeground(artworkTheme?.artistNameRGB, fallback: artworkTheme?.artistName ?? .secondary)
@@ -64,6 +76,46 @@ struct NowPlayingTrackTextView: View {
                 .multilineTextAlignment(.center)
                 .lineLimit(detailLineLimit)
                 .minimumScaleFactor(0.82)
+        }
+    }
+}
+
+/// Play Album and Play Artist for the current song, through the shared
+/// controller action every surface uses (`PLAY-018`).
+struct PlayCollectionMenuView<MenuLabel: View>: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(PlaybackController.self) private var playbackController
+
+    @ViewBuilder var label: () -> MenuLabel
+
+    var body: some View {
+        Menu {
+            Button("Play Album", systemImage: "square.stack") { play(.album) }
+            Button("Play Artist", systemImage: "music.mic") { play(.artist) }
+        } label: {
+            label()
+        }
+        .disabled(!playbackController.canPlayCurrentCollection)
+        .accessibilityHint("Plays this song's album or artist")
+    }
+
+    private func play(_ request: PlaybackCollection.Request) {
+        Task { await playbackController.playCurrentCollection(request, context: modelContext) }
+    }
+}
+
+/// The album or artist being played, in place of a playlist name.
+struct PlaybackCollectionContextView: View {
+    @Environment(PlaybackController.self) private var playbackController
+
+    var foreground: Color = .secondary
+
+    var body: some View {
+        if let title = playbackController.playbackCollectionTitle {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(foreground)
+                .lineLimit(1)
         }
     }
 }
@@ -295,7 +347,26 @@ struct TrackActionControlsView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            if isCurrentTrackRetired {
+            if playbackController.canAddCurrentToOverplay {
+                // A song Overplay does not track, from an album or artist (`PLAY-018`).
+                Button {
+                    Task { await playbackController.addCurrentToTriage(context: modelContext) }
+                } label: {
+                    Label("Triage", systemImage: "tray.and.arrow.down.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .accessibilityLabel("Add to Triage")
+                .fullScreenPlayerControlStyle(palette: controlPalette, prominence: .secondary, fallbackStyle: .bordered)
+                Button {
+                    Task { await playbackController.addCurrentToOneTruePlaylist(context: modelContext) }
+                } label: {
+                    Label("Overplay", systemImage: "plus.circle")
+                        .frame(maxWidth: .infinity)
+                }
+                .accessibilityLabel("Add to One True Playlist")
+                .disabled(!playbackController.canAddCurrentToOneTruePlaylist(context: modelContext))
+                .fullScreenPlayerControlStyle(palette: controlPalette, prominence: .secondary, fallbackStyle: .bordered)
+            } else if isCurrentTrackRetired {
                 Button {
                     Task { playbackController.restoreCurrent(context: modelContext) }
                 } label: {
