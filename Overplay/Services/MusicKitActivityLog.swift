@@ -76,6 +76,10 @@ nonisolated final class MusicKitActivityLog: Sendable {
         category: "MusicKitActivity"
     )
     private let state = Mutex(Storage())
+    /// Launch-file writes come from the debounce task, from flushes on the
+    /// main thread and from sharing. Appends, trims and deletes are done one
+    /// at a time, so lines are never torn, lost or split across two files.
+    private let launchLogIO = Mutex(())
     private let fileURL: URL?
     private let launchLogDirectory: URL?
     private let launchStartedAt: Date
@@ -277,7 +281,9 @@ nonisolated final class MusicKitActivityLog: Sendable {
             storage.pendingLaunchEvents = []
             storage.launchLogURL = nil
         }
-        for url in launchLogs() { try? FileManager.default.removeItem(at: url) }
+        launchLogIO.withLock { _ in
+            for url in launchLogs() { try? FileManager.default.removeItem(at: url) }
+        }
         persistNow()
     }
 
@@ -405,6 +411,10 @@ nonisolated final class MusicKitActivityLog: Sendable {
     /// files past the limit; past the size limit it keeps its newest half.
     private func persistLaunchLog() {
         guard let launchLogDirectory else { return }
+        launchLogIO.withLock { _ in appendPendingLaunchEvents(in: launchLogDirectory) }
+    }
+
+    private func appendPendingLaunchEvents(in launchLogDirectory: URL) {
         let pending: (events: [MusicKitActivityEvent], url: URL?) = state.withLock { storage in
             defer { storage.pendingLaunchEvents = [] }
             return (storage.pendingLaunchEvents, storage.launchLogURL)
@@ -421,9 +431,12 @@ nonisolated final class MusicKitActivityLog: Sendable {
             }
             let url = try pending.url ?? createLaunchLog(in: launchLogDirectory)
             let handle = try FileHandle(forWritingTo: url)
-            defer { try? handle.close() }
-            let size = try handle.seekToEnd()
-            try handle.write(contentsOf: data)
+            let size: UInt64
+            do {
+                defer { try? handle.close() }
+                size = try handle.seekToEnd()
+                try handle.write(contentsOf: data)
+            }
             if Int(size) + data.count > maximumLaunchLogBytes {
                 try trimLaunchLog(at: url)
             }

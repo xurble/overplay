@@ -41,8 +41,9 @@ final class AudioSessionEventRecorder {
 
     nonisolated static func describeRouteChange(_ notification: Notification) -> String {
         let reason = (notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) ?? 0
+        // Port types only: port names can be personal ("Someone's AirPods").
         let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
-            .map { "\($0.portType.rawValue):\($0.portName)" }
+            .map(\.portType.rawValue)
             .joined(separator: ",")
         return "route changed reason=\(reason) outputs=\(outputs.isEmpty ? "none" : outputs)"
     }

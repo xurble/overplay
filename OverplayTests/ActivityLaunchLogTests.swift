@@ -51,6 +51,36 @@ struct ActivityLaunchLogTests {
         #expect(first.snapshot().events.map(\.operation) == [.playerPrepare, .playerPlay])
     }
 
+    @Test func concurrentFlushesNeitherTearNorSplitTheFile() async throws {
+        let folder = folder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let launch = log(in: folder)
+        await withTaskGroup(of: Void.self) { group in
+            for writer in 0..<8 {
+                group.addTask {
+                    for index in 0..<50 {
+                        launch.record(.playerPlay, detail: "\(writer)-\(index)")
+                        launch.flush()
+                    }
+                }
+            }
+        }
+        launch.flush()
+        let files = launch.launchLogs()
+        #expect(files.count == 1)
+        let events = try lines(try #require(files.first))
+        #expect(events.count == 400)
+        #expect(Set(events.compactMap(\.detail)).count == 400)
+    }
+
+    @Test func aRepeatedDiagnosticNoteIsPersistedOncePerMinute() {
+        let message = "repeated note \(UUID().uuidString)"
+        let now = Date()
+        #expect(TrackMetadataDiagnostics.shouldPersist(message, now: now))
+        #expect(!TrackMetadataDiagnostics.shouldPersist(message, now: now.addingTimeInterval(30)))
+        #expect(TrackMetadataDiagnostics.shouldPersist(message, now: now.addingTimeInterval(61)))
+    }
+
     @Test func aLaunchThatRecordsNothingLeavesNoFile() {
         let folder = folder()
         defer { try? FileManager.default.removeItem(at: folder) }

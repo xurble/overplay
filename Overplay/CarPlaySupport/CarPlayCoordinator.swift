@@ -732,10 +732,10 @@ final class CarPlayCoordinator: NSObject {
         }
     }
 
-    /// The shared playback failure (`PLAY-014`), once per episode, and again
-    /// if the player becomes stuck (#84), replacing the earlier alert. "Try
-    /// Again" runs the same user-initiated recovery as Play on every other
-    /// surface; a stuck player is not offered it.
+    /// The shared playback failure (`PLAY-014`), once per episode, and again,
+    /// replacing the earlier alert, when the player becomes stuck or answers
+    /// again (#84). "Try Again" runs the same user-initiated recovery as Play
+    /// on every other surface; a stuck player is not offered it.
     private func presentDeliveryStallAlertIfNeeded() {
         guard let playbackController else { return }
         guard let failure = playbackController.playbackFailure else {
