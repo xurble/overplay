@@ -20,7 +20,11 @@ struct NowPlayingColumnView: View {
                     controlSize: .regular,
                     artworkTheme: artworkTheme.isFallback ? nil : artworkTheme
                 )
-                .padding(.bottom, 28)
+                .padding(.bottom, AudioOutputPillView.isAvailable ? 16 : 28)
+                if AudioOutputPillView.isAvailable {
+                    AudioOutputPillView(artworkTheme: artworkTheme)
+                        .padding(.bottom, 28)
+                }
             }
             .background {
                 Group {

@@ -1924,6 +1924,11 @@ Show:
 - Manual retire action for active tracks.
 - Move to Triage and Move to One True Playlist for retired tracks.
 - Promote action when playing from the triage bucket.
+- Audio output: a pill below the playback controls naming the current output
+  (iPhone Speaker, AirPods, an AirPlay device), filled to the system volume. Dragging across it sets the
+  volume; tapping it opens the system route picker, where AirPlay devices are
+  chosen. Output and volume belong to the system: the pill only shows and
+  opens them, and does not configure the audio session or touch playback.
 
 Now Playing displays the player-reported track (`PLAY-011`). When the
 current entry is unattributed, the curation actions are disabled rather than
@@ -1936,6 +1941,8 @@ Platform notes:
 - iPhone should keep Now Playing immersive and touch-first.
 - iPad uses the same persistent mini-player sheet and expandable Now Playing
   surface as iPhone.
+- On Mac (Designed for iPad) the audio output pill is hidden: the Mac has its
+  own output menu, and the system volume cannot be set from the app there.
 - **Planned Mac:** support a compact mini-player style window in addition to the
   full Now Playing view where practical.
 

@@ -9,6 +9,8 @@ struct NowPlayingPaneView: View {
     var settings: OverplaySettings
     var artworkTheme: AlbumArtworkTheme?
     var onArtworkThemeUpdated: (AlbumArtworkTheme) -> Void = { _ in }
+    /// The bottom of the last control, in global coordinates.
+    var onContentBottomChange: ((CGFloat) -> Void)? = nil
 
     @State private var isShowingThemeDiagnostics = false
     @State private var isThemeDiagnosticsLoading = false
@@ -77,6 +79,9 @@ struct NowPlayingPaneView: View {
                         .multilineTextAlignment(.center)
                 }
                 PlaybackFailureRetryView()
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { bottom in
+                onContentBottomChange?(bottom)
             }
             .padding(.horizontal, 24)
             .padding(.top, Self.blend(16, 24, roominess))
