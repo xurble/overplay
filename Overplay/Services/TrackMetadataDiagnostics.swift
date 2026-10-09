@@ -7,7 +7,10 @@ enum TrackMetadataDiagnostics {
         category: "TrackMetadata"
     )
 
+    /// Also kept in the activity log's launch files, so a decision made on a
+    /// device can be read after the fact (#84).
     static func log(_ message: String) {
+        MusicKitActivityLog.shared.record(.diagnosticNote, detail: message)
         #if DEBUG
         logger.debug("\(message, privacy: .public)")
         #endif

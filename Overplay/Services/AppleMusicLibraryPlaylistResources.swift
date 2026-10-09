@@ -17,7 +17,9 @@ enum AppleMusicLibraryPlaylistResources {
 
     static func fetchAll(
         request: (URL) async throws -> Data = { url in
-            try await MusicDataRequest(urlRequest: URLRequest(url: url)).response().data
+            try await MusicKitActivityLog.shared.measure(.libraryPlaylistEnumeration, detail: "web library playlists page") {
+                try await MusicDataRequest(urlRequest: URLRequest(url: url)).response().data
+            }
         }
     ) async throws -> [RemotePlaylistLink] {
         var next: URL? = URL(string: "https://api.music.apple.com/v1/me/library/playlists?limit=100")
@@ -63,7 +65,9 @@ enum AppleMusicLibraryPlaylistResources {
     static func fetchEntries(
         playlistID: String,
         request: (URL) async throws -> Data = { url in
-            try await MusicDataRequest(urlRequest: URLRequest(url: url)).response().data
+            try await MusicKitActivityLog.shared.measure(.playlistTrackFetch, detail: "web playlist entries page") {
+                try await MusicDataRequest(urlRequest: URLRequest(url: url)).response().data
+            }
         }
     ) async throws -> [Entry] {
         struct EntryPage: Decodable { var data: [Entry]; var next: String? }

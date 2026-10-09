@@ -16,6 +16,8 @@ final class SettingsViewModel {
         var rebuildOneTruePlaylist: (ModelContext) async throws -> OneTruePlaylistRebuildService.Result = { _ in
             throw OneTruePlaylistRebuildService.RebuildError.notOnThisDevice
         }
+        /// The activity snapshot and every launch's log, written out first.
+        var shareableActivityLogFiles: () -> [URL] = { [] }
 
         static func live(playbackController: PlaybackController) -> Self {
             Self(
@@ -35,15 +37,16 @@ final class SettingsViewModel {
                     await MusicKitDiagnosticsService().run(settings: settings, context: context)
                 },
                 loadMusicKitActivityReport: {
-                    // The shared log file is then current with the report.
-                    MusicKitActivityLog.shared.flush()
-                    return MusicKitDiagnosticsService().activityReport
+                    MusicKitDiagnosticsService().activityReport
                 },
                 resetMusicKitActivityLog: {
                     MusicKitActivityLog.shared.reset()
                 },
                 rebuildOneTruePlaylist: { context in
                     try await playbackController.rebuildOneTruePlaylist(context: context)
+                },
+                shareableActivityLogFiles: {
+                    MusicKitActivityLog.shared.shareableFiles()
                 }
             )
         }
@@ -54,6 +57,8 @@ final class SettingsViewModel {
     var isRunningMusicKitDiagnostics = false
     var musicKitDiagnosticsReport: String?
     var musicKitActivityReport: MusicKitActivityReport.Summary?
+    /// What Share Activity Log sends, as of the last refresh.
+    var activityLogFiles: [URL] = []
     var message: String?
 
     func saveIfNeeded(
@@ -131,6 +136,7 @@ final class SettingsViewModel {
     /// repeatedly while investigating.
     func refreshMusicKitActivityReport(dependencies: Dependencies) {
         musicKitActivityReport = dependencies.loadMusicKitActivityReport()
+        activityLogFiles = dependencies.shareableActivityLogFiles()
     }
 
     func resetMusicKitActivityLog(dependencies: Dependencies) {

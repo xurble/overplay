@@ -1678,10 +1678,27 @@ only relaunching Overplay helped. A stuck player:
 
 New starts and selections the user asks for still run, so the user is never
 locked out of a player that has come back. Pause, Next, Previous, Shuffle and
-Repeat stay single direct calls. Every unanswered call and late answer is
-recorded as `playerCallStuck`, and each network path change as
-`networkPathChanged`, so a stall can be read against the network it happened
-on. Settings → Apple Music Call Activity can share the full activity log.
+Repeat stay single direct calls.
+
+**Activity logging (#84).** Logging of Apple Music work is as complete as the
+device allows, because failures are read after the fact:
+
+- every MusicKit call (player commands including seeks, catalog, library and
+  web-library requests, library writes, subscription checks) is recorded with
+  its duration, size and outcome. A failure records its whole error chain, not
+  only the top domain and code;
+- every unanswered player call and late answer (`playerCallStuck`), network
+  path change (`networkPathChanged`), audio session event (media services lost
+  or reset, interruption, route change) and note from Overplay's own code
+  (`diagnosticNote`) is recorded too;
+- each launch writes **every** event, high-frequency ones included, to its own
+  file, created on its first event. The ten newest launch files are kept; one
+  past 5 MB keeps its newest half. The summary the in-app report reads still
+  lists 1,000 notable events and tallies the rest;
+- Settings → Apple Music Call Activity → Share Activity Log sends the summary
+  and every launch file. Clear Recorded Activity deletes them.
+
+Logging never affects playback: a write that fails is dropped.
 
 Album and artist intents recover without the network: their songs are cached
 on the device when the intent starts (`PLAY-019`), and rung 3 resubmits from

@@ -59,6 +59,7 @@ struct OverplayApp: App {
             AppRuntime.shared.playbackController.restoreIntent()
             AppRuntime.shared.playbackController.startMonitoring()
             NetworkReachabilityMonitor.shared.start()
+            AudioSessionEventRecorder.shared.start()
         }
     }
 
