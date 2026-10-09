@@ -24,6 +24,8 @@ struct NowPlayingPresentation: Equatable, Sendable {
     let skipCountText: String
     let playSkipMetricText: String
     let isEvicted: Bool
+    /// False for a song Overplay does not track: it has no counts to show.
+    let isTracked: Bool
 
     init(
         trackID: String? = nil,
@@ -40,7 +42,8 @@ struct NowPlayingPresentation: Equatable, Sendable {
         skipCount: Int,
         playthroughCount: Int = 0,
         applePlayCount: Int? = nil,
-        isEvicted: Bool
+        isEvicted: Bool,
+        isTracked: Bool = true
     ) {
         self.trackID = trackID
         self.title = title ?? "Nothing playing"
@@ -65,6 +68,7 @@ struct NowPlayingPresentation: Equatable, Sendable {
         self.skipCountText = Self.pluralized(skipCount, singular: "skip")
         self.playSkipMetricText = PlayCountPresentation.metric(overplay: playthroughCount, apple: applePlayCount, skips: skipCount)
         self.isEvicted = isEvicted
+        self.isTracked = isTracked
     }
 
     static func formatTime(_ seconds: Double) -> String {

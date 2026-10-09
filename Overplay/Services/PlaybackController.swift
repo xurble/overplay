@@ -181,6 +181,10 @@ final class PlaybackController {
     var currentPlaylistScope: PlaylistPlaybackScope { intent?.scope ?? .active }
     /// The playback context of an album or artist intent (`PLAY-018`).
     var playbackCollectionTitle: String? { intent?.collection?.contextTitle }
+    /// Whether the current song is one Overplay tracks, so it has counts to
+    /// show. False while it is unattributed, and for an album or artist song
+    /// Overplay does not track.
+    var isCurrentTracked: Bool { currentMember?.trackID != nil }
     /// The Recents entry being played, if any (`PLAY-019`).
     var playingCollectionGroupKey: String? { intent?.collection?.groupKey }
     var nowPlayingDisplayTrack: CurrentPlaybackTrack? { currentTrack }
