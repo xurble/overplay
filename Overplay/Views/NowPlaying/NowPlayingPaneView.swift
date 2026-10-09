@@ -79,6 +79,7 @@ struct NowPlayingPaneView: View {
                         .multilineTextAlignment(.center)
                 }
                 PlaybackFailureRetryView()
+                SysdiagnoseReminderButtonView()
             }
             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { bottom in
                 onContentBottomChange?(bottom)
