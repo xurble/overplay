@@ -35,7 +35,9 @@ final class SettingsViewModel {
                     await MusicKitDiagnosticsService().run(settings: settings, context: context)
                 },
                 loadMusicKitActivityReport: {
-                    MusicKitDiagnosticsService().activityReport
+                    // The shared log file is then current with the report.
+                    MusicKitActivityLog.shared.flush()
+                    return MusicKitDiagnosticsService().activityReport
                 },
                 resetMusicKitActivityLog: {
                     MusicKitActivityLog.shared.reset()

@@ -2,13 +2,14 @@ import SwiftData
 import SwiftUI
 
 /// The shared playback failure's Try Again action (`PLAY-014`). It runs the
-/// same user-initiated recovery as Play on every other surface.
+/// same user-initiated recovery as Play on every other surface. A stuck
+/// player is not offered it: only relaunching Overplay helps (#84).
 struct PlaybackFailureRetryView: View {
     @Environment(PlaybackController.self) private var playbackController
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
-        if playbackController.playbackFailure != nil {
+        if playbackController.playbackFailure?.offersRetry == true {
             Button {
                 Task { await playbackController.play(context: modelContext) }
             } label: {

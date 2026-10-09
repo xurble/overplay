@@ -120,6 +120,13 @@ struct SettingsView: View {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
 
+                    if let logURL = MusicKitActivityLog.defaultFileURL(),
+                       FileManager.default.fileExists(atPath: logURL.path) {
+                        ShareLink(item: logURL) {
+                            Label("Share Activity Log", systemImage: "square.and.arrow.up")
+                        }
+                    }
+
                     Button(role: .destructive) {
                         viewModel.resetMusicKitActivityLog(dependencies: dependencies)
                     } label: {
@@ -129,7 +136,7 @@ struct SettingsView: View {
             } header: {
                 Text("Apple Music Call Activity")
             } footer: {
-                Text("Every Overplay call into Apple Music is recorded with its size, duration, and outcome, and kept across launches. Reach for this after Apple Music misbehaves system-wide.")
+                Text("Every Overplay call into Apple Music is recorded with its size, duration, and outcome, and kept across launches. Reach for this after Apple Music misbehaves system-wide. Share Activity Log sends the full log as it was at the last refresh.")
                     .font(.caption)
             }
 

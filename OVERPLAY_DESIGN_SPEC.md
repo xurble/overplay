@@ -88,7 +88,7 @@ Music's global play count or skip count.
 | `PLAY-011` | The player is the authority on what is audible. Every Overplay surface displays the player-reported track, position, status and modes, even when the entry cannot be attributed. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-012` | The current entry is attributed to an intent member by identifier, then by unique normalized title/artist with duration corroboration. An unattributed entry is displayed, not counted, and has curation disabled; attribution never clears context. | `Overplay/Playback/PlaybackAttribution.swift` |
 | `PLAY-013` | Every transport command is one direct MusicKit call: no confirmation loop, no rejection of overlapping commands, no automatic queue replacement or retry. Displayed state changes only through observation. | `Overplay/Services/PlaybackController.swift` |
-| `PLAY-014` | Failures are shared across surfaces and recovered only by a user Play press through a bounded ladder (play; prepare and play; resubmit the intent at the current member and position, looking that member's track up again). Pause is never disabled. | `Overplay/Services/PlaybackController.swift` |
+| `PLAY-014` | Failures are shared across surfaces and recovered only by a user Play press through a bounded ladder (play; prepare and play; resubmit the intent at the current member and position, looking that member's track up again). A rung counts once called, so a press while one hangs escalates. A call unanswered for 8 seconds makes the player stuck: advice to relaunch, one rung-3 attempt, then no more calls from Play. Pause is never disabled. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-015` | Membership changes never mutate the live queue. Retiring the current track issues Next; a member that left the scope is skipped when reached; additions appear at the next start. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-016` | Overplay does not write `MPNowPlayingInfoCenter` or register transport `MPRemoteCommandCenter` handlers; the `ApplicationMusicPlayer` host owns system Now Playing. A default-off diagnostic mirror exists only for device verification. | `Overplay/Services/SystemNowPlayingBridge.swift` |
 | `PLAY-017` | Native `Track` objects needed for playback are cached on disk per device; cold launches do not need to re-resolve the whole playlist, a cached track is reused only while it is the song its record names (its library or catalog ID), a library ID that no longer exists in the account library falls back to the record's catalog ID, and unresolvable songs are omitted rather than failing playback, with each omission recorded in the activity log. | `Overplay/Services/DevicePlaybackCache.swift` |
@@ -1646,13 +1646,46 @@ failure stays shown while a rung-3 resubmission prepares. A Play press while it
 prepares supersedes it at rung 3, never rung 2 on the old queue. A more specific
 failure from the resubmission itself is kept. A press within two minutes of an earlier recovery
 starts one rung above the rung that last ran, so a failure that keeps coming
-back reaches rung 3. Resubmitting the track that is playing continues its
+back reaches rung 3. A rung counts as run as soon as Overplay calls it, before
+it answers, so a press while a rung hangs moves to the next rung instead of
+repeating it (#84). A rung that answers after a later press has replaced the
+queue changes nothing. Resubmitting the track that is playing continues its
 listening session instead of judging it. Each Play press runs the ladder at most
 once. If every rung fails, the failure
 remains with guidance that Apple Music is not responding. While a failure is
 active, periodic playlist sync, bulk Apple play-count refresh and artwork
 maintenance pause, so Overplay adds no Apple Music load. Pause is never
 disabled.
+
+**Stuck player (#84).** A `play` or `prepareToPlay` call (from a start, a
+resume, a selection or a recovery rung) that has not answered after 8 seconds
+makes the player **stuck**. On 2026-10-09 one hung `prepareToPlay` was followed
+by every later call hanging too, even after Apple's Music app had recovered;
+only relaunching Overplay helped. A stuck player:
+
+- sets the shared failure with the advice to force-quit Overplay and open it
+  again. No surface offers Try Again: the app hides it, and CarPlay alerts
+  again with this advice and only OK, replacing its earlier alert in the
+  episode;
+- keeps that advice when a later, milder failure arrives, until every stuck
+  call has answered or playback is seen to progress;
+- gets one fresh queue: the first Play press in the episode goes straight to
+  rung 3, because preparing the hung queue again only adds another call to it.
+  After rung 3 has run in the episode, Play makes no Apple Music call while the
+  player stays stuck. It only records the press and repeats the advice;
+- is not retried, and is not stuck any more once its calls answer or playback
+  progresses.
+
+New starts and selections the user asks for still run, so the user is never
+locked out of a player that has come back. Pause, Next, Previous, Shuffle and
+Repeat stay single direct calls. Every unanswered call and late answer is
+recorded as `playerCallStuck`, and each network path change as
+`networkPathChanged`, so a stall can be read against the network it happened
+on. Settings → Apple Music Call Activity can share the full activity log.
+
+Album and artist intents recover without the network: their songs are cached
+on the device when the intent starts (`PLAY-019`), and rung 3 resubmits from
+that cache.
 
 ### Shuffle and repeat (`PLAY-004`)
 
@@ -1934,7 +1967,8 @@ Now Playing displays the player-reported track (`PLAY-011`). When the
 current entry is unattributed, the curation actions are disabled rather than
 hidden. The standard media controls call the shared playback controller. A
 shared playback failure is shown with a Play action that runs the recovery
-ladder (`PLAY-014`).
+ladder (`PLAY-014`), except for a stuck player, which is shown only the advice
+to force-quit and reopen Overplay.
 
 Platform notes:
 
@@ -2443,7 +2477,8 @@ CarPlay supports:
 CarPlay does not provide a separate skip-history browser. Now Playing metadata
 and artwork come from the `ApplicationMusicPlayer` host. Custom buttons are
 enabled only when the current entry is attributed (`PLAY-012`). A shared
-playback failure presents one alert per failure episode (`PLAY-014`).
+playback failure presents one alert per failure episode (`PLAY-014`), and one
+more, without Try Again, if the player becomes stuck.
 
 CarPlay UI logic should remain isolated from the iPhone/iPad SwiftUI shell.
 The iPad shell does not depend on CarPlay-specific types or entitlements; the

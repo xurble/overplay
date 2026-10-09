@@ -68,6 +68,12 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     /// Player observation set aside while a start loads its queue (#76),
     /// listed once per start (#84).
     case observationHeld
+    /// A player call still unanswered at the limit, and its late return: the
+    /// player is stuck until every such call returns (#84).
+    case playerCallStuck
+    /// The device's network path changed, for reading a stall against the
+    /// network it happened on (#84).
+    case networkPathChanged
 
 
     // Local performance work; distinct from Apple Music API calls.
@@ -147,7 +153,8 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
              .queueEndObserved, .playerModeObserved,
              .playbackQueueInvalidation, .playbackStateInvalidation, .playbackQueueObservationRebound,
              .playbackObservationCoalesced, .playCountLookupResult,
-             .playerCallStarted, .playerEntryObserved, .nowPlayingDisplayChanged, .observationHeld:
+             .playerCallStarted, .playerEntryObserved, .nowPlayingDisplayChanged, .observationHeld,
+             .playerCallStuck, .networkPathChanged:
             .playbackDecision
         }
     }
@@ -195,6 +202,8 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case .playerEntryObserved: "Player entry handled"
         case .nowPlayingDisplayChanged: "Now Playing display changed"
         case .observationHeld: "Observation held during start"
+        case .playerCallStuck: "Player call unanswered"
+        case .networkPathChanged: "Network path changed"
 
         case .libraryPlaylistCreate: "Playlist create"
         case .libraryPlaylistEdit: "Playlist rewrite"
