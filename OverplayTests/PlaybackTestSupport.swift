@@ -36,6 +36,8 @@ final class FakePlaybackPlayer: PlaybackPlayer {
     var reordersUpcomingOnShuffle = false
     /// Runs inside `prepareToPlay`, e.g. to report the interim entry (#76).
     var onPrepare: (@MainActor () async -> Void)?
+    /// Runs inside `play`, e.g. to hang it (#84).
+    var onPlay: (@MainActor () async -> Void)?
     /// MusicKit loads a prepared queue over a fraction of a second, and
     /// shuffle then covers only the loaded entries (#76). When set, prepare
     /// loads this many and each read of `loadedEntryCount` loads this many
@@ -124,6 +126,7 @@ final class FakePlaybackPlayer: PlaybackPlayer {
 
     func play() async throws {
         commands.append("play")
+        if let onPlay { await onPlay() }
         if playFailuresRemaining > 0 {
             playFailuresRemaining -= 1
             throw Failure.commandFailed

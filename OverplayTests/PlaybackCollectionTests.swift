@@ -294,6 +294,32 @@ struct PlaybackCollectionTests {
         #expect(relaunched.intent?.collection?.kind == .album)
         #expect(relaunched.currentTrack?.title == "Album Song 1")
     }
+
+    /// Recovering an album needs no network (#84): its songs were cached
+    /// on this device when it started, so rung 3 resubmits from the cache.
+    @Test func recoveringAnAlbumWorksWithTheCatalogUnreachable() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        let catalog = try catalog(for: fixture)
+        await playing(fixture)
+        await fixture.controller.playCurrentCollection(.album, context: fixture.context)
+        await fixture.player.externallyAdvance()
+        catalog.failure = URLError(.notConnectedToInternet)
+        let lookupsBefore = catalog.songRequests.count
+        for _ in 0...PlaybackController.stallSampleThreshold { await fixture.controller.samplePlayback() }
+        #expect(fixture.controller.playbackFailure?.kind == .stalled)
+
+        // Rung 2's prepare fails, so the same press reaches rung 3.
+        fixture.player.prepareFailuresRemaining = 1
+        await fixture.controller.play(context: fixture.context)
+
+        #expect(catalog.songRequests.count == lookupsBefore)
+        #expect(fixture.player.submittedTitles.last == ["Song 0", "Album Song 1", "Album Song 2"])
+        #expect(fixture.player.submittedStartIndices.last == 1)
+        #expect(fixture.controller.intent?.collection?.kind == .album)
+        #expect(fixture.controller.playbackFailure == nil)
+        #expect(fixture.controller.currentTrack?.title == "Album Song 1")
+    }
 }
 
 @Suite("Play artist choices")

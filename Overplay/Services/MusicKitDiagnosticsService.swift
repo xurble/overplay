@@ -42,7 +42,9 @@ struct MusicKitDiagnosticsService {
 
     private func probeSubscription(into report: inout MusicKitDiagnosticsReport) async {
         do {
-            let subscription = try await MusicSubscription.current
+            let subscription = try await MusicKitActivityLog.shared.measure(.subscriptionCheck, detail: "diagnostics") {
+                try await MusicSubscription.current
+            }
             report.add("MusicSubscription.current", "ok")
             report.add("canPlayCatalogContent", String(subscription.canPlayCatalogContent))
             report.add("hasCloudLibraryEnabled", String(subscription.hasCloudLibraryEnabled))

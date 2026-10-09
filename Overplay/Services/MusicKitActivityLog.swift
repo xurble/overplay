@@ -37,6 +37,14 @@ nonisolated final class MusicKitActivityLog: Sendable {
     /// Minutes of tallies retained — long enough to cover a listening
     /// session leading up to a failure.
     static let defaultRetainedMinutes = 240
+    /// Each launch also writes every event, high-frequency ones included, to
+    /// its own file, so the session that failed survives the relaunch that
+    /// recovers it (#84). Ten covers a day or two of launches, background
+    /// wakes included.
+    static let defaultMaximumLaunchLogs = 10
+    /// A launch's file past this size keeps its newest half, so ten files
+    /// stay under about 50 MB.
+    static let defaultMaximumLaunchLogBytes = 5_000_000
 
     /// The surface issuing the command currently being recorded.
     ///
@@ -56,6 +64,11 @@ nonisolated final class MusicKitActivityLog: Sendable {
         var isDirty = false
         var lastPrunedMinute: Int?
         var persistTask: Task<Void, Never>?
+        /// Events not yet appended to this launch's file.
+        var pendingLaunchEvents: [MusicKitActivityEvent] = []
+        /// Created on the first write, so a launch that records nothing
+        /// leaves no file and pushes no older log out.
+        var launchLogURL: URL?
     }
 
     private let logger = Logger(
@@ -63,7 +76,15 @@ nonisolated final class MusicKitActivityLog: Sendable {
         category: "MusicKitActivity"
     )
     private let state = Mutex(Storage())
+    /// Launch-file writes come from the debounce task, from flushes on the
+    /// main thread and from sharing. Appends, trims and deletes are done one
+    /// at a time, so lines are never torn, lost or split across two files.
+    private let launchLogIO = Mutex(())
     private let fileURL: URL?
+    private let launchLogDirectory: URL?
+    private let launchStartedAt: Date
+    private let maximumLaunchLogs: Int
+    private let maximumLaunchLogBytes: Int
     private let maximumEvents: Int
     private let retainedMinutes: Int
     private let persistDelay: Duration
@@ -74,9 +95,15 @@ nonisolated final class MusicKitActivityLog: Sendable {
         maximumEvents: Int = MusicKitActivityLog.defaultMaximumEvents,
         retainedMinutes: Int = MusicKitActivityLog.defaultRetainedMinutes,
         persistDelay: Duration = .seconds(5),
+        maximumLaunchLogs: Int = MusicKitActivityLog.defaultMaximumLaunchLogs,
+        maximumLaunchLogBytes: Int = MusicKitActivityLog.defaultMaximumLaunchLogBytes,
         now: @escaping @Sendable () -> Date = { .now }
     ) {
         self.fileURL = fileURL
+        launchLogDirectory = fileURL.map(Self.launchLogDirectory(besides:))
+        launchStartedAt = now()
+        self.maximumLaunchLogs = maximumLaunchLogs
+        self.maximumLaunchLogBytes = maximumLaunchLogBytes
         self.maximumEvents = maximumEvents
         self.retainedMinutes = retainedMinutes
         self.persistDelay = persistDelay
@@ -102,6 +129,28 @@ nonisolated final class MusicKitActivityLog: Sendable {
             .appendingPathComponent("musickit-activity.json")
     }
 
+    /// One file per launch, in a folder beside the snapshot.
+    static func launchLogDirectory(besides fileURL: URL) -> URL {
+        fileURL.deletingLastPathComponent().appendingPathComponent("ActivityLogs", isDirectory: true)
+    }
+
+    /// The snapshot and every launch's log, oldest launch first, for sharing.
+    func shareableFiles() -> [URL] {
+        flush()
+        let snapshot = fileURL.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+        return [snapshot].compactMap { $0 } + launchLogs()
+    }
+
+    func launchLogs() -> [URL] {
+        guard let launchLogDirectory,
+              let files = try? FileManager.default.contentsOfDirectory(
+                  at: launchLogDirectory, includingPropertiesForKeys: nil
+              ) else { return [] }
+        // Names start with the launch time, so name order is launch order.
+        return files.filter { $0.pathExtension == "jsonl" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
+
     // MARK: - Recording
 
     func record(
@@ -125,7 +174,8 @@ nonisolated final class MusicKitActivityLog: Sendable {
             origin: Self.currentOrigin,
             errorDomain: nsError?.domain,
             errorCode: nsError?.code,
-            errorDescription: nsError?.localizedDescription
+            errorDescription: nsError?.localizedDescription,
+            errorDetail: error.map(MusicKitActivityEvent.detail(of:))
         )
         append(event)
         emitToUnifiedLog(event)
@@ -228,6 +278,11 @@ nonisolated final class MusicKitActivityLog: Sendable {
             storage.snapshot = MusicKitActivitySnapshot(observationStartedAt: now())
             storage.didLoad = true
             storage.isDirty = true
+            storage.pendingLaunchEvents = []
+            storage.launchLogURL = nil
+        }
+        launchLogIO.withLock { _ in
+            for url in launchLogs() { try? FileManager.default.removeItem(at: url) }
         }
         persistNow()
     }
@@ -303,6 +358,9 @@ nonisolated final class MusicKitActivityLog: Sendable {
                     storage.snapshot.events.removeFirst(storage.snapshot.events.count - maximumEvents)
                 }
             }
+            if launchLogDirectory != nil {
+                storage.pendingLaunchEvents.append(event)
+            }
 
             storage.isDirty = true
             schedulePersist(&storage)
@@ -325,6 +383,7 @@ nonisolated final class MusicKitActivityLog: Sendable {
 
     private func persistNow() {
         guard let fileURL else { return }
+        persistLaunchLog()
         let snapshot: MusicKitActivitySnapshot? = state.withLock { storage in
             guard storage.isDirty else { return nil }
             storage.isDirty = false
@@ -345,6 +404,74 @@ nonisolated final class MusicKitActivityLog: Sendable {
             // the unified log both still hold this activity.
             state.withLock { $0.isDirty = true }
         }
+    }
+
+    /// Appends pending events to this launch's file, one JSON event per
+    /// line. The first write creates it and removes the oldest launches'
+    /// files past the limit; past the size limit it keeps its newest half.
+    private func persistLaunchLog() {
+        guard let launchLogDirectory else { return }
+        launchLogIO.withLock { _ in appendPendingLaunchEvents(in: launchLogDirectory) }
+    }
+
+    private func appendPendingLaunchEvents(in launchLogDirectory: URL) {
+        let pending: (events: [MusicKitActivityEvent], url: URL?) = state.withLock { storage in
+            defer { storage.pendingLaunchEvents = [] }
+            return (storage.pendingLaunchEvents, storage.launchLogURL)
+        }
+        guard !pending.events.isEmpty else { return }
+
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            var data = Data()
+            for event in pending.events {
+                data.append(try encoder.encode(event))
+                data.append(0x0A)
+            }
+            let url = try pending.url ?? createLaunchLog(in: launchLogDirectory)
+            let handle = try FileHandle(forWritingTo: url)
+            let size: UInt64
+            do {
+                defer { try? handle.close() }
+                size = try handle.seekToEnd()
+                try handle.write(contentsOf: data)
+            }
+            if Int(size) + data.count > maximumLaunchLogBytes {
+                try trimLaunchLog(at: url)
+            }
+        } catch {
+            // Diagnostics must never affect playback. The unified log still
+            // holds these events.
+        }
+    }
+
+    private func createLaunchLog(in directory: URL) throws -> URL {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent(Self.launchLogName(startedAt: launchStartedAt))
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        state.withLock { $0.launchLogURL = url }
+        for old in launchLogs().filter({ $0 != url }).dropLast(maximumLaunchLogs - 1) {
+            try? FileManager.default.removeItem(at: old)
+        }
+        return url
+    }
+
+    /// Keeps the newest half of the file, cut at a line boundary.
+    private func trimLaunchLog(at url: URL) throws {
+        let data = try Data(contentsOf: url)
+        let cut = data.index(data.startIndex, offsetBy: data.count / 2)
+        guard let newline = data[cut...].firstIndex(of: 0x0A) else { return }
+        try Data(data[data.index(after: newline)...]).write(to: url, options: [.atomic])
+    }
+
+    static func launchLogName(startedAt: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.dateFormat = "yyyyMMdd'T'HHmmss.SSS'Z'"
+        let suffix = UUID().uuidString.prefix(4)
+        return "launch-\(formatter.string(from: startedAt))-\(suffix).jsonl"
     }
 
     private func loadIfNeeded() {
@@ -394,7 +521,8 @@ nonisolated final class MusicKitActivityLog: Sendable {
                 via=\(via, privacy: .public) domain=\(event.errorDomain ?? "nil", privacy: .public) \
                 code=\(event.errorCode ?? 0, privacy: .public) \
                 error=\(event.errorDescription ?? "nil", privacy: .public) \
-                detail=\(event.detail ?? "-", privacy: .public)
+                detail=\(event.detail ?? "-", privacy: .public) \
+                chain=\(event.errorDetail ?? "-", privacy: .public)
                 """
             )
         } else if event.operation.isHighFrequency {

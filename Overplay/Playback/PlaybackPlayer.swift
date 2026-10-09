@@ -102,7 +102,11 @@ final class ApplicationMusicPlaybackPlayer: PlaybackPlayer {
 
     var playbackTime: TimeInterval {
         get { player.playbackTime }
-        set { player.playbackTime = newValue }
+        set {
+            MusicKitActivityLog.shared.measure(.playerSeek, magnitude: newValue) {
+                player.playbackTime = newValue
+            }
+        }
     }
 
     var reportedShuffleMode: MusicPlayer.ShuffleMode? { player.state.shuffleMode }

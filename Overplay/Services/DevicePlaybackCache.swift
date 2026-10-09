@@ -145,7 +145,10 @@ nonisolated final class DevicePlaybackCache: Sendable {
         _ ids: [String],
         lookup: ([String]) async throws -> [Song] = { batch in
             let request = MusicCatalogResourceRequest<Song>(matching: \.id, memberOf: batch.map { MusicItemID($0) })
-            return Array(try await request.response().items)
+            return try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, magnitude: Double(batch.count),
+                                                         detail: "playback catalog songs") {
+                Array(try await request.response().items)
+            }
         }
     ) async throws -> [String: Song] {
         var result: [String: Song] = [:]
@@ -203,7 +206,9 @@ nonisolated final class DevicePlaybackCache: Sendable {
         _ ids: [String],
         nativeLookup: ([String]) async throws -> [Song] = nativeLibrarySongs,
         request: (URL) async throws -> Data = { url in
-            try await MusicDataRequest(urlRequest: URLRequest(url: url)).response().data
+            try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, detail: "playback web library songs") {
+                try await MusicDataRequest(urlRequest: URLRequest(url: url)).response().data
+            }
         }
     ) async throws -> [String: Song] {
         let ids = Array(Set(ids)).sorted()
@@ -240,7 +245,10 @@ nonisolated final class DevicePlaybackCache: Sendable {
         var request = MusicLibraryRequest<Song>()
         request.filter(matching: \.id, memberOf: ids.map { MusicItemID($0) })
         request.limit = ids.count
-        return Array(try await request.response().items)
+        return try await MusicKitActivityLog.shared.measure(.libraryTrackQuery, magnitude: Double(ids.count),
+                                                     detail: "playback library songs") {
+            Array(try await request.response().items)
+        }
     }
 
     /// A persisted web-library ID need not be queryable in the device's native
@@ -250,7 +258,9 @@ nonisolated final class DevicePlaybackCache: Sendable {
         _ id: String,
         nativeLookup: (String) async throws -> Song? = nativeLibrarySong,
         request: (URL) async throws -> Data = { url in
-            try await MusicDataRequest(urlRequest: URLRequest(url: url)).response().data
+            try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, magnitude: 1, detail: "playback web library song") {
+                try await MusicDataRequest(urlRequest: URLRequest(url: url)).response().data
+            }
         }
     ) async throws -> Song {
         let native = try await nativeLookup(id)
@@ -277,7 +287,9 @@ nonisolated final class DevicePlaybackCache: Sendable {
         var request = MusicLibraryRequest<Song>()
         request.filter(matching: \.id, equalTo: MusicItemID(id))
         request.limit = 2
-        let items = try await request.response().items
+        let items = try await MusicKitActivityLog.shared.measure(.libraryTrackQuery, magnitude: 1, detail: "playback library song") {
+            try await request.response().items
+        }
         guard items.count == 1, !items.hasNextBatch else { return nil }
         return items.first
     }

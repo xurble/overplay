@@ -8,11 +8,25 @@ struct PlaybackFailure: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
         case command
         case stalled
+        /// A player call has not returned within the limit. Only relaunching
+        /// Overplay has been seen to recover from this (#84).
+        case stuck
     }
 
     var kind: Kind
     var message: String
     var since: Date
+
+    /// Whether pressing Play might help. A stuck player needs a relaunch.
+    var offersRetry: Bool { kind != .stuck }
+
+    /// A surface that alerts once per failure episode alerts again when the
+    /// advice changes: when the player becomes stuck, and when it answers
+    /// again so Try Again is worth offering (#84).
+    static func needsAlert(_ kind: Kind, alerted: Kind?) -> Bool {
+        guard let alerted else { return true }
+        return (kind == .stuck) != (alerted == .stuck)
+    }
 }
 
 /// The single owner of playback (`PLAY-010`–`PLAY-017`).
@@ -149,6 +163,15 @@ final class PlaybackController {
     @ObservationIgnored private var samplingGeneration = 0
     /// The last recovery rung that ran, so repeated presses escalate.
     @ObservationIgnored private var recoveryEscalation: (rung: Int, at: Date)?
+    /// How long a player call may go unanswered before the player is stuck.
+    @ObservationIgnored var stuckCallLimit: Duration = .seconds(8)
+    /// Counts every answer (return or error) to a call Overplay waits on.
+    /// The player is stuck only when nothing at all has answered since a
+    /// call started, so an old, superseded call cannot mark a player that
+    /// is answering newer calls (#84).
+    @ObservationIgnored private var playerAnswers = 0
+    /// When the current stuck episode began; nil while not stuck.
+    @ObservationIgnored private var stuckSince: Date?
     @ObservationIgnored private var prefetchedArtworkTrackID: String?
     @ObservationIgnored private var appleCountLookupTask: Task<Void, Never>?
     @ObservationIgnored private var appleCountLookupTrackID: UUID?
@@ -347,6 +370,7 @@ final class PlaybackController {
         durationSeconds = nil
         isPlaying = false
         playbackFailure = nil
+        stuckSince = nil
         activePlaylistSnapshot = nil
         cachedSettings = nil
         statusMessage = "Overplay data reset."
@@ -580,12 +604,49 @@ final class PlaybackController {
             "\(path) entry=\(entry.entryID) item=\(item) member=\(member) position=\(Int(player.playbackTime)) status=\(player.playbackStatus)")
     }
 
+    /// Whether a call Overplay waited on answered before the stuck limit.
+    @MainActor final class PlayerCallOutcome {
+        fileprivate(set) var wentStuck = false
+    }
+
     /// Records a player call before waiting on it. The player wrapper records
     /// only completions, so a call that never returns shows as a start with
-    /// no completion (#84).
-    private func awaitPlayer(_ call: String, _ body: () async throws -> Void) async throws {
+    /// no completion (#84). If nothing answers any call within the limit,
+    /// the player is stuck; any answer ends that.
+    private func awaitPlayer(
+        _ call: String, outcome: PlayerCallOutcome? = nil, _ body: () async throws -> Void
+    ) async throws {
         activityLog.record(.playerCallStarted, detail: call)
+        let outcome = outcome ?? PlayerCallOutcome()
+        let answersAtStart = playerAnswers
+        let watchdog = Task { [weak self, limit = stuckCallLimit] in
+            try? await Task.sleep(for: limit)
+            guard !Task.isCancelled, let self, self.playerAnswers == answersAtStart else { return }
+            outcome.wentStuck = true
+            self.playerCallBecameStuck(call)
+        }
+        defer {
+            watchdog.cancel()
+            playerAnswered(call, late: outcome.wentStuck)
+        }
         try await body()
+    }
+
+    private func playerCallBecameStuck(_ call: String) {
+        activityLog.record(.playerCallStuck, detail: "\(call) unanswered")
+        if playbackFailure?.kind != .stuck { stuckSince = .now }
+        fail(kind: .stuck, message: Self.stuckMessage)
+    }
+
+    /// Any answer shows the player is answering again: a stuck failure
+    /// steps down so Play may work, and the caller reports its own outcome.
+    private func playerAnswered(_ call: String, late: Bool) {
+        playerAnswers &+= 1
+        if late { activityLog.record(.playerCallStuck, detail: "\(call) answered late") }
+        guard let failure = playbackFailure, failure.kind == .stuck else { return }
+        stuckSince = nil
+        playbackFailure = PlaybackFailure(kind: .command, message: Self.notRespondingMessage, since: failure.since)
+        if statusMessage == failure.message { statusMessage = Self.notRespondingMessage }
     }
 
     /// Previous from any surface is not a skip. The player's queue order says
@@ -1168,7 +1229,9 @@ final class PlaybackController {
         if shuffle {
             player.setShuffleMode(.off)
             player.setShuffleMode(.songs)
-            if trackCount > 1 { try await player.skipToNextEntry() }
+            if trackCount > 1 {
+                try await awaitPlayer("shuffle skip start=\(generation)") { try await player.skipToNextEntry() }
+            }
             guard isHoldingStart(generation) else { return }
         }
         try await awaitPlayer("play start=\(generation)") { try await player.play() }
@@ -1530,9 +1593,22 @@ final class PlaybackController {
     /// Runs only on a user Play press, at most once per press. A stalled
     /// player already reports `.playing`, so a bare `play()` proves nothing:
     /// stalls start at rung 2. A press soon after an earlier recovery starts
-    /// one rung higher than the last, so repeated failures reach rung 3.
+    /// one rung higher than the last, so repeated failures reach rung 3. Each
+    /// rung is recorded before Overplay waits on it, so a press while a rung
+    /// hangs escalates instead of repeating it (#84). A stuck player gets one
+    /// fresh queue (rung 3) per failure, then no more calls until it answers.
     private func recover(now: Date = .now) async {
-        var firstRung = playbackFailure?.kind == .stalled ? 2 : 1
+        if let failure = playbackFailure, failure.kind == .stuck, let stuckSince,
+           let escalation = recoveryEscalation, escalation.rung == 3, escalation.at >= stuckSince {
+            activityLog.record(.playbackRecoveryAttempt, detail: "user play: player stuck, no call made")
+            statusMessage = failure.message
+            return
+        }
+        var firstRung = switch playbackFailure?.kind {
+        case .stalled: 2
+        case .stuck: 3
+        default: 1
+        }
         if let escalation = recoveryEscalation, now.timeIntervalSince(escalation.at) < Self.recoveryEscalationWindow {
             firstRung = max(firstRung, escalation.rung + 1)
         }
@@ -1540,15 +1616,40 @@ final class PlaybackController {
         firstRung = min(firstRung, 3)
         activityLog.record(.playbackRecoveryAttempt, magnitude: Double(firstRung), detail: "user play")
         resetStallEvidence()
+        // A later press's rung 3 replaces the queue; this press then yields.
+        let generation = startGeneration
 
-        if firstRung <= 1, (try? await awaitPlayer("play recovery rung=1", { try await player.play() })) != nil {
-            recovered(rung: 1, at: now)
-            return
+        // A rung that answers only after the stuck limit ends this press: the
+        // user has been told to relaunch, and carrying on would be a retry
+        // nobody asked for. A newer press's queue also ends it.
+        func superseded(_ outcome: PlayerCallOutcome) -> Bool {
+            outcome.wentStuck || generation != startGeneration
         }
-        if firstRung <= 2, (try? await awaitPlayer("prepare recovery rung=2", { try await player.prepareToPlay() })) != nil,
-           (try? await awaitPlayer("play recovery rung=2", { try await player.play() })) != nil {
-            recovered(rung: 2, at: now)
-            return
+
+        if firstRung <= 1 {
+            recoveryEscalation = (1, now)
+            let played = PlayerCallOutcome()
+            let didPlay = (try? await awaitPlayer("play recovery rung=1", outcome: played) { try await player.play() }) != nil
+            if superseded(played) { return }
+            if didPlay {
+                recovered(rung: 1, at: now)
+                return
+            }
+        }
+        if firstRung <= 2 {
+            recoveryEscalation = (2, now)
+            let prepared = PlayerCallOutcome()
+            let didPrepare = (try? await awaitPlayer("prepare recovery rung=2", outcome: prepared) { try await player.prepareToPlay() }) != nil
+            if superseded(prepared) { return }
+            if didPrepare {
+                let played = PlayerCallOutcome()
+                let didPlay = (try? await awaitPlayer("play recovery rung=2", outcome: played) { try await player.play() }) != nil
+                if superseded(played) { return }
+                if didPlay {
+                    recovered(rung: 2, at: now)
+                    return
+                }
+            }
         }
         guard let intent else {
             fail(kind: .command, message: Self.notRespondingMessage)
@@ -1562,9 +1663,9 @@ final class PlaybackController {
         // MusicKit can no longer play are not resubmitted unchanged.
         recoveryEscalation = (3, now)
         let messageBefore = playbackFailure?.message
-        let generation = startGeneration &+ 1
+        let resubmission = startGeneration &+ 1
         await resubmit(intent, from: currentMember ?? intent.members.first, position: elapsedSeconds, refreshingStart: true)
-        guard startGeneration == generation else { return }
+        guard startGeneration == resubmission else { return }
         // Keep a more specific message from the resubmission itself.
         if let failure = playbackFailure, failure.message == messageBefore {
             fail(kind: .command, message: Self.notRespondingMessage)
@@ -1611,12 +1712,19 @@ final class PlaybackController {
             activityLog.record(.deliveryStallDetected, detail:
                 "\(message) kind=\(kind) entry=\(lastEntryID ?? "nil") position=\(Int(elapsedSeconds)) status=\(player.playbackStatus)")
         }
+        // A stuck player stays stuck until its calls return or it plays: a
+        // later, milder failure must not offer Play as the fix.
+        if playbackFailure?.kind == .stuck, kind != .stuck, let stuck = playbackFailure {
+            statusMessage = stuck.message
+            return
+        }
         playbackFailure = PlaybackFailure(kind: kind, message: message, since: playbackFailure?.since ?? .now)
         statusMessage = message
     }
 
     private func clearFailure() {
         guard let failure = playbackFailure else { return }
+        stuckSince = nil
         playbackFailure = nil
         if statusMessage == failure.message { statusMessage = nil }
     }
@@ -1627,6 +1735,8 @@ final class PlaybackController {
         "Playback stopped before the track finished. Press Play to resume."
     static let notRespondingMessage =
         "Apple Music isn't responding. Wait a moment and press Play again."
+    static let stuckMessage =
+        "Overplay has lost its connection to Apple Music. Force-quit Overplay and open it again to keep playing."
 
     static func failureMessage(for error: Error) -> String {
         let nsError = error as NSError

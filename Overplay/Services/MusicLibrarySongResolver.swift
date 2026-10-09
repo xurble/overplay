@@ -142,13 +142,17 @@ enum MusicLibrarySongResolver {
         var request = MusicLibraryRequest<Song>()
         request.filter(matching: \.id, equalTo: id)
         request.limit = 2
-        let items = try await request.response().items
+        let items = try await MusicKitActivityLog.shared.measure(.libraryTrackQuery, magnitude: 1, detail: "resolver library song") {
+            try await request.response().items
+        }
         guard items.isEmpty || !items.hasNextBatch else { throw ResolutionError.unresolved(id.rawValue) }
         return Array(items)
     }
 
     private static func webLibrarySongIDs(_ id: MusicItemID) async throws -> [String] {
-        try await webLibrarySongIDs([id])
+        try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, magnitude: 1, detail: "resolver web library song") {
+            try await webLibrarySongIDs([id])
+        }
     }
 
     /// IDs of the library-song resources the account's web library returns.
@@ -176,7 +180,9 @@ enum MusicLibrarySongResolver {
 
     static func catalogSongs(_ id: MusicItemID) async throws -> [Song] {
         let request = MusicCatalogResourceRequest<Song>(matching: \.id, equalTo: id)
-        let items = try await request.response().items
+        let items = try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, magnitude: 1, detail: "resolver catalog song") {
+            try await request.response().items
+        }
         guard !items.hasNextBatch else { throw ResolutionError.unresolved(id.rawValue) }
         return Array(items)
     }

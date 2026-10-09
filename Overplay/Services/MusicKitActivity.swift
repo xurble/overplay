@@ -37,6 +37,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     case playerSkipToEntry
     /// Any shuffle or repeat write, whichever surface asked for it.
     case playerModeReset
+    case playerSeek
     case playbackRecoveryAttempt
 
     // Overplay's own playback decisions. Not Apple Music calls, but they
@@ -68,6 +69,18 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     /// Player observation set aside while a start loads its queue (#76),
     /// listed once per start (#84).
     case observationHeld
+    /// A player call still unanswered at the limit, and its late return: the
+    /// player is stuck until every such call returns (#84).
+    case playerCallStuck
+    /// The device's network path changed, for reading a stall against the
+    /// network it happened on (#84).
+    case networkPathChanged
+    /// The system's media services were lost or reset, or audio was
+    /// interrupted or rerouted (#84).
+    case audioSessionEvent
+    /// A note from Overplay's own code: a decision, a skipped count, a
+    /// failure handled without surfacing. Listed in the launch logs only.
+    case diagnosticNote
 
 
     // Local performance work; distinct from Apple Music API calls.
@@ -137,7 +150,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
             .libraryWrite
         case .queueReplace, .playerPrepare, .playerPlay, .playerPause,
              .playerSkipNext, .playerSkipPrevious, .playerSkipToEntry, .playerModeReset,
-             .playbackRecoveryAttempt:
+             .playbackRecoveryAttempt, .playerSeek:
             .player
         case .carPlayNowPlayingButtonsUpdate, .carPlayRefreshRequested, .carPlayListMutation, .carPlayArtworkUpdate, .carPlayNowPlayingButtonState:
             .systemMediaSurface
@@ -147,7 +160,8 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
              .queueEndObserved, .playerModeObserved,
              .playbackQueueInvalidation, .playbackStateInvalidation, .playbackQueueObservationRebound,
              .playbackObservationCoalesced, .playCountLookupResult,
-             .playerCallStarted, .playerEntryObserved, .nowPlayingDisplayChanged, .observationHeld:
+             .playerCallStarted, .playerEntryObserved, .nowPlayingDisplayChanged, .observationHeld,
+             .playerCallStuck, .networkPathChanged, .audioSessionEvent, .diagnosticNote:
             .playbackDecision
         }
     }
@@ -195,6 +209,11 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case .playerEntryObserved: "Player entry handled"
         case .nowPlayingDisplayChanged: "Now Playing display changed"
         case .observationHeld: "Observation held during start"
+        case .playerCallStuck: "Player call unanswered"
+        case .networkPathChanged: "Network path changed"
+        case .audioSessionEvent: "Audio session event"
+        case .diagnosticNote: "Diagnostic note"
+        case .playerSeek: "Player seek"
 
         case .libraryPlaylistCreate: "Playlist create"
         case .libraryPlaylistEdit: "Playlist rewrite"
@@ -226,7 +245,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
             return self != .playbackSelectionPath
         }
         return switch self {
-        case .artworkDownload,
+        case .artworkDownload, .diagnosticNote,
              .playbackQueueInvalidation, .playbackStateInvalidation, .playbackObservationCoalesced:
             true
         default:
@@ -296,6 +315,9 @@ nonisolated struct MusicKitActivityEvent: Codable, Equatable, Sendable {
     var errorDomain: String?
     var errorCode: Int?
     var errorDescription: String?
+    /// The whole error as Swift describes it, then each underlying error, so
+    /// a failure can be read without reproducing it.
+    var errorDetail: String?
 
     init(
         operation: MusicKitActivityOperation,
@@ -307,7 +329,8 @@ nonisolated struct MusicKitActivityEvent: Codable, Equatable, Sendable {
         origin: MusicKitActivityOrigin? = nil,
         errorDomain: String? = nil,
         errorCode: Int? = nil,
-        errorDescription: String? = nil
+        errorDescription: String? = nil,
+        errorDetail: String? = nil
     ) {
         self.operation = operation
         self.startedAt = startedAt
@@ -319,9 +342,21 @@ nonisolated struct MusicKitActivityEvent: Codable, Equatable, Sendable {
         self.errorDomain = errorDomain
         self.errorCode = errorCode
         self.errorDescription = errorDescription
+        self.errorDetail = errorDetail
     }
 
     var didFail: Bool { errorDomain != nil }
+
+    /// The error, then up to five underlying errors, each with its user info.
+    static func detail(of error: Error) -> String {
+        var parts = [String(reflecting: error)]
+        var current = error as NSError
+        while parts.count < 6, let underlying = current.userInfo[NSUnderlyingErrorKey] as? NSError {
+            parts.append("\(underlying.domain) \(underlying.code) \(underlying.userInfo)")
+            current = underlying
+        }
+        return parts.joined(separator: " <- ")
+    }
 }
 
 /// One minute of activity for one operation. Counting into minute buckets
