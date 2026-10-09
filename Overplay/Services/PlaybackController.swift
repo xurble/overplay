@@ -92,6 +92,8 @@ final class PlaybackController {
         try await PlaylistMutationService().addCatalogSong(id: $0, to: $1, in: $2)
     }
     @ObservationIgnored private let sleep: @MainActor (Duration) async -> Void
+    /// Where the controller's decisions are recorded; injectable for tests.
+    @ObservationIgnored var activityLog = MusicKitActivityLog.shared
 
     // MARK: - Internal state
 
@@ -129,6 +131,10 @@ final class PlaybackController {
     /// plays, when a newer start replaces it, when the user presses Play, or
     /// at the limit.
     @ObservationIgnored private var startHold: Int?
+    /// The start whose held observation has been recorded, so it is listed once.
+    @ObservationIgnored private var recordedHeldStart: Int?
+    /// The display last recorded, so only changes are listed.
+    @ObservationIgnored private var recordedDisplay: String?
     private var isHoldingStart: Bool { startHold == startGeneration }
     /// How long the hold may last if Apple Music never finishes preparing.
     @ObservationIgnored var startHoldLimit: Duration = .seconds(8)
@@ -344,7 +350,13 @@ final class PlaybackController {
     /// The one path by which player changes reach Overplay, whichever surface
     /// or MusicKit itself caused them.
     func observePlayer() async {
-        guard !isHoldingStart else { return }
+        guard !isHoldingStart else {
+            if recordedHeldStart != startHold {
+                recordedHeldStart = startHold
+                activityLog.record(.observationHeld, detail: "start=\(startGeneration) entry=\(player.currentEntryID ?? "nil")")
+            }
+            return
+        }
         player.refreshObservationBindings()
         observeModes()
         let status = player.playbackStatus
@@ -358,6 +370,7 @@ final class PlaybackController {
             } else if entry.item != nil, !lastEntryWasHydrated {
                 lastEntryWasHydrated = true
                 await attributeCurrent(entry)
+                recordEntry(entry, path: "hydrated")
             }
             let position = player.playbackTime
             elapsedSeconds = position
@@ -415,7 +428,7 @@ final class PlaybackController {
         var modes = playbackModes
         modes.observe(shuffle: player.reportedShuffleMode, repeatMode: player.reportedRepeatMode)
         guard modes != playbackModes else { return }
-        MusicKitActivityLog.shared.record(.playerModeObserved, detail: "shuffle=\(Self.describe(modes.shuffle)) repeat=\(Self.describe(modes.repeatMode))")
+        activityLog.record(.playerModeObserved, detail: "shuffle=\(Self.describe(modes.shuffle)) repeat=\(Self.describe(modes.repeatMode))")
         playbackModes = modes
     }
 
@@ -475,6 +488,7 @@ final class PlaybackController {
         frozenSamples = 0
         lastSamplePosition = nil
         await attributeCurrent(entry)
+        recordEntry(entry, path: "new")
         saveResumePoint(force: true)
     }
 
@@ -491,8 +505,9 @@ final class PlaybackController {
         self.session = session
         lastEntryID = entry.entryID
         lastEntryWasHydrated = entry.item != nil
-        MusicKitActivityLog.shared.record(.playbackSelectionPath, detail: "sessionCarriedOver confirmed=\(confirmed)")
+        activityLog.record(.playbackSelectionPath, detail: "sessionCarriedOver confirmed=\(confirmed)")
         await attributeCurrent(entry)
+        recordEntry(entry, path: "carried")
         saveResumePoint(force: true)
     }
 
@@ -531,7 +546,7 @@ final class PlaybackController {
         }
         if member == nil, entry.item != nil, reportedUnattributedEntryID != entry.entryID {
             reportedUnattributedEntryID = entry.entryID
-            MusicKitActivityLog.shared.record(.queueCorrelationRejected,
+            activityLog.record(.queueCorrelationRejected,
                 detail: "unattributed entry=\(entry.entryID) title=\(entry.item?.title ?? "nil") intent=\(intent?.id.uuidString ?? "nil")")
         }
         refreshCurrentItem()
@@ -546,6 +561,23 @@ final class PlaybackController {
         let member = attribution.member(for: item, cachedLocalTrackID: attributedEntries[entry.entryID])
         if let member { attributedEntries[entry.entryID] = member.localTrackID }
         return member
+    }
+
+    /// What the controller made of an entry change, so a display that stops
+    /// following the audio can be explained from the device log (#84).
+    private func recordEntry(_ entry: PlayerEntrySnapshot, path: String) {
+        let item = entry.item.map { "\"\($0.title)\"" } ?? "unhydrated"
+        let member = currentMember.map { "\"\($0.title)\"" } ?? "none"
+        activityLog.record(.playerEntryObserved, detail:
+            "\(path) entry=\(entry.entryID) item=\(item) member=\(member) position=\(Int(player.playbackTime)) status=\(player.playbackStatus)")
+    }
+
+    /// Records a player call before waiting on it. The player wrapper records
+    /// only completions, so a call that never returns shows as a start with
+    /// no completion (#84).
+    private func awaitPlayer(_ call: String, _ body: () async throws -> Void) async throws {
+        activityLog.record(.playerCallStarted, detail: call)
+        try await body()
     }
 
     /// Previous from any surface is not a skip. The player's queue order says
@@ -571,7 +603,7 @@ final class PlaybackController {
             Date.now.timeIntervalSince($0.play.lastObservedAt) > PlaybackSessionEvaluationService.observationStalenessThresholdSeconds
         } ?? true
         let stoppedMidTrack = !completed && !stale
-        MusicKitActivityLog.shared.record(.queueEndObserved,
+        activityLog.record(.queueEndObserved,
             detail: completed ? "played out" : stale ? "ended while suspended" : "stopped mid-track")
         if let outgoing, completed {
             finish(outgoing, end: .queueEnded)
@@ -743,7 +775,7 @@ final class PlaybackController {
             await recover()
         } else if player.currentEntryID != nil {
             do {
-                try await player.play()
+                try await awaitPlayer("play resume") { try await player.play() }
                 clearFailure()
             } catch {
                 fail(error)
@@ -872,24 +904,24 @@ final class PlaybackController {
         let localTrackID = track.id.uuidString
         guard let intent, intent.musicPlaylistID == playlist.musicPlaylistID, intent.scope == scope,
               let member = intent.member(localTrackID: localTrackID) else {
-            MusicKitActivityLog.shared.record(.playbackSelectionPath, detail: "newIntent")
+            activityLog.record(.playbackSelectionPath, detail: "newIntent")
             await startPlayback(playlist, scope: scope, startingTrackID: localTrackID, shuffle: false, context: context)
             return
         }
 
         if currentMember?.localTrackID == localTrackID {
             // The current track resumes, never restarts, live queue or not.
-            MusicKitActivityLog.shared.record(.playbackSelectionPath, detail: "resumeCurrent")
+            activityLog.record(.playbackSelectionPath, detail: "resumeCurrent")
             if player.currentEntryID == nil || player.playbackStatus != .playing { await play(context: context) }
             return
         }
 
         if let entryID = liveEntryID(for: member) {
-            MusicKitActivityLog.shared.record(.playbackSelectionPath, detail: "inIntentJump")
+            activityLog.record(.playbackSelectionPath, detail: "inIntentJump")
             startGeneration &+= 1
             do {
                 try player.selectEntry(withID: entryID)
-                try await player.play()
+                try await awaitPlayer("play jump") { try await player.play() }
                 clearFailure()
                 await observePlayer()
                 return
@@ -901,7 +933,7 @@ final class PlaybackController {
                 }
             }
         }
-        MusicKitActivityLog.shared.record(.playbackSelectionPath, detail: "resubmitFromMember")
+        activityLog.record(.playbackSelectionPath, detail: "resubmitFromMember")
         await resubmit(intent, from: member, position: 0)
         await observePlayer()
     }
@@ -1100,14 +1132,14 @@ final class PlaybackController {
             // Stop hiding the player; Play recovers as usual, and a late
             // prepare does not resume this start.
             self.startHold = nil
-            MusicKitActivityLog.shared.record(.playbackSelectionPath, detail: "startTimedOut")
+            activityLog.record(.playbackSelectionPath, detail: "startTimedOut")
             await self.observePlayer()
         }
         defer {
             watchdog.cancel()
             if startHold == generation { startHold = nil }
         }
-        try await player.prepareToPlay()
+        try await awaitPlayer("prepare start=\(generation)") { try await player.prepareToPlay() }
         guard isHoldingStart(generation) else { return }
         // Nothing is playing yet; past the limit, start anyway.
         let clock = ContinuousClock()
@@ -1123,7 +1155,7 @@ final class PlaybackController {
             if trackCount > 1 { try await player.skipToNextEntry() }
             guard isHoldingStart(generation) else { return }
         }
-        try await player.play()
+        try await awaitPlayer("play start=\(generation)") { try await player.play() }
     }
 
     private func isHoldingStart(_ generation: Int) -> Bool {
@@ -1166,7 +1198,7 @@ final class PlaybackController {
             } catch {
                 // Name the songs left out where they can be seen: the activity
                 // report and the unified log at normal level (#75).
-                MusicKitActivityLog.shared.record(
+                activityLog.record(
                     .playbackQueuePreparation, detail: error.localizedDescription, error: error
                 )
             }
@@ -1188,7 +1220,7 @@ final class PlaybackController {
         do {
             songs = try await playbackCatalog.songs(members.compactMap(\.catalogSongID))
         } catch {
-            MusicKitActivityLog.shared.record(.playbackQueuePreparation, detail: error.localizedDescription, error: error)
+            activityLog.record(.playbackQueuePreparation, detail: error.localizedDescription, error: error)
             return [:]
         }
         var resolved: [String: Track] = [:]
@@ -1245,7 +1277,7 @@ final class PlaybackController {
             statusMessage = PlaybackCollectionError.songNotInCatalog.localizedDescription
             return false
         }
-        MusicKitActivityLog.shared.record(.playbackSelectionPath, detail: "playCollection request=\(request.rawValue)")
+        activityLog.record(.playbackSelectionPath, detail: "playCollection request=\(request.rawValue)")
         // Nothing is replaced until the lookup succeeds, so a start in
         // progress is not disturbed by one that fails.
         let generationBeforeLookup = startGeneration
@@ -1407,14 +1439,15 @@ final class PlaybackController {
         }
         if player.currentEntryID == nil { firstRung = 3 }
         firstRung = min(firstRung, 3)
-        MusicKitActivityLog.shared.record(.playbackRecoveryAttempt, magnitude: Double(firstRung), detail: "user play")
+        activityLog.record(.playbackRecoveryAttempt, magnitude: Double(firstRung), detail: "user play")
         resetStallEvidence()
 
-        if firstRung <= 1, (try? await player.play()) != nil {
+        if firstRung <= 1, (try? await awaitPlayer("play recovery rung=1", { try await player.play() })) != nil {
             recovered(rung: 1, at: now)
             return
         }
-        if firstRung <= 2, (try? await player.prepareToPlay()) != nil, (try? await player.play()) != nil {
+        if firstRung <= 2, (try? await awaitPlayer("prepare recovery rung=2", { try await player.prepareToPlay() })) != nil,
+           (try? await awaitPlayer("play recovery rung=2", { try await player.play() })) != nil {
             recovered(rung: 2, at: now)
             return
         }
@@ -1476,7 +1509,8 @@ final class PlaybackController {
 
     private func fail(kind: PlaybackFailure.Kind, message: String) {
         if playbackFailure == nil {
-            MusicKitActivityLog.shared.record(.deliveryStallDetected, detail: message)
+            activityLog.record(.deliveryStallDetected, detail:
+                "\(message) kind=\(kind) entry=\(lastEntryID ?? "nil") position=\(Int(elapsedSeconds)) status=\(player.playbackStatus)")
         }
         playbackFailure = PlaybackFailure(kind: kind, message: message, since: playbackFailure?.since ?? .now)
         statusMessage = message
@@ -1812,7 +1846,7 @@ final class PlaybackController {
         if let item, let intent, intent.scope.includes(item) { return }
         skippedEntryIDs.insert(entry.entryID)
         markSessionEvaluatedWithoutSkip()
-        MusicKitActivityLog.shared.record(.playbackSelectionPath, detail: "skipOnReach")
+        activityLog.record(.playbackSelectionPath, detail: "skipOnReach")
         try? await player.skipToNextEntry()
         await observePlayer()
     }
@@ -1853,6 +1887,11 @@ final class PlaybackController {
             track?.playthroughCount = item.playthroughCount
             track?.applePlayCount = item.applePlayCount
             track?.evictedAt = item.evictedAt
+        }
+        let displayed = "\(track.map { "\"\($0.title)\" id=\($0.id)" } ?? "none") member=\(member != nil)"
+        if displayed != recordedDisplay {
+            recordedDisplay = displayed
+            activityLog.record(.nowPlayingDisplayChanged, detail: displayed)
         }
         if track != currentTrack {
             currentTrack = track

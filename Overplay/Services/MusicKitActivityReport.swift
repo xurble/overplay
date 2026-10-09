@@ -625,7 +625,7 @@ nonisolated enum MusicKitActivityReport {
     /// player's entries were matched to the playback intent (`PLAY-011`).
     static func isAttributionEvidence(_ event: MusicKitActivityEvent) -> Bool {
         switch event.operation {
-        case .queueCorrelationRejected: true
+        case .queueCorrelationRejected, .playerEntryObserved: true
         case .playbackSelectionPath:
             event.detail.map { $0.hasPrefix("sessionCarriedOver") || $0 == "skipOnReach" } ?? false
         default: false
