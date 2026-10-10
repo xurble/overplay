@@ -20,7 +20,6 @@ struct FullScreenPlayerView: View {
     /// The screen's safe area, read where the player never moves.
     @State private var screenInsets = EdgeInsets()
     @State private var screenSize: CGSize = .zero
-    @State private var dragOffset: CGFloat = 0
     /// 0 open (moved by the drag), 1 shrunk into the mini player.
     @State private var closeProgress: CGFloat = 0
     /// Set once a drag has moved: down closes, sideways (the volume pill)
@@ -55,15 +54,16 @@ struct FullScreenPlayerView: View {
         // The margins take the swipe as well as the controls.
         .contentShape(.rect)
         .simultaneousGesture(dismissDrag)
+        // Measured inside the full-screen layout: outside it, the size
+        // leaves out the status bar and home indicator.
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { screenSize = $0 }
         .modifier(PlayerCardTransform(
-            dragOffset: dragOffset,
             closeProgress: closeProgress,
             screenSize: screenSize,
             miniPlayerFrame: miniPlayerFrame
         ))
         .ignoresSafeArea()
         .onGeometryChange(for: EdgeInsets.self) { $0.safeAreaInsets } action: { screenInsets = $0 }
-        .onGeometryChange(for: CGSize.self) { $0.size } action: { screenSize = $0 }
         .accessibilityAction(.escape) { close() }
     }
 
@@ -74,7 +74,9 @@ struct FullScreenPlayerView: View {
                     dragIsDismissal = value.translation.height > abs(value.translation.width)
                 }
                 guard dragIsDismissal == true else { return }
-                dragOffset = max(value.translation.height, 0)
+                // The drag drives the shrink: the card's top follows the
+                // finger and reaches the mini player as it becomes it.
+                closeProgress = min(max(value.translation.height, 0) / max(miniPlayerTop, 1), 1)
             }
             .onEnded { value in
                 defer { dragIsDismissal = nil }
@@ -82,13 +84,18 @@ struct FullScreenPlayerView: View {
                 if Self.closesPlayer(translation: value.translation, predictedEnd: value.predictedEndTranslation) {
                     close()
                 } else {
-                    withAnimation(.spring(duration: 0.3)) { dragOffset = 0 }
+                    withAnimation(.spring(duration: 0.3)) { closeProgress = 0 }
                 }
             }
     }
 
     /// Slides the rest of the way down from wherever the drag left it, then
     /// dismisses without a second animation.
+    /// Where the mini player's top is; without a measurement, where it sits.
+    private var miniPlayerTop: CGFloat {
+        miniPlayerFrame.width > 0 ? miniPlayerFrame.minY : screenSize.height - 100
+    }
+
     /// Shrinks into the mini player from wherever the drag left it, then
     /// dismisses without a second animation.
     private func close() {
@@ -132,20 +139,19 @@ struct FullScreenPlayerView: View {
     }
 }
 
-/// Draws the player as a card: moved down by the drag, then shrinking from
-/// there into the mini player's frame. Its content scales evenly and the
+/// Draws the player as a card shrinking from the full screen into the mini
+/// player's frame as `closeProgress` goes from 0 to 1. Its content scales evenly and the
 /// card's outline, rounding into the capsule, clips it. It is opaque until it
 /// is under half the screen's height, then fades out as it reaches the mini
 /// player. Rendering only: layout and the safe area never change.
 private struct PlayerCardTransform: ViewModifier, Animatable {
-    var dragOffset: CGFloat
     var closeProgress: CGFloat
     var screenSize: CGSize
     var miniPlayerFrame: CGRect
 
-    var animatableData: AnimatablePair<CGFloat, CGFloat> {
-        get { AnimatablePair(dragOffset, closeProgress) }
-        set { dragOffset = newValue.first; closeProgress = newValue.second }
+    var animatableData: CGFloat {
+        get { closeProgress }
+        set { closeProgress = newValue }
     }
 
     private static let movingCornerRadius: CGFloat = 50
@@ -153,7 +159,7 @@ private struct PlayerCardTransform: ViewModifier, Animatable {
     func body(content: Content) -> some View {
         let width = max(screenSize.width, 1)
         let height = max(screenSize.height, 1)
-        let start = CGRect(x: 0, y: dragOffset, width: width, height: height)
+        let start = CGRect(x: 0, y: 0, width: width, height: height)
         // Without a measured mini player, shrink into where it sits.
         let target = miniPlayerFrame.width > 0
             ? miniPlayerFrame
@@ -166,7 +172,7 @@ private struct PlayerCardTransform: ViewModifier, Animatable {
             height: start.height + (target.height - start.height) * t
         )
         let scale = card.width / width
-        let startRadius = dragOffset > 0 || t > 0 ? Self.movingCornerRadius : 0
+        let startRadius = t > 0 ? Self.movingCornerRadius : 0
         let radius = startRadius + (target.height / 2 - startRadius) * t
         // Opaque down to half the screen's height, then fading to nothing at
         // the mini player's height.
