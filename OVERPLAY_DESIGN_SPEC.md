@@ -1994,7 +1994,11 @@ current entry is unattributed, the curation actions are disabled rather than
 hidden. The standard media controls call the shared playback controller. A
 shared playback failure is shown with a Play action that runs the recovery
 ladder (`PLAY-014`), except for a stuck player, which is shown only the advice
-to force-quit and reopen Overplay.
+to force-quit and reopen Overplay. In place of Try Again, a stuck player has a
+button that opens the steps for taking a sysdiagnose on this device before
+force-quitting, because relaunching clears what the sysdiagnose would show
+(#90). CarPlay shows no sysdiagnose reminder: a sysdiagnose is taken on the
+phone.
 
 Platform notes:
 
