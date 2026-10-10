@@ -156,6 +156,9 @@ struct NowPlayingProgressBar: View {
     /// A bare line of this height (the mini player's top edge) instead of
     /// the glass bar.
     var lineHeight: CGFloat? = nil
+    /// Where the line's progress starts and ends, in from each side, so a
+    /// rounded container's curve neither hides the start nor the end.
+    var lineEndInset: CGFloat = 0
 
     @State private var sampledProgress = 0.0
     @State private var sampleDate = Date()
@@ -169,9 +172,10 @@ struct NowPlayingProgressBar: View {
                 let fillWidth = max(innerWidth * clampedProgress, clampedProgress > 0 ? 6 : 0)
 
                 if lineHeight != nil {
+                    let span = max(proxy.size.width - 2 * lineEndInset, 0)
                     Rectangle()
                         .fill(fillColor)
-                        .frame(width: proxy.size.width * clampedProgress)
+                        .frame(width: clampedProgress > 0 ? lineEndInset + span * clampedProgress : 0)
                         .animation(.smooth(duration: 0.45), value: phase)
                 } else {
                 ZStack(alignment: .leading) {

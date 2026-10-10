@@ -11,6 +11,16 @@ struct MiniPlayerLozengeView: View {
     var onOpen: () -> Void
 
     static let height: CGFloat = 68
+    private static let progressLineHeight: CGFloat = 3
+
+    /// Where the capsule's curve shows half the line's height: progress maps
+    /// from here to the same point on the right, so the first second already
+    /// marks the curve and the end meets the right one.
+    private static var progressLineEndInset: CGFloat {
+        let radius = height / 2
+        let depth = radius - progressLineHeight / 2
+        return radius - (radius * radius - depth * depth).squareRoot()
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -71,7 +81,8 @@ struct MiniPlayerLozengeView: View {
             durationSeconds: presentation.durationSeconds,
             isPlaying: presentation.isPlaying,
             trackID: presentation.trackID,
-            lineHeight: 3
+            lineHeight: Self.progressLineHeight,
+            lineEndInset: Self.progressLineEndInset
         )
         .accessibilityHidden(true)
         .allowsHitTesting(false)
