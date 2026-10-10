@@ -20,8 +20,10 @@ struct FullScreenPlayerView: View {
     /// The screen's safe area, read where the player never moves.
     @State private var screenInsets = EdgeInsets()
     @State private var screenSize: CGSize = .zero
-    /// 0 open (moved by the drag), 1 shrunk into the mini player.
-    @State private var closeProgress: CGFloat = 0
+    /// 0 open, 1 shrunk into the mini player. It starts there: opening
+    /// grows the player out of the mini player, the close in reverse.
+    @State private var closeProgress: CGFloat = 1
+    @State private var hasOpened = false
     /// Set once a drag has moved: down closes, sideways (the volume pill)
     /// is left alone.
     @State private var dragIsDismissal: Bool?
@@ -50,7 +52,13 @@ struct FullScreenPlayerView: View {
         .simultaneousGesture(dismissDrag)
         // Measured inside the full-screen layout: outside it, the size
         // leaves out the status bar and home indicator.
-        .onGeometryChange(for: CGSize.self) { $0.size } action: { screenSize = $0 }
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+            screenSize = size
+            // Grow once the screen is measured, so the first frame is right.
+            guard !hasOpened, size.width > 0 else { return }
+            hasOpened = true
+            withAnimation(.smooth(duration: 0.35)) { closeProgress = 0 }
+        }
         .modifier(PlayerCardTransform(
             closeProgress: closeProgress,
             screenSize: screenSize,

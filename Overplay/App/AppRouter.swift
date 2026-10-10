@@ -70,7 +70,12 @@ struct AppRouter: View {
         .environment(artworkPresentation)
         .overlay(alignment: .bottom) {
             if showsPlayer, let settings {
-                MiniPlayerLozengeView(settings: settings) { isPlayerExpanded = true }
+                MiniPlayerLozengeView(settings: settings) {
+                    // The player animates its own opening out of the mini player.
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { isPlayerExpanded = true }
+                }
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { miniPlayerFrame = $0 }
                     .padding(.horizontal, 12)
                     .padding(.bottom, 4)
