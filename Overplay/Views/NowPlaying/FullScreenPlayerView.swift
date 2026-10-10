@@ -15,6 +15,8 @@ struct FullScreenPlayerView: View {
     var settings: OverplaySettings
     /// The mini player, in screen coordinates: closing shrinks into it.
     var miniPlayerFrame: CGRect = .zero
+    /// A swipe up on the mini player that opened this player, if any.
+    var openDrag: PlayerOpenDrag?
 
     @State private var artworkTop: CGFloat?
     /// The screen's safe area, read where the player never moves.
@@ -54,10 +56,27 @@ struct FullScreenPlayerView: View {
         // leaves out the status bar and home indicator.
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
             screenSize = size
-            // Grow once the screen is measured, so the first frame is right.
+            // Grow once the screen is measured, so the first frame is right;
+            // a swipe up opens it with the finger instead.
             guard !hasOpened, size.width > 0 else { return }
             hasOpened = true
-            withAnimation(.smooth(duration: 0.35)) { closeProgress = 0 }
+            if let progress = openDrag?.progress {
+                closeProgress = progress
+            } else {
+                withAnimation(.smooth(duration: 0.35)) { closeProgress = 0 }
+            }
+        }
+        .onChange(of: openDrag?.progress) { _, progress in
+            guard let progress, hasOpened else { return }
+            closeProgress = progress
+        }
+        .onChange(of: openDrag?.outcome) { _, outcome in
+            guard let outcome else { return }
+            openDrag?.outcome = nil
+            switch outcome {
+            case .open: withAnimation(.smooth(duration: 0.3)) { closeProgress = 0 }
+            case .cancel: close()
+            }
         }
         .modifier(PlayerCardTransform(
             closeProgress: closeProgress,

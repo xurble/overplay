@@ -9,6 +9,9 @@ struct MiniPlayerLozengeView: View {
 
     var settings: OverplaySettings
     var onOpen: () -> Void
+    /// A swipe up, as it moves (upward distance) and on release.
+    var onOpenDragChanged: (CGFloat) -> Void = { _ in }
+    var onOpenDragEnded: (DragGesture.Value) -> Void = { _ in }
 
     static let height: CGFloat = 68
     private static let progressLineHeight: CGFloat = 3
@@ -60,9 +63,9 @@ struct MiniPlayerLozengeView: View {
         .clipShape(.capsule)
         .contentShape(.capsule)
         .simultaneousGesture(
-            DragGesture(minimumDistance: 16).onEnded { value in
-                if value.translation.height < -30 { onOpen() }
-            }
+            DragGesture(minimumDistance: 10, coordinateSpace: .global)
+                .onChanged { value in onOpenDragChanged(-value.translation.height) }
+                .onEnded { value in onOpenDragEnded(value) }
         )
         .glassEffect(.regular.interactive(), in: .capsule)
         .accessibilityElement(children: .contain)
