@@ -9,6 +9,8 @@ struct DashboardView: View {
     @Query private var playlistItems: [PlaylistItemRecord]
     @Query(sort: \RecentCollectionRecord.lastPlayedAt, order: .reverse) private var recentRecords: [RecentCollectionRecord]
     @State private var tracks: [TrackRecord] = []
+    @State private var leadArtworkSide = DashboardLayout.defaultLeadArtworkSide
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var settings: OverplaySettings
 
@@ -23,7 +25,7 @@ struct DashboardView: View {
                     }
                     .navigationLinkIndicatorVisibility(.hidden)
                     .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: DashboardLayout.blockSpacing, trailing: 16))
                 } else {
                     NavigationLink {
                         PlaylistSelectionView()
@@ -64,13 +66,26 @@ struct DashboardView: View {
 
             let recents = RecentCollectionRepository.distinct(recentRecords)
             if !recents.isEmpty {
-                Section("Recents") {
+                Section {
+                    Text("Recent Deep Dives")
+                        .font(.headline)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: DashboardLayout.blockSpacing, leading: 16, bottom: 6, trailing: 16))
                     RecentsRowView(recents: recents)
-                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 8, trailing: 0))
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 0, trailing: 0))
                 }
             }
         }
         .listStyle(.plain)
+        .onScrollGeometryChange(for: DashboardFit.self) { geometry in
+            DashboardFit(
+                spareHeight: geometry.containerSize.height - geometry.contentInsets.top - geometry.contentSize.height,
+                width: geometry.containerSize.width
+            )
+        } action: { _, fit in
+            fitLeadArtwork(fit)
+        }
         .miniPlayerScrollContentInset()
         .navigationTitle("Overplay")
         .toolbar {
@@ -88,13 +103,25 @@ struct DashboardView: View {
         }
     }
 
-    /// The One True Playlist leads the screen as artwork alone, twice the size
-    /// of a standard row's thumbnail.
+    /// Sizes the lead artwork so that, scrolled to the top, the last row ends
+    /// one block spacing above the mini player.
+    private func fitLeadArtwork(_ fit: DashboardFit) {
+        guard PlayerPlacement(horizontalSizeClass) == .sheet else {
+            leadArtworkSide = DashboardLayout.defaultLeadArtworkSide
+            return
+        }
+        let excess = fit.spareHeight - MiniPlayerLayout.collapsedHeight - DashboardLayout.blockSpacing
+        let side = min(max(leadArtworkSide + excess, DashboardLayout.minimumLeadArtworkSide), fit.width - 32)
+        if abs(side - leadArtworkSide) >= 1 { leadArtworkSide = side }
+    }
+
+    /// The One True Playlist leads the screen as artwork alone, sized to fill
+    /// the first screen.
     private func oneTruePlaylistArtwork(for playlist: PlaylistRecord) -> some View {
         let summary = presentation(for: playlist)
         return ZStack(alignment: .bottomTrailing) {
             PlaylistCollageThumbnailView(playlist: playlist)
-                .frame(width: 192, height: 192)
+                .frame(width: leadArtworkSide, height: leadArtworkSide)
 
             Image(systemName: summary.iconIntent.systemImage)
                 .font(.footnote.weight(.bold))
@@ -182,4 +209,17 @@ struct DashboardView: View {
     }
     .environment(PlaybackController())
     .modelContainer(PreviewContainer.make())
+}
+
+private enum DashboardLayout {
+    /// The gap under the lead artwork, above Recent Deep Dives, and between
+    /// the last row and the mini player.
+    static let blockSpacing: CGFloat = 14
+    static let defaultLeadArtworkSide: CGFloat = 192
+    static let minimumLeadArtworkSide: CGFloat = 120
+}
+
+private struct DashboardFit: Equatable {
+    var spareHeight: CGFloat
+    var width: CGFloat
 }
