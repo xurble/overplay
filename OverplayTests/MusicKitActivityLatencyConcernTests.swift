@@ -235,7 +235,7 @@ struct MusicKitActivityOriginScopingTests {
     @Test("a command's origin reaches the recorded event")
     func originReachesTheEvent() async {
         let log = makeLog()
-        await log.withOrigin(.carPlay) {
+        await log.withOrigin(.carPlay) { () async in
             log.record(.playerPlay)
         }
 
@@ -245,7 +245,7 @@ struct MusicKitActivityOriginScopingTests {
     @Test("origin does not leak past the command that set it")
     func originDoesNotLeakPastTheCommand() async {
         let log = makeLog()
-        await log.withOrigin(.remoteCommand) { log.record(.playerPlay) }
+        await log.withOrigin(.remoteCommand) { () async in log.record(.playerPlay) }
         log.record(.artworkDownload)
 
         let events = log.snapshot().events
@@ -257,7 +257,7 @@ struct MusicKitActivityOriginScopingTests {
     func nestingRestoresTheOuterOrigin() async {
         let log = makeLog()
         await log.withOrigin(.carPlay) {
-            await log.withOrigin(.automatic) { log.record(.playerSkipNext) }
+            await log.withOrigin(.automatic) { () async in log.record(.playerSkipNext) }
             log.record(.playerPlay)
         }
 
