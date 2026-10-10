@@ -27,6 +27,7 @@ struct SettingsView: View {
                     Spacer()
                     NavigationLink("Change") {
                         PlaylistSelectionView()
+                            .nowPlayingColumnToggle()
                     }
                 }
             } header: {
@@ -65,7 +66,7 @@ struct SettingsView: View {
             }
 
             Section {
-                NavigationLink("Find Duplicates", destination: DuplicateTracksView())
+                NavigationLink("Find Duplicates", destination: DuplicateTracksView().nowPlayingColumnToggle())
             }
 
             if let oneTruePlaylist, !ProcessInfo.processInfo.isMacCatalystApp {

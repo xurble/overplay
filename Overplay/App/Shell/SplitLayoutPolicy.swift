@@ -5,8 +5,16 @@ import SwiftUI
 /// phone) the list and player take a half each, divided by the fold or,
 /// without one, the middle of the window.
 enum SplitLayoutPolicy {
-    /// A Mac (Catalyst, or the iPad app on a Mac) keeps the columns.
-    static var keepsColumns: Bool { ProcessInfo.processInfo.isMacCatalystApp }
+    /// A Mac (Catalyst, or the iPad app on a Mac) keeps the columns. UI tests
+    /// on the iPad simulator ask for them with `macLayoutArgument`.
+    static var keepsColumns: Bool {
+#if targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains(macLayoutArgument) { return true }
+#endif
+        return ProcessInfo.processInfo.isMacCatalystApp
+    }
+
+    static let macLayoutArgument = "-OverplayMacLayout"
 
     /// Where the list and player divide side by side: a vertical fold or,
     /// without a fold, the middle of a window wider than tall. Nil with

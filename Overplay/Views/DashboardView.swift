@@ -23,6 +23,7 @@ struct DashboardView: View {
                 if let oneTruePlaylist {
                     NavigationLink {
                         PlaylistManagementView(settings: settings, playlist: oneTruePlaylist)
+                            .nowPlayingColumnToggle()
                     } label: {
                         oneTruePlaylistArtwork(for: oneTruePlaylist, summary: builder.summary(for: oneTruePlaylist))
                     }
@@ -33,6 +34,7 @@ struct DashboardView: View {
                 } else {
                     NavigationLink {
                         PlaylistSelectionView()
+                            .nowPlayingColumnToggle()
                     } label: {
                         PlaylistHomeRowView(
                             title: "Link One True Playlist",
@@ -50,6 +52,7 @@ struct DashboardView: View {
                 Section {
                     NavigationLink {
                         PlaylistManagementView(settings: settings, playlist: triageBucket)
+                            .nowPlayingColumnToggle()
                     } label: {
                         TriageHomeRowView(bucket: triageBucket, summary: builder.summary(for: triageBucket),
                                           sourceCount: triageSourceCount)
@@ -58,6 +61,7 @@ struct DashboardView: View {
 
                     NavigationLink {
                         PlaylistManagementView(settings: settings, playlist: triageBucket, scope: .retired)
+                            .nowPlayingColumnToggle()
                     } label: {
                         Label {
                             Text("Retired")
@@ -107,6 +111,7 @@ struct DashboardView: View {
             ToolbarItem(placement: .topBarLeading) {
                 NavigationLink {
                     SettingsView(settings: settings)
+                        .nowPlayingColumnToggle()
                 } label: {
                     // A title as well as a symbol: a vertical bar's overflow
                     // menu (iPhone Duo) lists items by title.

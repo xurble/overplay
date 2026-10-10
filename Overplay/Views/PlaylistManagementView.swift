@@ -197,6 +197,7 @@ private struct PlaylistManagementContentView: View {
                     if playlist.role == .triageBucket, selectedScope == .active {
                         NavigationLink {
                             TriageSourcesView()
+                                .nowPlayingColumnToggle()
                         } label: {
                             Label("Contributing Playlists", systemImage: "slider.horizontal.3")
                         }
@@ -206,12 +207,14 @@ private struct PlaylistManagementContentView: View {
 
                     NavigationLink {
                         SearchMusicView(settings: settings, playlistID: playlist.musicPlaylistID)
+                            .nowPlayingColumnToggle()
                     } label: {
                         Label("Search Apple Music", systemImage: "magnifyingglass")
                     }
 
                     NavigationLink {
                         HistoryView()
+                            .nowPlayingColumnToggle()
                     } label: {
                         Label("History", systemImage: "clock.arrow.circlepath")
                     }

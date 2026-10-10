@@ -131,18 +131,7 @@ struct SplitAppShell: View {
                 detailView
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("detail-\(selectedDestination.storageValue)")
-                    .toolbar {
-                        if !isPinnedAtFold {
-                            ToolbarItem(placement: .primaryAction) {
-                                Button {
-                                    withAnimation(.smooth) { showsNowPlaying.toggle() }
-                                } label: {
-                                    Label(showsNowPlaying ? "Hide Now Playing" : "Show Now Playing", systemImage: "sidebar.trailing")
-                                }
-                                .help(showsNowPlaying ? "Hide Now Playing" : "Show Now Playing")
-                            }
-                        }
-                    }
+                    .nowPlayingColumnToggle()
             }
         }
         .onChange(of: storedSelection) { _, newValue in
@@ -159,6 +148,9 @@ struct SplitAppShell: View {
             Self.logger.info("Detail navigation depth: \(count, privacy: .public)")
         }
         .modifier(SplitStyle(sidebarOverlaysList: sidebarOverlaysList))
+        // On the split view, not the detail stack: pushed screens take their
+        // environment from here.
+        .environment(\.nowPlayingColumnToggle, columnToggle)
     }
 
     private var detailView: some View {
@@ -191,6 +183,14 @@ struct SplitAppShell: View {
     private var isPinnedAtFold: Bool { isSplitAtFold || isStackedAtFold }
 
     private var showsPlayerColumn: Bool { showsNowPlaying || isPinnedAtFold }
+
+    /// Divided in halves the player cannot be hidden, so there is no toggle.
+    private var columnToggle: NowPlayingColumnToggle? {
+        guard !isPinnedAtFold else { return nil }
+        return NowPlayingColumnToggle(isShown: showsNowPlaying) {
+            withAnimation(.smooth) { showsNowPlaying.toggle() }
+        }
+    }
 
     private var nowPlayingWidth: CGFloat { SplitLayoutPolicy.playerWidth(for: totalWidth, foldX: dividerX) }
 

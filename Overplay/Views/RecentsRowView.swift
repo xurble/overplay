@@ -12,6 +12,7 @@ struct RecentsRowView: View {
                 ForEach(recents) { recent in
                     NavigationLink {
                         RecentCollectionView(recent: recent)
+                            .nowPlayingColumnToggle()
                     } label: {
                         RecentTileView(recent: recent)
                     }
