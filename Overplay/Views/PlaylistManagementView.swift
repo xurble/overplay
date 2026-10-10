@@ -292,6 +292,9 @@ private struct PlaylistManagementContentView: View {
         if playlistPresentation.isCurrentPlaybackPlaylist {
             return .green
         }
+        if playlistPresentation.playbackScope == .retired {
+            return .gray
+        }
 
         switch playlist.role {
         case .oneTruePlaylist:

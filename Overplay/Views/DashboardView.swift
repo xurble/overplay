@@ -52,9 +52,13 @@ struct DashboardView: View {
                     NavigationLink {
                         PlaylistManagementView(settings: settings, playlist: triageBucket, scope: .retired)
                     } label: {
-                        Label("Retired", systemImage: retiredSummary.iconIntent.systemImage)
+                        Label {
+                            Text("Retired")
+                        } icon: {
+                            Image(systemName: retiredSummary.iconIntent.systemImage)
+                                .foregroundStyle(retiredSummary.isCurrentPlaybackPlaylist ? .green : .gray)
+                        }
                     }
-                    .tint(retiredSummary.isCurrentPlaybackPlaylist ? .green : nil)
                 }
             }
 
