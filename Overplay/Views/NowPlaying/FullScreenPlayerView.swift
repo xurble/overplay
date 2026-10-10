@@ -63,7 +63,7 @@ struct FullScreenPlayerView: View {
             if let progress = openDrag?.progress {
                 closeProgress = progress
             } else {
-                withAnimation(.smooth(duration: 0.35)) { closeProgress = 0 }
+                withAnimation(.smooth(duration: 0.385)) { closeProgress = 0 }
             }
         }
         .onChange(of: openDrag?.progress) { _, progress in
@@ -74,7 +74,7 @@ struct FullScreenPlayerView: View {
             guard let outcome else { return }
             openDrag?.outcome = nil
             switch outcome {
-            case .open: withAnimation(.smooth(duration: 0.3)) { closeProgress = 0 }
+            case .open: withAnimation(.smooth(duration: 0.33)) { closeProgress = 0 }
             case .cancel: close()
             }
         }
@@ -105,7 +105,7 @@ struct FullScreenPlayerView: View {
                 if Self.closesPlayer(translation: value.translation, predictedEnd: value.predictedEndTranslation) {
                     close()
                 } else {
-                    withAnimation(.spring(duration: 0.3)) { closeProgress = 0 }
+                    withAnimation(.spring(duration: 0.33)) { closeProgress = 0 }
                 }
             }
     }
@@ -120,7 +120,7 @@ struct FullScreenPlayerView: View {
     /// Shrinks into the mini player from wherever the drag left it, then
     /// dismisses without a second animation.
     private func close() {
-        withAnimation(.smooth(duration: 0.35)) {
+        withAnimation(.smooth(duration: 0.385)) {
             closeProgress = 1
         } completion: {
             var transaction = Transaction()
