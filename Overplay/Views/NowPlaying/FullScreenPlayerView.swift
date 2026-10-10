@@ -19,6 +19,16 @@ struct FullScreenPlayerView: View {
             onArtworkTopChange: { artworkTop = $0 }
         )
         .modifier(UnderVerticalBar())
+        // The zoom transition's own swipe down loses to the controls' and the
+        // volume pill's touch handling. This one runs alongside them: a
+        // clearly downward swipe closes the player from anywhere.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 24, coordinateSpace: .global).onEnded { value in
+                if Self.closesPlayer(translation: value.translation, predictedEnd: value.predictedEndTranslation) {
+                    dismiss()
+                }
+            }
+        )
         .overlay {
             // Laid out against the whole screen: centred across it, and
             // halfway between its top edge and the top of the art.
@@ -29,6 +39,12 @@ struct FullScreenPlayerView: View {
             .ignoresSafeArea()
         }
         .accessibilityAction(.escape) { dismiss() }
+    }
+
+    /// Down by 80 points, or flicked down past 160, and more down than across.
+    static func closesPlayer(translation: CGSize, predictedEnd: CGSize) -> Bool {
+        let down = max(translation.height, predictedEnd.height)
+        return down > (translation.height > 80 ? 0 : 160) && translation.height > abs(translation.width) * 1.5
     }
 
     private var dragHandle: some View {
