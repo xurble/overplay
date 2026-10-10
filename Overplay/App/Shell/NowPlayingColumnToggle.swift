@@ -1,11 +1,13 @@
 import SwiftUI
 
-/// Shows and hides the Now Playing column where it can be hidden (a Mac).
-/// A toolbar item belongs to the screen on top of the stack, so every screen
-/// the detail column can show or push carries `.nowPlayingColumnToggle()`;
-/// without the environment value (iPhone, iPad) it adds nothing.
+/// Shows and hides the Now Playing column where it can be hidden (a Mac),
+/// with a mini player in the title bar while it is hidden. A toolbar item
+/// belongs to the screen on top of the stack, so every screen the detail
+/// column can show or push carries `.nowPlayingColumnToggle()`; without the
+/// environment value (iPhone, iPad) it adds nothing.
 struct NowPlayingColumnToggle {
     var isShown: Bool
+    var settings: OverplaySettings
     var toggle: () -> Void
 }
 
@@ -24,6 +26,13 @@ private struct NowPlayingColumnToggleToolbar: ViewModifier {
 
     func body(content: Content) -> some View {
         content.toolbar {
+            if let columnToggle, !columnToggle.isShown {
+                ToolbarItem(placement: .primaryAction) {
+                    MiniPlayerToolbarView(settings: columnToggle.settings, onOpen: columnToggle.toggle)
+                }
+                // Its own glass, taller than the bar's.
+                .sharedBackgroundVisibility(.hidden)
+            }
             if let columnToggle {
                 ToolbarItem(placement: .primaryAction) {
                     let title = columnToggle.isShown ? "Hide Now Playing" : "Show Now Playing"

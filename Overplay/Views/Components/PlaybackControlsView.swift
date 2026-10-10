@@ -8,6 +8,9 @@ struct PlaybackControlsView: View {
     var settings: OverplaySettings
     var controlSize: PlaybackControlSize = .regular
     var artworkTheme: AlbumArtworkTheme? = nil
+    /// System Liquid Glass buttons, for a surface that is itself glass (the
+    /// Mac's title-bar mini player) rather than the player's art.
+    var usesSystemGlass = false
 
     var body: some View {
         HStack(spacing: controlSize.spacing) {
@@ -21,7 +24,8 @@ struct PlaybackControlsView: View {
             .buttonStyle(PlaybackControlButtonStyle(
                 controlSize: controlSize,
                 prominence: .secondary,
-                artworkTheme: artworkTheme
+                artworkTheme: artworkTheme,
+                usesSystemGlass: usesSystemGlass
             ))
 
             Button {
@@ -34,7 +38,8 @@ struct PlaybackControlsView: View {
             .buttonStyle(PlaybackControlButtonStyle(
                 controlSize: controlSize,
                 prominence: .primary,
-                artworkTheme: artworkTheme
+                artworkTheme: artworkTheme,
+                usesSystemGlass: usesSystemGlass
             ))
 
             Button {
@@ -47,7 +52,8 @@ struct PlaybackControlsView: View {
             .buttonStyle(PlaybackControlButtonStyle(
                 controlSize: controlSize,
                 prominence: .secondary,
-                artworkTheme: artworkTheme
+                artworkTheme: artworkTheme,
+                usesSystemGlass: usesSystemGlass
             ))
         }
     }
@@ -76,6 +82,8 @@ struct PlaybackControlsView: View {
 enum PlaybackControlSize {
     case compact
     case regular
+    /// In a Mac title bar.
+    case toolbar
 
     var spacing: CGFloat {
         switch self {
@@ -83,6 +91,8 @@ enum PlaybackControlSize {
             14
         case .regular:
             22
+        case .toolbar:
+            6
         }
     }
 
@@ -92,6 +102,8 @@ enum PlaybackControlSize {
             42
         case .regular:
             68
+        case .toolbar:
+            30
         }
     }
 
@@ -101,6 +113,8 @@ enum PlaybackControlSize {
             18
         case .regular:
             28
+        case .toolbar:
+            14
         }
     }
 
@@ -110,6 +124,8 @@ enum PlaybackControlSize {
             16
         case .regular:
             24
+        case .toolbar:
+            12
         }
     }
 
@@ -119,6 +135,8 @@ enum PlaybackControlSize {
             34
         case .regular:
             48
+        case .toolbar:
+            26
         }
     }
 }
@@ -134,6 +152,7 @@ private struct PlaybackControlButtonStyle: ButtonStyle {
     var controlSize: PlaybackControlSize
     var prominence: Prominence
     var artworkTheme: AlbumArtworkTheme?
+    var usesSystemGlass = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -148,12 +167,16 @@ private struct PlaybackControlButtonStyle: ButtonStyle {
             .opacity(isEnabled ? 1 : 0.42)
             .frame(width: buttonSize, height: buttonSize)
             .contentShape(Circle())
-            .playbackControlBackdrop(
-                palette,
+            .modifier(SystemGlassOrBackdrop(
+                usesSystemGlass: usesSystemGlass,
+                // Untinted glass over the surface's own glass reads as a
+                // white disc, so secondary buttons take the surface colour.
+                tint: prominence == .primary ? palette?.surface : palette?.backgroundRGB.color,
+                palette: palette,
                 prominence: glassProminence,
                 isPressed: configuration.isPressed,
                 fallbackOpacity: backgroundOpacity(isPressed: configuration.isPressed)
-            )
+            ))
             .scaleEffect(configuration.isPressed && palette?.usesGlass != true ? 0.92 : 1)
             .animation(.smooth(duration: 0.16), value: configuration.isPressed)
             .animation(.smooth(duration: 0.16), value: isEnabled)
@@ -207,6 +230,29 @@ private struct PlaybackControlButtonStyle: ButtonStyle {
             isPressed ? 0.78 : 1
         case .secondary:
             isPressed ? 0.42 : 0.18
+        }
+    }
+}
+
+/// System glass, or the player's own art-backed backdrop.
+private struct SystemGlassOrBackdrop: ViewModifier {
+    var usesSystemGlass: Bool
+    var tint: Color?
+    var palette: FullScreenPlayerControlPalette?
+    var prominence: FullScreenPlayerControlProminence
+    var isPressed: Bool
+    var fallbackOpacity: Double
+
+    func body(content: Content) -> some View {
+        if usesSystemGlass {
+            content.glassEffect(.regular.tint(tint).interactive(), in: .circle)
+        } else {
+            content.playbackControlBackdrop(
+                palette,
+                prominence: prominence,
+                isPressed: isPressed,
+                fallbackOpacity: fallbackOpacity
+            )
         }
     }
 }

@@ -13,7 +13,8 @@ struct SplitAppShell: View {
     @State private var placeOnOpen: AppShellDestination?
 
     @SceneStorage("overplay.splitSelection") private var storedSelection = AppShellDestination.dashboard.storageValue
-    @SceneStorage("overplay.showsNowPlayingColumn") private var showsNowPlaying = true
+    /// Remembered across launches; the big player shows by default.
+    @AppStorage("overplay.showsNowPlayingColumn") private var showsNowPlaying = true
     @State private var totalWidth: CGFloat = 0
     @State private var totalHeight: CGFloat = 0
     /// Where a vertical fold crosses this view, on a folding phone.
@@ -125,7 +126,8 @@ struct SplitAppShell: View {
             }
             .miniPlayerScrollContentInset()
             .listStyle(.sidebar)
-            .navigationTitle("Overplay")
+            // The Mac window has no title bar to fill; its sidebar shows none.
+            .navigationTitle(SplitLayoutPolicy.keepsColumns ? "" : "Overplay")
         } detail: {
             NavigationStack(path: $detailPath) {
                 detailView
@@ -187,7 +189,7 @@ struct SplitAppShell: View {
     /// Divided in halves the player cannot be hidden, so there is no toggle.
     private var columnToggle: NowPlayingColumnToggle? {
         guard !isPinnedAtFold else { return nil }
-        return NowPlayingColumnToggle(isShown: showsNowPlaying) {
+        return NowPlayingColumnToggle(isShown: showsNowPlaying, settings: settings) {
             withAnimation(.smooth) { showsNowPlaying.toggle() }
         }
     }

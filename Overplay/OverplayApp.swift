@@ -67,6 +67,7 @@ struct OverplayApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(runtime: .shared)
+                .hidesMacTitlebar()
         }
         .modelContainer(modelContainer)
         .onChange(of: scenePhase) { _, newPhase in
