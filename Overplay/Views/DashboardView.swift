@@ -111,13 +111,11 @@ struct DashboardView: View {
             PlaylistCollageThumbnailView(playlist: playlist)
                 .frame(width: 192, height: 192)
 
-            if summary.isCurrentPlaybackPlaylist {
-                Image(systemName: summary.iconIntent.systemImage)
-                    .font(.footnote.weight(.bold))
-                    .foregroundStyle(.white)
-                    .padding(6)
-                    .background(.green, in: Circle())
-            }
+            Image(systemName: summary.iconIntent.systemImage)
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(.white)
+                .padding(6)
+                .background(badgeTint(for: summary, role: playlist.role), in: Circle())
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .ignore)
