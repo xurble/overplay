@@ -2,8 +2,13 @@ import SwiftData
 import SwiftUI
 
 /// Now Playing over the whole screen in compact width, opened from the mini
-/// player. It is the regular-width column's player; swiping down closes it,
-/// and a drag handle under the status bar or Dynamic Island says so.
+/// player. It is the regular-width column's player. A swipe down anywhere
+/// moves it with the finger and, past the threshold, closes it; the drag
+/// handle under the status bar or Dynamic Island says so, and tapping it
+/// closes it too.
+///
+/// The swipe is Overplay's own: the zoom transition's swipe down missed
+/// about half of first attempts and lost to the controls.
 struct FullScreenPlayerView: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -11,6 +16,11 @@ struct FullScreenPlayerView: View {
 
     @State private var artworkTop: CGFloat?
     @State private var safeAreaTop: CGFloat = 0
+    @State private var screenHeight: CGFloat = 0
+    @State private var dragOffset: CGFloat = 0
+    /// Set once a drag has moved: down closes, sideways (the volume pill)
+    /// is left alone.
+    @State private var dragIsDismissal: Bool?
 
     var body: some View {
         NowPlayingColumnView(
@@ -21,16 +31,6 @@ struct FullScreenPlayerView: View {
         )
         .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { safeAreaTop = $0 }
         .modifier(UnderVerticalBar())
-        // The zoom transition's own swipe down loses to the controls' and the
-        // volume pill's touch handling. This one runs alongside them: a
-        // clearly downward swipe closes the player from anywhere.
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 24, coordinateSpace: .global).onEnded { value in
-                if Self.closesPlayer(translation: value.translation, predictedEnd: value.predictedEndTranslation) {
-                    dismiss()
-                }
-            }
-        )
         .overlay {
             // Laid out against the whole screen, centred across it.
             GeometryReader { proxy in
@@ -42,7 +42,46 @@ struct FullScreenPlayerView: View {
             }
             .ignoresSafeArea()
         }
-        .accessibilityAction(.escape) { dismiss() }
+        // The margins take the swipe as well as the controls.
+        .contentShape(.rect)
+        .simultaneousGesture(dismissDrag)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height + $0.safeAreaInsets.top + $0.safeAreaInsets.bottom } action: {
+            screenHeight = $0
+        }
+        .offset(y: dragOffset)
+        .accessibilityAction(.escape) { close() }
+    }
+
+    private var dismissDrag: some Gesture {
+        DragGesture(minimumDistance: 10, coordinateSpace: .global)
+            .onChanged { value in
+                if dragIsDismissal == nil {
+                    dragIsDismissal = value.translation.height > abs(value.translation.width)
+                }
+                guard dragIsDismissal == true else { return }
+                dragOffset = max(value.translation.height, 0)
+            }
+            .onEnded { value in
+                defer { dragIsDismissal = nil }
+                guard dragIsDismissal == true else { return }
+                if Self.closesPlayer(translation: value.translation, predictedEnd: value.predictedEndTranslation) {
+                    close()
+                } else {
+                    withAnimation(.spring(duration: 0.3)) { dragOffset = 0 }
+                }
+            }
+    }
+
+    /// Slides the rest of the way down from wherever the drag left it, then
+    /// dismisses without a second animation.
+    private func close() {
+        withAnimation(.smooth(duration: 0.25)) {
+            dragOffset = max(screenHeight, 1000)
+        } completion: {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { dismiss() }
+        }
     }
 
     /// Down by 80 points, or flicked down past 160, and more down than across.
@@ -62,7 +101,7 @@ struct FullScreenPlayerView: View {
 
     private var dragHandle: some View {
         Button {
-            dismiss()
+            close()
         } label: {
             Capsule()
                 .fill(.secondary)

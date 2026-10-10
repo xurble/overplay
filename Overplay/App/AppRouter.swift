@@ -14,11 +14,8 @@ struct AppRouter: View {
     @State private var showingNewLibraryConfirmation = false
     @State private var setupError: String?
     @State private var isPlayerExpanded = false
-    @Namespace private var playerTransition
     @State private var artworkPresentation = PlaylistArtworkPresentation()
     private var startupViewModel: AppStartupViewModel { runtime.startupViewModel }
-
-    private static let playerTransitionID = "now-playing"
 
     var body: some View {
         Group {
@@ -73,7 +70,6 @@ struct AppRouter: View {
         .overlay(alignment: .bottom) {
             if showsPlayer, let settings {
                 MiniPlayerLozengeView(settings: settings) { isPlayerExpanded = true }
-                    .matchedTransitionSource(id: Self.playerTransitionID, in: playerTransition)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 4)
                     .modifier(UnderVerticalBar())
@@ -91,7 +87,8 @@ struct AppRouter: View {
                     .environment(authorizationService)
                     .environment(artworkPresentation)
                     .modelContext(modelContext)
-                    .navigationTransition(.zoom(sourceID: Self.playerTransitionID, in: playerTransition))
+                    // Clear, so the app shows above the player as it is swiped down.
+                    .presentationBackground(.clear)
             }
         }
         .sheet(item: $artworkPresentation.request) { request in
