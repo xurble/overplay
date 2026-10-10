@@ -7,6 +7,7 @@ struct AppRouter: View {
     @Environment(MusicAuthorizationService.self) private var authorizationService
     @Environment(PlaybackController.self) private var playbackController
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     @AppStorage("overplay.hasPresentedAuthorizedUI") private var hasPresentedAuthorizedUI = false
 
@@ -96,6 +97,12 @@ struct AppRouter: View {
         .onChange(of: showsFullScreenPlayer) { _, shows in
             if !shows, isPlayerExpanded { playerReturnsInPlace = true }
         }
+        // Expanded, not shown: while a folding phone is open the player is
+        // hidden but stays expanded, and the closed screen must come up
+        // already in landscape rather than turning to it.
+        .onChange(of: isPlayerExpanded, initial: true) { _, isExpanded in
+            PlayerOrientation.setFullScreenPlayerOpen(isExpanded)
+        }
         // Drawn over the app rather than presented: a presentation slides in
         // whatever its transaction, and holds the iPhone's portrait-only
         // orientation as a folding phone opens. Over the app, the player is
@@ -154,7 +161,7 @@ struct AppRouter: View {
     /// The mini player and full-screen player belong to compact width; in
     /// regular width the player is a column beside the list instead.
     private var showsPlayer: Bool {
-        PlayerPlacement(horizontalSizeClass) == .sheet
+        PlayerPlacement(horizontalSizeClass, verticalSizeClass) == .sheet
             && authorizationService.readiness.isReady && runtime.libraryRestoration.isReady && settings != nil
             && !startupViewModel.isPreparingLibrary && startupViewModel.libraryPreparationError == nil
     }

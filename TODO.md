@@ -17,7 +17,7 @@ change or new evidence changes the risk.
 playback core: a persisted playback intent, player-authoritative display,
 single-call transport, user-initiated recovery, system-owned Now Playing and
 the listen ledger. It has unit evidence only. Run the acceptance pass on My Mac
-(Designed for iPad) for live MusicKit, and on iPhone with CarPlay hardware.
+(Mac Catalyst) for live MusicKit, and on iPhone with CarPlay hardware.
 After that it remains a standing release gate: repeat the affected parts after
 every change to playback, attribution, MusicKit modes, CarPlay templates,
 suspended-playback reconciliation or counting.
@@ -41,8 +41,8 @@ Rewrite-specific checks:
   Essentials, or Top Songs without repeated versions, in more than one
   storefront language; untracked songs offer Add to Triage and Add to One
   True Playlist and are not counted; tracked songs count; Play after a
-  relaunch resumes the album. Check whether Add to One True Playlist works on
-  My Mac (Designed for iPad).
+  relaunch resumes the album. Add to One True Playlist is unavailable on Mac
+  Catalyst; check it on iPhone or iPad.
 - Recents (`PLAY-019`, #87): an entry plays from the main screen and CarPlay;
   Back from Now Playing goes to the entry and then Recents, including after
   Play Album / Play Artist and when CarPlay opens Now Playing itself; an

@@ -24,7 +24,7 @@ enum SysdiagnoseReminder {
     }
 
     @MainActor static var currentDevice: Device {
-        if ProcessInfo.processInfo.isiOSAppOnMac { return .mac }
+        if ProcessInfo.processInfo.isMacCatalystApp { return .mac }
         return UIDevice.current.userInterfaceIdiom == .pad ? .pad : .phone
     }
 

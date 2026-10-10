@@ -101,7 +101,7 @@ Music's global play count or skip count.
 | `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing; Play Album and Play Artist add one action list above it (`PLAY-018`), and Recents adds one level under the root (`PLAY-019`). | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
 | `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
 | `HISTORY-001` | History is filterable and paged. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. History is never the source of counts. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
-| `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, playlist selection, MusicKit diagnostics, and the diagnostic Now Playing mirror. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
+| `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, playlist selection, MusicKit diagnostics (including whether the One True Playlist is still editable), and the diagnostic Now Playing mirror. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
 | `SURFACE-001` | Every playback action exposed by SwiftUI or CarPlay runs through the shared playback controller with identical semantics. System transport controls act on the player directly and their effects are processed through the same observation path. A surface may expose fewer actions but never a different version of one. | Confirmed product requirement (2026-08-31, revised 2026-10-04); `Overplay/Services/PlaybackController.swift`, `Overplay/CarPlaySupport/CarPlayCoordinator.swift` |
 | `SURFACE-002` | Every observed player change is published as one snapshot to every Overplay surface within one observation cycle; system surfaces read the same player. Current track, playlist context, play state, position, outgoing-session evaluation and active-playlist projection must not diverge. | Confirmed product requirement (2026-08-31, revised 2026-10-04); `Overplay/Services/PlaybackController.swift` |
 | `SURFACE-003` | Equivalent iOS/iPadOS and CarPlay actions use one controller decision, including in-intent jump versus new intent, resume versus restart, and failure handling. | Confirmed product requirement (2026-09-25); `Overplay/Services/PlaybackController.swift` |
@@ -165,16 +165,28 @@ iPad is the review and management experience as well as a playback device.
   stacked dashboard flow.
 - The sidebar provides Dashboard, One True Playlist, Triage, Retired,
   Search, History, and Settings.
-- Sidebar selection is scene-local. In regular width Now Playing is a column
-  beside the list; compact width has the mini player.
+- Sidebar selection is scene-local. Regular width matches an open iPhone
+  Duo: the list and Now Playing each take half the window, side by side when
+  it is wider than tall and Now Playing above the list when it is taller. The
+  sidebar slides over the list and closes after a choice, and Now Playing
+  cannot be hidden. Compact width has the mini player.
 
 **Planned iPad refinements:** improve wide-screen playlist detail and Now
 Playing coexistence; verify Stage Manager, Split View, and multiwindow state;
 and add useful hardware-keyboard and pointer interactions.
 
-### Mac — Planned
+### Mac
 
-Mac is the power-user library management and background playback experience.
+The Mac runs the iPad app as a Mac Catalyst build, keeping the sidebar, list
+and Now Playing columns: three side by side from 1,100 pt wide, and list and
+Now Playing 60/40 with the sidebar over the list below that. Now Playing can
+be hidden. MusicKit has no playlist writes on Mac Catalyst, so the Mac never
+adds to, creates or edits an Apple Music playlist: removals wait for an iPhone
+or iPad, rebuilding is not offered, and adding or promoting a song reports
+that it needs an iPhone or iPad.
+
+**Planned:** Mac is the power-user library management and background playback
+experience.
 
 - Prefer a native SwiftUI Mac target rather than treating Mac as only a
   scaled iPad surface.
@@ -1086,9 +1098,9 @@ Titles never decide it.
   anything after " - " removed ("Hey Jude - Remastered 2015", "Let It Be
   (Live)"). Check this on real artists for songs wrongly merged or missed. It
   only builds this list. It never establishes Overplay track identity.
-- Whether adding to a playlist works on My Mac (Designed for iPad), where
-  playlist edits crash. If it does not, Add to One True Playlist is disabled
-  there.
+- Adding to a playlist is unavailable on Mac Catalyst (MusicKit marks it
+  unavailable), so Add to One True Playlist reports that it needs an iPhone
+  or iPad there.
 
 ## Recents
 
@@ -1882,7 +1894,7 @@ against a fake player that can:
 Each case must show that the intent survives, the displayed track is the
 player's, the outgoing session is evaluated at most once against the right
 track, and no queue replacement happens without a user action. Device
-verification on My Mac (Designed for iPad) covers live MusicKit. CarPlay
+verification on My Mac (Mac Catalyst) covers live MusicKit playback. CarPlay
 hardware covers Now Playing ownership, transport and the custom buttons.
 
 ## Required Screens
@@ -1890,7 +1902,8 @@ hardware covers Now Playing ownership, transport and the custom buttons.
 Screens are adaptive rather than separate products. Compact width uses stacked
 navigation from the dashboard. Regular width uses a `NavigationSplitView`
 sidebar for Dashboard, Search, History, Settings, linked playlists, and
-playlist detail. Native Mac presentation is planned.
+playlist detail, laid out as on an open iPhone Duo on iPad and in columns on a
+Mac (see iPad and Mac). Native Mac presentation is planned.
 
 Switching between the two (folding or unfolding an iPhone Duo, resizing a
 window) opens the new layout on the same screen: the dashboard, a playlist,
@@ -2038,7 +2051,7 @@ Platform notes:
   the status bar stays vertical under the camera in full screen, the player
   centres on the screen across it, and the mini
   player spans the width below the vertical bar's controls.
-- On Mac (Designed for iPad) the audio output pill is hidden: the Mac has its
+- On Mac the audio output pill is hidden: the Mac has its
   own output menu, and the system volume cannot be set from the app there.
 - **Planned Mac:** support a compact mini-player style window in addition to the
   full Now Playing view where practical.

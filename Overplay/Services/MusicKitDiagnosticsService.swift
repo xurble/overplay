@@ -22,6 +22,7 @@ struct MusicKitDiagnosticsService {
         await probeSubscription(into: &report)
         await probeLibraryPlaylists(into: &report)
         await probeSelectedPlaylist(settings: settings, context: context, into: &report)
+        await probeOneTruePlaylistEditing(context: context, into: &report)
         MusicKitDiagnosticsPlayerProbe().addDiagnostics(into: &report)
 
         // The probes above describe the current state; the recorded call
@@ -114,6 +115,27 @@ struct MusicKitDiagnosticsService {
         }
     }
 
+    private func probeOneTruePlaylistEditing(context: ModelContext, into report: inout MusicKitDiagnosticsReport) async {
+        let playlist: PlaylistRecord?
+        do {
+            playlist = try PlaylistRepository.oneTruePlaylist(in: context)
+        } catch {
+            report.add("One True Playlist", "failed: \(diagnosticDescription(for: error))")
+            return
+        }
+        await MusicKitDiagnosticsPlaylistEditProbe().addDiagnostics(
+            for: playlist.map {
+                .init(
+                    name: $0.name,
+                    musicPlaylistID: $0.musicPlaylistID,
+                    allowsRemoteWrites: $0.allowsRemoteWrites,
+                    editsRefusedAt: $0.remoteEditsRefusedAt
+                )
+            },
+            into: &report
+        )
+    }
+
     private func probeStoredPlaylistIDAlignment(
         storedID: String,
         name: String?,
@@ -178,14 +200,68 @@ struct MusicKitDiagnosticsService {
             "unknown"
         }
     }
+}
 
-    private func diagnosticDescription(for error: Error) -> String {
-        let nsError = error as NSError
-        if nsError.userInfo.isEmpty {
-            return "\(nsError.domain) \(nsError.code): \(nsError.localizedDescription)"
+private func diagnosticDescription(for error: Error) -> String {
+    let nsError = error as NSError
+    if nsError.userInfo.isEmpty {
+        return "\(nsError.domain) \(nsError.code): \(nsError.localizedDescription)"
+    }
+
+    return "\(nsError.domain) \(nsError.code): \(nsError.localizedDescription) userInfo=\(nsError.userInfo)"
+}
+
+/// Whether Overplay can still edit the One True Playlist's Apple Music
+/// playlist. MusicKit has no ownership query, so this reports what Overplay
+/// has recorded and Apple Music's own `canEdit`; it never attempts an edit.
+@MainActor
+struct MusicKitDiagnosticsPlaylistEditProbe {
+    struct Facts: Equatable {
+        let name: String
+        let musicPlaylistID: String
+        let allowsRemoteWrites: Bool
+        let editsRefusedAt: Date?
+    }
+
+    var canEditOnThisDevice: () -> Bool = { !ProcessInfo.processInfo.isMacCatalystApp }
+    var fetchCanEdit: (String) async throws -> Bool? = { try await AppleMusicLibraryPlaylistResources.fetchCanEdit(playlistID: $0) }
+
+    func addDiagnostics(for facts: Facts?, into report: inout MusicKitDiagnosticsReport) async {
+        guard let facts else {
+            report.add("One True Playlist", "none")
+            return
         }
 
-        return "\(nsError.domain) \(nsError.code): \(nsError.localizedDescription) userInfo=\(nsError.userInfo)"
+        report.add("One True Playlist", "\(facts.name) [\(facts.musicPlaylistID)]")
+        report.add("One True Playlist writes", facts.allowsRemoteWrites ? "managed" : "incoming only")
+        report.add(
+            "One True Playlist edit refusal",
+            facts.editsRefusedAt.map { "refused \($0.formatted(date: .numeric, time: .standard))" } ?? "none recorded"
+        )
+
+        var canEdit: Bool?
+        do {
+            canEdit = try await fetchCanEdit(facts.musicPlaylistID)
+            report.add("Apple Music API canEdit", canEdit.map(String.init) ?? "not reported")
+        } catch {
+            report.add("Apple Music API canEdit", "failed: \(diagnosticDescription(for: error))")
+        }
+
+        report.add("This device can edit playlists", canEditOnThisDevice() ? "yes" : "no (Mac; edits wait for iPhone or iPad)")
+        report.add("One True Playlist editable", verdict(facts: facts, canEdit: canEdit))
+    }
+
+    private func verdict(facts: Facts, canEdit: Bool?) -> String {
+        if !facts.allowsRemoteWrites {
+            return "no: the playlist is incoming only"
+        }
+        if facts.editsRefusedAt != nil {
+            return "no: Apple Music refused Overplay's edits; rebuild the playlist in Settings on iPhone or iPad"
+        }
+        if canEdit == false {
+            return "no: Apple Music reports the playlist as not editable"
+        }
+        return "yes as far as known: no refusal recorded; a lost ownership shows only when Overplay next removes a song"
     }
 }
 

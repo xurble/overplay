@@ -373,12 +373,12 @@ struct PlaylistSyncService {
             magnitude: Double(sourceTracks.count)
         ) {
             if sourceTracks.isEmpty {
-                try await MusicLibrary.shared.createPlaylist(
+                try await AppleMusicPlaylistWrites.createPlaylist(
                     name: playlistName,
                     description: "Managed by Overplay"
                 )
             } else {
-                try await MusicLibrary.shared.createPlaylist(
+                try await AppleMusicPlaylistWrites.createPlaylist(
                     name: playlistName,
                     description: "Managed by Overplay",
                     items: sourceTracks

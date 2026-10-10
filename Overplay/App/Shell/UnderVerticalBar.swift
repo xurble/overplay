@@ -6,13 +6,18 @@ import SwiftUI
 /// landscape iPhone's camera side, still apply.
 struct UnderVerticalBar: ViewModifier {
     func body(content: Content) -> some View {
+#if targetEnvironment(macCatalyst)
+        content
+#else
         if #available(iOS 27.1, *) {
             VerticalBarAware(content: content)
         } else {
             content
         }
+#endif
     }
 
+#if !targetEnvironment(macCatalyst)
     @available(iOS 27.1, *)
     private struct VerticalBarAware: View {
         @Environment(\.toolbarVerticalEdge) private var verticalBarEdge
@@ -26,4 +31,5 @@ struct UnderVerticalBar: ViewModifier {
             }
         }
     }
+#endif
 }

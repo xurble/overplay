@@ -78,7 +78,12 @@ struct FullScreenPlayerView: View {
         // made the swipe jump and kept the top corners square.
         // Its own view with inputs a drag never changes, so a frame of the
         // drag redraws the card's transform without rebuilding the player.
-        FullScreenPlayerContent(settings: settings, screenInsets: screenInsets, artworkTop: $artworkTop)
+        FullScreenPlayerContent(
+            settings: settings,
+            screenInsets: screenInsets,
+            isLandscape: screenSize.width > screenSize.height,
+            artworkTop: $artworkTop
+        )
         .overlay {
             // Centred across the whole screen.
             GeometryReader { proxy in
@@ -166,6 +171,13 @@ struct FullScreenPlayerView: View {
         }
     }
 
+    /// Landscape has a home indicator below and nothing above: the same
+    /// space at the top centres the player on the screen.
+    static func verticallyCentred(_ insets: EdgeInsets) -> EdgeInsets {
+        let vertical = max(insets.top, insets.bottom)
+        return EdgeInsets(top: vertical, leading: insets.leading, bottom: vertical, trailing: insets.trailing)
+    }
+
     /// Down by 80 points, or flicked down past 160, and more down than across.
     static func closesPlayer(translation: CGSize, predictedEnd: CGSize) -> Bool {
         let down = max(translation.height, predictedEnd.height)
@@ -198,10 +210,13 @@ struct FullScreenPlayerView: View {
 }
 
 /// The player inside the card, laid out full screen with the screen's safe
-/// area as fixed padding.
+/// area as fixed padding. In landscape the art and the controls sit side by
+/// side, the art on the edge that was the phone's top in portrait, so the
+/// two halves turn in place with the phone.
 private struct FullScreenPlayerContent: View {
     var settings: OverplaySettings
     var screenInsets: EdgeInsets
+    var isLandscape: Bool
     @Binding var artworkTop: CGFloat?
 
     var body: some View {
@@ -209,10 +224,12 @@ private struct FullScreenPlayerContent: View {
             settings: settings,
             bottomPadding: FullScreenPlayerView.bottomPadding,
             transportPillGap: FullScreenPlayerView.transportPillGap,
-            onArtworkTopChange: { artworkTop = $0 }
+            onArtworkTopChange: { artworkTop = $0 },
+            isSideBySide: isLandscape,
+            artworkOnTrailing: isLandscape && PhoneTurn.shared.isClockwise
         )
         .modifier(UnderVerticalBar())
-        .safeAreaPadding(screenInsets)
+        .safeAreaPadding(isLandscape ? FullScreenPlayerView.verticallyCentred(screenInsets) : screenInsets)
         .coordinateSpace(.named(FullScreenPlayerView.coordinateSpace))
     }
 }

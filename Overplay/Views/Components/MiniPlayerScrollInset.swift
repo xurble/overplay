@@ -9,11 +9,12 @@ enum MiniPlayerLayout {
 /// compact width.
 private struct MiniPlayerScrollContentInset: ViewModifier {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     func body(content: Content) -> some View {
         content.safeAreaInset(edge: .bottom) {
             Color.clear
-                .frame(height: PlayerPlacement(horizontalSizeClass) == .sheet ? MiniPlayerLayout.scrollContentBottomPadding : 0)
+                .frame(height: PlayerPlacement(horizontalSizeClass, verticalSizeClass) == .sheet ? MiniPlayerLayout.scrollContentBottomPadding : 0)
                 .allowsHitTesting(false)
         }
     }

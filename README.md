@@ -163,7 +163,7 @@ that reserved suffix instead of connecting the developer app to CloudKit.
 
 ## Player sheet startup regression check
 
-Run from Xcode using **My Mac (Designed for iPad)** with Apple Music authorized.
+Run from Xcode using **My Mac (Mac Catalyst)** with Apple Music authorized.
 Confirm startup reaches the dashboard with the collapsed player visible, then
 expand and collapse the player. Both layouts must render without a missing
 `PlaybackController` environment error. `AppRouter` supplies the existing shared

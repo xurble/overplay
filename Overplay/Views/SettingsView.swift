@@ -68,7 +68,7 @@ struct SettingsView: View {
                 NavigationLink("Find Duplicates", destination: DuplicateTracksView())
             }
 
-            if let oneTruePlaylist, !ProcessInfo.processInfo.isiOSAppOnMac {
+            if let oneTruePlaylist, !ProcessInfo.processInfo.isMacCatalystApp {
                 RebuildPlaylistSection(
                     playlistName: oneTruePlaylist.name,
                     editsRefused: oneTruePlaylist.remoteEditsRefusedAt != nil,
@@ -145,7 +145,7 @@ struct SettingsView: View {
                 } label: {
                     SettingsActionLabel(
                         title: viewModel.isRunningMusicKitDiagnostics ? "Running MusicKit Diagnostics" : "Run MusicKit Diagnostics",
-                        subtitle: "Checks Apple Music authorization, playlist access, and playback readiness. Makes several live Apple Music requests.",
+                        subtitle: "Checks Apple Music authorization, playlist access, whether the One True Playlist is still editable, and playback readiness. Makes several live Apple Music requests.",
                         systemImage: "waveform.path.ecg"
                     )
                 }

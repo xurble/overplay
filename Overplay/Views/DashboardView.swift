@@ -11,6 +11,7 @@ struct DashboardView: View {
     /// screen, least of all mid-scroll.
     @State private var leadArtworkFit = LeadArtworkFit()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.shellPlace) private var shellPlace
 
     var settings: OverplaySettings
@@ -122,7 +123,7 @@ struct DashboardView: View {
     /// first scroll and never changes; scrolling only moves the page.
     private func fitLeadArtwork(_ fit: DashboardFit) {
         guard !leadArtworkFit.isLocked, oneTruePlaylist != nil else { return }
-        guard PlayerPlacement(horizontalSizeClass) == .sheet else {
+        guard PlayerPlacement(horizontalSizeClass, verticalSizeClass) == .sheet else {
             leadArtworkSide = DashboardLayout.defaultLeadArtworkSide
             return
         }

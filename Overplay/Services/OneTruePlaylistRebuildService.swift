@@ -38,8 +38,8 @@ struct OneTruePlaylistRebuildService {
         }
     }
 
-    /// An iPad app on a Mac has no MusicKit playlist creation.
-    var canCreatePlaylists: @MainActor () -> Bool = { !ProcessInfo.processInfo.isiOSAppOnMac }
+    /// A Mac (Catalyst, or the iPad app there) has no MusicKit playlist creation.
+    var canCreatePlaylists: @MainActor () -> Bool = { !ProcessInfo.processInfo.isMacCatalystApp }
     /// Live MusicKit items for the given songs. Apple Music adds only live
     /// items to a playlist: tracks decoded from saved playback data are
     /// refused (`MPPlaylistUpdateErrorDomain` -1, observed 2026-10-06). The
@@ -82,7 +82,7 @@ struct OneTruePlaylistRebuildService {
     }
     var createPlaylist: @MainActor (String, [Track]) async throws -> Playlist = { name, items in
         let created = try await MusicKitActivityLog.shared.measure(.libraryPlaylistCreate, magnitude: Double(items.count)) {
-            try await MusicLibrary.shared.createPlaylist(name: name, description: "Managed by Overplay", items: items)
+            try await AppleMusicPlaylistWrites.createPlaylist(name: name, description: "Managed by Overplay", items: items)
         }
         CachingMusicLibraryPlaylistFetcher.shared.invalidate()
         return created
