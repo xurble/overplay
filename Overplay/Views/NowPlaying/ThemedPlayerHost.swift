@@ -14,6 +14,7 @@ struct ThemedPlayerHost<Content: View>: View {
     @State private var glassBackdrop = PlayerGlassBackdrop()
 
     var body: some View {
+        let artworkTheme = displayedTheme
         content(artworkTheme) { applyArtworkTheme($0, source: "debug-refresh") }
             .coordinateSpace(.named(PlayerGlassBackdrop.coordinateSpace))
             .environment(\.playerGlassArtwork, glassArtwork)
@@ -28,6 +29,17 @@ struct ThemedPlayerHost<Content: View>: View {
             .onChange(of: artworkTheme, initial: true) {
                 glassBackdrop.tint = artworkTheme.backgroundRGB
             }
+    }
+
+    /// A player that appears (a folding phone switching screens, the
+    /// regular-width column) starts with the theme the last one showed for
+    /// this track, rather than the fallback and then easing into it, which
+    /// resized the controls and moved the art after the screen activated.
+    private var displayedTheme: AlbumArtworkTheme {
+        guard artworkTheme.isFallback, let last = LastPlayerTheme.value, last.identity == artworkThemeIdentity else {
+            return artworkTheme
+        }
+        return last.theme
     }
 
     private var glassArtwork: PlayerGlassArtwork? {
@@ -93,8 +105,15 @@ struct ThemedPlayerHost<Content: View>: View {
         AlbumArtworkThemeDiagnostics.log(
             "player apply \(source): trackID=\(playbackController.nowPlayingDisplayTrack?.id ?? "nil") title=\(playbackController.nowPlayingDisplayTrack?.title ?? "nil") fallback=\(theme.isFallback) themeSource=\(theme.source.rawValue) background=\(AlbumArtworkThemeDiagnostics.describe(theme.backgroundRGB)) titleColor=\(AlbumArtworkThemeDiagnostics.describe(theme.trackTitleRGB))"
         )
+        LastPlayerTheme.value = (artworkThemeIdentity, theme)
         withAnimation(.easeInOut(duration: 0.35)) {
             artworkTheme = theme
         }
     }
+}
+
+/// The theme a player surface last applied, shared by every surface.
+@MainActor
+private enum LastPlayerTheme {
+    static var value: (identity: String, theme: AlbumArtworkTheme)?
 }

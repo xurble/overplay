@@ -14,6 +14,9 @@ struct AppRouter: View {
     @State private var showingNewLibraryConfirmation = false
     @State private var setupError: String?
     @State private var isPlayerExpanded = false
+    /// The expanded player was hidden by a fold or a size change, so it comes
+    /// back already open, as the screen activates.
+    @State private var playerReturnsInPlace = false
     @State private var miniPlayerFrame: CGRect = .zero
     @State private var openDrag = PlayerOpenDrag()
     @State private var artworkPresentation = PlaylistArtworkPresentation()
@@ -90,19 +93,24 @@ struct AppRouter: View {
                     .ignoresSafeArea(.keyboard)
             }
         }
-        .fullScreenCover(isPresented: playerCoverPresentation) {
-            if let settings {
-                FullScreenPlayerView(settings: settings, miniPlayerFrame: miniPlayerFrame, openDrag: openDrag)
-                    // Supply the same shared instances at this hosting boundary.
-                    // Relying on inherited values crashed during sheet construction
-                    // on My Mac (Designed for iPad).
-                    .environment(playbackController)
-                    .environment(runtime)
-                    .environment(authorizationService)
-                    .environment(artworkPresentation)
-                    .modelContext(modelContext)
-                    // Clear, so the app shows above the player as it is swiped down.
-                    .presentationBackground(.clear)
+        .onChange(of: showsFullScreenPlayer) { _, shows in
+            if !shows, isPlayerExpanded { playerReturnsInPlace = true }
+        }
+        // Drawn over the app rather than presented: a presentation slides in
+        // whatever its transaction, and holds the iPhone's portrait-only
+        // orientation as a folding phone opens. Over the app, the player is
+        // simply there as a screen activates, as the system's own apps are.
+        .overlay {
+            if showsFullScreenPlayer, let settings {
+                FullScreenPlayerView(
+                    settings: settings,
+                    miniPlayerFrame: miniPlayerFrame,
+                    openDrag: openDrag,
+                    opensInPlace: playerReturnsInPlace
+                ) {
+                    isPlayerExpanded = false
+                }
+                .accessibilityAddTraits(.isModal)
             }
         }
         .sheet(item: $artworkPresentation.request) { request in
@@ -155,13 +163,14 @@ struct AppRouter: View {
     private func openPlayer() {
         var transaction = Transaction()
         transaction.disablesAnimations = true
+        playerReturnsInPlace = false
         withTransaction(transaction) { isPlayerExpanded = true }
     }
 
-    private var playerCoverPresentation: Binding<Bool> {
-        Binding {
-            showsPlayer && isPlayerExpanded
-        } set: { isPlayerExpanded = $0 }
+    /// The player stays expanded while regular width hides it, for when it
+    /// returns (a folding phone closed again).
+    private var showsFullScreenPlayer: Bool {
+        showsPlayer && isPlayerExpanded
     }
 
     private var startupDependencies: AppStartupViewModel.Dependencies {

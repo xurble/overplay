@@ -10,29 +10,69 @@ import SwiftUI
 /// The swipe is Overplay's own: the zoom transition's swipe down missed
 /// about half of first attempts and lost to the controls.
 struct FullScreenPlayerView: View {
-    @Environment(\.dismiss) private var dismiss
-
     var settings: OverplaySettings
     /// The mini player, in screen coordinates: closing shrinks into it.
     var miniPlayerFrame: CGRect = .zero
     /// A swipe up on the mini player that opened this player, if any.
     var openDrag: PlayerOpenDrag?
+    /// Removes the player once it has shrunk into the mini player.
+    var onClose: () -> Void
 
     @State private var artworkTop: CGFloat?
-    /// The screen's safe area, read where the player never moves.
-    @State private var screenInsets = EdgeInsets()
     @State private var screenSize: CGSize = .zero
     /// 0 open, 1 shrunk into the mini player. It starts there: opening
     /// grows the player out of the mini player, the close in reverse.
-    @State private var closeProgress: CGFloat = 1
-    @State private var hasOpened = false
+    @State private var closeProgress: CGFloat
+    @State private var hasOpened: Bool
     /// Set once a drag has moved: down closes, sideways (the volume pill)
     /// is left alone.
     @State private var dragIsDismissal: Bool?
 
     static let coordinateSpace = "full-screen-player"
+    /// The spacing under and above the volume pill, shared with an unfolded
+    /// phone's column so the player looks the same open and closed.
+    static let bottomPadding: CGFloat = 4
+    static let transportPillGap: CGFloat = 36
+
+    /// `opensInPlace`: already open, without growing out of the mini player,
+    /// as when folding a phone brings back the player it was showing.
+    init(
+        settings: OverplaySettings,
+        miniPlayerFrame: CGRect = .zero,
+        openDrag: PlayerOpenDrag? = nil,
+        opensInPlace: Bool = false,
+        onClose: @escaping () -> Void = {}
+    ) {
+        self.settings = settings
+        self.miniPlayerFrame = miniPlayerFrame
+        self.openDrag = openDrag
+        self.onClose = onClose
+        _closeProgress = State(initialValue: opensInPlace ? 0 : 1)
+        _hasOpened = State(initialValue: opensInPlace)
+    }
 
     var body: some View {
+        // The screen's size and safe area, read where the player never moves
+        // and in the same layout pass: measured a frame later, the player
+        // laid out without them first and then jumped up as a screen
+        // activated.
+        // The reader stays inside the safe area, so it reports the insets;
+        // the card extends past them to the whole screen.
+        GeometryReader { screen in
+            let insets = screen.safeAreaInsets
+            card(
+                screenInsets: insets,
+                screenSize: CGSize(
+                    width: screen.size.width + insets.leading + insets.trailing,
+                    height: screen.size.height + insets.top + insets.bottom
+                )
+            )
+            .ignoresSafeArea()
+        }
+        .accessibilityAction(.escape) { close() }
+    }
+
+    private func card(screenInsets: EdgeInsets, screenSize: CGSize) -> some View {
         // Laid out full screen with the safe area as fixed padding: a view
         // drawn moved loses whatever it extended into the safe area, which
         // made the swipe jump and kept the top corners square.
@@ -55,7 +95,7 @@ struct FullScreenPlayerView: View {
         // Measured inside the full-screen layout: outside it, the size
         // leaves out the status bar and home indicator.
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
-            screenSize = size
+            self.screenSize = size
             // Grow once the screen is measured, so the first frame is right;
             // a swipe up opens it with the finger instead.
             guard !hasOpened, size.width > 0 else { return }
@@ -83,9 +123,6 @@ struct FullScreenPlayerView: View {
             screenSize: screenSize,
             miniPlayerFrame: miniPlayerFrame
         ))
-        .ignoresSafeArea()
-        .onGeometryChange(for: EdgeInsets.self) { $0.safeAreaInsets } action: { screenInsets = $0 }
-        .accessibilityAction(.escape) { close() }
     }
 
     private var dismissDrag: some Gesture {
@@ -125,7 +162,7 @@ struct FullScreenPlayerView: View {
         } completion: {
             var transaction = Transaction()
             transaction.disablesAnimations = true
-            withTransaction(transaction) { dismiss() }
+            withTransaction(transaction) { onClose() }
         }
     }
 
@@ -170,8 +207,8 @@ private struct FullScreenPlayerContent: View {
     var body: some View {
         NowPlayingColumnView(
             settings: settings,
-            bottomPadding: 4,
-            transportPillGap: 36,
+            bottomPadding: FullScreenPlayerView.bottomPadding,
+            transportPillGap: FullScreenPlayerView.transportPillGap,
             onArtworkTopChange: { artworkTop = $0 }
         )
         .modifier(UnderVerticalBar())

@@ -15,8 +15,11 @@ struct SplitAppShell: View {
     @SceneStorage("overplay.splitSelection") private var storedSelection = AppShellDestination.dashboard.storageValue
     @SceneStorage("overplay.showsNowPlayingColumn") private var showsNowPlaying = true
     @State private var totalWidth: CGFloat = 0
+    @State private var totalHeight: CGFloat = 0
     /// Where a vertical fold crosses this view, on a folding phone.
     @State private var foldX: CGFloat?
+    /// Where a horizontal fold crosses this view, from its top.
+    @State private var foldY: CGFloat?
     /// Narrow: whether the sidebar has been slid over the list. Wide: the
     /// split view's own choice. Visibility is derived from the width each
     /// time it is read, so a rotation never leaves a stale value behind.
@@ -34,24 +37,54 @@ struct SplitAppShell: View {
         // needs; it is inset by the player's width and the player is drawn in
         // that space, beside the sidebar and list, never over them.
         splitView
-            .padding(.trailing, showsNowPlaying ? nowPlayingWidth + 1 : 0)
-            .overlay(alignment: .trailing) {
-                if showsNowPlaying {
+            .padding(.trailing, showsPlayerColumn && !isStackedAtFold ? nowPlayingWidth + 1 : 0)
+            .padding(.top, isStackedAtFold ? (foldY ?? 0) + 1 : 0)
+            .overlay(alignment: isStackedAtFold ? .top : .trailing) {
+                if isStackedAtFold, let foldY {
+                    // Open in portrait: the player fills the half above the
+                    // fold (its art background under the status bar) and the
+                    // list the half below.
+                    VStack(spacing: 0) {
+                        NowPlayingColumnView(settings: settings, isSideBySide: true)
+                            .frame(height: foldY)
+                        Divider()
+                    }
+                } else if showsPlayerColumn {
                     HStack(spacing: 0) {
                         Divider()
-                        NowPlayingColumnView(settings: settings)
+                        if isSplitAtFold {
+                            // Open as a book, laid out exactly as the closed
+                            // phone's full-screen player: centred on its half
+                            // across the vertical bar, inside the safe area,
+                            // with the same spacing. Never animated, so it is
+                            // in place as the unfolded screen activates.
+                            NowPlayingColumnView(
+                                settings: settings,
+                                bottomPadding: FullScreenPlayerView.bottomPadding,
+                                transportPillGap: FullScreenPlayerView.transportPillGap
+                            )
+                            .modifier(UnderVerticalBar())
                             .frame(width: nowPlayingWidth)
+                            .transaction { $0.animation = nil }
+                        } else {
+                            NowPlayingColumnView(settings: settings)
+                                .frame(width: nowPlayingWidth)
+                        }
                     }
                     // Top and bottom only: a vertical bar (iPhone Duo) can
                     // take the trailing edge, and the controls must clear it.
-                    .ignoresSafeArea(edges: .vertical)
+                    // Open as a book the bars are at the side and the bottom
+                    // is kept, as when closed; the top inset changes as the
+                    // screen activates, which settled the art into place.
+                    .ignoresSafeArea(edges: isSplitAtFold ? .top : .vertical)
                     .transition(.move(edge: .trailing))
                 }
             }
-            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { totalWidth = $0 }
-            .onGeometryChange(for: CGFloat?.self) { Self.verticalFoldX(in: $0) } action: { foldX = $0 }
-            .onChange(of: "\(showsNowPlaying) \(Int(totalWidth)) \(Int(nowPlayingWidth))", initial: true) { _, state in
-                Self.logger.info("Now Playing column shown/total/column: \(state, privacy: .public)")
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { totalWidth = $0.width; totalHeight = $0.height }
+            .onGeometryChange(for: CGFloat?.self) { Self.foldX(in: $0) } action: { foldX = $0 }
+            .onGeometryChange(for: CGFloat?.self) { Self.foldY(in: $0) } action: { foldY = $0 }
+            .onChange(of: "\(showsPlayerColumn) \(isStackedAtFold) \(Int(totalWidth)) \(Int(nowPlayingWidth))", initial: true) { _, state in
+                Self.logger.info("Now Playing column shown/stacked/total/column: \(state, privacy: .public)")
             }
     }
 
@@ -94,13 +127,15 @@ struct SplitAppShell: View {
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("detail-\(selectedDestination.storageValue)")
                     .toolbar {
-                        ToolbarItem(placement: .primaryAction) {
-                            Button {
-                                withAnimation(.smooth) { showsNowPlaying.toggle() }
-                            } label: {
-                                Label(showsNowPlaying ? "Hide Now Playing" : "Show Now Playing", systemImage: "sidebar.trailing")
+                        if !isPinnedAtFold {
+                            ToolbarItem(placement: .primaryAction) {
+                                Button {
+                                    withAnimation(.smooth) { showsNowPlaying.toggle() }
+                                } label: {
+                                    Label(showsNowPlaying ? "Hide Now Playing" : "Show Now Playing", systemImage: "sidebar.trailing")
+                                }
+                                .help(showsNowPlaying ? "Hide Now Playing" : "Show Now Playing")
                             }
-                            .help(showsNowPlaying ? "Hide Now Playing" : "Show Now Playing")
                         }
                     }
             }
@@ -129,14 +164,31 @@ struct SplitAppShell: View {
 
     private var isNarrow: Bool { SplitLayoutPolicy.isNarrow(totalWidth) }
 
+    private var isSplitAtFold: Bool { SplitLayoutPolicy.splitsAtFold(totalWidth, foldX: foldX) }
+
+    private var isStackedAtFold: Bool { SplitLayoutPolicy.stacksAtFold(totalHeight, foldY: foldY) }
+
+    /// Open on a fold, the player keeps its half and cannot be hidden.
+    private var isPinnedAtFold: Bool { isSplitAtFold || isStackedAtFold }
+
+    private var showsPlayerColumn: Bool { showsNowPlaying || isPinnedAtFold }
+
     private var nowPlayingWidth: CGFloat { SplitLayoutPolicy.playerWidth(for: totalWidth, foldX: foldX) }
 
     /// The fold of an open folding phone, also while it lies flat, so the
     /// columns stay put as the hinge moves.
-    nonisolated private static func verticalFoldX(in proxy: GeometryProxy) -> CGFloat? {
+    nonisolated private static func foldX(in proxy: GeometryProxy) -> CGFloat? {
+        foldFrame(in: proxy) { $0.height > $0.width }?.midX
+    }
+
+    nonisolated private static func foldY(in proxy: GeometryProxy) -> CGFloat? {
+        foldFrame(in: proxy) { $0.width > $0.height }?.midY
+    }
+
+    nonisolated private static func foldFrame(in proxy: GeometryProxy, where matches: (CGRect) -> Bool) -> CGRect? {
         guard #available(iOS 27.1, *) else { return nil }
         return proxy.reservedRegions(kind: .division, options: .includeInactive)
-            .first { $0.frame.height > $0.frame.width }?.frame.midX
+            .map(\.frame).first(where: matches)
     }
 
     /// Narrow: list and player share the width and the sidebar slides in
