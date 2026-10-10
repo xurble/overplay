@@ -14,6 +14,7 @@ struct AppRouter: View {
     @State private var showingNewLibraryConfirmation = false
     @State private var setupError: String?
     @State private var isPlayerExpanded = false
+    @State private var miniPlayerFrame: CGRect = .zero
     @State private var artworkPresentation = PlaylistArtworkPresentation()
     private var startupViewModel: AppStartupViewModel { runtime.startupViewModel }
 
@@ -70,6 +71,7 @@ struct AppRouter: View {
         .overlay(alignment: .bottom) {
             if showsPlayer, let settings {
                 MiniPlayerLozengeView(settings: settings) { isPlayerExpanded = true }
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { miniPlayerFrame = $0 }
                     .padding(.horizontal, 12)
                     .padding(.bottom, 4)
                     .modifier(UnderVerticalBar())
@@ -78,7 +80,7 @@ struct AppRouter: View {
         }
         .fullScreenCover(isPresented: playerCoverPresentation) {
             if let settings {
-                FullScreenPlayerView(settings: settings)
+                FullScreenPlayerView(settings: settings, miniPlayerFrame: miniPlayerFrame)
                     // Supply the same shared instances at this hosting boundary.
                     // Relying on inherited values crashed during sheet construction
                     // on My Mac (Designed for iPad).

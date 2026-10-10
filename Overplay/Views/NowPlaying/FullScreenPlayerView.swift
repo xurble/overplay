@@ -13,12 +13,16 @@ struct FullScreenPlayerView: View {
     @Environment(\.dismiss) private var dismiss
 
     var settings: OverplaySettings
+    /// The mini player, in screen coordinates: closing shrinks into it.
+    var miniPlayerFrame: CGRect = .zero
 
     @State private var artworkTop: CGFloat?
     /// The screen's safe area, read where the player never moves.
     @State private var screenInsets = EdgeInsets()
-    @State private var screenHeight: CGFloat = 0
+    @State private var screenSize: CGSize = .zero
     @State private var dragOffset: CGFloat = 0
+    /// 0 open (moved by the drag), 1 shrunk into the mini player.
+    @State private var closeProgress: CGFloat = 0
     /// Set once a drag has moved: down closes, sideways (the volume pill)
     /// is left alone.
     @State private var dragIsDismissal: Bool?
@@ -51,15 +55,15 @@ struct FullScreenPlayerView: View {
         // The margins take the swipe as well as the controls.
         .contentShape(.rect)
         .simultaneousGesture(dismissDrag)
-        // A rounded card once it moves. Square at rest: the screen rounds its
-        // own corners, and a closed iPhone Duo's hinge side is nearly square.
-        .clipShape(.rect(cornerRadius: dragOffset > 0 ? 50 : 0, style: .continuous))
-        .visualEffect { content, _ in
-            content.offset(y: dragOffset)
-        }
+        .modifier(PlayerCardTransform(
+            dragOffset: dragOffset,
+            closeProgress: closeProgress,
+            screenSize: screenSize,
+            miniPlayerFrame: miniPlayerFrame
+        ))
         .ignoresSafeArea()
         .onGeometryChange(for: EdgeInsets.self) { $0.safeAreaInsets } action: { screenInsets = $0 }
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { screenHeight = $0 }
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { screenSize = $0 }
         .accessibilityAction(.escape) { close() }
     }
 
@@ -85,9 +89,11 @@ struct FullScreenPlayerView: View {
 
     /// Slides the rest of the way down from wherever the drag left it, then
     /// dismisses without a second animation.
+    /// Shrinks into the mini player from wherever the drag left it, then
+    /// dismisses without a second animation.
     private func close() {
-        withAnimation(.smooth(duration: 0.25)) {
-            dragOffset = max(screenHeight, 1000)
+        withAnimation(.smooth(duration: 0.35)) {
+            closeProgress = 1
         } completion: {
             var transaction = Transaction()
             transaction.disablesAnimations = true
@@ -123,6 +129,60 @@ struct FullScreenPlayerView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Close Now Playing")
+    }
+}
+
+/// Draws the player as a card: moved down by the drag, then shrinking from
+/// there into the mini player's frame. Its content scales evenly and the
+/// card's outline, rounding into the capsule, clips it. It is opaque until it
+/// is under half the screen's height, then fades out as it reaches the mini
+/// player. Rendering only: layout and the safe area never change.
+private struct PlayerCardTransform: ViewModifier, Animatable {
+    var dragOffset: CGFloat
+    var closeProgress: CGFloat
+    var screenSize: CGSize
+    var miniPlayerFrame: CGRect
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(dragOffset, closeProgress) }
+        set { dragOffset = newValue.first; closeProgress = newValue.second }
+    }
+
+    private static let movingCornerRadius: CGFloat = 50
+
+    func body(content: Content) -> some View {
+        let width = max(screenSize.width, 1)
+        let height = max(screenSize.height, 1)
+        let start = CGRect(x: 0, y: dragOffset, width: width, height: height)
+        // Without a measured mini player, shrink into where it sits.
+        let target = miniPlayerFrame.width > 0
+            ? miniPlayerFrame
+            : CGRect(x: 12, y: height - 100, width: width - 24, height: MiniPlayerLozengeView.height)
+        let t = min(max(closeProgress, 0), 1)
+        let card = CGRect(
+            x: start.minX + (target.minX - start.minX) * t,
+            y: start.minY + (target.minY - start.minY) * t,
+            width: start.width + (target.width - start.width) * t,
+            height: start.height + (target.height - start.height) * t
+        )
+        let scale = card.width / width
+        let startRadius = dragOffset > 0 || t > 0 ? Self.movingCornerRadius : 0
+        let radius = startRadius + (target.height / 2 - startRadius) * t
+        // Opaque down to half the screen's height, then fading to nothing at
+        // the mini player's height.
+        let fadeStart = height / 2
+        let opacity = card.height >= fadeStart
+            ? 1
+            : max(0, (card.height - target.height) / max(fadeStart - target.height, 1))
+
+        content
+            .mask(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: radius / scale, style: .continuous)
+                    .frame(width: card.width / scale, height: card.height / scale)
+            }
+            .scaleEffect(scale, anchor: .topLeading)
+            .offset(x: card.minX, y: card.minY)
+            .opacity(opacity)
     }
 }
 
