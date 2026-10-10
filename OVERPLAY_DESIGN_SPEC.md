@@ -2030,7 +2030,8 @@ Platform notes:
   swiping it up opens Now Playing full screen with the system zoom
   transition, with a drag handle at the top; swiping down returns to the bar. Regular
   width shows Now Playing as a column beside the list. On a closed iPhone Duo
-  the status bar stays vertical under the camera in full screen, and the mini
+  the status bar stays vertical under the camera in full screen, the player
+  centres on the screen across it, and the mini
   player spans the width below the vertical bar's controls.
 - On Mac (Designed for iPad) the audio output pill is hidden: the Mac has its
   own output menu, and the system volume cannot be set from the app there.

@@ -165,29 +165,3 @@ struct AppRouter: View {
 }
 
 
-/// A vertical bar (iPhone Duo) holds its controls at the top, so the mini
-/// player can use the full width below them. Other horizontal insets, such
-/// as a landscape iPhone's camera side, still apply.
-private struct UnderVerticalBar: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(iOS 27.1, *) {
-            VerticalBarAware(content: content)
-        } else {
-            content
-        }
-    }
-
-    @available(iOS 27.1, *)
-    private struct VerticalBarAware: View {
-        @Environment(\.toolbarVerticalEdge) private var verticalBarEdge
-        var content: Content
-
-        var body: some View {
-            switch verticalBarEdge {
-            case .leading: content.ignoresSafeArea(.container, edges: .leading)
-            case .trailing: content.ignoresSafeArea(.container, edges: .trailing)
-            default: content
-            }
-        }
-    }
-}
