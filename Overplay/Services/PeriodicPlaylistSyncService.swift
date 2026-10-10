@@ -123,7 +123,7 @@ final class PeriodicPlaylistSyncService {
 
         let orderedPlaylists = Self.prioritized(
             playlists,
-            currentPlaylistID: playbackController?.currentPlaylistID,
+            currentPlaylistID: playbackController?.currentPlaylistContext?.musicPlaylistID,
             selectedPlaylistID: try? SettingsRepository.settings(in: context).selectedPlaylistID
         )
 

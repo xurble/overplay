@@ -58,6 +58,7 @@ struct DashboardView: View {
             }
 
             if let triageBucket {
+                let retiredSummary = presentationBuilder.summary(for: triageBucket, scope: .retired)
                 Section {
                     NavigationLink {
                         PlaylistManagementView(settings: settings, playlist: triageBucket, scope: .retired)
@@ -66,7 +67,8 @@ struct DashboardView: View {
                             title: "Retired",
                             detail: "\(playlistItems.filter { $0.evictedAt != nil }.count) tracks · Revisit songs you put aside",
                             playlist: triageBucket, scope: .retired,
-                            systemImage: "archivebox.fill", badgeTint: .secondary
+                            systemImage: retiredSummary.iconIntent.systemImage,
+                            badgeTint: retiredSummary.isCurrentPlaybackPlaylist ? .green : .secondary
                         )
                     }
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
@@ -154,7 +156,7 @@ struct DashboardView: View {
             playlists: playlists,
             items: playlistItems,
             tracks: tracks,
-            currentPlaylistID: playbackController.currentTrack != nil ? playbackController.currentPlaylistID : nil
+            playingContext: playbackController.playingPlaylistContext
         )
     }
 

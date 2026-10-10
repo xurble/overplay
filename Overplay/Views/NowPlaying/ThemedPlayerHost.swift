@@ -32,7 +32,7 @@ struct ThemedPlayerHost<Content: View>: View {
 
     private var glassArtwork: PlayerGlassArtwork? {
         playbackController.nowPlayingDisplayTrack?.artworkURLTemplate.map {
-            PlayerGlassArtwork(urlString: $0, playlistID: playbackController.currentPlaylistID)
+            PlayerGlassArtwork(urlString: $0, playlistID: playbackController.currentPlaylistContext?.musicPlaylistID)
         }
     }
 
@@ -40,7 +40,7 @@ struct ThemedPlayerHost<Content: View>: View {
         [
             playbackController.nowPlayingDisplayTrack?.id ?? "",
             playbackController.nowPlayingDisplayTrack?.artworkURLTemplate ?? "",
-            playbackController.currentPlaylistID ?? "",
+            playbackController.currentPlaylistContext?.musicPlaylistID ?? "",
             colorSchemeContrast == .increased ? "increased" : "standard"
         ].joined(separator: "|")
     }
@@ -49,7 +49,7 @@ struct ThemedPlayerHost<Content: View>: View {
     private func loadArtworkTheme() async {
         let requestIdentity = artworkThemeIdentity
         let track = playbackController.nowPlayingDisplayTrack
-        let playlistID = playbackController.currentPlaylistID
+        let playlistID = playbackController.currentPlaylistContext?.musicPlaylistID
         let trackTitle = track?.title
         let artistName = track?.artistName
         let albumTitle = track?.albumTitle

@@ -37,6 +37,10 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
     let isCurrentPlaybackPlaylist: Bool
     var playbackScope: PlaylistPlaybackScope = .active
 
+    var playbackContext: PlaylistPlaybackContext? {
+        musicPlaylistID.map { PlaylistPlaybackContext(musicPlaylistID: $0, scope: playbackScope) }
+    }
+
     var roleTitle: String {
         if playbackScope == .retired { return "Retired" }
         return switch role {

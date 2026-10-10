@@ -260,7 +260,7 @@ struct PlaybackCollectionTests {
         await playing(fixture, at: 0)
 
         #expect(fixture.controller.intent?.collection == nil)
-        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(fixture.controller.currentPlaylistContext == fixture.playlist.playbackContext())
         #expect(fixture.player.submitCount == 3)
         #expect(fixture.player.submittedTitles.last == ["Song 0", "Song 1", "Song 2"])
     }

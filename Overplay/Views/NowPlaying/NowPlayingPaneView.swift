@@ -38,7 +38,7 @@ struct NowPlayingPaneView: View {
             VStack(spacing: Self.blend(12, 18, roominess)) {
                 NowPlayingArtworkView(
                     urlString: displayTrack?.artworkURLTemplate,
-                    playlistID: playbackController.currentPlaylistID
+                    playlistID: playbackController.currentPlaylistContext?.musicPlaylistID
                 )
                 .frame(width: artworkSize, height: artworkSize)
                 .shadow(color: .black.opacity(0.28), radius: 22, y: 16)
@@ -119,7 +119,7 @@ struct NowPlayingPaneView: View {
         themeDebugErrorMessage = nil
         let report = await AlbumArtworkThemeProvider.shared.debugReport(
             forArtworkURLTemplate: artworkURLTemplate,
-            playlistID: playbackController.currentPlaylistID,
+            playlistID: playbackController.currentPlaylistContext?.musicPlaylistID,
             trackTitle: track?.title,
             artistName: track?.artistName,
             albumTitle: track?.albumTitle,

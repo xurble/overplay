@@ -81,7 +81,7 @@ final class CarPlayCoordinator: NSObject {
     private var libraryRefreshTask: Task<Void, Never>?
     private var playbackObservationGeneration = 0
     private var lastNowPlayingButtonSignature: CarPlayNowPlayingButtonSignature?
-    private var lastNowPlayingPlaylistID: String?
+    private var lastNowPlayingContext: PlaylistPlaybackContext?
     private var displayedActions: [CarPlayNowPlayingAction] = []
     private var displayedActionButtons: [CPNowPlayingButton] = []
     private var visiblePlaylistID: UUID?
@@ -170,7 +170,7 @@ final class CarPlayCoordinator: NSObject {
         visibleRecentTemplate = nil
         visibleRecentID = nil
         lastNowPlayingButtonSignature = nil
-        lastNowPlayingPlaylistID = nil
+        lastNowPlayingContext = nil
         displayedActions = []
         displayedActionButtons = []
         CPNowPlayingTemplate.shared.remove(self)
@@ -400,14 +400,7 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func isCurrentPlaylist(_ summary: PlaylistSummaryPresentation) -> Bool {
-        guard let playbackController,
-              let musicPlaylistID = summary.musicPlaylistID,
-              playbackController.currentTrack != nil else {
-            return false
-        }
-
-        return playbackController.currentPlaylistID == musicPlaylistID
-            && playbackController.currentPlaylistScope == summary.playbackScope
+        playbackController?.isPlaying(summary.playbackContext) == true
     }
 
     private func isCurrentTrack(_ summary: TrackSummaryPresentation, in playlist: PlaylistRecord) -> Bool {
@@ -422,7 +415,7 @@ final class CarPlayCoordinator: NSObject {
             itemID: summary.id,
             track: track,
             playlist: playlist,
-            currentPlaylistID: playbackController.currentPlaylistID,
+            currentPlaylistID: playbackController.currentPlaylistContext?.musicPlaylistID,
             currentPlaylistItem: playbackController.currentPlaylistItem,
             currentTrack: playbackController.currentTrack
         )
@@ -590,10 +583,8 @@ final class CarPlayCoordinator: NSObject {
         guard let playbackController else { return }
         switch CarPlayPlaybackOutcome.decide(
             hasPlaybackFailure: playbackController.playbackFailure != nil,
-            currentPlaylistID: playbackController.currentPlaylistID,
-            currentScope: playbackController.currentPlaylistScope,
-            requestedPlaylistID: playlist.musicPlaylistID,
-            requestedScope: scope
+            current: playbackController.currentPlaylistContext,
+            requested: playlist.playbackContext(scope)
         ) {
         case .nowPlaying: showNowPlaying()
         case .sharedFailure: break
@@ -703,10 +694,9 @@ final class CarPlayCoordinator: NSObject {
             // CarPlay's progress bar reads Now Playing metadata, not this.
             _ = runtime?.libraryRestoration.isReady
             _ = runtime?.libraryRestoration.importRevision
-            _ = playbackController.currentPlaylistScope
+            _ = playbackController.currentPlaylistContext
             _ = playbackController.hasLiveQueue
             _ = playbackController.currentMember?.localTrackID
-            _ = playbackController.currentPlaylistID
             _ = playbackController.currentTrack?.id
             _ = playbackController.displayedIsEvicted
             _ = playbackController.activePlaylistSnapshot?.updatedAt
@@ -786,14 +776,14 @@ final class CarPlayCoordinator: NSObject {
         // action layout. Keep it in place, but disable curation until resolved.
         let layout = signature.resolvingLayout(
             previous: lastNowPlayingButtonSignature,
-            samePlaylist: playbackController.currentPlaylistID != nil
-                && playbackController.currentPlaylistID == lastNowPlayingPlaylistID
+            samePlaylist: playbackController.currentPlaylistContext != nil
+                && playbackController.currentPlaylistContext == lastNowPlayingContext
         )
         let actions = CarPlayNowPlayingActionPolicy.actions(
             playlistRole: layout.playlistRole, isRetired: layout.isEvicted, canAddToOverplay: layout.canAddToOverplay
         )
         lastNowPlayingButtonSignature = layout
-        lastNowPlayingPlaylistID = playbackController.currentPlaylistID
+        lastNowPlayingContext = playbackController.currentPlaylistContext
         let needsLayout = actions != displayedActions
         if needsLayout {
             displayedActions = actions

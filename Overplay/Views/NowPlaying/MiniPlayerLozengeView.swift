@@ -31,7 +31,7 @@ struct MiniPlayerLozengeView: View {
         HStack(spacing: 12) {
             NowPlayingArtworkView(
                 urlString: playbackController.nowPlayingDisplayTrack?.artworkURLTemplate,
-                playlistID: playbackController.currentPlaylistID,
+                playlistID: playbackController.currentPlaylistContext?.musicPlaylistID,
                 cornerRadius: 10,
                 pixelSize: 128
             )

@@ -690,7 +690,7 @@ struct NewModelRepositoryTests {
 
         await controller.playPlaylist(triagePlaylist, settings: settings, context: context)
 
-        #expect(controller.currentPlaylistID == nil)
+        #expect(controller.currentPlaylistContext == nil)
         #expect(controller.statusMessage == "No active tracks in Triage.")
     }
 }
