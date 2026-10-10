@@ -10,6 +10,7 @@ struct NowPlayingColumnView: View {
     var bottomPadding: CGFloat = 28
     /// Space between the transport and the volume pill.
     var transportPillGap: CGFloat = 16
+    var onArtworkTopChange: ((CGFloat) -> Void)? = nil
 
     var body: some View {
         ThemedPlayerHost { artworkTheme, applyRefreshedTheme in
@@ -17,7 +18,8 @@ struct NowPlayingColumnView: View {
                 NowPlayingPaneView(
                     settings: settings,
                     artworkTheme: artworkTheme,
-                    onArtworkThemeUpdated: applyRefreshedTheme
+                    onArtworkThemeUpdated: applyRefreshedTheme,
+                    onArtworkTopChange: onArtworkTopChange
                 )
                 PlaybackControlsView(
                     settings: settings,

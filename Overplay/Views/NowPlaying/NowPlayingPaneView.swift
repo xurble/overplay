@@ -9,8 +9,8 @@ struct NowPlayingPaneView: View {
     var settings: OverplaySettings
     var artworkTheme: AlbumArtworkTheme?
     var onArtworkThemeUpdated: (AlbumArtworkTheme) -> Void = { _ in }
-    /// The bottom of the last control, in global coordinates.
-    var onContentBottomChange: ((CGFloat) -> Void)? = nil
+    /// The top of the artwork, in global coordinates.
+    var onArtworkTopChange: ((CGFloat) -> Void)? = nil
 
     @State private var isShowingThemeDiagnostics = false
     @State private var isThemeDiagnosticsLoading = false
@@ -42,6 +42,9 @@ struct NowPlayingPaneView: View {
                 )
                 .frame(width: artworkSize, height: artworkSize)
                 .shadow(color: .black.opacity(0.28), radius: 22, y: 16)
+                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { top in
+                    onArtworkTopChange?(top)
+                }
 
                 PlaybackCollectionContextView(foreground: activeArtworkTheme?.albumName ?? .secondary)
                 NowPlayingTrackTextView(
@@ -80,9 +83,6 @@ struct NowPlayingPaneView: View {
                 }
                 PlaybackFailureRetryView()
                 SysdiagnoseReminderButtonView()
-            }
-            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { bottom in
-                onContentBottomChange?(bottom)
             }
             .padding(.horizontal, 24)
             .padding(.top, Self.blend(16, 24, roominess))

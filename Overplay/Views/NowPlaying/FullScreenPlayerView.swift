@@ -9,24 +9,40 @@ struct FullScreenPlayerView: View {
 
     var settings: OverplaySettings
 
+    @State private var artworkTop: CGFloat?
+
     var body: some View {
-        NowPlayingColumnView(settings: settings, bottomPadding: 4, transportPillGap: 36)
-            .modifier(UnderVerticalBar())
-            .overlay(alignment: .top) {
-                Capsule()
-                    .fill(.secondary)
-                    .frame(width: 36, height: 5)
-                    .padding(.top, 6)
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 12)
-                    .contentShape(.rect)
-                    .onTapGesture { dismiss() }
-                    .accessibilityElement()
-                    .accessibilityLabel("Close Now Playing")
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityAction { dismiss() }
+        NowPlayingColumnView(
+            settings: settings,
+            bottomPadding: 4,
+            transportPillGap: 36,
+            onArtworkTopChange: { artworkTop = $0 }
+        )
+        .modifier(UnderVerticalBar())
+        .overlay {
+            // Laid out against the whole screen: centred across it, and
+            // halfway between its top edge and the top of the art.
+            GeometryReader { proxy in
+                dragHandle
+                    .position(x: proxy.size.width / 2, y: (artworkTop ?? 48) / 2)
             }
-            .accessibilityAction(.escape) { dismiss() }
+            .ignoresSafeArea()
+        }
+        .accessibilityAction(.escape) { dismiss() }
+    }
+
+    private var dragHandle: some View {
+        Capsule()
+            .fill(.secondary)
+            .frame(width: 36, height: 5)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 10)
+            .contentShape(.rect)
+            .onTapGesture { dismiss() }
+            .accessibilityElement()
+            .accessibilityLabel("Close Now Playing")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { dismiss() }
     }
 }
 
