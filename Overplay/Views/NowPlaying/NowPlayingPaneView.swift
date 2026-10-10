@@ -13,6 +13,8 @@ struct NowPlayingPaneView: View {
     var onArtworkTopChange: ((CGFloat) -> Void)? = nil
     /// Art and track beside the controls, which then include the transport.
     var isSideBySide = false
+    /// Side by side, the art on the trailing side instead of the leading.
+    var artworkOnTrailing = false
 
     @State private var isShowingThemeDiagnostics = false
     @State private var isThemeDiagnosticsLoading = false
@@ -66,25 +68,32 @@ struct NowPlayingPaneView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
-    /// Wide and short (iPhone Duo open in portrait, above the fold): the art
-    /// and track on the left, every control including the transport on the
-    /// right.
+    /// Wide and short (iPhone Duo open in portrait, above the fold; a phone's
+    /// full-screen player in landscape): the art and track on one side, every
+    /// control including the transport on the other.
     private func sideBySide(in size: CGSize, presentation: NowPlayingPresentation, artworkTheme: AlbumArtworkTheme?) -> some View {
         let identityWidth = ((size.width - 72) * 0.45).rounded()
         let artworkSize = max(min(identityWidth, size.height - 150), 112)
+        let identityColumn = VStack(spacing: 12) {
+            identity(artworkSize: artworkSize, presentation: presentation, artworkTheme: artworkTheme)
+        }
+        .frame(width: identityWidth)
+        let controlsColumn = VStack(spacing: 12) {
+            trackControls(presentation: presentation, artworkTheme: artworkTheme)
+            PlaybackControlsView(settings: settings, controlSize: .regular, artworkTheme: artworkTheme)
+            if AudioOutputPillView.isAvailable {
+                AudioOutputPillView(artworkTheme: artworkTheme)
+            }
+        }
+        .frame(maxWidth: .infinity)
         return HStack(spacing: 24) {
-            VStack(spacing: 12) {
-                identity(artworkSize: artworkSize, presentation: presentation, artworkTheme: artworkTheme)
+            if artworkOnTrailing {
+                controlsColumn
+                identityColumn
+            } else {
+                identityColumn
+                controlsColumn
             }
-            .frame(width: identityWidth)
-            VStack(spacing: 12) {
-                trackControls(presentation: presentation, artworkTheme: artworkTheme)
-                PlaybackControlsView(settings: settings, controlSize: .regular, artworkTheme: artworkTheme)
-                if AudioOutputPillView.isAvailable {
-                    AudioOutputPillView(artworkTheme: artworkTheme)
-                }
-            }
-            .frame(maxWidth: .infinity)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)

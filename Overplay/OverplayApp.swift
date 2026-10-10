@@ -38,6 +38,7 @@ struct OverplayApp: App {
         }
     }
 
+    @UIApplicationDelegateAdaptor(OverplayAppDelegate.self) private var appDelegate
     private let modelContainer: ModelContainer
     @Environment(\.scenePhase) private var scenePhase
 

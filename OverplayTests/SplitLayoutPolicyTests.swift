@@ -39,4 +39,38 @@ struct SplitLayoutPolicyTests {
         #expect(SplitLayoutPolicy.visibility(isNarrow: false, narrowSidebarShown: true, wideVisibility: .all) == .all)
         #expect(SplitLayoutPolicy.visibility(isNarrow: false, narrowSidebarShown: false, wideVisibility: .detailOnly) == .detailOnly)
     }
+
+    @Test("Open as a book, a vertical fold with room on both sides splits list and player")
+    func splitsAtVerticalFold() {
+        #expect(SplitLayoutPolicy.splitsAtFold(951, foldX: 475))
+        #expect(SplitLayoutPolicy.playerWidth(for: 951, foldX: 475) == 476)
+        #expect(!SplitLayoutPolicy.splitsAtFold(951, foldX: nil))
+        #expect(!SplitLayoutPolicy.splitsAtFold(951, foldX: 200))
+        #expect(!SplitLayoutPolicy.splitsAtFold(1366, foldX: 683))
+    }
+
+    @Test("Open in portrait, a horizontal fold with room above and below stacks player over list")
+    func stacksAtHorizontalFold() {
+        #expect(SplitLayoutPolicy.stacksAtFold(951, foldY: 475))
+        #expect(!SplitLayoutPolicy.stacksAtFold(951, foldY: nil))
+        #expect(!SplitLayoutPolicy.stacksAtFold(951, foldY: 700))
+    }
+}
+
+/// Where the player lives, from the size classes.
+@Suite("Player placement")
+struct PlayerPlacementTests {
+    @Test("Compact width or compact height (a phone in landscape) keeps the mini and full-screen player")
+    func placement() {
+        #expect(PlayerPlacement(.compact, .regular) == .sheet)
+        #expect(PlayerPlacement(.regular, .compact) == .sheet)
+        #expect(PlayerPlacement(.compact, .compact) == .sheet)
+        #expect(PlayerPlacement(.regular, .regular) == .column)
+    }
+
+    @Test("Landscape centres the full-screen player: the home indicator's space is matched above")
+    func landscapeInsetsAreVerticallyCentred() {
+        let insets = FullScreenPlayerView.verticallyCentred(EdgeInsets(top: 0, leading: 59, bottom: 21, trailing: 59))
+        #expect(insets == EdgeInsets(top: 21, leading: 59, bottom: 21, trailing: 59))
+    }
 }

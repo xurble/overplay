@@ -13,6 +13,8 @@ struct NowPlayingColumnView: View {
     var onArtworkTopChange: ((CGFloat) -> Void)? = nil
     /// Art and track beside the controls, for a wide, short space.
     var isSideBySide = false
+    /// Side by side, the art on the trailing side instead of the leading.
+    var artworkOnTrailing = false
 
     var body: some View {
         ThemedPlayerHost { artworkTheme, applyRefreshedTheme in
@@ -22,7 +24,8 @@ struct NowPlayingColumnView: View {
                     artworkTheme: artworkTheme,
                     onArtworkThemeUpdated: applyRefreshedTheme,
                     onArtworkTopChange: onArtworkTopChange,
-                    isSideBySide: isSideBySide
+                    isSideBySide: isSideBySide,
+                    artworkOnTrailing: artworkOnTrailing
                 )
                 if !isSideBySide {
                     PlaybackControlsView(

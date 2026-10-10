@@ -9,7 +9,10 @@ enum PlayerPlacement: Equatable {
     case sheet
     case column
 
-    init(_ horizontalSizeClass: UserInterfaceSizeClass?) {
-        self = horizontalSizeClass == .compact ? .sheet : .column
+    /// Compact height (a phone in landscape, only while its full-screen
+    /// player is open) keeps the compact layout, even where the landscape
+    /// width is regular, so the open player stays open.
+    init(_ horizontalSizeClass: UserInterfaceSizeClass?, _ verticalSizeClass: UserInterfaceSizeClass?) {
+        self = horizontalSizeClass == .compact || verticalSizeClass == .compact ? .sheet : .column
     }
 }

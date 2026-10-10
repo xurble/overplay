@@ -45,7 +45,11 @@ struct SplitAppShell: View {
                     // fold (its art background under the status bar) and the
                     // list the half below.
                     VStack(spacing: 0) {
-                        NowPlayingColumnView(settings: settings, isSideBySide: true)
+                        NowPlayingColumnView(
+                            settings: settings,
+                            isSideBySide: true,
+                            artworkOnTrailing: PhoneTurn.shared.isClockwise
+                        )
                             .frame(height: foldY)
                         Divider()
                     }
