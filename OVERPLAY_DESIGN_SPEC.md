@@ -1138,15 +1138,17 @@ CloudKit schema.
 
 ### Surfaces
 
-- **iPhone and iPad:** a Recents section under the One True Playlist, Triage
-  and Retired: one horizontally scrolling row of artwork tiles (album covers
-  square, artist images round) with the title and "Album" or "Artist", and a
-  marker on the one playing. A tile opens the entry's song list: Shuffle and
-  Play at the top, then the songs, with counts and retired state for songs
-  Overplay tracks.
-- **CarPlay:** a Recents row under the playlists on the root (hidden when
-  empty) opens the list of up to 10 entries, each opening its songs with
-  Shuffle and Play at the top, and then Now Playing.
+- **iPhone and iPad:** a section headed "Recent Deep Dives" under the One
+  True Playlist, Triage and Retired (hidden, heading included, when empty):
+  one horizontally scrolling row of artwork tiles (album covers square, artist
+  images round) with the title and "Album" or "Artist", and a marker on the one
+  playing. A tile opens the entry's song list: Shuffle and Play at the top,
+  then the songs, with counts and retired state for songs Overplay tracks.
+- **CarPlay:** a "Recent Deep Dives" strip of artwork tiles under the
+  playlists on the root (hidden when empty). A tile opens that entry's songs
+  with Shuffle and Play at the top, and then Now Playing; the strip's title
+  opens the list of up to 10 entries. Strip tiles have no system playing
+  indicator, so the playing entry's subtitle reads "Now Playing".
 - **CarPlay Back:** while an entry plays, Back from Now Playing goes to that
   entry's songs, then to Recents, then to the root, however Now Playing was
   opened: from Recents, from CarPlay's Now Playing button or on connect, or
