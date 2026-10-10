@@ -2028,9 +2028,13 @@ Platform notes:
 - Compact width (iPhone, a closed iPhone Duo, a narrow iPad window) shows a
   mini player: a glass bar over the bottom of the screen, its top edge a
   progress line coloured as Now Playing's progress bar. Tapping it or
-  swiping it up opens Now Playing full screen with the system zoom
-  transition, with a drag handle at the top; swiping down returns to the bar. Regular
-  width shows Now Playing as a column beside the list. On a closed iPhone Duo
+  swiping it up slides Now Playing up full screen. A downward swipe starting
+  anywhere on it, controls and margins included, moves it with the finger and
+  closes it past the threshold; a sideways drag (the volume pill) does not.
+  A drag handle at the top, clear of the Dynamic Island, closes it on a tap.
+  The system zoom transition was tried and dropped: its swipe down missed
+  about half of first attempts and lost to the controls. Regular width shows
+  Now Playing as a column beside the list. On a closed iPhone Duo
   the status bar stays vertical under the camera in full screen, the player
   centres on the screen across it, and the mini
   player spans the width below the vertical bar's controls.
