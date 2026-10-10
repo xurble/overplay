@@ -67,7 +67,9 @@ struct MiniPlayerLozengeView: View {
                 .onChanged { value in onOpenDragChanged(-value.translation.height) }
                 .onEnded { value in onOpenDragEnded(value) }
         )
-        .glassEffect(.regular.interactive(), in: .capsule)
+        // Not interactive: its press bulge would leave the player, which
+        // grows from and shrinks into this frame, a size out of step.
+        .glassEffect(.regular, in: .capsule)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("mini-player")
     }

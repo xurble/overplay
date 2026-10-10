@@ -197,7 +197,7 @@ private struct PlayerCardTransform: ViewModifier, Animatable {
     private static let movingCornerRadius: CGFloat = 50
     /// Opaque for most of the shrink; fades out over the last stretch, just
     /// before it reaches the mini player.
-    private static let fadeStart: CGFloat = 0.85
+    private static let fadeStart: CGFloat = 0.7
 
     func body(content: Content) -> some View {
         let width = max(screenSize.width, 1)
