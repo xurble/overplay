@@ -5,7 +5,6 @@ struct DashboardView: View {
     @Environment(PlaybackController.self) private var playbackController
 
     @Query(filter: #Predicate<PlaylistRecord> { $0.isActive }, sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
-    @Query private var playlistItems: [PlaylistItemRecord]
     @Query(sort: \RecentCollectionRecord.lastPlayedAt, order: .reverse) private var recentRecords: [RecentCollectionRecord]
     @State private var leadArtworkSide = DashboardLayout.defaultLeadArtworkSide
     /// Fitting bookkeeping. Not observed: updating it must never redraw the
@@ -45,14 +44,13 @@ struct DashboardView: View {
             }
 
             if let triageBucket {
-                let triageSummary = builder.summary(for: triageBucket)
                 let retiredSummary = builder.summary(for: triageBucket, scope: .retired)
                 Section {
                     NavigationLink {
                         PlaylistManagementView(settings: settings, playlist: triageBucket)
                     } label: {
-                        playlistHomeRow(for: triageBucket, summary: triageSummary,
-                                        detail: triageSummary.triageDetail(sourceCount: triageSourceCount))
+                        TriageHomeRowView(bucket: triageBucket, summary: builder.summary(for: triageBucket),
+                                          sourceCount: triageSourceCount)
                     }
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
 
@@ -161,24 +159,8 @@ struct DashboardView: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    private func playlistHomeRow(for playlist: PlaylistRecord, summary: PlaylistSummaryPresentation,
-                                 detail: String? = nil) -> some View {
-        PlaylistHomeRowView(
-            title: playlist.name,
-            detail: detail ?? summary.dashboardDetailText,
-            playlist: playlist,
-            systemImage: summary.iconIntent.systemImage,
-            badgeTint: badgeTint(for: summary, role: playlist.role)
-        )
-    }
-
     private func badgeTint(for summary: PlaylistSummaryPresentation, role: PlaylistRole) -> Color {
-        if summary.isCurrentPlaybackPlaylist {
-            return .green
-        }
-
-        return role == .oneTruePlaylist ? .pink : .teal
-
+        DashboardBadge.tint(for: summary, role: role)
     }
 
     private var oneTruePlaylist: PlaylistRecord? {
@@ -201,7 +183,9 @@ struct DashboardView: View {
     private var presentationBuilder: PlaylistPresentationBuilder {
         PlaylistPresentationBuilder(
             playlists: playlists,
-            items: playlistItems,
+            // No items: the dashboard shows only the Triage count, which its
+            // row queries itself, so a redraw never fetches every item.
+            items: [],
             tracks: [],
             playingContext: playbackController.playingPlaylistContext,
             // Nothing here shows a track's artwork, so skip the track lookups.
@@ -263,4 +247,38 @@ private final class LeadArtworkFit {
     var deepDivesHeight: CGFloat = 0
     var isSized = false
     var isLocked = false
+}
+
+private enum DashboardBadge {
+    static func tint(for summary: PlaylistSummaryPresentation, role: PlaylistRole) -> Color {
+        if summary.isCurrentPlaybackPlaylist { return .green }
+        return role == .oneTruePlaylist ? .pink : .teal
+    }
+}
+
+/// The Triage row. It queries only the bucket's active items, so the count
+/// stays live without the dashboard fetching every playlist item.
+private struct TriageHomeRowView: View {
+    @Query private var activeItems: [PlaylistItemRecord]
+    var bucket: PlaylistRecord
+    var summary: PlaylistSummaryPresentation
+    var sourceCount: Int
+
+    init(bucket: PlaylistRecord, summary: PlaylistSummaryPresentation, sourceCount: Int) {
+        self.bucket = bucket
+        self.summary = summary
+        self.sourceCount = sourceCount
+        let bucketID = bucket.id
+        _activeItems = Query(filter: #Predicate<PlaylistItemRecord> { $0.playlistID == bucketID && $0.evictedAt == nil })
+    }
+
+    var body: some View {
+        PlaylistHomeRowView(
+            title: bucket.name,
+            detail: PlaylistSummaryPresentation.triageDetail(trackCount: activeItems.count, sourceCount: sourceCount),
+            playlist: bucket,
+            systemImage: summary.iconIntent.systemImage,
+            badgeTint: DashboardBadge.tint(for: summary, role: bucket.role)
+        )
+    }
 }

@@ -117,7 +117,11 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
 
     /// The Triage row's subtitle on every surface: "12 tracks from 3 playlists".
     func triageDetail(sourceCount: Int) -> String {
-        let tracks = activeTrackCount == 1 ? "1 track" : "\(activeTrackCount) tracks"
+        Self.triageDetail(trackCount: activeTrackCount, sourceCount: sourceCount)
+    }
+
+    static func triageDetail(trackCount: Int, sourceCount: Int) -> String {
+        let tracks = trackCount == 1 ? "1 track" : "\(trackCount) tracks"
         let sources = sourceCount == 1 ? "1 playlist" : "\(sourceCount) playlists"
         return "\(tracks) from \(sources)"
     }
