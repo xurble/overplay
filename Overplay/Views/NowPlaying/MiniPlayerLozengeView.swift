@@ -1,8 +1,10 @@
+import SwiftData
 import SwiftUI
 
 /// The mini player in compact width: a glass bar over the bottom of the
 /// screen. Tapping it or swiping it up opens the full-screen player.
 struct MiniPlayerLozengeView: View {
+    @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackController.self) private var playbackController
 
     var settings: OverplaySettings
@@ -40,9 +42,12 @@ struct MiniPlayerLozengeView: View {
 
             PlaybackControlsView(settings: settings, controlSize: .compact)
         }
-        .padding(.leading, 9)
+        .padding(.leading, 16)
         .padding(.trailing, 14)
         .frame(height: Self.height)
+        // Progress along the top edge, coloured as Now Playing's bar.
+        .overlay(alignment: .top) { progressLine }
+        .clipShape(.capsule)
         .contentShape(.capsule)
         .simultaneousGesture(
             DragGesture(minimumDistance: 16).onEnded { value in
@@ -52,6 +57,24 @@ struct MiniPlayerLozengeView: View {
         .glassEffect(.regular.interactive(), in: .capsule)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("mini-player")
+    }
+
+    private var progressLine: some View {
+        let presentation = NowPlayingPresentationFactory.presentation(
+            playbackController: playbackController,
+            settings: settings,
+            context: modelContext
+        )
+        return NowPlayingProgressBar(
+            progress: presentation.progress,
+            phase: presentation.progressPhase,
+            durationSeconds: presentation.durationSeconds,
+            isPlaying: presentation.isPlaying,
+            trackID: presentation.trackID,
+            lineHeight: 3
+        )
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
     }
 }
 

@@ -2026,7 +2026,8 @@ Platform notes:
 
 - iPhone should keep Now Playing immersive and touch-first.
 - Compact width (iPhone, a closed iPhone Duo, a narrow iPad window) shows a
-  mini player: a glass bar over the bottom of the screen. Tapping it or
+  mini player: a glass bar over the bottom of the screen, its top edge a
+  progress line coloured as Now Playing's progress bar. Tapping it or
   swiping it up opens Now Playing full screen with the system zoom
   transition, with a drag handle at the top; swiping down returns to the bar. Regular
   width shows Now Playing as a column beside the list. On a closed iPhone Duo

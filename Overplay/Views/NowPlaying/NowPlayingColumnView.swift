@@ -8,6 +8,8 @@ struct NowPlayingColumnView: View {
     /// Space under the last control. Full screen sits it just above the
     /// home indicator, leaving more room for the art.
     var bottomPadding: CGFloat = 28
+    /// Space between the transport and the volume pill.
+    var transportPillGap: CGFloat = 16
 
     var body: some View {
         ThemedPlayerHost { artworkTheme, applyRefreshedTheme in
@@ -22,7 +24,7 @@ struct NowPlayingColumnView: View {
                     controlSize: .regular,
                     artworkTheme: artworkTheme.isFallback ? nil : artworkTheme
                 )
-                .padding(.bottom, AudioOutputPillView.isAvailable ? 16 : bottomPadding)
+                .padding(.bottom, AudioOutputPillView.isAvailable ? transportPillGap : bottomPadding)
                 if AudioOutputPillView.isAvailable {
                     AudioOutputPillView(artworkTheme: artworkTheme)
                         .padding(.bottom, bottomPadding)

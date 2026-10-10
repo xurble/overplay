@@ -10,7 +10,7 @@ struct FullScreenPlayerView: View {
     var settings: OverplaySettings
 
     var body: some View {
-        NowPlayingColumnView(settings: settings, bottomPadding: 4)
+        NowPlayingColumnView(settings: settings, bottomPadding: 4, transportPillGap: 36)
             .modifier(UnderVerticalBar())
             .overlay(alignment: .top) {
                 Capsule()
