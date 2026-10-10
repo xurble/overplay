@@ -84,7 +84,7 @@ private struct PlaylistManagementContentView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 4)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.glass)
                     .controlSize(.large)
                     .disabled(!detail.rows.contains { $0.isPlayable })
 
@@ -190,6 +190,14 @@ private struct PlaylistManagementContentView: View {
                         .disabled(viewModel.isSyncing)
                     }
 
+                    if playlist.role == .triageBucket, selectedScope == .active {
+                        NavigationLink {
+                            TriageSourcesView()
+                        } label: {
+                            Label("Contributing Playlists", systemImage: "slider.horizontal.3")
+                        }
+                    }
+
                     Divider()
 
                     NavigationLink {
@@ -217,7 +225,7 @@ private struct PlaylistManagementContentView: View {
             for: playlist,
             playlistItems: playlistItems,
             tracks: tracks,
-            currentPlaylistID: playbackController.currentPlaylistID,
+            currentContext: playbackController.currentPlaylistContext,
             currentPlaylistItem: playbackController.currentPlaylistItem,
             currentLocalTrackID: playbackController.nowPlayingDisplayLocalTrackID,
             currentTrack: playbackController.nowPlayingDisplayTrack,
@@ -258,7 +266,7 @@ private struct PlaylistManagementContentView: View {
         var sources: [SourceRevision]
         var tracks: [TrackRevision]
         var metadataVersion: Int
-        var currentPlaylist: String?
+        var currentContext: PlaylistPlaybackContext?
         var currentTrack: String?
         var snapshotDate: Date?
     }
@@ -271,7 +279,7 @@ private struct PlaylistManagementContentView: View {
             sources: linkedPlaylists.map { SourceRevision(id: $0.id, musicID: $0.musicPlaylistID, name: $0.name, role: $0.roleRawValue) },
             tracks: tracks.map { TrackRevision(id: $0.id, updatedAt: $0.updatedAt, title: $0.title, artist: $0.artistName, album: $0.albumTitle, artwork: $0.artworkURLTemplate) },
             metadataVersion: playbackController.playbackItemMetadataVersion,
-            currentPlaylist: playbackController.currentPlaylistID,
+            currentContext: playbackController.currentPlaylistContext,
             currentTrack: playbackController.nowPlayingDisplayLocalTrackID,
             snapshotDate: playbackController.activePlaylistSnapshot?.updatedAt)
     }
@@ -283,6 +291,9 @@ private struct PlaylistManagementContentView: View {
     private func roleTint(for playlistPresentation: PlaylistSummaryPresentation) -> Color {
         if playlistPresentation.isCurrentPlaybackPlaylist {
             return .green
+        }
+        if playlistPresentation.playbackScope == .retired {
+            return .gray
         }
 
         switch playlist.role {

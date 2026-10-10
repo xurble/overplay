@@ -72,7 +72,7 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [firstItem, otherItem, secondItem, evictedItem],
             tracks: [otherTrack, evictedTrack, firstTrack, secondTrack],
-            currentPlaylistID: playlist.musicPlaylistID,
+            currentContext: playlist.playbackContext(),
             currentPlaylistItem: secondItem,
             currentTrack: CurrentPlaybackTrack(id: "second", title: "Second", artistName: "Artist"),
         )
@@ -92,7 +92,7 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [firstItem, otherItem, secondItem, evictedItem],
             tracks: [otherTrack, evictedTrack, firstTrack, secondTrack],
-            currentPlaylistID: playlist.musicPlaylistID,
+            currentContext: playlist.playbackContext(),
             currentPlaylistItem: secondItem,
             currentTrack: CurrentPlaybackTrack(id: "second", title: "Second", artistName: "Artist"),
             scope: .retired,
@@ -133,7 +133,7 @@ struct PlaylistManagementViewModelTests {
             for: bucket,
             playlistItems: [attributedItem, unattributedItem],
             tracks: [attributedTrack, unattributedTrack],
-            currentPlaylistID: nil,
+            currentContext: nil,
             currentPlaylistItem: nil,
             currentTrack: nil,
             sourcePlaylists: sourcePlaylists
@@ -148,7 +148,7 @@ struct PlaylistManagementViewModelTests {
             for: bucket,
             playlistItems: [attributedItem, unattributedItem],
             tracks: [attributedTrack, unattributedTrack],
-            currentPlaylistID: bucket.musicPlaylistID,
+            currentContext: bucket.playbackContext(),
             currentPlaylistItem: attributedItem,
             currentTrack: CurrentPlaybackTrack(id: "attributed", title: "Attributed", artistName: "Artist"),
             activePlaylistSnapshot: snapshot,
@@ -172,7 +172,7 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [item],
             tracks: [track],
-            currentPlaylistID: playlist.musicPlaylistID,
+            currentContext: playlist.playbackContext(),
             currentPlaylistItem: item,
             currentTrack: CurrentPlaybackTrack(id: "track", title: "Track", artistName: "Artist"),
             playbackItemMetadataVersion: 0,
@@ -184,7 +184,7 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [item],
             tracks: [track],
-            currentPlaylistID: playlist.musicPlaylistID,
+            currentContext: playlist.playbackContext(),
             currentPlaylistItem: item,
             currentTrack: CurrentPlaybackTrack(id: "track", title: "Track", artistName: "Artist"),
             playbackItemMetadataVersion: 1,
@@ -206,7 +206,7 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [item],
             tracks: [track],
-            currentPlaylistID: playlist.musicPlaylistID,
+            currentContext: playlist.playbackContext(),
             currentPlaylistItem: nil,
             currentTrack: nil,
         )
@@ -215,7 +215,7 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [item],
             tracks: [track],
-            currentPlaylistID: playlist.musicPlaylistID,
+            currentContext: playlist.playbackContext(),
             currentPlaylistItem: item,
             currentTrack: CurrentPlaybackTrack(id: "track", title: "Track", artistName: "Artist"),
         )
@@ -245,7 +245,7 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [item],
             tracks: [staleTrack],
-            currentPlaylistID: playlist.musicPlaylistID,
+            currentContext: playlist.playbackContext(),
             currentPlaylistItem: item,
             currentTrack: CurrentPlaybackTrack(id: "fresh", title: "Fresh", artistName: "Artist"),
             activePlaylistSnapshot: snapshot,
@@ -289,7 +289,7 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [retiredFirstItem, retiredSecondItem],
             tracks: [retiredFirstTrack, retiredSecondTrack],
-            currentPlaylistID: playlist.musicPlaylistID,
+            currentContext: playlist.playbackContext(),
             currentPlaylistItem: nil,
             currentTrack: CurrentPlaybackTrack(id: "retired-second", title: "Retired Second", artistName: "Artist"),
             activePlaylistSnapshot: activeSnapshot,
@@ -298,6 +298,49 @@ struct PlaylistManagementViewModelTests {
 
         #expect(detail.rows.map(\.id) == [retiredSecondItem.id, retiredFirstItem.id])
         #expect(detail.rows.map(\.summary.title) == ["Retired Second", "Retired First"])
+    }
+
+    @Test("header marks only the playing scope of the triage bucket as current")
+    func headerMarksOnlyPlayingScopeAsCurrent() {
+        let viewModel = PlaylistManagementViewModel()
+        let bucket = PlaylistRecord(
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket
+        )
+        let activeTrack = TrackRecord(catalogID: "active", title: "Active", artistName: "Artist")
+        let retiredTrack = TrackRecord(catalogID: "retired", title: "Retired", artistName: "Artist")
+        let activeItem = PlaylistItemRecord(playlistID: bucket.id, trackID: activeTrack.id)
+        let retiredItem = PlaylistItemRecord(playlistID: bucket.id, trackID: retiredTrack.id, evictedAt: .now)
+
+        func header(
+            for scope: PlaylistPlaybackScope,
+            playing playingScope: PlaylistPlaybackScope
+        ) -> PlaylistSummaryPresentation {
+            let playingItem = playingScope == .active ? activeItem : retiredItem
+            let snapshot = ActivePlaylistSnapshot(
+                playlist: bucket,
+                items: [activeItem, retiredItem],
+                tracks: [activeTrack, retiredTrack],
+                playbackScope: playingScope
+            )
+            return viewModel.detailPresentation(
+                for: bucket,
+                playlistItems: [activeItem, retiredItem],
+                tracks: [activeTrack, retiredTrack],
+                currentContext: bucket.playbackContext(playingScope),
+                currentPlaylistItem: playingItem,
+                currentTrack: CurrentPlaybackTrack(id: "playing", title: "Playing", artistName: "Artist"),
+                activePlaylistSnapshot: snapshot,
+                scope: scope
+            ).playlist
+        }
+
+        #expect(header(for: .active, playing: .active).iconIntent == .currentPlayback)
+        #expect(header(for: .retired, playing: .active).iconIntent == .retired)
+        #expect(header(for: .retired, playing: .retired).iconIntent == .currentPlayback)
+        #expect(header(for: .active, playing: .retired).iconIntent == .triageBucket)
+        #expect(!header(for: .active, playing: .retired).isCurrentPlaybackPlaylist)
     }
 
     @Test("non-current playlist detail ignores active snapshot")
@@ -320,7 +363,7 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [item],
             tracks: [track],
-            currentPlaylistID: activePlaylist.musicPlaylistID,
+            currentContext: activePlaylist.playbackContext(),
             currentPlaylistItem: activeItem,
             currentTrack: CurrentPlaybackTrack(id: "active", title: "Active", artistName: "Artist"),
             activePlaylistSnapshot: snapshot,
@@ -360,7 +403,7 @@ struct PlaylistManagementViewModelTests {
             for: playlist,
             playlistItems: [item],
             tracks: [track],
-            currentPlaylistID: playlist.musicPlaylistID,
+            currentContext: playlist.playbackContext(),
             currentPlaylistItem: nil,
             currentLocalTrackID: track.id.uuidString,
             currentTrack: CurrentPlaybackTrack(id: "runtime-only", title: "Track", artistName: "Artist"),

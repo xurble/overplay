@@ -68,13 +68,11 @@ enum CarPlayPlaybackOutcome: Equatable, Sendable {
 
     static func decide(
         hasPlaybackFailure: Bool,
-        currentPlaylistID: String?,
-        currentScope: PlaylistPlaybackScope,
-        requestedPlaylistID: String,
-        requestedScope: PlaylistPlaybackScope
+        current: PlaylistPlaybackContext?,
+        requested: PlaylistPlaybackContext
     ) -> Self {
         if hasPlaybackFailure { return .sharedFailure }
-        guard currentPlaylistID == requestedPlaylistID, currentScope == requestedScope else { return .notStarted }
+        guard current == requested else { return .notStarted }
         return .nowPlaying
     }
 }

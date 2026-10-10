@@ -221,12 +221,12 @@ struct PlaybackControllerReviewFixTests {
 
     // Finding 8
     @Test func carPlayShowsNowPlayingWhenATrackWasLeftOut() {
-        #expect(CarPlayPlaybackOutcome.decide(hasPlaybackFailure: false, currentPlaylistID: "p", currentScope: .active,
-                                              requestedPlaylistID: "p", requestedScope: .active) == .nowPlaying)
-        #expect(CarPlayPlaybackOutcome.decide(hasPlaybackFailure: true, currentPlaylistID: "p", currentScope: .active,
-                                              requestedPlaylistID: "p", requestedScope: .active) == .sharedFailure)
-        #expect(CarPlayPlaybackOutcome.decide(hasPlaybackFailure: false, currentPlaylistID: nil, currentScope: .active,
-                                              requestedPlaylistID: "p", requestedScope: .active) == .notStarted)
+        let requested = PlaylistPlaybackContext(musicPlaylistID: "p", scope: .active)
+        #expect(CarPlayPlaybackOutcome.decide(hasPlaybackFailure: false, current: requested, requested: requested) == .nowPlaying)
+        #expect(CarPlayPlaybackOutcome.decide(hasPlaybackFailure: true, current: requested, requested: requested) == .sharedFailure)
+        #expect(CarPlayPlaybackOutcome.decide(hasPlaybackFailure: false, current: nil, requested: requested) == .notStarted)
+        let otherScope = PlaylistPlaybackContext(musicPlaylistID: "p", scope: .retired)
+        #expect(CarPlayPlaybackOutcome.decide(hasPlaybackFailure: false, current: otherScope, requested: requested) == .notStarted)
     }
 }
 

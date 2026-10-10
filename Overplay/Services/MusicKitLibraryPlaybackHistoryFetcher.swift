@@ -4,7 +4,7 @@ import Foundation
 /// A lightweight, persisted observation of Apple Music's library playback
 /// metadata. Both fields are optional because MusicKit doesn't expose them
 /// for every item or every listening-history configuration.
-struct MusicLibraryPlaybackSnapshot: Codable, Equatable, Sendable {
+nonisolated struct MusicLibraryPlaybackSnapshot: Codable, Equatable, Sendable {
     var musicItemID: String
     var playCount: Int?
     var lastPlayedDate: Date?
@@ -14,7 +14,7 @@ struct MusicLibraryPlaybackSnapshot: Codable, Equatable, Sendable {
     var recentlyPlayedEvidence: Bool? = nil
 }
 
-struct MusicLibraryPlaybackObservation: Equatable, Sendable {
+nonisolated struct MusicLibraryPlaybackObservation: Equatable, Sendable {
     var aliases: [String]
     var snapshot: MusicLibraryPlaybackSnapshot
     /// A conservative metadata match applies only to this local track; it is
@@ -50,7 +50,9 @@ protocol MusicLibraryPlaybackHistoryFetching {
 struct MusicKitLibraryPlaybackHistoryFetcher: MusicLibraryPlaybackHistoryFetching {
     /// A bounded history probe, not a complete play-event ledger. Only actual
     /// numeric metadata counts; presence in this list never credits a play.
-    func recentlyPlayedObservations() async throws -> [MusicLibraryPlaybackObservation] {
+    /// Play-count lookups run off the main actor: statistics never compete
+    /// with the UI for it.
+    @concurrent nonisolated func recentlyPlayedObservations() async throws -> [MusicLibraryPlaybackObservation] {
         var request = MusicRecentlyPlayedRequest<Song>()
         request.limit = 30
         let songs = try await MusicKitActivityLog.shared.measure(
@@ -85,7 +87,7 @@ struct MusicKitLibraryPlaybackHistoryFetcher: MusicLibraryPlaybackHistoryFetchin
     /// Scan the local library, including songs whose library ID was never
     /// present in a playlist response. Follow every page before matching so
     /// an unseen duplicate cannot make a metadata match look unique.
-    func libraryEntries(matching title: String? = nil) async throws -> [ApplePlayCountLibraryEntry] {
+    @concurrent nonisolated func libraryEntries(matching title: String? = nil) async throws -> [ApplePlayCountLibraryEntry] {
         var request = MusicLibraryRequest<Song>()
         request.limit = 500
         if let title { request.filter(text: title) }
@@ -137,7 +139,7 @@ struct MusicKitLibraryPlaybackHistoryFetcher: MusicLibraryPlaybackHistoryFetchin
     }
 
     /// Keep distinct library counters even when they share a catalog alias.
-    func observations(for requestedIDs: [String]) async throws -> [MusicLibraryPlaybackObservation] {
+    @concurrent nonisolated func observations(for requestedIDs: [String]) async throws -> [MusicLibraryPlaybackObservation] {
         guard !requestedIDs.isEmpty else { return [] }
 
         var request = MusicLibraryRequest<Track>()

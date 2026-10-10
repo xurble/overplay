@@ -39,6 +39,10 @@ struct PlaybackIntent: Codable, Equatable, Sendable {
     /// playlist (`PLAY-018`).
     var collection: PlaybackCollection? = nil
 
+    var playlistContext: PlaylistPlaybackContext {
+        PlaylistPlaybackContext(musicPlaylistID: musicPlaylistID, scope: scope)
+    }
+
     func member(localTrackID: String?) -> Member? {
         guard let localTrackID else { return nil }
         return members.first { $0.localTrackID == localTrackID }

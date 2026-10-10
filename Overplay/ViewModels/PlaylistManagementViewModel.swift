@@ -74,7 +74,7 @@ final class PlaylistManagementViewModel {
         for playlist: PlaylistRecord,
         playlistItems: [PlaylistItemRecord],
         tracks: [TrackRecord],
-        currentPlaylistID: String?,
+        currentContext: PlaylistPlaybackContext?,
         currentPlaylistItem: PlaylistItemRecord?,
         currentLocalTrackID: String? = nil,
         currentTrack: CurrentPlaybackTrack?,
@@ -84,10 +84,10 @@ final class PlaylistManagementViewModel {
         scope: PlaylistPlaybackScope = .active
     ) -> DetailPresentation {
         _ = playbackItemMetadataVersion
+        let viewContext = playlist.playbackContext(scope)
         if let activePlaylistSnapshot,
-           activePlaylistSnapshot.musicPlaylistID == playlist.musicPlaylistID,
-           activePlaylistSnapshot.playbackScope == scope,
-           currentPlaylistID == playlist.musicPlaylistID {
+           activePlaylistSnapshot.playbackContext == viewContext,
+           currentContext == viewContext {
             return activeDetailPresentation(
                 for: playlist,
                 snapshot: activePlaylistSnapshot,
@@ -136,7 +136,7 @@ final class PlaylistManagementViewModel {
                         item,
                         track: track,
                         playlist: playlist,
-                        currentPlaylistID: currentPlaylistID,
+                        currentPlaylistID: currentContext?.musicPlaylistID,
                         currentPlaylistItem: currentPlaylistItem,
                         currentLocalTrackID: currentLocalTrackID,
                         currentTrack: currentTrack
@@ -150,7 +150,7 @@ final class PlaylistManagementViewModel {
             playlists: [playlist],
             items: playlistItems.filter { $0.playlistID == playlist.id },
             tracks: tracks,
-            currentPlaylistID: currentTrack == nil && currentLocalTrackID == nil ? nil : currentPlaylistID
+            playingContext: currentTrack == nil && currentLocalTrackID == nil ? nil : currentContext
         )
 
         return DetailPresentation(
@@ -237,36 +237,6 @@ final class PlaylistManagementViewModel {
 
     func track(for item: PlaylistItemRecord, tracks: [TrackRecord]) -> TrackRecord? {
         tracks.firstValueDictionary(keyedBy: \.id)[item.trackID]
-    }
-
-    func summary(
-        for playlist: PlaylistRecord,
-        playlistItems: [PlaylistItemRecord],
-        tracks: [TrackRecord],
-        currentPlaylistID: String?
-    ) -> DashboardSummary {
-        presentationBuilder(
-            for: playlist,
-            playlistItems: playlistItems,
-            tracks: tracks,
-            currentPlaylistID: currentPlaylistID
-        )
-        .dashboardSummary(forPlaylistID: playlist.id)
-    }
-
-    func playlistPresentation(
-        for playlist: PlaylistRecord,
-        playlistItems: [PlaylistItemRecord],
-        tracks: [TrackRecord],
-        currentPlaylistID: String?
-    ) -> PlaylistSummaryPresentation {
-        presentationBuilder(
-            for: playlist,
-            playlistItems: playlistItems,
-            tracks: tracks,
-            currentPlaylistID: currentPlaylistID
-        )
-        .summary(for: playlist)
     }
 
     var playButtonTitle: String { "Shuffle and Play" }
@@ -400,19 +370,5 @@ final class PlaylistManagementViewModel {
         scope: PlaylistPlaybackScope
     ) -> [PlaylistItemRecord] {
         playlistItems.filter { $0.playlistID == playlist.id && scope.includes($0) }
-    }
-
-    private func presentationBuilder(
-        for playlist: PlaylistRecord,
-        playlistItems: [PlaylistItemRecord],
-        tracks: [TrackRecord],
-        currentPlaylistID: String?
-    ) -> PlaylistPresentationBuilder {
-        PlaylistPresentationBuilder(
-            playlists: [playlist],
-            items: playlistItems,
-            tracks: tracks,
-            currentPlaylistID: currentPlaylistID
-        )
     }
 }

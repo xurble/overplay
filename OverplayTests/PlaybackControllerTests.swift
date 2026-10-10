@@ -47,8 +47,29 @@ struct PlaybackControllerTests {
 
         #expect(fixture.controller.intent == intent)
         #expect(fixture.intentStore.loadIntent() == intent)
-        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(fixture.controller.currentPlaylistContext == fixture.playlist.playbackContext())
         #expect(fixture.player.submitCount == 1)
+    }
+
+    @Test func triageAndRetiredAreDistinctPlayingContexts() async throws {
+        let fixture = try PlaybackFixture(role: .triageBucket)
+        defer { fixture.cleanUp() }
+        try fixture.item(1).evictedAt = .now
+        try fixture.item(2).evictedAt = .now
+        try fixture.context.save()
+        let triage = fixture.playlist.playbackContext()
+        let retired = fixture.playlist.playbackContext(.retired)
+        #expect(!fixture.controller.isPlaying(triage))
+
+        await fixture.controller.playPlaylist(fixture.playlist, scope: .retired,
+                                              settings: fixture.settings, context: fixture.context)
+        #expect(fixture.controller.isPlaying(retired))
+        #expect(!fixture.controller.isPlaying(triage))
+
+        await fixture.controller.playPlaylist(fixture.playlist, settings: fixture.settings, context: fixture.context)
+        #expect(fixture.controller.isPlaying(triage))
+        #expect(!fixture.controller.isPlaying(retired))
+        #expect(!fixture.controller.isPlaying(nil))
     }
 
     // MARK: - Attribution (`PLAY-011`, `PLAY-012`)
@@ -92,7 +113,7 @@ struct PlaybackControllerTests {
         #expect(fixture.controller.currentTrack?.title == "Unknown Song")
         #expect(fixture.controller.currentMember == nil)
         #expect(fixture.controller.currentPlaylistRole(context: fixture.context) == nil)
-        #expect(fixture.controller.currentPlaylistID == fixture.playlist.musicPlaylistID)
+        #expect(fixture.controller.currentPlaylistContext == fixture.playlist.playbackContext())
         await fixture.listen(to: 170)
         await fixture.player.externallyAdvance()
         #expect(try fixture.item(0).playthroughCount == 0)

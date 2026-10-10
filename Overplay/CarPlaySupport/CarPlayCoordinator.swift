@@ -81,7 +81,7 @@ final class CarPlayCoordinator: NSObject {
     private var libraryRefreshTask: Task<Void, Never>?
     private var playbackObservationGeneration = 0
     private var lastNowPlayingButtonSignature: CarPlayNowPlayingButtonSignature?
-    private var lastNowPlayingPlaylistID: String?
+    private var lastNowPlayingContext: PlaylistPlaybackContext?
     private var displayedActions: [CarPlayNowPlayingAction] = []
     private var displayedActionButtons: [CPNowPlayingButton] = []
     private var visiblePlaylistID: UUID?
@@ -170,7 +170,7 @@ final class CarPlayCoordinator: NSObject {
         visibleRecentTemplate = nil
         visibleRecentID = nil
         lastNowPlayingButtonSignature = nil
-        lastNowPlayingPlaylistID = nil
+        lastNowPlayingContext = nil
         displayedActions = []
         displayedActionButtons = []
         CPNowPlayingTemplate.shared.remove(self)
@@ -223,21 +223,46 @@ final class CarPlayCoordinator: NSObject {
         }
         do {
             let summaries = try playlistSummaries()
+            // The One True Playlist leads as a large artwork card, as on the phone.
+            // Cards have no playing indicator, so the subtitle says so instead.
             if let main = summaries.first(where: { $0.role == .oneTruePlaylist }) {
-                sections.append(Section(id: "main", rows: [row(main)]))
+                var mainRow = row(main)
+                mainRow.style = .card
+                mainRow.detail = mainRow.isPlaying ? "Now Playing" : nil
+                sections.append(Section(id: "main", rows: [mainRow]))
             }
-            let triage = summaries.filter { $0.role == .triageBucket && $0.playbackScope == .active }
-            if !triage.isEmpty { sections.append(Section(id: "triage", header: "Triage", rows: triage.map(row))) }
+            // Triage and a compact Retired row share one headerless section, as on the phone dashboard.
+            var triageRows: [Row] = []
+            if let triage = summaries.first(where: { $0.role == .triageBucket && $0.playbackScope == .active }) {
+                var triageRow = row(triage)
+                triageRow.detail = triage.triageDetail(sourceCount: triageSourceCount())
+                triageRows.append(triageRow)
+            }
             if let retired = summaries.first(where: { $0.playbackScope == .retired }) {
-                sections.append(Section(id: "retired", header: "Retired", rows: [row(retired)]))
+                var retiredRow = row(retired)
+                retiredRow.detail = nil
+                retiredRow.artwork = .symbol("archivebox.fill", tint: .systemGray)
+                triageRows.append(retiredRow)
             }
-            // Recents (`PLAY-019`): one row, like the playlists, opening the list.
-            if let modelContext, let recents = try? RecentCollectionRepository.recents(in: modelContext), !recents.isEmpty {
+            if !triageRows.isEmpty { sections.append(Section(id: "triage", rows: triageRows)) }
+            // Recent Deep Dives (`PLAY-019`): a strip of artwork tiles, as on the
+            // phone. A tile opens that album or artist; the title opens the list.
+            if let modelContext, let playbackController,
+               let recents = try? RecentCollectionRepository.recents(in: modelContext), !recents.isEmpty {
                 actions["recents"] = { [weak self] in self?.showRecents() }
-                let count = recents.count == 1 ? "1 album or artist" : "\(recents.count) albums and artists"
-                sections.append(Section(id: "recents", header: "Recents", rows: [Row(
-                    id: "recents", title: "Recents", detail: count, isPlaying: isPlayingRecent, disclosure: true,
-                    artwork: .track(url: recents[0].artworkURLTemplate, playlistID: recents[0].collection.reservedPlaylistID)
+                let tiles = recents.map { recent -> Row.Tile in
+                    let recentID = recent.id
+                    let tileID = "recent-tile-\(recent.groupKey)"
+                    actions[tileID] = { [weak self] in self?.showRecent(recentID) }
+                    let isPlaying = RecentCollectionPresentation.isPlaying(recent, controller: playbackController)
+                    return Row.Tile(
+                        id: tileID, title: recent.title,
+                        subtitle: isPlaying ? "Now Playing" : RecentCollectionPresentation.subtitle(for: recent),
+                        artwork: .track(url: recent.artworkURLTemplate, playlistID: recent.collection.reservedPlaylistID)
+                    )
+                }
+                sections.append(Section(id: "recents", rows: [Row(
+                    id: "recents", title: "Recent Deep Dives", style: .strip(tiles)
                 )]))
             }
             if sections.isEmpty {
@@ -262,8 +287,9 @@ final class CarPlayCoordinator: NSObject {
         )
     }
 
-    private var isPlayingRecent: Bool {
-        playbackController?.currentTrack != nil && playbackController?.playingCollectionGroupKey != nil
+    private func triageSourceCount() -> Int {
+        guard let modelContext, let playlists = try? PlaylistRepository.activePlaylists(in: modelContext) else { return 0 }
+        return playlists.filter { $0.role == .triageSource }.count
     }
 
     // MARK: - Recents (`PLAY-019`)
@@ -276,7 +302,7 @@ final class CarPlayCoordinator: NSObject {
     private func makeRecentsTemplate() -> CPListTemplate {
         recentsRenderer.stop()
         recentsRenderer = CarPlayListRenderer()
-        let template = CPListTemplate(title: "Recents", sections: [])
+        let template = CPListTemplate(title: "Recent Deep Dives", sections: [])
         updateRecentsList(template)
         recentsTemplate = template
         return template
@@ -400,14 +426,7 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func isCurrentPlaylist(_ summary: PlaylistSummaryPresentation) -> Bool {
-        guard let playbackController,
-              let musicPlaylistID = summary.musicPlaylistID,
-              playbackController.currentTrack != nil else {
-            return false
-        }
-
-        return playbackController.currentPlaylistID == musicPlaylistID
-            && playbackController.currentPlaylistScope == summary.playbackScope
+        playbackController?.isPlaying(summary.playbackContext) == true
     }
 
     private func isCurrentTrack(_ summary: TrackSummaryPresentation, in playlist: PlaylistRecord) -> Bool {
@@ -422,7 +441,7 @@ final class CarPlayCoordinator: NSObject {
             itemID: summary.id,
             track: track,
             playlist: playlist,
-            currentPlaylistID: playbackController.currentPlaylistID,
+            currentPlaylistID: playbackController.currentPlaylistContext?.musicPlaylistID,
             currentPlaylistItem: playbackController.currentPlaylistItem,
             currentTrack: playbackController.currentTrack
         )
@@ -590,10 +609,8 @@ final class CarPlayCoordinator: NSObject {
         guard let playbackController else { return }
         switch CarPlayPlaybackOutcome.decide(
             hasPlaybackFailure: playbackController.playbackFailure != nil,
-            currentPlaylistID: playbackController.currentPlaylistID,
-            currentScope: playbackController.currentPlaylistScope,
-            requestedPlaylistID: playlist.musicPlaylistID,
-            requestedScope: scope
+            current: playbackController.currentPlaylistContext,
+            requested: playlist.playbackContext(scope)
         ) {
         case .nowPlaying: showNowPlaying()
         case .sharedFailure: break
@@ -703,10 +720,9 @@ final class CarPlayCoordinator: NSObject {
             // CarPlay's progress bar reads Now Playing metadata, not this.
             _ = runtime?.libraryRestoration.isReady
             _ = runtime?.libraryRestoration.importRevision
-            _ = playbackController.currentPlaylistScope
+            _ = playbackController.currentPlaylistContext
             _ = playbackController.hasLiveQueue
             _ = playbackController.currentMember?.localTrackID
-            _ = playbackController.currentPlaylistID
             _ = playbackController.currentTrack?.id
             _ = playbackController.displayedIsEvicted
             _ = playbackController.activePlaylistSnapshot?.updatedAt
@@ -786,14 +802,14 @@ final class CarPlayCoordinator: NSObject {
         // action layout. Keep it in place, but disable curation until resolved.
         let layout = signature.resolvingLayout(
             previous: lastNowPlayingButtonSignature,
-            samePlaylist: playbackController.currentPlaylistID != nil
-                && playbackController.currentPlaylistID == lastNowPlayingPlaylistID
+            samePlaylist: playbackController.currentPlaylistContext != nil
+                && playbackController.currentPlaylistContext == lastNowPlayingContext
         )
         let actions = CarPlayNowPlayingActionPolicy.actions(
             playlistRole: layout.playlistRole, isRetired: layout.isEvicted, canAddToOverplay: layout.canAddToOverplay
         )
         lastNowPlayingButtonSignature = layout
-        lastNowPlayingPlaylistID = playbackController.currentPlaylistID
+        lastNowPlayingContext = playbackController.currentPlaylistContext
         let needsLayout = actions != displayedActions
         if needsLayout {
             displayedActions = actions

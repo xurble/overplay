@@ -2,7 +2,7 @@ import Foundation
 @preconcurrency import MusicKit
 import SwiftData
 
-enum VideoTrackPolicy {
+nonisolated enum VideoTrackPolicy {
     static func isSong(_ track: Track) -> Bool {
         if case .song = track { return true }
         return false
@@ -25,21 +25,28 @@ enum TrackImportError: LocalizedError {
 /// Repeatable rather than version-gated: older devices can deliver legacy rows later.
 /// This only deletes Overplay data, never the original Apple Music library items.
 enum VideoTrackCleanupService {
+    /// Decoding every track's playback data is the slow part, so it runs on a
+    /// low-priority background task; only the deletions touch the main context.
     @discardableResult
     static func removeVideos(
         knownVideoIDs: Set<String> = [],
         inspectPlaybackData: Bool = true,
         in context: ModelContext,
         defaults: UserDefaults = .standard
-    ) throws -> Int {
+    ) async throws -> Int {
         let span = PerformanceSpan(.videoCleanup)
         defer { span.finish(detail: inspectPlaybackData ? "full scan" : "known IDs") }
         guard inspectPlaybackData || !knownVideoIDs.isEmpty else { return 0 }
-        let videos = try TrackRecordRepository.allTracks(in: context).filter { track in
-            (inspectPlaybackData && VideoTrackPolicy.isVideo(playbackData: track.musicKitPlaybackData))
-                || !knownVideoIDs.isDisjoint(with:
-                    [track.catalogID, track.libraryID].compactMap { $0 } + track.identityAliases)
+        var videoIDs = Set(try TrackRecordRepository.allTracks(in: context).filter { track in
+            !knownVideoIDs.isDisjoint(with: [track.catalogID, track.libraryID].compactMap { $0 } + track.identityAliases)
+        }.map(\.id))
+        if inspectPlaybackData {
+            let trackIDs = try TrackRecordRepository.allTracks(in: context).map(\.id)
+            videoIDs.formUnion(await Task.detached(priority: .utility) { videoTrackIDs(among: trackIDs) }.value)
         }
+        guard !videoIDs.isEmpty else { return 0 }
+        // Re-read after the await: a sync or merge may have changed the store.
+        let videos = try TrackRecordRepository.allTracks(in: context).filter { videoIDs.contains($0.id) }
         guard !videos.isEmpty else { return 0 }
         let trackIDs = Set(videos.map(\.id))
         let localIDs = Set(trackIDs.map(\.uuidString))
@@ -57,5 +64,9 @@ enum VideoTrackCleanupService {
             PlaybackWaypointStore.clear(from: defaults, flushImmediately: true)
         }
         return videos.count
+    }
+
+    nonisolated private static func videoTrackIDs(among trackIDs: [UUID]) -> Set<UUID> {
+        Set(trackIDs.filter { VideoTrackPolicy.isVideo(playbackData: DevicePlaybackCache.shared.data(for: $0)) })
     }
 }

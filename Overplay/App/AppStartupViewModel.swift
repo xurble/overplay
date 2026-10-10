@@ -16,7 +16,7 @@ final class AppStartupViewModel {
         var startPeriodicPlaylistSync: () -> Void
         var stopPeriodicPlaylistSync: () -> Void
         var compactHistory: () -> Void
-        var removeVideoTracks: () -> Void = {}
+        var removeVideoTracks: () async -> Void = {}
         var prepareLibrary: () async throws -> Void = {}
         /// Counting is a layer: its failures are logged, never fatal to startup.
         var reconcileListenLedger: () -> Void = {}
@@ -108,7 +108,7 @@ final class AppStartupViewModel {
             }
         } removeVideoTracks: {
             do {
-                try VideoTrackCleanupService.removeVideos(in: modelContext)
+                try await VideoTrackCleanupService.removeVideos(in: modelContext)
             } catch {
                 StartupProfiler.mark("Video cleanup failed: \(error.localizedDescription)")
             }
@@ -160,7 +160,7 @@ final class AppStartupViewModel {
                 // Imports that landed before the library was ready skipped it.
                 dependencies.repairTrackLocations()
                 try dependencies.loadSettings()
-                dependencies.removeVideoTracks()
+                await dependencies.removeVideoTracks()
                 dependencies.migrateTriageBucket()
                 dependencies.installRemoteCommands()
             } catch {

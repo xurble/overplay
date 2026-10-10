@@ -37,6 +37,10 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
     let isCurrentPlaybackPlaylist: Bool
     var playbackScope: PlaylistPlaybackScope = .active
 
+    var playbackContext: PlaylistPlaybackContext? {
+        musicPlaylistID.map { PlaylistPlaybackContext(musicPlaylistID: $0, scope: playbackScope) }
+    }
+
     var roleTitle: String {
         if playbackScope == .retired { return "Retired" }
         return switch role {
@@ -109,6 +113,17 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
 
     var playableTrackCountLabel: String {
         playableTrackCount == 1 ? "1 playable track" : "\(playableTrackCount) playable tracks"
+    }
+
+    /// The Triage row's subtitle on every surface: "12 tracks from 3 playlists".
+    func triageDetail(sourceCount: Int) -> String {
+        Self.triageDetail(trackCount: activeTrackCount, sourceCount: sourceCount)
+    }
+
+    static func triageDetail(trackCount: Int, sourceCount: Int) -> String {
+        let tracks = trackCount == 1 ? "1 track" : "\(trackCount) tracks"
+        let sources = sourceCount == 1 ? "1 playlist" : "\(sourceCount) playlists"
+        return "\(tracks) from \(sources)"
     }
 
     var syncStatusLabel: String {

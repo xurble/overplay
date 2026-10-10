@@ -236,7 +236,7 @@ struct PlaylistSelectionView: View {
             playlists: linkedPlaylists,
             items: playlistItems,
             tracks: tracks,
-            currentPlaylistID: playbackController.currentTrack != nil ? playbackController.currentPlaylistID : nil
+            playingContext: playbackController.playingPlaylistContext
         )
     }
 

@@ -200,8 +200,9 @@ final class PlaybackController {
 
     // MARK: - Derived state
 
-    var currentPlaylistID: String? { intent?.musicPlaylistID }
-    var currentPlaylistScope: PlaylistPlaybackScope { intent?.scope ?? .active }
+    /// The playlist and scope of the live intent. Compare whole contexts:
+    /// Triage and Retired share the bucket's playlist ID.
+    var currentPlaylistContext: PlaylistPlaybackContext? { intent?.playlistContext }
     /// The playback context of an album or artist intent (`PLAY-018`).
     var playbackCollectionTitle: String? { intent?.collection?.contextTitle }
     /// Whether the current song is one Overplay tracks, so it has counts to
@@ -285,12 +286,13 @@ final class PlaybackController {
         return try? currentPlaylist(in: context)?.role
     }
 
-    func isCurrentPlaylist(_ playlist: PlaylistRecord) -> Bool {
-        currentPlaylistID == playlist.musicPlaylistID && currentTrack != nil
+    /// The context a surface should mark as playing, or nil when no track is shown.
+    var playingPlaylistContext: PlaylistPlaybackContext? {
+        currentTrack == nil ? nil : currentPlaylistContext
     }
 
-    func currentQueueContains(playlist: PlaylistRecord, scope: PlaylistPlaybackScope) -> Bool {
-        currentPlaylistID == playlist.musicPlaylistID && currentPlaylistScope == scope && hasLiveQueue
+    func isPlaying(_ context: PlaylistPlaybackContext?) -> Bool {
+        context != nil && playingPlaylistContext == context
     }
 
     // MARK: - Lifecycle
@@ -2126,7 +2128,7 @@ final class PlaybackController {
     private func prefetchArtwork(_ track: CurrentPlaybackTrack) {
         guard prefetchedArtworkTrackID != track.id, let template = track.artworkURLTemplate else { return }
         prefetchedArtworkTrackID = track.id
-        let playlistID = currentPlaylistID
+        let playlistID = currentPlaylistContext?.musicPlaylistID
         Task(priority: .userInitiated) {
             await ArtworkCacheService.shared.artworkFileURL(
                 for: template, pixelSize: 512, playlistID: playlistID, priority: .userInitiated, protectedPlaylistID: nil
@@ -2170,7 +2172,7 @@ final class PlaybackController {
                 playlist: playlist,
                 items: items,
                 tracks: tracks,
-                playbackScope: currentPlaylistScope,
+                playbackScope: currentPlaylistContext?.scope ?? .active,
                 currentPlaylistItemID: currentPlaylistItem?.id,
                 currentLocalTrackID: currentMember?.localTrackID,
                 currentMusicItemID: nil
@@ -2186,7 +2188,7 @@ final class PlaybackController {
     }
 
     private func patchActivePlaylistSnapshotRow(for item: PlaylistItemRecord) {
-        guard let snapshot = activePlaylistSnapshot, snapshot.musicPlaylistID == currentPlaylistID,
+        guard let snapshot = activePlaylistSnapshot, snapshot.playbackContext == currentPlaylistContext,
               let patched = snapshot.updatingRow(for: item) else {
             rebuildActivePlaylistSnapshot()
             return
@@ -2245,7 +2247,7 @@ final class PlaybackController {
     }
 
     func publishReconciledPlaylistItemChanges(localTrackIDs: [String], playlistID: String, context: ModelContext) {
-        guard currentPlaylistID == playlistID, !localTrackIDs.isEmpty else { return }
+        guard currentPlaylistContext?.musicPlaylistID == playlistID, !localTrackIDs.isEmpty else { return }
         reconcileTrackMembership(context: context)
     }
 
@@ -2273,7 +2275,7 @@ final class PlaybackController {
     }
 
     private func currentPlaylist(in context: ModelContext) throws -> PlaylistRecord? {
-        try PlaybackTrackResolver.currentPlaylist(musicPlaylistID: currentPlaylistID, in: context)
+        try PlaybackTrackResolver.currentPlaylist(musicPlaylistID: currentPlaylistContext?.musicPlaylistID, in: context)
     }
 
     private func saveResumePoint(force: Bool, now: Date = .now) {

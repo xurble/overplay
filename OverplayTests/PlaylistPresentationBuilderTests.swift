@@ -50,7 +50,7 @@ struct PlaylistPresentationBuilderTests {
             playlists: [playlist],
             items: items,
             tracks: [playableTrack, evictedTrack],
-            currentPlaylistID: "triage"
+            playingContext: playlist.playbackContext()
         )
         .summary(for: playlist)
 
@@ -58,6 +58,32 @@ struct PlaylistPresentationBuilderTests {
         #expect(summary.playableTrackCount == 1)
         #expect(summary.displayPriority == 1)
         #expect(summary.iconIntent == .currentPlayback)
+    }
+
+    @Test("triage and retired summaries are current only for the playing scope")
+    func summariesAreCurrentOnlyForPlayingScope() {
+        let bucket = PlaylistRecord(
+            musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+            name: PlaylistRecord.triageBucketName,
+            role: .triageBucket
+        )
+        let retiredPlaying = PlaylistPresentationBuilder(
+            playlists: [bucket],
+            items: [],
+            tracks: [],
+            playingContext: bucket.playbackContext(.retired)
+        )
+        let activePlaying = PlaylistPresentationBuilder(
+            playlists: [bucket],
+            items: [],
+            tracks: [],
+            playingContext: bucket.playbackContext()
+        )
+
+        #expect(!retiredPlaying.summary(for: bucket).isCurrentPlaybackPlaylist)
+        #expect(retiredPlaying.summary(for: bucket, scope: .retired).isCurrentPlaybackPlaylist)
+        #expect(activePlaying.summary(for: bucket).isCurrentPlaybackPlaylist)
+        #expect(!activePlaying.summary(for: bucket, scope: .retired).isCurrentPlaybackPlaylist)
     }
 
     @Test("representative artwork prefers first playable item with artwork")
@@ -148,13 +174,13 @@ struct PlaylistPresentationBuilderTests {
         playlists: [PlaylistRecord] = [],
         items: [PlaylistItemRecord] = [],
         tracks: [TrackRecord] = [],
-        currentPlaylistID: String? = nil
+        playingContext: PlaylistPlaybackContext? = nil
     ) -> PlaylistPresentationBuilder {
         PlaylistPresentationBuilder(
             playlists: playlists,
             items: items,
             tracks: tracks,
-            currentPlaylistID: currentPlaylistID
+            playingContext: playingContext
         )
     }
 }

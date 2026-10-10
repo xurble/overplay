@@ -5,18 +5,21 @@ struct PlaylistPresentationBuilder {
     private let playlists: [PlaylistRecord]
     private let items: [PlaylistItemRecord]
     private let tracksByID: [UUID: TrackRecord]
-    private let currentPlaylistID: String?
+    private let playingContext: PlaylistPlaybackContext?
+    private let includesArtwork: Bool
 
     init(
         playlists: [PlaylistRecord],
         items: [PlaylistItemRecord],
         tracks: [TrackRecord],
-        currentPlaylistID: String? = nil
+        playingContext: PlaylistPlaybackContext? = nil,
+        includesArtwork: Bool = true
     ) {
         self.playlists = playlists
         self.items = items
         self.tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
-        self.currentPlaylistID = currentPlaylistID
+        self.playingContext = playingContext
+        self.includesArtwork = includesArtwork
     }
 
     func activePlaylistSummaries() -> [PlaylistSummaryPresentation] {
@@ -94,14 +97,14 @@ struct PlaylistPresentationBuilder {
             id: playlist.id,
             musicPlaylistID: playlist.musicPlaylistID,
             title: scope == .retired ? "Retired" : playlist.name,
-            artworkURLString: representativeArtworkURL(for: playlist),
+            artworkURLString: includesArtwork ? representativeArtworkURL(for: playlist) : nil,
             role: playlist.role,
             source: playlist.source,
             writePolicy: playlist.writePolicy,
             activeTrackCount: playlistItems.count,
             playableTrackCount: playlistItems.count,
             lastSyncedAt: playlist.lastSyncedAt,
-            isCurrentPlaybackPlaylist: playlist.musicPlaylistID == currentPlaylistID,
+            isCurrentPlaybackPlaylist: playingContext == playlist.playbackContext(scope),
             playbackScope: scope
         )
     }

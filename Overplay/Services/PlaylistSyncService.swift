@@ -157,7 +157,7 @@ struct PlaylistSyncService {
         skipWhenRemoteUnchanged: Bool = false,
         runVideoCleanup: Bool = true
     ) async throws -> PlaylistSyncSummary {
-        if runVideoCleanup { try VideoTrackCleanupService.removeVideos(in: context) }
+        if runVideoCleanup { try await VideoTrackCleanupService.removeVideos(in: context) }
         guard playlistRecord.isActive else {
             return inactivePlaylistSummary()
         }
@@ -195,7 +195,7 @@ struct PlaylistSyncService {
             return inactivePlaylistSummary(skippedCount: fetchResult.snapshots.count)
         }
 
-        try VideoTrackCleanupService.removeVideos(knownVideoIDs: fetchResult.videoMusicItemIDs, inspectPlaybackData: false, in: context)
+        try await VideoTrackCleanupService.removeVideos(knownVideoIDs: fetchResult.videoMusicItemIDs, inspectPlaybackData: false, in: context)
 
         guard fetchResult.didFetchTracks else {
             // Nothing was fetched because nothing changed. Record the visit
@@ -320,7 +320,7 @@ struct PlaylistSyncService {
     }
 
     func syncAllLinkedPlaylists(in context: ModelContext) async throws -> Int {
-        try VideoTrackCleanupService.removeVideos(in: context)
+        try await VideoTrackCleanupService.removeVideos(in: context)
         // The triage bucket is active and linked but has no Apple Music
         // playlist to fetch — it is fed by its contributing sources.
         let playlists = try PlaylistRepository.activePlaylists(in: context)
@@ -429,7 +429,7 @@ struct PlaylistSyncService {
             return inactivePlaylistSummary(skippedCount: snapshots.count)
         }
 
-        try VideoTrackCleanupService.removeVideos(in: context)
+        try await VideoTrackCleanupService.removeVideos(in: context)
         let rejectedCount = snapshots.filter { VideoTrackPolicy.isVideo(playbackData: $0.musicKitPlaybackData) }.count
         let snapshots = snapshots.filter { !VideoTrackPolicy.isVideo(playbackData: $0.musicKitPlaybackData) }
         let sourceReadID = playlistRecord.id

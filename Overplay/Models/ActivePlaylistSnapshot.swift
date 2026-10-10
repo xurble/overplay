@@ -31,6 +31,10 @@ struct ActivePlaylistSnapshot: Equatable, Sendable {
     var rows: [Row]
     var updatedAt: Date
 
+    var playbackContext: PlaylistPlaybackContext {
+        PlaylistPlaybackContext(musicPlaylistID: musicPlaylistID, scope: playbackScope)
+    }
+
     init(
         playlist: PlaylistRecord,
         items: [PlaylistItemRecord],
