@@ -23,7 +23,7 @@ struct VideoTrackPolicyTests {
     }
 
     @Test("Cleanup removes legacy videos, all memberships and history, preserving songs and unknown records")
-    func cleanup() throws {
+    func cleanup() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let defaults = PlaybackTestDefaults()
@@ -46,28 +46,28 @@ struct VideoTrackPolicyTests {
             positionSeconds: 3, recordedAt: .now), to: defaults.defaults)
         try context.save()
 
-        #expect(try VideoTrackCleanupService.removeVideos(in: context, defaults: defaults.defaults) == 1)
+        #expect(try await VideoTrackCleanupService.removeVideos(in: context, defaults: defaults.defaults) == 1)
         let reloaded = ModelContext(container)
         #expect(Set(try TrackRecordRepository.allTracks(in: reloaded).map(\.id)) == Set([song.id, unknown.id, malformed.id]))
         #expect(try PlaylistItemRepository.allItems(in: reloaded).map(\.trackID) == [song.id])
         #expect(try context.fetch(FetchDescriptor<HistoryEvent>()).map(\.trackID) == [song.id])
         #expect(PlaybackWaypointStore.load(from: defaults.defaults) == nil)
-        #expect(try VideoTrackCleanupService.removeVideos(in: context, defaults: defaults.defaults) == 0)
+        #expect(try await VideoTrackCleanupService.removeVideos(in: context, defaults: defaults.defaults) == 0)
 
         // An old device can deliver another legacy row after the first cleanup.
         context.insert(TrackRecord(catalogID: "late-video", title: "Video", artistName: "Artist",
             musicKitPlaybackData: try JSONEncoder().encode(makeVideo())))
-        #expect(try VideoTrackCleanupService.removeVideos(in: context, defaults: defaults.defaults) == 1)
+        #expect(try await VideoTrackCleanupService.removeVideos(in: context, defaults: defaults.defaults) == 1)
     }
 
     @Test("Remote video identities remove legacy rows without playback data, including aliases")
-    func cleanupUsingRemoteEvidence() throws {
+    func cleanupUsingRemoteEvidence() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let video = TrackRecord(libraryID: "i.video", title: "Video", artistName: "Artist")
         video.confirmedAliases = [.catalog("video")]
         context.insert(video)
-        #expect(try VideoTrackCleanupService.removeVideos(knownVideoIDs: ["video"], in: context) == 1)
+        #expect(try await VideoTrackCleanupService.removeVideos(knownVideoIDs: ["video"], in: context) == 1)
         #expect(try TrackRecordRepository.allTracks(in: context).isEmpty)
     }
 

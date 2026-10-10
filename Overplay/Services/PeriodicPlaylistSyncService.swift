@@ -107,7 +107,7 @@ final class PeriodicPlaylistSyncService {
         let playlists: [PlaylistRecord]
 
         do {
-            let deletedCount = try VideoTrackCleanupService.removeVideos(in: context)
+            let deletedCount = try await VideoTrackCleanupService.removeVideos(in: context)
             if deletedCount > 0 {
                 for playlist in try PlaylistRepository.activePlaylists(in: context) {
                     playbackController?.reconcileStoredOrder(for: playlist, context: context)

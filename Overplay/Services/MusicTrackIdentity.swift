@@ -7,7 +7,7 @@ import Foundation
 /// library identifiers exist, so syntax alone does not establish a domain.
 /// Persistent playlist intake resolves through MusicLibrarySongResolver and
 /// verifies the returned web resource before reconciliation instead.
-enum MusicTrackIdentity {
+nonisolated enum MusicTrackIdentity {
     struct IDs: Equatable, Sendable {
         var catalogID: String?
         var libraryID: String?
@@ -69,7 +69,7 @@ extension TrackSnapshot {
     }
 }
 
-private struct DecodedPlayParameters: Decodable {
+nonisolated private struct DecodedPlayParameters: Decodable {
     var id: FlexibleMusicID?
     var catalogId: FlexibleMusicID?
     var isLibrary: Bool?

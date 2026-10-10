@@ -2,30 +2,28 @@ import SwiftData
 import SwiftUI
 
 struct DashboardView: View {
-    @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackController.self) private var playbackController
 
     @Query(filter: #Predicate<PlaylistRecord> { $0.isActive }, sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
     @Query private var playlistItems: [PlaylistItemRecord]
     @Query(sort: \RecentCollectionRecord.lastPlayedAt, order: .reverse) private var recentRecords: [RecentCollectionRecord]
-    @State private var tracks: [TrackRecord] = []
     @State private var leadArtworkSide = DashboardLayout.defaultLeadArtworkSide
-    @State private var restingTopInset: CGFloat = 0
-    @State private var deepDivesHeight: CGFloat = 0
-    @State private var isLeadArtworkSized = false
-    @State private var isLeadArtworkLocked = false
+    /// Fitting bookkeeping. Not observed: updating it must never redraw the
+    /// screen, least of all mid-scroll.
+    @State private var leadArtworkFit = LeadArtworkFit()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var settings: OverplaySettings
 
     var body: some View {
+        let builder = presentationBuilder
         List {
             Section {
                 if let oneTruePlaylist {
                     NavigationLink {
                         PlaylistManagementView(settings: settings, playlist: oneTruePlaylist)
                     } label: {
-                        oneTruePlaylistArtwork(for: oneTruePlaylist)
+                        oneTruePlaylistArtwork(for: oneTruePlaylist, summary: builder.summary(for: oneTruePlaylist))
                     }
                     .navigationLinkIndicatorVisibility(.hidden)
                     .listRowSeparator(.hidden)
@@ -47,12 +45,14 @@ struct DashboardView: View {
             }
 
             if let triageBucket {
-                let retiredSummary = presentationBuilder.summary(for: triageBucket, scope: .retired)
+                let triageSummary = builder.summary(for: triageBucket)
+                let retiredSummary = builder.summary(for: triageBucket, scope: .retired)
                 Section {
                     NavigationLink {
                         PlaylistManagementView(settings: settings, playlist: triageBucket)
                     } label: {
-                        playlistHomeRow(for: triageBucket, detail: triageDetail(for: triageBucket))
+                        playlistHomeRow(for: triageBucket, summary: triageSummary,
+                                        detail: triageSummary.triageDetail(sourceCount: triageSourceCount))
                     }
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
 
@@ -87,7 +87,7 @@ struct DashboardView: View {
             DeepDivesPlaceholderView()
                 .fixedSize(horizontal: false, vertical: true)
                 .hidden()
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { deepDivesHeight = $0 }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { leadArtworkFit.deepDivesHeight = $0 }
         }
         .onScrollGeometryChange(for: DashboardFit.self) { geometry in
             DashboardFit(
@@ -112,9 +112,6 @@ struct DashboardView: View {
                 .accessibilityLabel("Settings")
             }
         }
-        .task(id: dashboardDataKey) {
-            reloadDashboardData()
-        }
     }
 
     /// Sizes the lead artwork once, as if every element is present: the large
@@ -123,32 +120,32 @@ struct DashboardView: View {
     /// ends one block spacing above the mini player. The size locks at the
     /// first scroll and never changes; scrolling only moves the page.
     private func fitLeadArtwork(_ fit: DashboardFit) {
-        guard !isLeadArtworkLocked, oneTruePlaylist != nil else { return }
+        guard !leadArtworkFit.isLocked, oneTruePlaylist != nil else { return }
         guard PlayerPlacement(horizontalSizeClass) == .sheet else {
             leadArtworkSide = DashboardLayout.defaultLeadArtworkSide
             return
         }
-        restingTopInset = max(restingTopInset, fit.topInset)
+        leadArtworkFit.restingTopInset = max(leadArtworkFit.restingTopInset, fit.topInset)
         guard fit.scrolledDistance <= 1 else {
-            if isLeadArtworkSized { isLeadArtworkLocked = true }
+            if leadArtworkFit.isSized { leadArtworkFit.isLocked = true }
             return
         }
+        let deepDivesHeight = leadArtworkFit.deepDivesHeight
         guard fit.contentHeight > 0, deepDivesHeight > 0 else { return }
         let artworkRowInsets = DashboardLayout.leadArtworkTopInset + DashboardLayout.blockSpacing
         var otherRowsHeight = fit.contentHeight - leadArtworkSide - artworkRowInsets
         if recentRecords.isEmpty { otherRowsHeight += deepDivesHeight }
-        let available = fit.containerHeight - restingTopInset - MiniPlayerLayout.collapsedHeight
+        let available = fit.containerHeight - leadArtworkFit.restingTopInset - MiniPlayerLayout.collapsedHeight
             - DashboardLayout.blockSpacing - otherRowsHeight - artworkRowInsets
         let side = min(max(available, DashboardLayout.minimumLeadArtworkSide), fit.width - 32)
         if abs(side - leadArtworkSide) >= 1 { leadArtworkSide = side }
-        isLeadArtworkSized = true
+        leadArtworkFit.isSized = true
     }
 
     /// The One True Playlist leads the screen as artwork alone, sized to fill
     /// the first screen.
-    private func oneTruePlaylistArtwork(for playlist: PlaylistRecord) -> some View {
-        let summary = presentation(for: playlist)
-        return ZStack(alignment: .bottomTrailing) {
+    private func oneTruePlaylistArtwork(for playlist: PlaylistRecord, summary: PlaylistSummaryPresentation) -> some View {
+        ZStack(alignment: .bottomTrailing) {
             PlaylistCollageThumbnailView(playlist: playlist)
                 .frame(width: leadArtworkSide, height: leadArtworkSide)
 
@@ -164,9 +161,9 @@ struct DashboardView: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    private func playlistHomeRow(for playlist: PlaylistRecord, detail: String? = nil) -> some View {
-        let summary = presentation(for: playlist)
-        return PlaylistHomeRowView(
+    private func playlistHomeRow(for playlist: PlaylistRecord, summary: PlaylistSummaryPresentation,
+                                 detail: String? = nil) -> some View {
+        PlaylistHomeRowView(
             title: playlist.name,
             detail: detail ?? summary.dashboardDetailText,
             playlist: playlist,
@@ -182,11 +179,6 @@ struct DashboardView: View {
 
         return role == .oneTruePlaylist ? .pink : .teal
 
-    }
-
-    private var dashboardDataKey: String {
-        playlists.map(\.id.uuidString).joined(separator: "-")
-            + playlistItems.map(\.trackID.uuidString).joined(separator: "-")
     }
 
     private var oneTruePlaylist: PlaylistRecord? {
@@ -206,25 +198,15 @@ struct DashboardView: View {
         playlists.filter { $0.role == .triageSource && $0.isActive }.count
     }
 
-    private func triageDetail(for bucket: PlaylistRecord) -> String {
-        presentation(for: bucket).triageDetail(sourceCount: triageSourceCount)
-    }
-
-    private func presentation(for playlist: PlaylistRecord) -> PlaylistSummaryPresentation {
-        presentationBuilder.summary(for: playlist)
-    }
-
     private var presentationBuilder: PlaylistPresentationBuilder {
         PlaylistPresentationBuilder(
             playlists: playlists,
             items: playlistItems,
-            tracks: tracks,
-            playingContext: playbackController.playingPlaylistContext
+            tracks: [],
+            playingContext: playbackController.playingPlaylistContext,
+            // Nothing here shows a track's artwork, so skip the track lookups.
+            includesArtwork: false
         )
-    }
-
-    private func reloadDashboardData() {
-        tracks = (try? TrackRecordRepository.tracks(ids: playlistItems.map(\.trackID), in: modelContext)) ?? []
     }
 
 }
@@ -274,4 +256,11 @@ private struct DeepDivesPlaceholderView: View {
         }
         .accessibilityHidden(true)
     }
+}
+
+private final class LeadArtworkFit {
+    var restingTopInset: CGFloat = 0
+    var deepDivesHeight: CGFloat = 0
+    var isSized = false
+    var isLocked = false
 }

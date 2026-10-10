@@ -25,6 +25,9 @@ final class ApplePlayCountSyncService {
     private var playlistResults: [String: (date: Date, observations: [MusicLibraryPlaybackObservation])] = [:]
     private var recentResult: (date: Date, observations: [MusicLibraryPlaybackObservation])?
     private var recentAttemptAt: Date?
+    /// The first bulk refresh waits out the launch rush; its apply step still
+    /// runs on the main actor.
+    private var launchDelay: Duration?
 
     init(minimumRefreshInterval: TimeInterval = 0, saveChanges: @escaping (ModelContext) throws -> Void = { try $0.save() },
          fetchRecentlyPlayed: @escaping () async throws -> [MusicLibraryPlaybackObservation] = {
@@ -53,6 +56,7 @@ final class ApplePlayCountSyncService {
         self.fetchPlaylist = fetchPlaylist
         self.fetchRecentlyPlayed = fetchRecentlyPlayed
         self.logRecentLookup = logRecentLookup
+        self.launchDelay = minimumRefreshInterval > 0 ? .seconds(10) : nil
     }
 
     @discardableResult
@@ -66,6 +70,11 @@ final class ApplePlayCountSyncService {
         defer { span.finish() }
         isRefreshing = true
         defer { isRefreshing = false }
+        if let launchDelay {
+            self.launchDelay = nil
+            try? await Task.sleep(for: launchDelay)
+            guard !Task.isCancelled else { return 0 }
+        }
         let startedAt = Date.now
         let reconciled = reconcile(in: context, playbackController: playbackController)
         do {
@@ -235,18 +244,24 @@ final class ApplePlayCountSyncService {
                 item.sourceMusicPlaylistIDs + item.entryProvenance.map(\.playlistID)
                     + [playlists[item.playlistID]?.musicPlaylistID].compactMap { $0 }
             }).filter { !$0.isEmpty && $0 != PlaylistRecord.triageBucketMusicPlaylistID }.sorted()
+            // One apply and save per lookup date, not per playlist: each save
+            // re-renders every surface showing playlist items.
+            var pending: [Date: [MusicLibraryPlaybackObservation]] = [:]
             for id in ids {
                 try Task.checkCancellation()
                 do {
                     guard let result = try await playlistObservations(id, startedAt: startedAt) else { continue }
                     try Task.checkCancellation()
                     let observations = result.1
-                    changed += try persist(observations, startedAt: result.0, in: context)
+                    pending[result.0, default: []] += observations
                     TrackMetadataDiagnostics.log("Playlist Apple play counts: \(id), \(observations.count) songs, \(observations.filter { $0.snapshot.playCount != nil }.count) counts")
                 } catch {
                     if Task.isCancelled { break }
                     TrackMetadataDiagnostics.log("Playlist Apple play count lookup failed: \(error.localizedDescription)")
                 }
+            }
+            for (date, observations) in pending.sorted(by: { $0.key < $1.key }) {
+                changed += try persist(observations, startedAt: date, in: context)
             }
         } catch {
             TrackMetadataDiagnostics.log("Playlist Apple play count refresh failed: \(error.localizedDescription)")

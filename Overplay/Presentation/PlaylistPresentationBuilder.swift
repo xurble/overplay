@@ -6,17 +6,20 @@ struct PlaylistPresentationBuilder {
     private let items: [PlaylistItemRecord]
     private let tracksByID: [UUID: TrackRecord]
     private let playingContext: PlaylistPlaybackContext?
+    private let includesArtwork: Bool
 
     init(
         playlists: [PlaylistRecord],
         items: [PlaylistItemRecord],
         tracks: [TrackRecord],
-        playingContext: PlaylistPlaybackContext? = nil
+        playingContext: PlaylistPlaybackContext? = nil,
+        includesArtwork: Bool = true
     ) {
         self.playlists = playlists
         self.items = items
         self.tracksByID = tracks.firstValueDictionary(keyedBy: \.id)
         self.playingContext = playingContext
+        self.includesArtwork = includesArtwork
     }
 
     func activePlaylistSummaries() -> [PlaylistSummaryPresentation] {
@@ -94,7 +97,7 @@ struct PlaylistPresentationBuilder {
             id: playlist.id,
             musicPlaylistID: playlist.musicPlaylistID,
             title: scope == .retired ? "Retired" : playlist.name,
-            artworkURLString: representativeArtworkURL(for: playlist),
+            artworkURLString: includesArtwork ? representativeArtworkURL(for: playlist) : nil,
             role: playlist.role,
             source: playlist.source,
             writePolicy: playlist.writePolicy,
