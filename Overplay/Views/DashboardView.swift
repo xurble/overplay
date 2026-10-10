@@ -10,6 +10,7 @@ struct DashboardView: View {
     @Query(sort: \RecentCollectionRecord.lastPlayedAt, order: .reverse) private var recentRecords: [RecentCollectionRecord]
     @State private var tracks: [TrackRecord] = []
     @State private var leadArtworkSide = DashboardLayout.defaultLeadArtworkSide
+    @State private var restingTopInset: CGFloat = 0
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var settings: OverplaySettings
@@ -80,7 +81,10 @@ struct DashboardView: View {
         .listStyle(.plain)
         .onScrollGeometryChange(for: DashboardFit.self) { geometry in
             DashboardFit(
-                spareHeight: geometry.containerSize.height - geometry.contentInsets.top - geometry.contentSize.height,
+                containerHeight: geometry.containerSize.height,
+                contentHeight: geometry.contentSize.height,
+                topInset: geometry.contentInsets.top,
+                scrolledDistance: geometry.contentOffset.y + geometry.contentInsets.top,
                 width: geometry.containerSize.width
             )
         } action: { _, fit in
@@ -103,14 +107,19 @@ struct DashboardView: View {
         }
     }
 
-    /// Sizes the lead artwork so that, scrolled to the top, the last row ends
-    /// one block spacing above the mini player.
+    /// Sizes the lead artwork so that, at rest with the large title showing,
+    /// the last row ends one block spacing above the mini player. Scrolling
+    /// never resizes it: the fit uses the large-title inset and runs only
+    /// while the list is unscrolled, so a scroll just moves the page.
     private func fitLeadArtwork(_ fit: DashboardFit) {
         guard PlayerPlacement(horizontalSizeClass) == .sheet else {
             leadArtworkSide = DashboardLayout.defaultLeadArtworkSide
             return
         }
-        let excess = fit.spareHeight - MiniPlayerLayout.collapsedHeight - DashboardLayout.blockSpacing
+        restingTopInset = max(restingTopInset, fit.topInset)
+        guard fit.scrolledDistance <= 1 else { return }
+        let spareHeight = fit.containerHeight - restingTopInset - fit.contentHeight
+        let excess = spareHeight - MiniPlayerLayout.collapsedHeight - DashboardLayout.blockSpacing
         let side = min(max(leadArtworkSide + excess, DashboardLayout.minimumLeadArtworkSide), fit.width - 32)
         if abs(side - leadArtworkSide) >= 1 { leadArtworkSide = side }
     }
@@ -217,6 +226,9 @@ private enum DashboardLayout {
 }
 
 private struct DashboardFit: Equatable {
-    var spareHeight: CGFloat
+    var containerHeight: CGFloat
+    var contentHeight: CGFloat
+    var topInset: CGFloat
+    var scrolledDistance: CGFloat
     var width: CGFloat
 }
