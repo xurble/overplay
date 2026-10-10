@@ -223,8 +223,13 @@ final class CarPlayCoordinator: NSObject {
         }
         do {
             let summaries = try playlistSummaries()
+            // The One True Playlist leads as a large artwork card, as on the phone.
+            // Cards have no playing indicator, so the subtitle says so instead.
             if let main = summaries.first(where: { $0.role == .oneTruePlaylist }) {
-                sections.append(Section(id: "main", rows: [row(main)]))
+                var mainRow = row(main)
+                mainRow.style = .card
+                mainRow.detail = mainRow.isPlaying ? "Now Playing" : nil
+                sections.append(Section(id: "main", rows: [mainRow]))
             }
             // Triage and a compact Retired row share one headerless section, as on the phone dashboard.
             var triageRows: [Row] = []
@@ -240,13 +245,24 @@ final class CarPlayCoordinator: NSObject {
                 triageRows.append(retiredRow)
             }
             if !triageRows.isEmpty { sections.append(Section(id: "triage", rows: triageRows)) }
-            // Recent Deep Dives (`PLAY-019`): one row, like the playlists, opening the list.
-            if let modelContext, let recents = try? RecentCollectionRepository.recents(in: modelContext), !recents.isEmpty {
+            // Recent Deep Dives (`PLAY-019`): a strip of artwork tiles, as on the
+            // phone. A tile opens that album or artist; the title opens the list.
+            if let modelContext, let playbackController,
+               let recents = try? RecentCollectionRepository.recents(in: modelContext), !recents.isEmpty {
                 actions["recents"] = { [weak self] in self?.showRecents() }
-                let count = recents.count == 1 ? "1 album or artist" : "\(recents.count) albums and artists"
+                let tiles = recents.map { recent -> Row.Tile in
+                    let recentID = recent.id
+                    let tileID = "recent-tile-\(recent.groupKey)"
+                    actions[tileID] = { [weak self] in self?.showRecent(recentID) }
+                    let isPlaying = RecentCollectionPresentation.isPlaying(recent, controller: playbackController)
+                    return Row.Tile(
+                        id: tileID, title: recent.title,
+                        subtitle: isPlaying ? "Now Playing" : RecentCollectionPresentation.subtitle(for: recent),
+                        artwork: .track(url: recent.artworkURLTemplate, playlistID: recent.collection.reservedPlaylistID)
+                    )
+                }
                 sections.append(Section(id: "recents", rows: [Row(
-                    id: "recents", title: "Recent Deep Dives", detail: count, isPlaying: isPlayingRecent, disclosure: true,
-                    artwork: .track(url: recents[0].artworkURLTemplate, playlistID: recents[0].collection.reservedPlaylistID)
+                    id: "recents", title: "Recent Deep Dives", style: .strip(tiles)
                 )]))
             }
             if sections.isEmpty {
@@ -274,10 +290,6 @@ final class CarPlayCoordinator: NSObject {
     private func triageSourceCount() -> Int {
         guard let modelContext, let playlists = try? PlaylistRepository.activePlaylists(in: modelContext) else { return 0 }
         return playlists.filter { $0.role == .triageSource }.count
-    }
-
-    private var isPlayingRecent: Bool {
-        playbackController?.currentTrack != nil && playbackController?.playingCollectionGroupKey != nil
     }
 
     // MARK: - Recents (`PLAY-019`)

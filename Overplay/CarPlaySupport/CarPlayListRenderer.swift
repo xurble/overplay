@@ -11,6 +11,21 @@ struct CarPlayListPresentation: Equatable {
     }
 
     struct Row: Equatable {
+        /// How the row is drawn. Cards and strips are iOS 26 image rows; they
+        /// have no playing indicator.
+        enum Style: Equatable {
+            case standard
+            /// One large artwork card, titled with the row's title and detail.
+            case card
+            /// The row's title over a strip of tappable artwork tiles.
+            case strip([Tile])
+        }
+        struct Tile: Equatable {
+            var id: String
+            var title: String
+            var subtitle: String? = nil
+            var artwork: Artwork? = nil
+        }
         enum Artwork: Equatable {
             case symbol(String, tint: UIColor? = nil)
             case track(url: String?, playlistID: String)
@@ -23,6 +38,7 @@ struct CarPlayListPresentation: Equatable {
         var isEnabled = true
         var disclosure = false
         var artwork: Artwork? = nil
+        var style: Style = .standard
     }
 
     var sections: [Section]
@@ -35,6 +51,11 @@ final class CarPlayListRenderer {
     typealias Row = CarPlayListPresentation.Row
     private(set) var presentation = CarPlayListPresentation(sections: [])
     private(set) var items: [String: CPListItem] = [:]
+    private(set) var imageRows: [String: CPListImageRowItem] = [:]
+    /// Image-row elements and their loaded images, keyed by artwork slot
+    /// (the row ID for a card, the tile ID for a strip tile).
+    private var elements: [String: CPListImageRowItemElement] = [:]
+    private var images: [String: UIImage] = [:]
     private var actions: [String: @MainActor () async -> Void] = [:]
     private var requestedArtwork: [String: Row.Artwork] = [:]
     private var loadedArtwork: [String: Row.Artwork] = [:]
@@ -73,11 +94,20 @@ final class CarPlayListRenderer {
         guard next != presentation else { return }
         let oldRows = Dictionary(uniqueKeysWithValues: presentation.sections.flatMap(\.rows).map { ($0.id, $0) })
         let rows = next.sections.flatMap(\.rows)
-        let ids = Set(rows.map(\.id))
-        items = items.filter { ids.contains($0.key) }
-        requestedArtwork = requestedArtwork.filter { ids.contains($0.key) }
-        loadedArtwork = loadedArtwork.filter { ids.contains($0.key) }
+        let styles = Dictionary(rows.map { ($0.id, $0.style) }, uniquingKeysWith: { first, _ in first })
+        let slotIDs = Set(Self.artworkSlots(in: rows).map(\.id))
+        items = items.filter { styles[$0.key] == .standard }
+        imageRows = imageRows.filter { styles[$0.key].map { $0 != .standard } ?? false }
+        elements = elements.filter { slotIDs.contains($0.key) }
+        images = images.filter { slotIDs.contains($0.key) }
+        requestedArtwork = requestedArtwork.filter { slotIDs.contains($0.key) }
+        loadedArtwork = loadedArtwork.filter { slotIDs.contains($0.key) }
+        var replacedItem = false
         for row in rows {
+            if row.style != .standard {
+                if updateImageRow(row, old: oldRows[row.id]) { replacedItem = true }
+                continue
+            }
             if let item = items[row.id], let old = oldRows[row.id] {
                 var fields: [String] = []
                 if old.title != row.title { item.setText(row.title); fields.append("title") }
@@ -90,6 +120,8 @@ final class CarPlayListRenderer {
                 }
                 if !fields.isEmpty { record(.carPlayListMutation, "row=\(row.id) fields=\(fields.joined(separator: ","))") }
             } else {
+                // A row that changed style keeps its ID but needs its new item placed.
+                if oldRows[row.id] != nil { replacedItem = true }
                 let item = CPListItem(text: row.title, detailText: row.detail)
                 item.isEnabled = row.isEnabled
                 item.isPlaying = row.isPlaying
@@ -111,18 +143,106 @@ final class CarPlayListRenderer {
                 record(.carPlayArtworkUpdate, "row=\(row.id) cleared")
             }
         }
-        let structureChanged = next.sections.count != presentation.sections.count
+        let structureChanged = replacedItem || next.sections.count != presentation.sections.count
             || zip(next.sections, presentation.sections).contains {
                 $0.id != $1.id || $0.header != $1.header || $0.rows.map(\.id) != $1.rows.map(\.id)
             }
         presentation = next
         if structureChanged {
             template.updateSections(next.sections.map { section in
-                CPListSection(items: section.rows.compactMap { items[$0.id] }, header: section.header, sectionIndexTitle: nil)
+                CPListSection(
+                    items: section.rows.compactMap { row -> (any CPListTemplateItem)? in items[row.id] ?? imageRows[row.id] },
+                    header: section.header,
+                    sectionIndexTitle: nil
+                )
             })
             record(.carPlayListMutation, "sections rows=\(rows.count)")
         }
         startArtworkIfNeeded()
+    }
+
+    /// Creates or refreshes a card or strip. Returns true when a new item
+    /// replaced the one in the template, so sections must be rebuilt.
+    private func updateImageRow(_ row: Row, old: Row?) -> Bool {
+        if imageRows[row.id] != nil, old == row { return false }
+        let rowElements: [CPListImageRowItemElement]
+        switch row.style {
+        case .standard:
+            return false
+        case .card:
+            let card = CPListImageRowItemCardElement(
+                image: images[row.id] ?? Self.placeholder, showsImageFullHeight: true,
+                title: row.title, subtitle: row.detail, tintColor: nil
+            )
+            elements[row.id] = card
+            rowElements = [card]
+        case .strip(let tiles):
+            rowElements = tiles.map { tile in
+                let element = CPListImageRowItemRowElement(
+                    image: images[tile.id] ?? Self.placeholder, title: tile.title, subtitle: tile.subtitle
+                )
+                elements[tile.id] = element
+                return element
+            }
+        }
+        let text: String? = if case .card = row.style { nil } else { row.title }
+        if let item = imageRows[row.id], let old, Self.sameKind(old.style, row.style) {
+            item.text = text
+            item.isEnabled = row.isEnabled
+            item.elements = rowElements
+            record(.carPlayListMutation, "row=\(row.id) fields=elements")
+            return false
+        }
+        let item: CPListImageRowItem = switch row.style {
+        case .card:
+            CPListImageRowItem(text: text, cardElements: rowElements.compactMap { $0 as? CPListImageRowItemCardElement },
+                               allowsMultipleLines: false)
+        default:
+            CPListImageRowItem(text: text, elements: rowElements.compactMap { $0 as? CPListImageRowItemRowElement },
+                               allowsMultipleLines: false)
+        }
+        item.isEnabled = row.isEnabled
+        let rowID = row.id
+        item.handler = { [weak self] _, completion in
+            Task { @MainActor in
+                defer { completion() }
+                await self?.actions[rowID]?()
+            }
+        }
+        item.listImageRowHandler = { [weak self] _, index, completion in
+            Task { @MainActor in
+                defer { completion() }
+                guard let self, let current = self.presentation.sections.flatMap(\.rows).first(where: { $0.id == rowID }) else { return }
+                switch current.style {
+                case .strip(let tiles) where tiles.indices.contains(index):
+                    await self.actions[tiles[index].id]?()
+                default:
+                    await self.actions[rowID]?()
+                }
+            }
+        }
+        imageRows[row.id] = item
+        return true
+    }
+
+    private static func sameKind(_ left: Row.Style, _ right: Row.Style) -> Bool {
+        switch (left, right) {
+        case (.standard, .standard), (.card, .card), (.strip, .strip): true
+        default: false
+        }
+    }
+
+    private static let placeholder = UIImage(systemName: "music.note") ?? UIImage()
+
+    /// Every artwork the list shows, in display order: one per standard row
+    /// or card, one per strip tile.
+    private static func artworkSlots(in rows: some Sequence<Row>) -> [(id: String, artwork: Row.Artwork)] {
+        rows.flatMap { row -> [(id: String, artwork: Row.Artwork)] in
+            switch row.style {
+            case .strip(let tiles): tiles.compactMap { tile in tile.artwork.map { (tile.id, $0) } }
+            default: row.artwork.map { [(row.id, $0)] } ?? []
+            }
+        }
     }
 
     private func startArtworkIfNeeded() {
@@ -131,22 +251,23 @@ final class CarPlayListRenderer {
             while let self, !Task.isCancelled {
                 // One request at a time, in display order, bounded by what
                 // CarPlay can display. Unchanged rows never restart artwork.
-                guard let row = self.presentation.sections.flatMap(\.rows)
-                    .prefix(CPListTemplate.maximumItemCount)
-                    .first(where: { $0.artwork != nil && self.requestedArtwork[$0.id] != $0.artwork }),
-                      let artwork = row.artwork else {
+                let rows = self.presentation.sections.flatMap(\.rows).prefix(CPListTemplate.maximumItemCount)
+                guard let slot = Self.artworkSlots(in: rows).first(where: { self.requestedArtwork[$0.id] != $0.artwork }) else {
                     self.artworkTask = nil
                     return
                 }
-                self.requestedArtwork[row.id] = artwork
-                let image = await self.loadArtwork(artwork)
+                self.requestedArtwork[slot.id] = slot.artwork
+                let image = await self.loadArtwork(slot.artwork)
                 guard !Task.isCancelled else { return }
-                guard self.presentation.sections.flatMap(\.rows).first(where: { $0.id == row.id })?.artwork == artwork else { continue }
+                let allRows = self.presentation.sections.flatMap(\.rows)
+                guard Self.artworkSlots(in: allRows).first(where: { $0.id == slot.id })?.artwork == slot.artwork else { continue }
                 // Keep the previous image through loading and failures.
                 if let image {
-                    self.items[row.id]?.setImage(image)
-                    self.loadedArtwork[row.id] = artwork
-                    self.record(.carPlayArtworkUpdate, "row=\(row.id)")
+                    self.items[slot.id]?.setImage(image)
+                    self.elements[slot.id]?.image = image
+                    self.images[slot.id] = image
+                    self.loadedArtwork[slot.id] = slot.artwork
+                    self.record(.carPlayArtworkUpdate, "row=\(slot.id)")
                 }
             }
         }

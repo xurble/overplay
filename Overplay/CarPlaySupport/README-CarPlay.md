@@ -23,11 +23,15 @@ entitlement, and `Config/Info.plist` declares a CarPlay scene using
 
 The root template has no navigation-bar actions. It shows:
 
-- A row for the One True Playlist, which opens its track list. There is no
-  one-tap entry point above it: two similar-looking rows is one too many to
-  disambiguate while driving.
-- A Triage row for the shared intake bucket.
-- A Retired row for locally retired tracks.
+- A large artwork card for the One True Playlist (an iOS 26 image-row card),
+  which opens its track list. Cards have no playing indicator, so the card's
+  subtitle reads "Now Playing" while it plays. There is no one-tap entry point
+  above it: two similar-looking entries is one too many to disambiguate while
+  driving.
+- A headerless section with the Triage row ("X tracks from Y playlists") and a
+  compact Retired row with a grey archive icon, matching the phone dashboard.
+- Recent Deep Dives, when there are any: a strip of artwork tiles. A tile opens
+  that album or artist; the title opens the full list.
 
 Each of these three track lists starts with a **Shuffle and Play** row above
 tracks in display order (newest-added first; Retired newest-retired first). The action uses the shared controller's
