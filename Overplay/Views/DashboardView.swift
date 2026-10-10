@@ -19,9 +19,11 @@ struct DashboardView: View {
                     NavigationLink {
                         PlaylistManagementView(settings: settings, playlist: oneTruePlaylist)
                     } label: {
-                        playlistHomeRow(for: oneTruePlaylist)
+                        oneTruePlaylistArtwork(for: oneTruePlaylist)
                     }
-                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+                    .navigationLinkIndicatorVisibility(.hidden)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                 } else {
                     NavigationLink {
                         PlaylistSelectionView()
@@ -99,6 +101,28 @@ struct DashboardView: View {
         .task(id: dashboardDataKey) {
             reloadDashboardData()
         }
+    }
+
+    /// The One True Playlist leads the screen as artwork alone, twice the size
+    /// of a standard row's thumbnail.
+    private func oneTruePlaylistArtwork(for playlist: PlaylistRecord) -> some View {
+        let summary = presentation(for: playlist)
+        return ZStack(alignment: .bottomTrailing) {
+            PlaylistCollageThumbnailView(playlist: playlist)
+                .frame(width: 192, height: 192)
+
+            if summary.isCurrentPlaybackPlaylist {
+                Image(systemName: summary.iconIntent.systemImage)
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(6)
+                    .background(.green, in: Circle())
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(playlist.name)
+        .accessibilityAddTraits(.isButton)
     }
 
     private func playlistHomeRow(for playlist: PlaylistRecord) -> some View {
