@@ -84,7 +84,7 @@ private struct PlaylistManagementContentView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 4)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.glass)
                     .controlSize(.large)
                     .disabled(!detail.rows.contains { $0.isPlayable })
 

@@ -178,10 +178,7 @@ struct DashboardView: View {
     }
 
     private func triageDetail(for bucket: PlaylistRecord) -> String {
-        let trackCount = presentation(for: bucket).activeTrackCount
-        let tracks = trackCount == 1 ? "1 track" : "\(trackCount) tracks"
-        let sources = triageSourceCount == 1 ? "1 playlist" : "\(triageSourceCount) playlists"
-        return "\(tracks) from \(sources)"
+        presentation(for: bucket).triageDetail(sourceCount: triageSourceCount)
     }
 
     private func presentation(for playlist: PlaylistRecord) -> PlaylistSummaryPresentation {

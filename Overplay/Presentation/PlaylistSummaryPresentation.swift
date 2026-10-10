@@ -115,6 +115,13 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
         playableTrackCount == 1 ? "1 playable track" : "\(playableTrackCount) playable tracks"
     }
 
+    /// The Triage row's subtitle on every surface: "12 tracks from 3 playlists".
+    func triageDetail(sourceCount: Int) -> String {
+        let tracks = activeTrackCount == 1 ? "1 track" : "\(activeTrackCount) tracks"
+        let sources = sourceCount == 1 ? "1 playlist" : "\(sourceCount) playlists"
+        return "\(tracks) from \(sources)"
+    }
+
     var syncStatusLabel: String {
         lastSyncedAt.map { "Synced \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Not synced"
     }

@@ -226,17 +226,26 @@ final class CarPlayCoordinator: NSObject {
             if let main = summaries.first(where: { $0.role == .oneTruePlaylist }) {
                 sections.append(Section(id: "main", rows: [row(main)]))
             }
-            let triage = summaries.filter { $0.role == .triageBucket && $0.playbackScope == .active }
-            if !triage.isEmpty { sections.append(Section(id: "triage", header: "Triage", rows: triage.map(row))) }
-            if let retired = summaries.first(where: { $0.playbackScope == .retired }) {
-                sections.append(Section(id: "retired", header: "Retired", rows: [row(retired)]))
+            // Triage and a compact Retired row share one headerless section, as on the phone dashboard.
+            var triageRows: [Row] = []
+            if let triage = summaries.first(where: { $0.role == .triageBucket && $0.playbackScope == .active }) {
+                var triageRow = row(triage)
+                triageRow.detail = triage.triageDetail(sourceCount: triageSourceCount())
+                triageRows.append(triageRow)
             }
-            // Recents (`PLAY-019`): one row, like the playlists, opening the list.
+            if let retired = summaries.first(where: { $0.playbackScope == .retired }) {
+                var retiredRow = row(retired)
+                retiredRow.detail = nil
+                retiredRow.artwork = .symbol("archivebox.fill", tint: .systemGray)
+                triageRows.append(retiredRow)
+            }
+            if !triageRows.isEmpty { sections.append(Section(id: "triage", rows: triageRows)) }
+            // Recent Deep Dives (`PLAY-019`): one row, like the playlists, opening the list.
             if let modelContext, let recents = try? RecentCollectionRepository.recents(in: modelContext), !recents.isEmpty {
                 actions["recents"] = { [weak self] in self?.showRecents() }
                 let count = recents.count == 1 ? "1 album or artist" : "\(recents.count) albums and artists"
-                sections.append(Section(id: "recents", header: "Recents", rows: [Row(
-                    id: "recents", title: "Recents", detail: count, isPlaying: isPlayingRecent, disclosure: true,
+                sections.append(Section(id: "recents", rows: [Row(
+                    id: "recents", title: "Recent Deep Dives", detail: count, isPlaying: isPlayingRecent, disclosure: true,
                     artwork: .track(url: recents[0].artworkURLTemplate, playlistID: recents[0].collection.reservedPlaylistID)
                 )]))
             }
@@ -262,6 +271,11 @@ final class CarPlayCoordinator: NSObject {
         )
     }
 
+    private func triageSourceCount() -> Int {
+        guard let modelContext, let playlists = try? PlaylistRepository.activePlaylists(in: modelContext) else { return 0 }
+        return playlists.filter { $0.role == .triageSource }.count
+    }
+
     private var isPlayingRecent: Bool {
         playbackController?.currentTrack != nil && playbackController?.playingCollectionGroupKey != nil
     }
@@ -276,7 +290,7 @@ final class CarPlayCoordinator: NSObject {
     private func makeRecentsTemplate() -> CPListTemplate {
         recentsRenderer.stop()
         recentsRenderer = CarPlayListRenderer()
-        let template = CPListTemplate(title: "Recents", sections: [])
+        let template = CPListTemplate(title: "Recent Deep Dives", sections: [])
         updateRecentsList(template)
         recentsTemplate = template
         return template

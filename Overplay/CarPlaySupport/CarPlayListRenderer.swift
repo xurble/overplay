@@ -12,7 +12,7 @@ struct CarPlayListPresentation: Equatable {
 
     struct Row: Equatable {
         enum Artwork: Equatable {
-            case symbol(String)
+            case symbol(String, tint: UIColor? = nil)
             case track(url: String?, playlistID: String)
             case collage(PlaylistCollage, playlistID: String, scope: PlaylistPlaybackScope)
         }
@@ -154,7 +154,9 @@ final class CarPlayListRenderer {
 
     private static func loadArtwork(_ artwork: Row.Artwork) async -> UIImage? {
         switch artwork {
-        case .symbol(let name): return UIImage(systemName: name)
+        case .symbol(let name, let tint):
+            let image = UIImage(systemName: name)
+            return tint.flatMap { image?.withTintColor($0, renderingMode: .alwaysOriginal) } ?? image
         case .track(let url, let playlistID):
             let image = await ArtworkImagePipeline.shared.image(for: url, size: 128, playlistID: playlistID, priority: .utility)
             return image.map { UIImage(cgImage: $0) }
