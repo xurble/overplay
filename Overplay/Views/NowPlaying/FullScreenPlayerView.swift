@@ -15,40 +15,51 @@ struct FullScreenPlayerView: View {
     var settings: OverplaySettings
 
     @State private var artworkTop: CGFloat?
-    @State private var safeAreaTop: CGFloat = 0
+    /// The screen's safe area, read where the player never moves.
+    @State private var screenInsets = EdgeInsets()
     @State private var screenHeight: CGFloat = 0
     @State private var dragOffset: CGFloat = 0
     /// Set once a drag has moved: down closes, sideways (the volume pill)
     /// is left alone.
     @State private var dragIsDismissal: Bool?
 
+    static let coordinateSpace = "full-screen-player"
+
     var body: some View {
+        // Laid out full screen with the safe area as fixed padding: a view
+        // drawn moved loses whatever it extended into the safe area, which
+        // made the swipe jump and kept the top corners square.
         NowPlayingColumnView(
             settings: settings,
             bottomPadding: 4,
             transportPillGap: 36,
             onArtworkTopChange: { artworkTop = $0 }
         )
-        .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { safeAreaTop = $0 }
         .modifier(UnderVerticalBar())
+        .safeAreaPadding(screenInsets)
+        .coordinateSpace(.named(Self.coordinateSpace))
         .overlay {
-            // Laid out against the whole screen, centred across it.
+            // Centred across the whole screen.
             GeometryReader { proxy in
                 dragHandle
                     .position(
                         x: proxy.size.width / 2,
-                        y: Self.handleCentreY(artworkTop: artworkTop ?? 96, safeAreaTop: safeAreaTop)
+                        y: Self.handleCentreY(artworkTop: artworkTop ?? 96, safeAreaTop: screenInsets.top)
                     )
             }
-            .ignoresSafeArea()
         }
         // The margins take the swipe as well as the controls.
         .contentShape(.rect)
         .simultaneousGesture(dismissDrag)
-        .onGeometryChange(for: CGFloat.self) { $0.size.height + $0.safeAreaInsets.top + $0.safeAreaInsets.bottom } action: {
-            screenHeight = $0
+        // A rounded card once it moves. Square at rest: the screen rounds its
+        // own corners, and a closed iPhone Duo's hinge side is nearly square.
+        .clipShape(.rect(cornerRadius: dragOffset > 0 ? 50 : 0, style: .continuous))
+        .visualEffect { content, _ in
+            content.offset(y: dragOffset)
         }
-        .offset(y: dragOffset)
+        .ignoresSafeArea()
+        .onGeometryChange(for: EdgeInsets.self) { $0.safeAreaInsets } action: { screenInsets = $0 }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { screenHeight = $0 }
         .accessibilityAction(.escape) { close() }
     }
 

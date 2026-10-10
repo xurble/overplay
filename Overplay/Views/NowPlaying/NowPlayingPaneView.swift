@@ -9,7 +9,7 @@ struct NowPlayingPaneView: View {
     var settings: OverplaySettings
     var artworkTheme: AlbumArtworkTheme?
     var onArtworkThemeUpdated: (AlbumArtworkTheme) -> Void = { _ in }
-    /// The top of the artwork, in global coordinates.
+    /// The top of the artwork, in the full-screen player's coordinates.
     var onArtworkTopChange: ((CGFloat) -> Void)? = nil
 
     @State private var isShowingThemeDiagnostics = false
@@ -42,7 +42,9 @@ struct NowPlayingPaneView: View {
                 )
                 .frame(width: artworkSize, height: artworkSize)
                 .shadow(color: .black.opacity(0.28), radius: 22, y: 16)
-                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { top in
+                .onGeometryChange(for: CGFloat.self) {
+                    $0.frame(in: .named(FullScreenPlayerView.coordinateSpace)).minY
+                } action: { top in
                     onArtworkTopChange?(top)
                 }
 
