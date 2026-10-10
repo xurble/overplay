@@ -10,6 +10,7 @@ struct FullScreenPlayerView: View {
     var settings: OverplaySettings
 
     @State private var artworkTop: CGFloat?
+    @State private var safeAreaTop: CGFloat = 0
 
     var body: some View {
         NowPlayingColumnView(
@@ -18,6 +19,7 @@ struct FullScreenPlayerView: View {
             transportPillGap: 36,
             onArtworkTopChange: { artworkTop = $0 }
         )
+        .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { safeAreaTop = $0 }
         .modifier(UnderVerticalBar())
         // The zoom transition's own swipe down loses to the controls' and the
         // volume pill's touch handling. This one runs alongside them: a
@@ -30,11 +32,13 @@ struct FullScreenPlayerView: View {
             }
         )
         .overlay {
-            // Laid out against the whole screen: centred across it, and
-            // halfway between its top edge and the top of the art.
+            // Laid out against the whole screen, centred across it.
             GeometryReader { proxy in
                 dragHandle
-                    .position(x: proxy.size.width / 2, y: (artworkTop ?? 48) / 2)
+                    .position(
+                        x: proxy.size.width / 2,
+                        y: Self.handleCentreY(artworkTop: artworkTop ?? 96, safeAreaTop: safeAreaTop)
+                    )
             }
             .ignoresSafeArea()
         }
@@ -47,18 +51,28 @@ struct FullScreenPlayerView: View {
         return down > (translation.height > 80 ? 0 : 160) && translation.height > abs(translation.width) * 1.5
     }
 
+    /// Halfway between the top of the screen and the art. Under a Dynamic
+    /// Island (a tall top safe area) that would hug the island and sit in the
+    /// status bar's touch area, so the handle drops to 16 points below the
+    /// safe area instead.
+    static func handleCentreY(artworkTop: CGFloat, safeAreaTop: CGFloat) -> CGFloat {
+        let halfway = artworkTop / 2
+        return safeAreaTop > 40 ? max(halfway, safeAreaTop + 16) : halfway
+    }
+
     private var dragHandle: some View {
-        Capsule()
-            .fill(.secondary)
-            .frame(width: 36, height: 5)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 10)
-            .contentShape(.rect)
-            .onTapGesture { dismiss() }
-            .accessibilityElement()
-            .accessibilityLabel("Close Now Playing")
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { dismiss() }
+        Button {
+            dismiss()
+        } label: {
+            Capsule()
+                .fill(.secondary)
+                .frame(width: 36, height: 5)
+                .padding(.horizontal, 40)
+                .padding(.vertical, 20)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Close Now Playing")
     }
 }
 
