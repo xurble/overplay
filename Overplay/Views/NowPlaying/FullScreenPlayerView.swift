@@ -32,15 +32,9 @@ struct FullScreenPlayerView: View {
         // Laid out full screen with the safe area as fixed padding: a view
         // drawn moved loses whatever it extended into the safe area, which
         // made the swipe jump and kept the top corners square.
-        NowPlayingColumnView(
-            settings: settings,
-            bottomPadding: 4,
-            transportPillGap: 36,
-            onArtworkTopChange: { artworkTop = $0 }
-        )
-        .modifier(UnderVerticalBar())
-        .safeAreaPadding(screenInsets)
-        .coordinateSpace(.named(Self.coordinateSpace))
+        // Its own view with inputs a drag never changes, so a frame of the
+        // drag redraws the card's transform without rebuilding the player.
+        FullScreenPlayerContent(settings: settings, screenInsets: screenInsets, artworkTop: $artworkTop)
         .overlay {
             // Centred across the whole screen.
             GeometryReader { proxy in
@@ -139,11 +133,30 @@ struct FullScreenPlayerView: View {
     }
 }
 
+/// The player inside the card, laid out full screen with the screen's safe
+/// area as fixed padding.
+private struct FullScreenPlayerContent: View {
+    var settings: OverplaySettings
+    var screenInsets: EdgeInsets
+    @Binding var artworkTop: CGFloat?
+
+    var body: some View {
+        NowPlayingColumnView(
+            settings: settings,
+            bottomPadding: 4,
+            transportPillGap: 36,
+            onArtworkTopChange: { artworkTop = $0 }
+        )
+        .modifier(UnderVerticalBar())
+        .safeAreaPadding(screenInsets)
+        .coordinateSpace(.named(FullScreenPlayerView.coordinateSpace))
+    }
+}
+
 /// Draws the player as a card shrinking from the full screen into the mini
 /// player's frame as `closeProgress` goes from 0 to 1. Its content scales evenly and the
 /// card's outline, rounding into the capsule, clips it. It is opaque until it
-/// is under half the screen's height, then fades out as it reaches the mini
-/// player. Rendering only: layout and the safe area never change.
+/// is nearly there, then fades out as it reaches the mini player. Rendering only: layout and the safe area never change.
 private struct PlayerCardTransform: ViewModifier, Animatable {
     var closeProgress: CGFloat
     var screenSize: CGSize
@@ -155,6 +168,9 @@ private struct PlayerCardTransform: ViewModifier, Animatable {
     }
 
     private static let movingCornerRadius: CGFloat = 50
+    /// Opaque for most of the shrink; fades out over the last stretch, just
+    /// before it reaches the mini player.
+    private static let fadeStart: CGFloat = 0.85
 
     func body(content: Content) -> some View {
         let width = max(screenSize.width, 1)
@@ -174,12 +190,7 @@ private struct PlayerCardTransform: ViewModifier, Animatable {
         let scale = card.width / width
         let startRadius = t > 0 ? Self.movingCornerRadius : 0
         let radius = startRadius + (target.height / 2 - startRadius) * t
-        // Opaque down to half the screen's height, then fading to nothing at
-        // the mini player's height.
-        let fadeStart = height / 2
-        let opacity = card.height >= fadeStart
-            ? 1
-            : max(0, (card.height - target.height) / max(fadeStart - target.height, 1))
+        let opacity = t < Self.fadeStart ? 1 : max(0, (1 - t) / (1 - Self.fadeStart))
 
         content
             .mask(alignment: .topLeading) {
