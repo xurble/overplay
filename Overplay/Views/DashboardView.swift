@@ -39,41 +39,22 @@ struct DashboardView: View {
                 }
             }
 
-            Section("Triage") {
-                if let triageBucket {
-                    NavigationLink {
-                        PlaylistManagementView(settings: settings, playlist: triageBucket)
-                    } label: {
-                        playlistHomeRow(for: triageBucket)
-                    }
-                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
-                }
-
-                NavigationLink {
-                    TriageSourcesView()
-                } label: {
-                    Label(
-                        triageSourceCount == 0 ? "Add Triage Playlists" : triageSourcesLabel,
-                        systemImage: triageSourceCount == 0 ? "plus.circle" : "slider.horizontal.3"
-                    )
-                }
-            }
-
             if let triageBucket {
                 let retiredSummary = presentationBuilder.summary(for: triageBucket, scope: .retired)
                 Section {
                     NavigationLink {
-                        PlaylistManagementView(settings: settings, playlist: triageBucket, scope: .retired)
+                        PlaylistManagementView(settings: settings, playlist: triageBucket)
                     } label: {
-                        PlaylistHomeRowView(
-                            title: "Retired",
-                            detail: "\(playlistItems.filter { $0.evictedAt != nil }.count) tracks · Revisit songs you put aside",
-                            playlist: triageBucket, scope: .retired,
-                            systemImage: retiredSummary.iconIntent.systemImage,
-                            badgeTint: retiredSummary.isCurrentPlaybackPlaylist ? .green : .secondary
-                        )
+                        playlistHomeRow(for: triageBucket, detail: triageDetail(for: triageBucket))
                     }
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+
+                    NavigationLink {
+                        PlaylistManagementView(settings: settings, playlist: triageBucket, scope: .retired)
+                    } label: {
+                        Label("Retired", systemImage: retiredSummary.iconIntent.systemImage)
+                    }
+                    .tint(retiredSummary.isCurrentPlaybackPlaylist ? .green : nil)
                 }
             }
 
@@ -123,11 +104,11 @@ struct DashboardView: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    private func playlistHomeRow(for playlist: PlaylistRecord) -> some View {
+    private func playlistHomeRow(for playlist: PlaylistRecord, detail: String? = nil) -> some View {
         let summary = presentation(for: playlist)
         return PlaylistHomeRowView(
             title: playlist.name,
-            detail: summary.dashboardDetailText,
+            detail: detail ?? summary.dashboardDetailText,
             playlist: playlist,
             systemImage: summary.iconIntent.systemImage,
             badgeTint: badgeTint(for: summary, role: playlist.role)
@@ -165,8 +146,11 @@ struct DashboardView: View {
         playlists.filter { $0.role == .triageSource && $0.isActive }.count
     }
 
-    private var triageSourcesLabel: String {
-        triageSourceCount == 1 ? "1 Contributing Playlist" : "\(triageSourceCount) Contributing Playlists"
+    private func triageDetail(for bucket: PlaylistRecord) -> String {
+        let trackCount = presentation(for: bucket).activeTrackCount
+        let tracks = trackCount == 1 ? "1 track" : "\(trackCount) tracks"
+        let sources = triageSourceCount == 1 ? "1 playlist" : "\(triageSourceCount) playlists"
+        return "\(tracks) from \(sources)"
     }
 
     private func presentation(for playlist: PlaylistRecord) -> PlaylistSummaryPresentation {

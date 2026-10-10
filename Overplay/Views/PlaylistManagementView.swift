@@ -190,6 +190,14 @@ private struct PlaylistManagementContentView: View {
                         .disabled(viewModel.isSyncing)
                     }
 
+                    if playlist.role == .triageBucket, selectedScope == .active {
+                        NavigationLink {
+                            TriageSourcesView()
+                        } label: {
+                            Label("Contributing Playlists", systemImage: "slider.horizontal.3")
+                        }
+                    }
+
                     Divider()
 
                     NavigationLink {
