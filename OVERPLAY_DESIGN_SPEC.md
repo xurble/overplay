@@ -1899,8 +1899,6 @@ affected. On an open iPhone Duo held as a book, the Now Playing column starts
 at the fold, so the list and the player each take one half. The player column
 stays clear of the vertical bar, and toolbar items carry a title as well as a
 symbol for the vertical bar's overflow menu.
-Full-screen Now Playing keeps horizontal bars (a full-screen media view), so
-on a closed iPhone Duo it has the iPhone layout and fills the screen.
 
 ### Permission screen
 
@@ -2031,7 +2029,9 @@ Platform notes:
   mini player: a glass bar over the bottom of the screen. Tapping it or
   swiping it up opens Now Playing full screen with the system zoom
   transition, with a drag handle at the top; swiping down returns to the bar. Regular
-  width shows Now Playing as a column beside the list.
+  width shows Now Playing as a column beside the list. On a closed iPhone Duo
+  the status bar stays vertical under the camera in full screen, and the mini
+  player spans the width below the vertical bar's controls.
 - On Mac (Designed for iPad) the audio output pill is hidden: the Mac has its
   own output menu, and the system volume cannot be set from the app there.
 - **Planned Mac:** support a compact mini-player style window in addition to the

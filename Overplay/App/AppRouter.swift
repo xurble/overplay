@@ -76,13 +76,13 @@ struct AppRouter: View {
                     .matchedTransitionSource(id: Self.playerTransitionID, in: playerTransition)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 4)
+                    .modifier(UnderVerticalBar())
                     .ignoresSafeArea(.keyboard)
             }
         }
         .fullScreenCover(isPresented: playerCoverPresentation) {
             if let settings {
                 FullScreenPlayerView(settings: settings)
-                    .modifier(HorizontalBarsOnly())
                     // Supply the same shared instances at this hosting boundary.
                     // Relying on inherited values crashed during sheet construction
                     // on My Mac (Designed for iPad).
@@ -164,15 +164,30 @@ struct AppRouter: View {
         .modelContainer(PreviewContainer.make())
 }
 
-/// The player is a full-screen media view: it keeps horizontal bars, so on a
-/// closed iPhone Duo it fills the screen instead of making room for a
-/// vertical bar.
-private struct HorizontalBarsOnly: ViewModifier {
+
+/// A vertical bar (iPhone Duo) holds its controls at the top, so the mini
+/// player can use the full width below them. Other horizontal insets, such
+/// as a landscape iPhone's camera side, still apply.
+private struct UnderVerticalBar: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 27.1, *) {
-            content.toolbarVerticalBehavior(.disabled)
+            VerticalBarAware(content: content)
         } else {
             content
+        }
+    }
+
+    @available(iOS 27.1, *)
+    private struct VerticalBarAware: View {
+        @Environment(\.toolbarVerticalEdge) private var verticalBarEdge
+        var content: Content
+
+        var body: some View {
+            switch verticalBarEdge {
+            case .leading: content.ignoresSafeArea(.container, edges: .leading)
+            case .trailing: content.ignoresSafeArea(.container, edges: .trailing)
+            default: content
+            }
         }
     }
 }
