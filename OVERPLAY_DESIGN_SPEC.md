@@ -2030,7 +2030,7 @@ Platform notes:
 - Compact width (iPhone, a closed iPhone Duo, a narrow iPad window) shows a
   mini player: a glass bar over the bottom of the screen. Tapping it or
   swiping it up opens Now Playing full screen with the system zoom
-  transition; swiping down or the close button returns to the bar. Regular
+  transition, with a drag handle at the top; swiping down returns to the bar. Regular
   width shows Now Playing as a column beside the list.
 - On Mac (Designed for iPad) the audio output pill is hidden: the Mac has its
   own output menu, and the system volume cannot be set from the app there.

@@ -2,8 +2,8 @@ import SwiftData
 import SwiftUI
 
 /// Now Playing over the whole screen in compact width, opened from the mini
-/// player. It is the regular-width column's player; swiping down or the
-/// chevron closes it.
+/// player. It is the regular-width column's player; swiping down closes it,
+/// and a drag handle under the status bar or Dynamic Island says so.
 struct FullScreenPlayerView: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -11,19 +11,21 @@ struct FullScreenPlayerView: View {
 
     var body: some View {
         NowPlayingColumnView(settings: settings)
-            .overlay(alignment: .topLeading) {
-                Button {
-                    dismiss()
-                } label: {
-                    Label("Close Now Playing", systemImage: "chevron.down")
-                        .labelStyle(.iconOnly)
-                        .font(.body.weight(.semibold))
-                        .frame(width: 32, height: 32)
-                }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .padding(.leading, 16)
+            .overlay(alignment: .top) {
+                Capsule()
+                    .fill(.secondary)
+                    .frame(width: 36, height: 5)
+                    .padding(.top, 6)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 12)
+                    .contentShape(.rect)
+                    .onTapGesture { dismiss() }
+                    .accessibilityElement()
+                    .accessibilityLabel("Close Now Playing")
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { dismiss() }
             }
+            .accessibilityAction(.escape) { dismiss() }
     }
 }
 
