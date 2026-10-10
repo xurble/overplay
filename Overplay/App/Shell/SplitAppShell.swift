@@ -38,26 +38,27 @@ struct SplitAppShell: View {
         // that space, beside the sidebar and list, never over them.
         splitView
             .padding(.trailing, showsPlayerColumn && !isStackedAtFold ? nowPlayingWidth + 1 : 0)
-            .padding(.top, isStackedAtFold ? (foldY ?? 0) + 1 : 0)
+            .padding(.top, isStackedAtFold ? (dividerY ?? 0) + 1 : 0)
             .overlay(alignment: isStackedAtFold ? .top : .trailing) {
-                if isStackedAtFold, let foldY {
-                    // Open in portrait: the player fills the half above the
-                    // fold (its art background under the status bar) and the
-                    // list the half below.
+                if isStackedAtFold, let dividerY {
+                    // Open in portrait, or an iPad taller than wide: the
+                    // player fills the top half (its art background under the
+                    // status bar) and the list the half below.
                     VStack(spacing: 0) {
                         NowPlayingColumnView(
                             settings: settings,
                             isSideBySide: true,
-                            artworkOnTrailing: PhoneTurn.shared.isClockwise
+                            artworkOnTrailing: foldY != nil && PhoneTurn.shared.isClockwise
                         )
-                            .frame(height: foldY)
+                            .frame(height: dividerY)
                         Divider()
                     }
                 } else if showsPlayerColumn {
                     HStack(spacing: 0) {
                         Divider()
                         if isSplitAtFold {
-                            // Open as a book, laid out exactly as the closed
+                            // Open as a book (or an iPad wider than tall),
+                            // laid out exactly as the closed
                             // phone's full-screen player: centred on its half
                             // across the vertical bar, inside the safe area,
                             // with the same spacing. Never animated, so it is
@@ -157,7 +158,7 @@ struct SplitAppShell: View {
         .onChange(of: detailPath.count) { _, count in
             Self.logger.info("Detail navigation depth: \(count, privacy: .public)")
         }
-        .modifier(SplitStyle(sidebarOverlaysList: isNarrow))
+        .modifier(SplitStyle(sidebarOverlaysList: sidebarOverlaysList))
     }
 
     private var detailView: some View {
@@ -168,16 +169,30 @@ struct SplitAppShell: View {
 
     private var isNarrow: Bool { SplitLayoutPolicy.isNarrow(totalWidth) }
 
-    private var isSplitAtFold: Bool { SplitLayoutPolicy.splitsAtFold(totalWidth, foldX: foldX) }
+    /// The sidebar slides over the list, closing after a choice, unless a
+    /// wide Mac window shows it as a column.
+    private var sidebarOverlaysList: Bool { isNarrow || isPinnedAtFold }
 
-    private var isStackedAtFold: Bool { SplitLayoutPolicy.stacksAtFold(totalHeight, foldY: foldY) }
+    /// The fold of an open folding phone or, without one, the middle of the
+    /// window on iPad; nil on a Mac, which keeps columns.
+    private var dividerX: CGFloat? {
+        SplitLayoutPolicy.dividingX(width: totalWidth, height: totalHeight, foldX: foldX, foldY: foldY, keepsColumns: SplitLayoutPolicy.keepsColumns)
+    }
 
-    /// Open on a fold, the player keeps its half and cannot be hidden.
+    private var dividerY: CGFloat? {
+        SplitLayoutPolicy.dividingY(width: totalWidth, height: totalHeight, foldX: foldX, foldY: foldY, keepsColumns: SplitLayoutPolicy.keepsColumns)
+    }
+
+    private var isSplitAtFold: Bool { SplitLayoutPolicy.splitsAtFold(totalWidth, foldX: dividerX) }
+
+    private var isStackedAtFold: Bool { SplitLayoutPolicy.stacksAtFold(totalHeight, foldY: dividerY) }
+
+    /// Divided in halves, the player keeps its half and cannot be hidden.
     private var isPinnedAtFold: Bool { isSplitAtFold || isStackedAtFold }
 
     private var showsPlayerColumn: Bool { showsNowPlaying || isPinnedAtFold }
 
-    private var nowPlayingWidth: CGFloat { SplitLayoutPolicy.playerWidth(for: totalWidth, foldX: foldX) }
+    private var nowPlayingWidth: CGFloat { SplitLayoutPolicy.playerWidth(for: totalWidth, foldX: dividerX) }
 
     /// The fold of an open folding phone, also while it lies flat, so the
     /// columns stay put as the hinge moves.
@@ -190,18 +205,23 @@ struct SplitAppShell: View {
     }
 
     nonisolated private static func foldFrame(in proxy: GeometryProxy, where matches: (CGRect) -> Bool) -> CGRect? {
+#if targetEnvironment(macCatalyst)
+        return nil
+#else
         guard #available(iOS 27.1, *) else { return nil }
         return proxy.reservedRegions(kind: .division, options: .includeInactive)
             .map(\.frame).first(where: matches)
+#endif
     }
 
-    /// Narrow: list and player share the width and the sidebar slides in
-    /// over the list when asked for. Wide: sidebar, list and player.
+    /// Halves or narrow: list and player share the width and the sidebar
+    /// slides in over the list when asked for. Wide Mac: sidebar, list and
+    /// player.
     private var columnVisibility: Binding<NavigationSplitViewVisibility> {
         Binding {
-            SplitLayoutPolicy.visibility(isNarrow: isNarrow, narrowSidebarShown: narrowSidebarShown, wideVisibility: wideVisibility)
+            SplitLayoutPolicy.visibility(isNarrow: sidebarOverlaysList, narrowSidebarShown: narrowSidebarShown, wideVisibility: wideVisibility)
         } set: { newValue in
-            if isNarrow {
+            if sidebarOverlaysList {
                 narrowSidebarShown = newValue != .detailOnly
             } else {
                 wideVisibility = newValue
@@ -250,8 +270,8 @@ struct SplitAppShell: View {
         } set: { newSelection in
             detailPath = NavigationPath()
             storedSelection = (newSelection ?? .dashboard).storageValue
-            // Narrow: the sidebar was slid over the list to choose; close it.
-            if isNarrow { narrowSidebarShown = false }
+            // The sidebar was slid over the list to choose; close it.
+            if sidebarOverlaysList { narrowSidebarShown = false }
         }
     }
 }

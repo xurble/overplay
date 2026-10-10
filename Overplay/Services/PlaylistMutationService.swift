@@ -240,7 +240,7 @@ struct PlaylistMutationService {
             )
             let song = try await song(id: songID)
             try await MusicKitActivityLog.shared.measure(.libraryPlaylistAddItem) {
-                try await MusicLibrary.shared.add(song, to: playlist)
+                try await AppleMusicPlaylistWrites.add(song, to: playlist)
             }
         }
     }
@@ -270,7 +270,7 @@ struct PlaylistMutationService {
         )
         let song = try await song(id: musicItemID)
         try await MusicKitActivityLog.shared.measure(.libraryPlaylistAddItem) {
-            try await MusicLibrary.shared.add(song, to: playlist)
+            try await AppleMusicPlaylistWrites.add(song, to: playlist)
         }
     }
 

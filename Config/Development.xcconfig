@@ -3,4 +3,5 @@
 
 PRODUCT_BUNDLE_IDENTIFIER = $(inherited).dev
 CODE_SIGN_ENTITLEMENTS = Config/Development.entitlements
+CODE_SIGN_ENTITLEMENTS[sdk=macosx*] = Config/Development-MacCatalyst.entitlements
 ICLOUD_CONTAINER_IDENTIFIER =

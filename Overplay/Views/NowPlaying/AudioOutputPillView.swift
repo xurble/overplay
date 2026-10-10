@@ -7,7 +7,7 @@ import UIKit
 /// system picker.
 struct AudioOutputPillView: View {
     /// The Mac has its own output menu, and its volume cannot be set this way.
-    static var isAvailable: Bool { !ProcessInfo.processInfo.isiOSAppOnMac }
+    static var isAvailable: Bool { !ProcessInfo.processInfo.isMacCatalystApp }
     static let size = CGSize(width: 180, height: 32)
     /// Between the transport's row and the pill.
     static let gap: CGFloat = 12

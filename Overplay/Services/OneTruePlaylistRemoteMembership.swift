@@ -38,13 +38,13 @@ struct OneTruePlaylistRemoteMembership {
             magnitude: Double(items.count),
             detail: "rewrote playlist to remove songs held outside it"
         ) {
-            try await MusicLibrary.shared.edit(playlist, items: items)
+            try await AppleMusicPlaylistWrites.edit(playlist, items: items)
         }
     }
 
-    /// iPad apps running on a Mac lack MusicKit's playlist editing and crash
-    /// on any edit, so removals there always wait for an iPhone or iPad.
-    var canEditPlaylists: @MainActor () -> Bool = { !ProcessInfo.processInfo.isiOSAppOnMac }
+    /// A Mac has no MusicKit playlist editing (the iPad app there crashes on
+    /// any edit), so removals there always wait for an iPhone or iPad.
+    var canEditPlaylists: @MainActor () -> Bool = { !ProcessInfo.processInfo.isMacCatalystApp }
 
     init() {}
 

@@ -45,6 +45,32 @@ enum AppleMusicLibraryPlaylistResources {
         return links
     }
 
+    /// Apple Music's own `canEdit` for a library playlist, or nil when the
+    /// response omits it. It says whether the playlist is editable at all;
+    /// MusicKit also edits only playlists this app created, and only a refused
+    /// edit reveals that.
+    static func fetchCanEdit(
+        playlistID: String,
+        request: (URL) async throws -> Data = { url in
+            try await MusicKitActivityLog.shared.measure(.libraryPlaylistLookup, detail: "web library playlist attributes") {
+                try await MusicDataRequest(urlRequest: URLRequest(url: url)).response().data
+            }
+        }
+    ) async throws -> Bool? {
+        struct Response: Decodable {
+            struct Resource: Decodable {
+                struct Attributes: Decodable { var canEdit: Bool? }
+                var attributes: Attributes?
+            }
+            var data: [Resource]
+        }
+        var components = URLComponents(string: "https://api.music.apple.com")!
+        components.path = "/v1/me/library/playlists/\(playlistID)"
+        guard let url = components.url else { throw PlaylistSyncError.incompletePlaylist }
+        let response = try JSONDecoder().decode(Response.self, from: await request(url))
+        return response.data.first?.attributes?.canEdit
+    }
+
     /// One occurrence in iCloud's copy of a library playlist. The response
     /// type establishes the domain; other types have no song reference.
     struct Entry: Decodable, Equatable {

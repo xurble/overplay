@@ -71,7 +71,7 @@ final class SearchService {
         return try await PlaylistRemoteMutationCoordinator.shared.perform(playlistID: playlistID) {
             let playlist = try await playlist(for: playlistID)
             try await MusicKitActivityLog.shared.measure(.libraryPlaylistAddItem) {
-                try await MusicLibrary.shared.add(song, to: playlist)
+                try await AppleMusicPlaylistWrites.add(song, to: playlist)
             }
             return playlist.name
         }

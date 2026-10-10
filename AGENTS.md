@@ -333,8 +333,10 @@ and describe what verification was performed instead.
 ## MusicKit Verification
 
 Run live playback and MusicKit integration checks using Xcode's **My Mac
-(Designed for iPad)** destination by default. This runs the iPad app on Apple
-silicon; it is distinct from a native macOS build and the iOS simulator.
+(Mac Catalyst)** destination by default. This runs the iPad app as a Mac
+Catalyst build; it is distinct from a native macOS build and the iOS
+simulator. MusicKit has no playlist writes (add, create, edit) on Mac
+Catalyst, so verify those on a physical iPhone or iPad.
 
 Use the iOS simulator only for checks that specifically need iOS, such as
 iPhone/iPad layout, navigation, or platform-specific UI. Do not use simulator
@@ -346,7 +348,7 @@ For MusicKit changes, agents should:
 -   Cover pure logic and injected boundaries with focused unit tests where
     practical
 -   Verify that the affected targets compile or build
--   Exercise relevant live playback behavior on My Mac (Designed for iPad),
+-   Exercise relevant live playback behavior on My Mac (Mac Catalyst),
     including queue actions and shared-state updates where affected
 -   Verify that signing, MusicKit authorization, and Apple Music account access
     work in that destination before relying on its results. If unavailable,

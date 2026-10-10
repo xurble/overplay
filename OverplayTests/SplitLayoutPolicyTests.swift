@@ -2,8 +2,9 @@ import SwiftUI
 import Testing
 @testable import Overplay
 
-/// The regular-width layout rules (`SplitLayoutPolicy`), at the widths of
-/// real windows: these hold whether or not a simulator rotates.
+/// The regular-width layout rules (`SplitLayoutPolicy`), at the sizes of
+/// real windows: these hold whether or not a simulator rotates. The column
+/// widths apply on a Mac; iPad and an open folding phone divide in halves.
 @Suite("Split layout policy")
 struct SplitLayoutPolicyTests {
     @Test("Portrait on every iPad, and narrower windows, are narrow; landscape is wide", arguments: [
@@ -46,7 +47,34 @@ struct SplitLayoutPolicyTests {
         #expect(SplitLayoutPolicy.playerWidth(for: 951, foldX: 475) == 476)
         #expect(!SplitLayoutPolicy.splitsAtFold(951, foldX: nil))
         #expect(!SplitLayoutPolicy.splitsAtFold(951, foldX: 200))
-        #expect(!SplitLayoutPolicy.splitsAtFold(1366, foldX: 683))
+        #expect(SplitLayoutPolicy.splitsAtFold(1376, foldX: 688))
+        #expect(SplitLayoutPolicy.playerWidth(for: 1376, foldX: 688) == 688)
+    }
+
+    @Test("An iPad divides like an open folding phone: side by side when wider than tall, stacked when taller", arguments: [
+        (CGSize(width: 1376, height: 1032), CGFloat?(688), CGFloat?.none),   // Pro/Air 13 landscape
+        (CGSize(width: 1180, height: 820), 590, nil),                        // Air 11 landscape
+        (CGSize(width: 1032, height: 1376), nil, 688),                       // Pro/Air 13 portrait
+        (CGSize(width: 744, height: 1133), nil, 567)                         // mini portrait
+    ])
+    func iPadDividesInHalves(size: CGSize, x: CGFloat?, y: CGFloat?) {
+        #expect(SplitLayoutPolicy.dividingX(width: size.width, height: size.height, foldX: nil, foldY: nil, keepsColumns: false) == x)
+        #expect(SplitLayoutPolicy.dividingY(width: size.width, height: size.height, foldX: nil, foldY: nil, keepsColumns: false) == y)
+    }
+
+    @Test("A folding phone's fold wins over the middle of the window")
+    func foldWinsOverMiddle() {
+        #expect(SplitLayoutPolicy.dividingX(width: 951, height: 669, foldX: 475, foldY: nil, keepsColumns: false) == 475)
+        #expect(SplitLayoutPolicy.dividingY(width: 951, height: 669, foldX: 475, foldY: nil, keepsColumns: false) == nil)
+        #expect(SplitLayoutPolicy.dividingY(width: 669, height: 951, foldX: nil, foldY: 476, keepsColumns: false) == 476)
+        #expect(SplitLayoutPolicy.dividingX(width: 669, height: 951, foldX: nil, foldY: 476, keepsColumns: false) == nil)
+    }
+
+    @Test("A Mac keeps the columns: no dividing line in any window shape")
+    func macKeepsColumns() {
+        #expect(SplitLayoutPolicy.dividingX(width: 1376, height: 1032, foldX: nil, foldY: nil, keepsColumns: true) == nil)
+        #expect(SplitLayoutPolicy.dividingY(width: 1032, height: 1376, foldX: nil, foldY: nil, keepsColumns: true) == nil)
+        #expect(SplitLayoutPolicy.playerWidth(for: 1376) == 380)
     }
 
     @Test("Open in portrait, a horizontal fold with room above and below stacks player over list")
