@@ -13,9 +13,13 @@ enum SplitLayoutPolicy {
 
     /// Narrow: 40% of the width, the list taking the other 60%. Wide: a
     /// fixed 380 beside the sidebar and list, narrowed only when they would
-    /// have less than 640, never below 280.
-    static func playerWidth(for width: CGFloat) -> CGFloat {
-        isNarrow(width) ? (width * 0.4).rounded() : min(380, max(280, width - 640))
+    /// have less than 640, never below 280. A vertical fold across a narrow
+    /// layout (iPhone Duo open as a book) puts the list on one half and the
+    /// player on the other, while each keeps at least 280.
+    static func playerWidth(for width: CGFloat, foldX: CGFloat? = nil) -> CGFloat {
+        guard isNarrow(width) else { return min(380, max(280, width - 640)) }
+        if let foldX, foldX >= 280, width - foldX >= 280 { return (width - foldX).rounded() }
+        return (width * 0.4).rounded()
     }
 
     /// Narrow: the sidebar shows only while slid over the list. Wide: the

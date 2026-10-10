@@ -1138,6 +1138,11 @@ nonisolated enum AlbumArtworkThemeBuilder {
     }
 
     private static func recognizeText(in image: CGImage) -> [AlbumArtworkRecognizedText] {
+        #if targetEnvironment(simulator)
+        // Text recognition never returns in the iOS 27.1 simulator, which
+        // left every new album without a theme; the palette alone will do.
+        return []
+        #else
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false
@@ -1168,6 +1173,7 @@ nonisolated enum AlbumArtworkThemeBuilder {
             AlbumArtworkThemeDiagnostics.log("builder ocr observations: \(summary)")
         }
         return observations
+        #endif
     }
 
     private static func cleaned(_ palette: [AlbumArtworkPaletteColor]) -> [AlbumArtworkPaletteColor] {

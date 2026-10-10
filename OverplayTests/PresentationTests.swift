@@ -47,7 +47,7 @@ struct PlaylistSummaryPresentationTests {
         #expect(oneTrue.displayPriority == 0)
         #expect(oneTrue.writePolicyTitle == "Managed")
 
-        #expect(triageBucket.roleTitle == "Triage")
+        #expect(triageBucket.roleTitle == "Find the next big thing")
         #expect(triageBucket.shortRoleTitle == "Triage")
         #expect(triageBucket.iconIntent.systemImage == "play.fill")
         #expect(triageBucket.displayPriority == 1)

@@ -49,6 +49,12 @@ struct AppRouter: View {
                 }
             }
         }
+        #if targetEnvironment(simulator)
+        // Screenshots of the full player without a drag.
+        .onAppear {
+            if ProcessInfo.processInfo.arguments.contains("-OverplayExpandedPlayer") { playerSheetDetent = .large }
+        }
+        #endif
         .confirmationDialog("Create a new Overplay library?", isPresented: $showingNewLibraryConfirmation) {
             Button("Create new library") {
                 do {
@@ -66,6 +72,7 @@ struct AppRouter: View {
         .sheet(isPresented: playerSheetPresentation) {
             if let settings {
                 PlayerSheetView(settings: settings, collapsedHeight: playerSheetCollapsedHeight)
+                    .modifier(HorizontalBarsOnly())
                     // Supply the same shared instances at this hosting boundary.
                     // Relying on inherited values crashed during sheet construction
                     // on My Mac (Designed for iPad).
@@ -150,4 +157,17 @@ struct AppRouter: View {
         .environment(MusicAuthorizationService())
         .environment(PlaybackController())
         .modelContainer(PreviewContainer.make())
+}
+
+/// The player is a full-screen media view: it keeps horizontal bars, so on a
+/// closed iPhone Duo its art wash reaches both edges instead of stopping at a
+/// vertical status bar.
+private struct HorizontalBarsOnly: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 27.1, *) {
+            content.toolbarVerticalBehavior(.disabled)
+        } else {
+            content
+        }
+    }
 }

@@ -7,6 +7,10 @@ enum RecentCollectionPresentation {
     struct Song: Identifiable, Equatable {
         let catalogID: String
         let summary: TrackSummaryPresentation
+        /// Swipe right: an untracked, Triage or retired song.
+        var canMoveToOneTruePlaylist = true
+        /// Swipe left: an untracked or retired song.
+        var canMoveToTriage = true
         var id: String { catalogID }
     }
 
@@ -25,6 +29,8 @@ enum RecentCollectionPresentation {
     /// and retired state; the rest show none.
     static func songs(for recent: RecentCollectionRecord, in context: ModelContext) -> [Song] {
         let tracked = (try? TrackRecordRepository.tracksByCatalogID(in: context)) ?? [:]
+        let roles = Dictionary(((try? context.fetch(FetchDescriptor<PlaylistRecord>())) ?? []).map { ($0.id, $0.role) },
+                               uniquingKeysWith: { first, _ in first })
         return recent.songs.map { song in
             let item = tracked[song.catalogID].flatMap { try? PlaylistItemRepository.item(trackID: $0.id, in: context) }
             return Song(catalogID: song.catalogID, summary: TrackSummaryPresentation(
@@ -40,7 +46,8 @@ enum RecentCollectionPresentation {
                 applePlayCount: item?.applePlayCount,
                 isRetired: item?.evictedAt != nil,
                 isTracked: item != nil
-            ))
+            ), canMoveToOneTruePlaylist: item.map { roles[$0.playlistID] == .triageBucket } ?? true,
+               canMoveToTriage: item == nil || item?.evictedAt != nil)
         }
     }
 

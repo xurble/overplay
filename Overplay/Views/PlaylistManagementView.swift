@@ -3,6 +3,7 @@ import SwiftUI
 
 struct PlaylistManagementView: View {
     @Query(sort: \PlaylistRecord.createdAt) private var playlists: [PlaylistRecord]
+    @Environment(\.shellPlace) private var shellPlace
 
     var settings: OverplaySettings
     var playlist: PlaylistRecord
@@ -19,6 +20,13 @@ struct PlaylistManagementView: View {
             scope: scope
         )
         .id(scope.playbackOrderPlaylistID(for: canonicalPlaylist.id.uuidString))
+        .onAppear {
+            if scope == .retired {
+                shellPlace?.destination = .retired
+            } else if canonicalPlaylist.role.isPlaybackContext {
+                shellPlace?.destination = .playlist(canonicalPlaylist.id)
+            }
+        }
     }
 }
 
@@ -109,6 +117,19 @@ private struct PlaylistManagementContentView: View {
                 ForEach(detail.rows) { row in
                     playlistTrackButton(for: row)
                         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
+                        // Right promotes to the One True Playlist; left
+                        // retires, or moves a retired track to Triage.
+                        .swipeActions(edge: .leading) {
+                            if row.isRetired || (row.isPlayable && playlist.role == .triageBucket) {
+                                Button {
+                                    Task { await promote(row) }
+                                } label: {
+                                    Label("Overplay", systemImage: "arrow.up.circle")
+                                }
+                                .tint(.pink)
+                                .disabled(viewModel.promotingItemIDs.contains(row.id))
+                            }
+                        }
                         .swipeActions(edge: .trailing) {
                             if row.isRetired {
                                 Button {
@@ -118,13 +139,6 @@ private struct PlaylistManagementContentView: View {
                                 }
                                 .tint(.green)
                                 .disabled(viewModel.restoringItemIDs.contains(row.id))
-                                Button {
-                                    Task { await promote(row) }
-                                } label: {
-                                    Label("Overplay", systemImage: "arrow.up.circle")
-                                }
-                                .tint(.pink)
-                                .disabled(viewModel.promotingItemIDs.contains(row.id))
                             } else if row.isPlayable {
                                 Button(role: .destructive) {
                                     Task { await evict(row) }
@@ -132,16 +146,6 @@ private struct PlaylistManagementContentView: View {
                                     Label("Retire", systemImage: "archivebox.fill")
                                 }
                                 .disabled(viewModel.evictingItemIDs.contains(row.id))
-
-                                if playlist.role == .triageBucket {
-                                    Button {
-                                        Task { await promote(row) }
-                                    } label: {
-                                        Label("Overplay", systemImage: "arrow.up.circle")
-                                    }
-                                    .tint(.pink)
-                                    .disabled(viewModel.promotingItemIDs.contains(row.id))
-                                }
                             }
                         }
                 }
@@ -213,9 +217,8 @@ private struct PlaylistManagementContentView: View {
                     }
 
                 } label: {
-                    Image(systemName: "ellipsis.circle")
+                    Label("Playlist Controls", systemImage: "ellipsis.circle")
                 }
-                .accessibilityLabel("Playlist Controls")
             }
         }
     }

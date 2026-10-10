@@ -1,9 +1,11 @@
-import Foundation
+import SwiftUI
 
 enum AppShellDestination: Hashable {
     case dashboard
     case playlist(UUID)
     case retired
+    /// A Recent Deep Dive, by its record ID.
+    case recent(UUID)
     case search
     case history
     case settings
@@ -13,6 +15,11 @@ enum AppShellDestination: Hashable {
             let uuidString = String(storageValue.dropFirst("playlist:".count))
             guard let id = UUID(uuidString: uuidString) else { return nil }
             self = .playlist(id)
+            return
+        }
+        if storageValue.hasPrefix("recent:") {
+            guard let id = UUID(uuidString: String(storageValue.dropFirst("recent:".count))) else { return nil }
+            self = .recent(id)
             return
         }
 
@@ -42,10 +49,25 @@ enum AppShellDestination: Hashable {
             "search"
         case .retired:
             "retired"
+        case let .recent(id):
+            "recent:\(id.uuidString)"
         case .history:
             "history"
         case .settings:
             "settings"
         }
     }
+}
+
+/// The screen the person is on, kept by `PlatformShell` across a switch
+/// between the compact and regular shells (folding or unfolding an iPhone
+/// Duo, resizing a window), so the new shell opens the same screen. Screens
+/// report themselves as they appear. Nothing observes it, so a report never
+/// redraws anything.
+final class ShellPlace {
+    var destination: AppShellDestination?
+}
+
+extension EnvironmentValues {
+    @Entry var shellPlace: ShellPlace?
 }

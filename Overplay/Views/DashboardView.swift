@@ -11,6 +11,7 @@ struct DashboardView: View {
     /// screen, least of all mid-scroll.
     @State private var leadArtworkFit = LeadArtworkFit()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.shellPlace) private var shellPlace
 
     var settings: OverplaySettings
 
@@ -99,15 +100,17 @@ struct DashboardView: View {
             fitLeadArtwork(fit)
         }
         .miniPlayerScrollContentInset()
+        .onAppear { shellPlace?.destination = .dashboard }
         .navigationTitle("Overplay")
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 NavigationLink {
                     SettingsView(settings: settings)
                 } label: {
-                    Image(systemName: "gearshape")
+                    // A title as well as a symbol: a vertical bar's overflow
+                    // menu (iPhone Duo) lists items by title.
+                    Label("Settings", systemImage: "gearshape")
                 }
-                .accessibilityLabel("Settings")
             }
         }
     }
@@ -140,22 +143,27 @@ struct DashboardView: View {
         leadArtworkFit.isSized = true
     }
 
-    /// The One True Playlist leads the screen as artwork alone, sized to fill
-    /// the first screen.
+    /// The One True Playlist leads the screen as artwork over its track count,
+    /// sized to fill the first screen.
     private func oneTruePlaylistArtwork(for playlist: PlaylistRecord, summary: PlaylistSummaryPresentation) -> some View {
-        ZStack(alignment: .bottomTrailing) {
-            PlaylistCollageThumbnailView(playlist: playlist)
-                .frame(width: leadArtworkSide, height: leadArtworkSide)
+        VStack(spacing: 6) {
+            ZStack(alignment: .bottomTrailing) {
+                PlaylistCollageThumbnailView(playlist: playlist)
+                    .frame(width: leadArtworkSide, height: leadArtworkSide)
 
-            Image(systemName: summary.iconIntent.systemImage)
-                .font(.footnote.weight(.bold))
-                .foregroundStyle(.white)
-                .padding(6)
-                .background(badgeTint(for: summary, role: playlist.role), in: Circle())
+                Image(systemName: summary.iconIntent.systemImage)
+                    .font(.footnote.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(6)
+                    .background(badgeTint(for: summary, role: playlist.role), in: Circle())
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(playlist.name)
+
+            OneTruePlaylistTrackCountView(playlist: playlist)
         }
         .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(playlist.name)
+        .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
     }
 
@@ -253,6 +261,24 @@ private enum DashboardBadge {
     static func tint(for summary: PlaylistSummaryPresentation, role: PlaylistRole) -> Color {
         if summary.isCurrentPlaybackPlaylist { return .green }
         return role == .oneTruePlaylist ? .pink : .teal
+    }
+}
+
+/// The count under the lead artwork. Like the Triage row, it queries only the
+/// playlist's active items, so the count stays live without the dashboard
+/// fetching every playlist item.
+private struct OneTruePlaylistTrackCountView: View {
+    @Query private var activeItems: [PlaylistItemRecord]
+
+    init(playlist: PlaylistRecord) {
+        let playlistID = playlist.id
+        _activeItems = Query(filter: #Predicate<PlaylistItemRecord> { $0.playlistID == playlistID && $0.evictedAt == nil })
+    }
+
+    var body: some View {
+        Text(PlaylistSummaryPresentation.trackCountLabel(activeItems.count))
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
     }
 }
 

@@ -993,7 +993,9 @@ Both are one shared controller action used by the app and CarPlay
 (`SURFACE-001`, `SURFACE-003`). It looks up the songs, then starts a new intent
 through the shared start path (`PLAY-005`): pause, submit, wait for the queue
 to load, play, under the same bounded hold. Songs that cannot be prepared are
-left out. Shuffle and repeat are left as they are (`PLAY-004`).
+left out. Shuffle is turned off before the queue is submitted, so the album
+or artist plays in order even after a shuffled playlist; repeat is left as it
+is (`PLAY-004`).
 
 The actions apply to the player-reported current song (`PLAY-011`), whether or
 not it is attributed. They are disabled, not hidden, when nothing is playing or
@@ -1126,7 +1128,8 @@ CloudKit schema.
   playlist's does.
 - **A song** follows the playlist selection rules (`SURFACE-003`), through the
   same shared decision: the current song resumes, a song in the live queue is
-  selected in place, and anything else starts the entry at that song.
+  selected in place, and anything else starts the entry at that song, in
+  order with shuffle turned off, as Play Album and Play Artist do.
 - Recents plays the saved songs. Only Play Album and Play Artist on Now Playing
   look the album or artist up again, replacing the saved songs.
 - Each device keeps the native tracks of the album and artist songs it has
@@ -1144,6 +1147,12 @@ CloudKit schema.
   images round) with the title and "Album" or "Artist", and a marker on the one
   playing. A tile opens the entry's song list: Shuffle and Play at the top,
   then the songs, with counts and retired state for songs Overplay tracks.
+  Swiping a song right sends it to the One True Playlist and left to Triage,
+  through one shared controller action: an untracked song is added as Now
+  Playing's Add to One True Playlist and Add to Triage do (`PLAY-018`), a
+  Triage or retired song is promoted, and a retired song moves to Triage. A
+  direction that would not move the song (right on a One True Playlist song,
+  left on an active one) is not offered. Playback goes on.
 - **CarPlay:** a "Recent Deep Dives" strip of artwork tiles under the
   playlists on the root (hidden when empty). A tile opens that entry's songs
   with Shuffle and Play at the top, and then Now Playing; the strip's title
@@ -1883,6 +1892,16 @@ navigation from the dashboard. Regular width uses a `NavigationSplitView`
 sidebar for Dashboard, Search, History, Settings, linked playlists, and
 playlist detail. Native Mac presentation is planned.
 
+Switching between the two (folding or unfolding an iPhone Duo, resizing a
+window) opens the new layout on the same screen: the dashboard, a playlist,
+Retired, a Recent Deep Dive, Search, History or Settings. Playback is not
+affected. On an open iPhone Duo held as a book, the Now Playing column starts
+at the fold, so the list and the player each take one half. The player column
+stays clear of the vertical bar, and toolbar items carry a title as well as a
+symbol for the vertical bar's overflow menu.
+The expanded player keeps horizontal bars (a full-screen media view), so on a
+closed iPhone Duo it has the iPhone layout with its art wash edge to edge.
+
 ### Permission screen
 
 Purpose: handle Apple Music permission and subscription readiness.
@@ -1960,6 +1979,9 @@ Show:
 - Manual retire/remove action for active tracks.
 - Move to Triage and Move to One True Playlist for retired tracks.
 - Search/add action scoped to that playlist.
+- Row swipes: swiping left retires an active track, or moves a retired track
+  to Triage; swiping right promotes a Triage or retired track to the One True
+  Playlist. One True Playlist rows have no right swipe.
 
 Playlist-row taps follow the shared **Action routing and playlist-selection
 parity** contract, including live-queue reuse and resume without restart.

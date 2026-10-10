@@ -5,19 +5,29 @@ import SwiftUI
 struct SplitAppShell: View {
     private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Overplay", category: "Layout")
     @Environment(PlaybackController.self) private var playbackController
+    @Environment(\.shellPlace) private var shellPlace
     @Query(sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
 
     var settings: OverplaySettings
+    /// The compact shell's screen when this one replaced it, opened on appear.
+    @State private var placeOnOpen: AppShellDestination?
 
     @SceneStorage("overplay.splitSelection") private var storedSelection = AppShellDestination.dashboard.storageValue
     @SceneStorage("overplay.showsNowPlayingColumn") private var showsNowPlaying = true
     @State private var totalWidth: CGFloat = 0
+    /// Where a vertical fold crosses this view, on a folding phone.
+    @State private var foldX: CGFloat?
     /// Narrow: whether the sidebar has been slid over the list. Wide: the
     /// split view's own choice. Visibility is derived from the width each
     /// time it is read, so a rotation never leaves a stale value behind.
     @State private var narrowSidebarShown = false
     @State private var wideVisibility: NavigationSplitViewVisibility = .all
     @State private var detailPath = NavigationPath()
+
+    init(settings: OverplaySettings, place: AppShellDestination?) {
+        self.settings = settings
+        _placeOnOpen = State(initialValue: place)
+    }
 
     var body: some View {
         // The split view stays the window's root container, which navigation
@@ -32,11 +42,14 @@ struct SplitAppShell: View {
                         NowPlayingColumnView(settings: settings)
                             .frame(width: nowPlayingWidth)
                     }
-                    .ignoresSafeArea()
+                    // Top and bottom only: a vertical bar (iPhone Duo) can
+                    // take the trailing edge, and the controls must clear it.
+                    .ignoresSafeArea(edges: .vertical)
                     .transition(.move(edge: .trailing))
                 }
             }
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { totalWidth = $0 }
+            .onGeometryChange(for: CGFloat?.self) { Self.verticalFoldX(in: $0) } action: { foldX = $0 }
             .onChange(of: "\(showsNowPlaying) \(Int(totalWidth)) \(Int(nowPlayingWidth))", initial: true) { _, state in
                 Self.logger.info("Now Playing column shown/total/column: \(state, privacy: .public)")
             }
@@ -95,6 +108,12 @@ struct SplitAppShell: View {
         .onChange(of: storedSelection) { _, newValue in
             Self.logger.info("Sidebar selection: \(newValue, privacy: .public)")
             detailPath = NavigationPath()
+            shellPlace?.destination = selectedDestination
+        }
+        .onAppear {
+            guard let placeOnOpen else { return }
+            self.placeOnOpen = nil
+            storedSelection = placeOnOpen.storageValue
         }
         .onChange(of: detailPath.count) { _, count in
             Self.logger.info("Detail navigation depth: \(count, privacy: .public)")
@@ -102,43 +121,23 @@ struct SplitAppShell: View {
         .modifier(SplitStyle(sidebarOverlaysList: isNarrow))
     }
 
-    @ViewBuilder
     private var detailView: some View {
-        switch selectedDestination {
-        case .dashboard:
-            DashboardView(settings: settings)
-        case let .playlist(playlistID):
-            if let playlist = resolvedActivePlaylist(for: playlistID) {
-                PlaylistManagementView(settings: settings, playlist: playlist)
-                    .task(id: playlist.id) {
-                        guard playlist.id != playlistID else { return }
-                        storedSelection = AppShellDestination.playlist(playlist.id).storageValue
-                    }
-            } else {
-                ContentUnavailableView(
-                    "Playlist Unavailable",
-                    systemImage: "music.note.list",
-                    description: Text("Choose another linked playlist from the sidebar.")
-                )
-            }
-        case .retired:
-            if let bucket = activePlaylists.first(where: \.isTriageBucket) {
-                PlaylistManagementView(settings: settings, playlist: bucket, scope: .retired)
-            } else {
-                ContentUnavailableView("No Retired Tracks", systemImage: "archivebox")
-            }
-        case .search:
-            SearchMusicView(settings: settings)
-        case .history:
-            HistoryView()
-        case .settings:
-            SettingsView(settings: settings)
+        AppShellDestinationView(destination: selectedDestination, settings: settings) { resolvedID in
+            storedSelection = AppShellDestination.playlist(resolvedID).storageValue
         }
     }
 
     private var isNarrow: Bool { SplitLayoutPolicy.isNarrow(totalWidth) }
 
-    private var nowPlayingWidth: CGFloat { SplitLayoutPolicy.playerWidth(for: totalWidth) }
+    private var nowPlayingWidth: CGFloat { SplitLayoutPolicy.playerWidth(for: totalWidth, foldX: foldX) }
+
+    /// The fold of an open folding phone, also while it lies flat, so the
+    /// columns stay put as the hinge moves.
+    nonisolated private static func verticalFoldX(in proxy: GeometryProxy) -> CGFloat? {
+        guard #available(iOS 27.1, *) else { return nil }
+        return proxy.reservedRegions(kind: .division, options: .includeInactive)
+            .first { $0.frame.height > $0.frame.width }?.frame.midX
+    }
 
     /// Narrow: list and player share the width and the sidebar slides in
     /// over the list when asked for. Wide: sidebar, list and player.
@@ -163,20 +162,6 @@ struct SplitAppShell: View {
                 }
                 return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
             }
-    }
-
-    private func resolvedActivePlaylist(for playlistID: UUID) -> PlaylistRecord? {
-        guard let requestedPlaylist = playlists.first(where: { $0.id == playlistID }) else {
-            return nil
-        }
-        let resolvedPlaylist = PlaylistRepository.canonicalPlaylist(
-            for: requestedPlaylist,
-            among: playlists
-        )
-        guard resolvedPlaylist.isActive, resolvedPlaylist.role.isPlaybackContext else {
-            return nil
-        }
-        return resolvedPlaylist
     }
 
     private var retiredIcon: String {
