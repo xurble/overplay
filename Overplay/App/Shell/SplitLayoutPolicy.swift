@@ -18,8 +18,22 @@ enum SplitLayoutPolicy {
     /// player on the other, while each keeps at least 280.
     static func playerWidth(for width: CGFloat, foldX: CGFloat? = nil) -> CGFloat {
         guard isNarrow(width) else { return min(380, max(280, width - 640)) }
-        if let foldX, foldX >= 280, width - foldX >= 280 { return (width - foldX).rounded() }
+        if let foldX, splitsAtFold(width, foldX: foldX) { return (width - foldX).rounded() }
         return (width * 0.4).rounded()
+    }
+
+    /// Whether the list and player sit on either side of a vertical fold
+    /// (iPhone Duo open as a book). The player then always keeps its half.
+    static func splitsAtFold(_ width: CGFloat, foldX: CGFloat?) -> Bool {
+        guard isNarrow(width), let foldX else { return false }
+        return foldX >= 280 && width - foldX >= 280
+    }
+
+    /// Whether the player sits above a horizontal fold and the list below it
+    /// (iPhone Duo open in portrait). The player then always keeps its half.
+    static func stacksAtFold(_ height: CGFloat, foldY: CGFloat?) -> Bool {
+        guard let foldY else { return false }
+        return foldY >= 280 && height - foldY >= 280
     }
 
     /// Narrow: the sidebar shows only while slid over the list. Wide: the

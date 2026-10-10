@@ -11,6 +11,8 @@ struct NowPlayingColumnView: View {
     /// Space between the transport and the volume pill.
     var transportPillGap: CGFloat = 16
     var onArtworkTopChange: ((CGFloat) -> Void)? = nil
+    /// Art and track beside the controls, for a wide, short space.
+    var isSideBySide = false
 
     var body: some View {
         ThemedPlayerHost { artworkTheme, applyRefreshedTheme in
@@ -19,17 +21,20 @@ struct NowPlayingColumnView: View {
                     settings: settings,
                     artworkTheme: artworkTheme,
                     onArtworkThemeUpdated: applyRefreshedTheme,
-                    onArtworkTopChange: onArtworkTopChange
+                    onArtworkTopChange: onArtworkTopChange,
+                    isSideBySide: isSideBySide
                 )
-                PlaybackControlsView(
-                    settings: settings,
-                    controlSize: .regular,
-                    artworkTheme: artworkTheme.isFallback ? nil : artworkTheme
-                )
-                .padding(.bottom, AudioOutputPillView.isAvailable ? transportPillGap : bottomPadding)
-                if AudioOutputPillView.isAvailable {
-                    AudioOutputPillView(artworkTheme: artworkTheme)
-                        .padding(.bottom, bottomPadding)
+                if !isSideBySide {
+                    PlaybackControlsView(
+                        settings: settings,
+                        controlSize: .regular,
+                        artworkTheme: artworkTheme.isFallback ? nil : artworkTheme
+                    )
+                    .padding(.bottom, AudioOutputPillView.isAvailable ? transportPillGap : bottomPadding)
+                    if AudioOutputPillView.isAvailable {
+                        AudioOutputPillView(artworkTheme: artworkTheme)
+                            .padding(.bottom, bottomPadding)
+                    }
                 }
             }
             .background {
