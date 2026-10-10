@@ -198,16 +198,6 @@ final class PlayerGlassMotion {
     }
 }
 
-/// Fades a view holding glass. Always the same modifier, so the view keeps
-/// its identity (a conditional rebuilt the pane near full extension).
-struct PlayerGlassFade: ViewModifier {
-    var opacity: Double
-
-    func body(content: Content) -> some View {
-        content.opacity(opacity)
-    }
-}
-
 /// The full player background: the album art filling the height, heavily
 /// blurred, drifting with the phone's tilt, under a wash of the theme
 /// background colour (as CarPlay darkens its art, but in the theme colour).

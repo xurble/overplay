@@ -1,76 +1,104 @@
+import SwiftData
 import SwiftUI
 
+/// The mini player in compact width: a glass bar over the bottom of the
+/// screen. Tapping it or swiping it up opens the full-screen player.
 struct MiniPlayerLozengeView: View {
+    @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackController.self) private var playbackController
 
     var settings: OverplaySettings
-    var expandedProgress: Double
-    var artworkTheme: AlbumArtworkTheme?
+    var onOpen: () -> Void
+    /// A swipe up, as it moves (upward distance) and on release.
+    var onOpenDragChanged: (CGFloat) -> Void = { _ in }
+    var onOpenDragEnded: (DragGesture.Value) -> Void = { _ in }
 
-    var body: some View {
-        ZStack {
-            compactContent
-                .opacity(1 - expandedProgress)
-                .allowsHitTesting(expandedProgress < 0.5)
+    static let height: CGFloat = 68
+    private static let progressLineHeight: CGFloat = 3
 
-            expandedContent
-                .modifier(PlayerGlassFade(opacity: expandedProgress))
-                .allowsHitTesting(expandedProgress >= 0.5)
-        }
-        .frame(maxHeight: .infinity, alignment: .center)
-        .animation(.smooth(duration: 0.22), value: expandedProgress)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(.white.opacity(0.18))
-                .frame(height: 1)
-                .opacity(1 - expandedProgress)
-        }
+    /// Where the capsule's curve shows half the line's height: progress maps
+    /// from here to the same point on the right, so the first second already
+    /// marks the curve and the end meets the right one.
+    private static var progressLineEndInset: CGFloat {
+        let radius = height / 2
+        let depth = radius - progressLineHeight / 2
+        return radius - (radius * radius - depth * depth).squareRoot()
     }
 
-    private var compactContent: some View {
+    var body: some View {
         HStack(spacing: 12) {
-            NowPlayingArtworkView(
-                urlString: playbackController.nowPlayingDisplayTrack?.artworkURLTemplate,
-                playlistID: playbackController.currentPlaylistContext?.musicPlaylistID,
-                cornerRadius: 10,
-                pixelSize: 128
-            )
-            .frame(width: 50, height: 50)
+            Button(action: onOpen) {
+                HStack(spacing: 12) {
+                    NowPlayingArtworkView(
+                        urlString: playbackController.nowPlayingDisplayTrack?.artworkURLTemplate,
+                        playlistID: playbackController.currentPlaylistContext?.musicPlaylistID,
+                        cornerRadius: 10,
+                        pixelSize: 128
+                    )
+                    .frame(width: 50, height: 50)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(playbackController.nowPlayingDisplayTrack?.title ?? "Nothing playing")
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                Text(playbackController.nowPlayingDisplayTrack?.artistName ?? "Choose a playlist to start playback")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(playbackController.nowPlayingDisplayTrack?.title ?? "Nothing playing")
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                        Text(playbackController.nowPlayingDisplayTrack?.artistName ?? "Choose a playlist to start playback")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(.rect)
             }
-
-            Spacer(minLength: 8)
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens Now Playing")
 
             PlaybackControlsView(settings: settings, controlSize: .compact)
         }
-        .padding(.horizontal, 14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .padding(.leading, 16)
+        .padding(.trailing, 14)
+        .frame(height: Self.height)
+        // Progress along the top edge, coloured as Now Playing's bar.
+        .overlay(alignment: .top) { progressLine }
+        .clipShape(.capsule)
+        .contentShape(.capsule)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 10, coordinateSpace: .global)
+                .onChanged { value in onOpenDragChanged(-value.translation.height) }
+                .onEnded { value in onOpenDragEnded(value) }
+        )
+        // Not interactive: its press bulge would leave the player, which
+        // grows from and shrinks into this frame, a size out of step.
+        .glassEffect(.regular, in: .capsule)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("mini-player")
     }
 
-    private var expandedContent: some View {
-        PlaybackControlsView(
+    private var progressLine: some View {
+        let presentation = NowPlayingPresentationFactory.presentation(
+            playbackController: playbackController,
             settings: settings,
-            controlSize: .regular,
-            artworkTheme: artworkTheme?.isFallback == false ? artworkTheme : nil
+            context: modelContext
         )
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        return NowPlayingProgressBar(
+            progress: presentation.progress,
+            phase: presentation.progressPhase,
+            durationSeconds: presentation.durationSeconds,
+            isPlaying: presentation.isPlaying,
+            trackID: presentation.trackID,
+            lineHeight: Self.progressLineHeight,
+            lineEndInset: Self.progressLineEndInset
+        )
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
     }
 }
 
 #Preview {
     MiniPlayerLozengeView(
         settings: OverplaySettings(selectedPlaylistID: "preview-playlist", selectedPlaylistName: "Overplay"),
-        expandedProgress: 0,
-        artworkTheme: nil
+        onOpen: {}
     )
     .environment(PlaybackController())
-    .frame(height: 96)
+    .padding()
 }

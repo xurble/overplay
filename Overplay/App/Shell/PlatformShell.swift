@@ -3,13 +3,20 @@ import SwiftUI
 struct PlatformShell: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
+    @State private var place = ShellPlace()
+
     var settings: OverplaySettings
 
     var body: some View {
-        if PlayerPlacement(horizontalSizeClass) == .sheet {
-            CompactAppShell(settings: settings)
-        } else {
-            SplitAppShell(settings: settings)
+        Group {
+            // Switching shells rebuilds navigation; the new shell opens the
+            // screen the old one last reported.
+            if PlayerPlacement(horizontalSizeClass) == .sheet {
+                CompactAppShell(settings: settings, place: place.destination)
+            } else {
+                SplitAppShell(settings: settings, place: place.destination)
+            }
         }
+        .environment(\.shellPlace, place)
     }
 }

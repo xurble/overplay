@@ -5,8 +5,8 @@ enum MiniPlayerLayout {
     static let scrollContentBottomPadding: CGFloat = collapsedHeight + 24
 }
 
-/// Room under scrolling content for the mini player, which only exists where
-/// the player is a sheet (compact width).
+/// Room under scrolling content for the mini player, which only exists in
+/// compact width.
 private struct MiniPlayerScrollContentInset: ViewModifier {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 

@@ -41,13 +41,14 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
         musicPlaylistID.map { PlaylistPlaybackContext(musicPlaylistID: $0, scope: playbackScope) }
     }
 
+    /// The tagline above a playlist's title on its screen.
     var roleTitle: String {
-        if playbackScope == .retired { return "Retired" }
+        if playbackScope == .retired { return "Old and busted songs" }
         return switch role {
         case .oneTruePlaylist:
             "One True Playlist"
         case .triageBucket:
-            "Triage"
+            "Find the next big thing"
         case .triageSource:
             "Triage Source"
         }
@@ -121,9 +122,13 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
     }
 
     static func triageDetail(trackCount: Int, sourceCount: Int) -> String {
-        let tracks = trackCount == 1 ? "1 track" : "\(trackCount) tracks"
         let sources = sourceCount == 1 ? "1 playlist" : "\(sourceCount) playlists"
-        return "\(tracks) from \(sources)"
+        return "\(trackCountLabel(trackCount)) from \(sources)"
+    }
+
+    /// "1 track" or "12 tracks".
+    static func trackCountLabel(_ trackCount: Int) -> String {
+        trackCount == 1 ? "1 track" : "\(trackCount) tracks"
     }
 
     var syncStatusLabel: String {

@@ -13,11 +13,11 @@ struct AppRouter: View {
     @Query(sort: \OverplaySettings.createdAt) private var settingsRecords: [OverplaySettings]
     @State private var showingNewLibraryConfirmation = false
     @State private var setupError: String?
-    @State private var playerSheetDetent: PresentationDetent = .height(96)
+    @State private var isPlayerExpanded = false
+    @State private var miniPlayerFrame: CGRect = .zero
+    @State private var openDrag = PlayerOpenDrag()
     @State private var artworkPresentation = PlaylistArtworkPresentation()
     private var startupViewModel: AppStartupViewModel { runtime.startupViewModel }
-
-    private let playerSheetCollapsedHeight = MiniPlayerLayout.collapsedHeight
 
     var body: some View {
         Group {
@@ -49,6 +49,12 @@ struct AppRouter: View {
                 }
             }
         }
+        #if targetEnvironment(simulator)
+        // Screenshots of the full player without a drag.
+        .onAppear {
+            if ProcessInfo.processInfo.arguments.contains("-OverplayExpandedPlayer") { isPlayerExpanded = true }
+        }
+        #endif
         .confirmationDialog("Create a new Overplay library?", isPresented: $showingNewLibraryConfirmation) {
             Button("Create new library") {
                 do {
@@ -63,9 +69,30 @@ struct AppRouter: View {
             Button("OK") { setupError = nil }
         } message: { Text(setupError ?? "") }
         .environment(artworkPresentation)
-        .sheet(isPresented: playerSheetPresentation) {
+        .overlay(alignment: .bottom) {
+            if showsPlayer, let settings {
+                MiniPlayerLozengeView(settings: settings, onOpen: openPlayer) { distance in
+                    guard distance > 0 || openDrag.progress != nil else { return }
+                    openDrag.outcome = nil
+                    openDrag.progress = PlayerOpenDrag.progress(draggedUp: distance, miniPlayerTop: miniPlayerFrame.minY)
+                    if !isPlayerExpanded { openPlayer() }
+                } onOpenDragEnded: { value in
+                    guard openDrag.progress != nil else { return }
+                    let up = CGSize(width: value.translation.width, height: -value.translation.height)
+                    let predictedUp = CGSize(width: value.predictedEndTranslation.width, height: -value.predictedEndTranslation.height)
+                    openDrag.outcome = FullScreenPlayerView.closesPlayer(translation: up, predictedEnd: predictedUp) ? .open : .cancel
+                    openDrag.progress = nil
+                }
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { miniPlayerFrame = $0 }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+                    .modifier(UnderVerticalBar())
+                    .ignoresSafeArea(.keyboard)
+            }
+        }
+        .fullScreenCover(isPresented: playerCoverPresentation) {
             if let settings {
-                PlayerSheetView(settings: settings, collapsedHeight: playerSheetCollapsedHeight)
+                FullScreenPlayerView(settings: settings, miniPlayerFrame: miniPlayerFrame, openDrag: openDrag)
                     // Supply the same shared instances at this hosting boundary.
                     // Relying on inherited values crashed during sheet construction
                     // on My Mac (Designed for iPad).
@@ -74,20 +101,13 @@ struct AppRouter: View {
                     .environment(authorizationService)
                     .environment(artworkPresentation)
                     .modelContext(modelContext)
-                    .presentationDetents([.height(playerSheetCollapsedHeight), .large], selection: $playerSheetDetent)
-                    .presentationDragIndicator(.visible)
+                    // Clear, so the app shows above the player as it is swiped down.
                     .presentationBackground(.clear)
-                    .presentationBackgroundInteraction(.enabled(upThrough: .height(playerSheetCollapsedHeight)))
-                    .presentationContentInteraction(.resizes)
-                    .interactiveDismissDisabled()
-                    // Present above the persistent player, so dismissal reveals it.
-                    .sheet(item: $artworkPresentation.request) { request in
-                        PlaylistCollageSettingsView(layout: request.layout, stroke: request.stroke) { layout, stroke in
-                            artworkPresentation.apply(layout: layout, stroke: stroke)
-                        }
-                    }
-            } else {
-                EmptyView()
+            }
+        }
+        .sheet(item: $artworkPresentation.request) { request in
+            PlaylistCollageSettingsView(layout: request.layout, stroke: request.stroke) { layout, stroke in
+                artworkPresentation.apply(layout: layout, stroke: stroke)
             }
         }
         .task {
@@ -123,15 +143,25 @@ struct AppRouter: View {
         )
     }
 
-    private var playerSheetPresentation: Binding<Bool> {
+    /// The mini player and full-screen player belong to compact width; in
+    /// regular width the player is a column beside the list instead.
+    private var showsPlayer: Bool {
+        PlayerPlacement(horizontalSizeClass) == .sheet
+            && authorizationService.readiness.isReady && runtime.libraryRestoration.isReady && settings != nil
+            && !startupViewModel.isPreparingLibrary && startupViewModel.libraryPreparationError == nil
+    }
+
+    /// The player animates its own opening out of the mini player.
+    private func openPlayer() {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { isPlayerExpanded = true }
+    }
+
+    private var playerCoverPresentation: Binding<Bool> {
         Binding {
-            // In regular width the player is a column beside the list instead.
-            PlayerPlacement(horizontalSizeClass) == .sheet
-                && authorizationService.readiness.isReady && runtime.libraryRestoration.isReady && settings != nil
-                && !startupViewModel.isPreparingLibrary && startupViewModel.libraryPreparationError == nil
-        } set: { _ in
-            playerSheetDetent = .height(playerSheetCollapsedHeight)
-        }
+            showsPlayer && isPlayerExpanded
+        } set: { isPlayerExpanded = $0 }
     }
 
     private var startupDependencies: AppStartupViewModel.Dependencies {
@@ -151,3 +181,5 @@ struct AppRouter: View {
         .environment(PlaybackController())
         .modelContainer(PreviewContainer.make())
 }
+
+

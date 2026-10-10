@@ -1,11 +1,16 @@
 import SwiftData
 import SwiftUI
 
-/// The full player as a column beside the regular-width layout: the same
-/// pane, transport and glass-over-art background as the expanded sheet, but
-/// always beside the list instead of covering it.
+/// The full player: a column beside the regular-width layout, and the
+/// full-screen player in compact width.
 struct NowPlayingColumnView: View {
     var settings: OverplaySettings
+    /// Space under the last control. Full screen sits it just above the
+    /// home indicator, leaving more room for the art.
+    var bottomPadding: CGFloat = 28
+    /// Space between the transport and the volume pill.
+    var transportPillGap: CGFloat = 16
+    var onArtworkTopChange: ((CGFloat) -> Void)? = nil
 
     var body: some View {
         ThemedPlayerHost { artworkTheme, applyRefreshedTheme in
@@ -13,17 +18,18 @@ struct NowPlayingColumnView: View {
                 NowPlayingPaneView(
                     settings: settings,
                     artworkTheme: artworkTheme,
-                    onArtworkThemeUpdated: applyRefreshedTheme
+                    onArtworkThemeUpdated: applyRefreshedTheme,
+                    onArtworkTopChange: onArtworkTopChange
                 )
                 PlaybackControlsView(
                     settings: settings,
                     controlSize: .regular,
                     artworkTheme: artworkTheme.isFallback ? nil : artworkTheme
                 )
-                .padding(.bottom, AudioOutputPillView.isAvailable ? 16 : 28)
+                .padding(.bottom, AudioOutputPillView.isAvailable ? transportPillGap : bottomPadding)
                 if AudioOutputPillView.isAvailable {
                     AudioOutputPillView(artworkTheme: artworkTheme)
-                        .padding(.bottom, 28)
+                        .padding(.bottom, bottomPadding)
                 }
             }
             .background {

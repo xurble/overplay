@@ -1433,6 +1433,9 @@ final class PlaybackController {
             startingLocalTrackID: shuffle ? nil : playable[startIndex].0.localTrackID,
             collection: collection
         )
+        // An album or artist plays in order, even after a shuffled playlist;
+        // only Shuffle and Play shuffles it.
+        if !shuffle { player.setShuffleMode(.off) }
         await submit(intent, tracks: playable.map(\.1), startIndex: startIndex, position: 0, shuffle: shuffle,
                      generation: generation)
         await observePlayer()
@@ -1545,16 +1548,61 @@ final class PlaybackController {
         await addCurrent(toOneTruePlaylist: true, context: context)
     }
 
-    /// The shared manual-add boundary: Triage is local with explicit keep;
-    /// the One True Playlist is added in Apple Music first. Playback goes on,
-    /// and counting starts with the song's next listening session.
     private func addCurrent(toOneTruePlaylist: Bool, context: ModelContext) async {
         adopt(context)
-        guard canAddCurrentToOverplay, let member = currentMember, let catalogID = member.catalogSongID,
-              let context = countingContext() else {
+        guard canAddCurrentToOverplay, let member = currentMember, let catalogID = member.catalogSongID else {
             statusMessage = "Only a song Overplay doesn't track yet can be added."
             return
         }
+        let song = SearchSongResult(id: catalogID, title: member.title, artistName: member.artistName,
+                                    albumTitle: member.albumTitle, artworkURL: member.artworkURLTemplate)
+        await addUntracked(song, toOneTruePlaylist: toOneTruePlaylist)
+    }
+
+    /// Swiping a Recents song (`PLAY-019`): right sends it to the One True
+    /// Playlist, left to Triage. An untracked song is added as Now Playing's
+    /// Add does; a Triage or retired song is promoted; a retired song moves
+    /// to Triage. Playback goes on.
+    func moveRecentSong(catalogID: String, in recent: RecentCollectionRecord, toOneTruePlaylist: Bool,
+                        context: ModelContext) async {
+        adopt(context)
+        guard let song = recent.songs.first(where: { $0.catalogID == catalogID }),
+              let context = countingContext() else { return }
+        guard let track = (try? TrackRecordRepository.tracksByCatalogID(in: context))?[catalogID],
+              let item = try? PlaylistItemRepository.item(trackID: track.id, in: context) else {
+            let result = SearchSongResult(id: catalogID, title: song.title, artistName: song.artistName,
+                                          albumTitle: song.albumTitle, artworkURL: song.artworkURLTemplate)
+            await addUntracked(result, toOneTruePlaylist: toOneTruePlaylist)
+            return
+        }
+        let playlist = try? PlaylistRepository.playlist(id: item.playlistID, in: context)
+        do {
+            if toOneTruePlaylist {
+                guard let playlist, playlist.role == .triageBucket else {
+                    statusMessage = "\(song.title) is already in the One True Playlist."
+                    return
+                }
+                try await promoteTrack(item, playlist: playlist, context: context)
+                statusMessage = "Moved \(song.title) to the One True Playlist."
+            } else {
+                guard item.evictedAt != nil else {
+                    statusMessage = "Only a retired or untracked song can go to Triage."
+                    return
+                }
+                try restoreTrack(item, playlist: playlist, context: context)
+                statusMessage = "Moved \(song.title) to Triage."
+            }
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    /// The shared manual-add boundary: Triage is local with explicit keep;
+    /// the One True Playlist is added in Apple Music first. Playback goes on,
+    /// and counting starts with the song's next listening session; a live
+    /// intent member for the song takes the new track.
+    private func addUntracked(_ song: SearchSongResult, toOneTruePlaylist: Bool) async {
+        guard let context = countingContext() else { return }
         let destination: PlaylistRecord
         do {
             if toOneTruePlaylist {
@@ -1570,21 +1618,20 @@ final class PlaybackController {
             statusMessage = error.localizedDescription
             return
         }
-        let song = SearchSongResult(id: catalogID, title: member.title, artistName: member.artistName,
-                                    albumTitle: member.albumTitle, artworkURL: member.artworkURLTemplate)
+        let memberID = PlaybackIntent.Member.untrackedID(catalogID: song.id)
         let mutations = PlaylistMutationService()
         do {
-            if toOneTruePlaylist { try await addCatalogSongToPlaylist(catalogID, destination, context) }
+            if toOneTruePlaylist { try await addCatalogSongToPlaylist(song.id, destination, context) }
             let item = try mutations.recordSuccessfulManualAdd(song, to: destination, in: context)
-            if session?.play.localTrackID == member.localTrackID { markSessionEvaluatedWithoutSkip() }
-            rekeyIntent([member.localTrackID: item.trackID.uuidString])
+            if session?.play.localTrackID == memberID { markSessionEvaluatedWithoutSkip() }
+            if intent?.member(localTrackID: memberID) != nil { rekeyIntent([memberID: item.trackID.uuidString]) }
             reconcileTrackMembership(context: context)
             statusMessage = toOneTruePlaylist ? "Added to the One True Playlist." : "Added to Triage."
         } catch {
             if toOneTruePlaylist {
                 mutations.recordFailedManualAdd(song, to: destination, message: error.localizedDescription, in: context)
             }
-            statusMessage = "Couldn't add \(member.title): \(error.localizedDescription)"
+            statusMessage = "Couldn't add \(song.title): \(error.localizedDescription)"
         }
     }
 

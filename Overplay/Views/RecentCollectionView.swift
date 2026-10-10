@@ -5,6 +5,7 @@ import SwiftUI
 struct RecentCollectionView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackController.self) private var playbackController
+    @Environment(\.shellPlace) private var shellPlace
 
     var recent: RecentCollectionRecord
 
@@ -64,6 +65,27 @@ struct RecentCollectionView: View {
                     }
                     .buttonStyle(.plain)
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
+                    // Right sends the song to the One True Playlist, left to Triage.
+                    .swipeActions(edge: .leading) {
+                        if song.canMoveToOneTruePlaylist {
+                            Button {
+                                Task { await move(song, toOneTruePlaylist: true) }
+                            } label: {
+                                Label("Overplay", systemImage: "arrow.up.circle")
+                            }
+                            .tint(.pink)
+                        }
+                    }
+                    .swipeActions(edge: .trailing) {
+                        if song.canMoveToTriage {
+                            Button {
+                                Task { await move(song, toOneTruePlaylist: false) }
+                            } label: {
+                                Label("Triage", systemImage: "tray.fill")
+                            }
+                            .tint(.green)
+                        }
+                    }
                 }
             }
         }
@@ -71,9 +93,15 @@ struct RecentCollectionView: View {
         .miniPlayerScrollContentInset()
         .navigationTitle(recent.title)
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { shellPlace?.destination = .recent(recent.id) }
         .task(id: reloadKey) {
             songs = RecentCollectionPresentation.songs(for: recent, in: modelContext)
         }
+    }
+
+    private func move(_ song: RecentCollectionPresentation.Song, toOneTruePlaylist: Bool) async {
+        await playbackController.moveRecentSong(catalogID: song.catalogID, in: recent,
+                                                toOneTruePlaylist: toOneTruePlaylist, context: modelContext)
     }
 
     /// Reloads when the saved songs or anyone's counts change.

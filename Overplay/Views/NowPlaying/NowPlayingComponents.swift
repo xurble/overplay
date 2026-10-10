@@ -147,12 +147,18 @@ struct NowPlayingProgressView: View {
     }
 }
 
-private struct NowPlayingProgressBar: View {
+struct NowPlayingProgressBar: View {
     var progress: Double
     var phase: NowPlayingProgressPhase
     var durationSeconds: Double?
     var isPlaying: Bool
     var trackID: String?
+    /// A bare line of this height (the mini player's top edge) instead of
+    /// the glass bar.
+    var lineHeight: CGFloat? = nil
+    /// Where the line's progress starts and ends, in from each side, so a
+    /// rounded container's curve neither hides the start nor the end.
+    var lineEndInset: CGFloat = 0
 
     @State private var sampledProgress = 0.0
     @State private var sampleDate = Date()
@@ -165,6 +171,13 @@ private struct NowPlayingProgressBar: View {
                 let innerWidth = max(proxy.size.width - 4, 0)
                 let fillWidth = max(innerWidth * clampedProgress, clampedProgress > 0 ? 6 : 0)
 
+                if lineHeight != nil {
+                    let span = max(proxy.size.width - 2 * lineEndInset, 0)
+                    Rectangle()
+                        .fill(fillColor)
+                        .frame(width: clampedProgress > 0 ? lineEndInset + span * clampedProgress : 0)
+                        .animation(.smooth(duration: 0.45), value: phase)
+                } else {
                 ZStack(alignment: .leading) {
                     // The same clear glass as an unpushed button, no outline.
                     Capsule()
@@ -190,9 +203,10 @@ private struct NowPlayingProgressBar: View {
                         .padding(2)
                         .animation(.smooth(duration: 0.45), value: phase)
                 }
+                }
             }
         }
-        .frame(height: 12)
+        .frame(height: lineHeight ?? 12)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Playback progress")
         .accessibilityValue("\(Int(displayedProgress(at: Date()) * 100)) percent")
