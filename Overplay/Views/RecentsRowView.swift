@@ -32,7 +32,7 @@ struct RecentTileView: View {
 
     var recent: RecentCollectionRecord
 
-    private static let side: CGFloat = 120
+    static let side: CGFloat = 120
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -60,6 +60,19 @@ struct RecentTileView: View {
         }
         .frame(width: Self.side)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// A tile's exact footprint without a recent, for layouts that reserve room
+/// for the Recent Deep Dives row before it exists.
+struct RecentTilePlaceholderView: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Color.clear.frame(width: RecentTileView.side, height: RecentTileView.side)
+            Text(verbatim: " ").font(.subheadline.weight(.semibold)).lineLimit(1)
+            Text(verbatim: " ").font(.caption)
+        }
+        .frame(width: RecentTileView.side)
     }
 }
 

@@ -11,6 +11,9 @@ struct DashboardView: View {
     @State private var tracks: [TrackRecord] = []
     @State private var leadArtworkSide = DashboardLayout.defaultLeadArtworkSide
     @State private var restingTopInset: CGFloat = 0
+    @State private var deepDivesHeight: CGFloat = 0
+    @State private var isLeadArtworkSized = false
+    @State private var isLeadArtworkLocked = false
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var settings: OverplaySettings
@@ -26,7 +29,8 @@ struct DashboardView: View {
                     }
                     .navigationLinkIndicatorVisibility(.hidden)
                     .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: DashboardLayout.blockSpacing, trailing: 16))
+                    .listRowInsets(EdgeInsets(top: DashboardLayout.leadArtworkTopInset, leading: 16,
+                                              bottom: DashboardLayout.blockSpacing, trailing: 16))
                 } else {
                     NavigationLink {
                         PlaylistSelectionView()
@@ -79,6 +83,12 @@ struct DashboardView: View {
             }
         }
         .listStyle(.plain)
+        .background(alignment: .top) {
+            DeepDivesPlaceholderView()
+                .fixedSize(horizontal: false, vertical: true)
+                .hidden()
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { deepDivesHeight = $0 }
+        }
         .onScrollGeometryChange(for: DashboardFit.self) { geometry in
             DashboardFit(
                 containerHeight: geometry.containerSize.height,
@@ -107,21 +117,31 @@ struct DashboardView: View {
         }
     }
 
-    /// Sizes the lead artwork so that, at rest with the large title showing,
-    /// the last row ends one block spacing above the mini player. Scrolling
-    /// never resizes it: the fit uses the large-title inset and runs only
-    /// while the list is unscrolled, so a scroll just moves the page.
+    /// Sizes the lead artwork once, as if every element is present: the large
+    /// title, Triage, Retired and a full Recent Deep Dives section (measured
+    /// from a stand-in when there are none). With all of them, the last row
+    /// ends one block spacing above the mini player. The size locks at the
+    /// first scroll and never changes; scrolling only moves the page.
     private func fitLeadArtwork(_ fit: DashboardFit) {
+        guard !isLeadArtworkLocked, oneTruePlaylist != nil else { return }
         guard PlayerPlacement(horizontalSizeClass) == .sheet else {
             leadArtworkSide = DashboardLayout.defaultLeadArtworkSide
             return
         }
         restingTopInset = max(restingTopInset, fit.topInset)
-        guard fit.scrolledDistance <= 1 else { return }
-        let spareHeight = fit.containerHeight - restingTopInset - fit.contentHeight
-        let excess = spareHeight - MiniPlayerLayout.collapsedHeight - DashboardLayout.blockSpacing
-        let side = min(max(leadArtworkSide + excess, DashboardLayout.minimumLeadArtworkSide), fit.width - 32)
+        guard fit.scrolledDistance <= 1 else {
+            if isLeadArtworkSized { isLeadArtworkLocked = true }
+            return
+        }
+        guard fit.contentHeight > 0, deepDivesHeight > 0 else { return }
+        let artworkRowInsets = DashboardLayout.leadArtworkTopInset + DashboardLayout.blockSpacing
+        var otherRowsHeight = fit.contentHeight - leadArtworkSide - artworkRowInsets
+        if recentRecords.isEmpty { otherRowsHeight += deepDivesHeight }
+        let available = fit.containerHeight - restingTopInset - MiniPlayerLayout.collapsedHeight
+            - DashboardLayout.blockSpacing - otherRowsHeight - artworkRowInsets
+        let side = min(max(available, DashboardLayout.minimumLeadArtworkSide), fit.width - 32)
         if abs(side - leadArtworkSide) >= 1 { leadArtworkSide = side }
+        isLeadArtworkSized = true
     }
 
     /// The One True Playlist leads the screen as artwork alone, sized to fill
@@ -221,6 +241,7 @@ private enum DashboardLayout {
     /// The gap under the lead artwork, above Recent Deep Dives, and between
     /// the last row and the mini player.
     static let blockSpacing: CGFloat = 14
+    static let leadArtworkTopInset: CGFloat = 8
     static let defaultLeadArtworkSide: CGFloat = 192
     static let minimumLeadArtworkSide: CGFloat = 120
 }
@@ -231,4 +252,26 @@ private struct DashboardFit: Equatable {
     var topInset: CGFloat
     var scrolledDistance: CGFloat
     var width: CGFloat
+}
+
+/// Invisible copy of the Recent Deep Dives rows (heading, then a tile row)
+/// with the same fonts and insets, so the lead artwork reserves their height.
+private struct DeepDivesPlaceholderView: View {
+    @Environment(\.defaultMinListRowHeight) private var minimumRowHeight
+
+    var body: some View {
+        // Each list row is its content plus insets, but never under the
+        // list's minimum row height.
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Recent Deep Dives")
+                .font(.headline)
+                .padding(.top, DashboardLayout.blockSpacing)
+                .padding(.bottom, 6)
+                .frame(minHeight: minimumRowHeight)
+            RecentTilePlaceholderView()
+                .padding(.top, 4)
+                .frame(minHeight: minimumRowHeight)
+        }
+        .accessibilityHidden(true)
+    }
 }
