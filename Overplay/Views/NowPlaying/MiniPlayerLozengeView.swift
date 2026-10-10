@@ -1,76 +1,65 @@
 import SwiftUI
 
+/// The mini player in compact width: a glass bar over the bottom of the
+/// screen. Tapping it or swiping it up opens the full-screen player.
 struct MiniPlayerLozengeView: View {
     @Environment(PlaybackController.self) private var playbackController
 
     var settings: OverplaySettings
-    var expandedProgress: Double
-    var artworkTheme: AlbumArtworkTheme?
+    var onOpen: () -> Void
+
+    static let height: CGFloat = 68
 
     var body: some View {
-        ZStack {
-            compactContent
-                .opacity(1 - expandedProgress)
-                .allowsHitTesting(expandedProgress < 0.5)
-
-            expandedContent
-                .modifier(PlayerGlassFade(opacity: expandedProgress))
-                .allowsHitTesting(expandedProgress >= 0.5)
-        }
-        .frame(maxHeight: .infinity, alignment: .center)
-        .animation(.smooth(duration: 0.22), value: expandedProgress)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(.white.opacity(0.18))
-                .frame(height: 1)
-                .opacity(1 - expandedProgress)
-        }
-    }
-
-    private var compactContent: some View {
         HStack(spacing: 12) {
-            NowPlayingArtworkView(
-                urlString: playbackController.nowPlayingDisplayTrack?.artworkURLTemplate,
-                playlistID: playbackController.currentPlaylistContext?.musicPlaylistID,
-                cornerRadius: 10,
-                pixelSize: 128
-            )
-            .frame(width: 50, height: 50)
+            Button(action: onOpen) {
+                HStack(spacing: 12) {
+                    NowPlayingArtworkView(
+                        urlString: playbackController.nowPlayingDisplayTrack?.artworkURLTemplate,
+                        playlistID: playbackController.currentPlaylistContext?.musicPlaylistID,
+                        cornerRadius: 10,
+                        pixelSize: 128
+                    )
+                    .frame(width: 50, height: 50)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(playbackController.nowPlayingDisplayTrack?.title ?? "Nothing playing")
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                Text(playbackController.nowPlayingDisplayTrack?.artistName ?? "Choose a playlist to start playback")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(playbackController.nowPlayingDisplayTrack?.title ?? "Nothing playing")
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                        Text(playbackController.nowPlayingDisplayTrack?.artistName ?? "Choose a playlist to start playback")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(.rect)
             }
-
-            Spacer(minLength: 8)
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens Now Playing")
 
             PlaybackControlsView(settings: settings, controlSize: .compact)
         }
-        .padding(.horizontal, 14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-    }
-
-    private var expandedContent: some View {
-        PlaybackControlsView(
-            settings: settings,
-            controlSize: .regular,
-            artworkTheme: artworkTheme?.isFallback == false ? artworkTheme : nil
+        .padding(.leading, 9)
+        .padding(.trailing, 14)
+        .frame(height: Self.height)
+        .contentShape(.capsule)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 16).onEnded { value in
+                if value.translation.height < -30 { onOpen() }
+            }
         )
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("mini-player")
     }
 }
 
 #Preview {
     MiniPlayerLozengeView(
         settings: OverplaySettings(selectedPlaylistID: "preview-playlist", selectedPlaylistName: "Overplay"),
-        expandedProgress: 0,
-        artworkTheme: nil
+        onOpen: {}
     )
     .environment(PlaybackController())
-    .frame(height: 96)
+    .padding()
 }

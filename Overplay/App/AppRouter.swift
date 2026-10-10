@@ -13,11 +13,12 @@ struct AppRouter: View {
     @Query(sort: \OverplaySettings.createdAt) private var settingsRecords: [OverplaySettings]
     @State private var showingNewLibraryConfirmation = false
     @State private var setupError: String?
-    @State private var playerSheetDetent: PresentationDetent = .height(96)
+    @State private var isPlayerExpanded = false
+    @Namespace private var playerTransition
     @State private var artworkPresentation = PlaylistArtworkPresentation()
     private var startupViewModel: AppStartupViewModel { runtime.startupViewModel }
 
-    private let playerSheetCollapsedHeight = MiniPlayerLayout.collapsedHeight
+    private static let playerTransitionID = "now-playing"
 
     var body: some View {
         Group {
@@ -52,7 +53,7 @@ struct AppRouter: View {
         #if targetEnvironment(simulator)
         // Screenshots of the full player without a drag.
         .onAppear {
-            if ProcessInfo.processInfo.arguments.contains("-OverplayExpandedPlayer") { playerSheetDetent = .large }
+            if ProcessInfo.processInfo.arguments.contains("-OverplayExpandedPlayer") { isPlayerExpanded = true }
         }
         #endif
         .confirmationDialog("Create a new Overplay library?", isPresented: $showingNewLibraryConfirmation) {
@@ -69,9 +70,18 @@ struct AppRouter: View {
             Button("OK") { setupError = nil }
         } message: { Text(setupError ?? "") }
         .environment(artworkPresentation)
-        .sheet(isPresented: playerSheetPresentation) {
+        .overlay(alignment: .bottom) {
+            if showsPlayer, let settings {
+                MiniPlayerLozengeView(settings: settings) { isPlayerExpanded = true }
+                    .matchedTransitionSource(id: Self.playerTransitionID, in: playerTransition)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+                    .ignoresSafeArea(.keyboard)
+            }
+        }
+        .fullScreenCover(isPresented: playerCoverPresentation) {
             if let settings {
-                PlayerSheetView(settings: settings, collapsedHeight: playerSheetCollapsedHeight)
+                FullScreenPlayerView(settings: settings)
                     .modifier(HorizontalBarsOnly())
                     // Supply the same shared instances at this hosting boundary.
                     // Relying on inherited values crashed during sheet construction
@@ -81,20 +91,12 @@ struct AppRouter: View {
                     .environment(authorizationService)
                     .environment(artworkPresentation)
                     .modelContext(modelContext)
-                    .presentationDetents([.height(playerSheetCollapsedHeight), .large], selection: $playerSheetDetent)
-                    .presentationDragIndicator(.visible)
-                    .presentationBackground(.clear)
-                    .presentationBackgroundInteraction(.enabled(upThrough: .height(playerSheetCollapsedHeight)))
-                    .presentationContentInteraction(.resizes)
-                    .interactiveDismissDisabled()
-                    // Present above the persistent player, so dismissal reveals it.
-                    .sheet(item: $artworkPresentation.request) { request in
-                        PlaylistCollageSettingsView(layout: request.layout, stroke: request.stroke) { layout, stroke in
-                            artworkPresentation.apply(layout: layout, stroke: stroke)
-                        }
-                    }
-            } else {
-                EmptyView()
+                    .navigationTransition(.zoom(sourceID: Self.playerTransitionID, in: playerTransition))
+            }
+        }
+        .sheet(item: $artworkPresentation.request) { request in
+            PlaylistCollageSettingsView(layout: request.layout, stroke: request.stroke) { layout, stroke in
+                artworkPresentation.apply(layout: layout, stroke: stroke)
             }
         }
         .task {
@@ -130,15 +132,18 @@ struct AppRouter: View {
         )
     }
 
-    private var playerSheetPresentation: Binding<Bool> {
+    /// The mini player and full-screen player belong to compact width; in
+    /// regular width the player is a column beside the list instead.
+    private var showsPlayer: Bool {
+        PlayerPlacement(horizontalSizeClass) == .sheet
+            && authorizationService.readiness.isReady && runtime.libraryRestoration.isReady && settings != nil
+            && !startupViewModel.isPreparingLibrary && startupViewModel.libraryPreparationError == nil
+    }
+
+    private var playerCoverPresentation: Binding<Bool> {
         Binding {
-            // In regular width the player is a column beside the list instead.
-            PlayerPlacement(horizontalSizeClass) == .sheet
-                && authorizationService.readiness.isReady && runtime.libraryRestoration.isReady && settings != nil
-                && !startupViewModel.isPreparingLibrary && startupViewModel.libraryPreparationError == nil
-        } set: { _ in
-            playerSheetDetent = .height(playerSheetCollapsedHeight)
-        }
+            showsPlayer && isPlayerExpanded
+        } set: { isPlayerExpanded = $0 }
     }
 
     private var startupDependencies: AppStartupViewModel.Dependencies {
@@ -160,8 +165,8 @@ struct AppRouter: View {
 }
 
 /// The player is a full-screen media view: it keeps horizontal bars, so on a
-/// closed iPhone Duo its art wash reaches both edges instead of stopping at a
-/// vertical status bar.
+/// closed iPhone Duo it fills the screen instead of making room for a
+/// vertical bar.
 private struct HorizontalBarsOnly: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 27.1, *) {

@@ -165,8 +165,8 @@ iPad is the review and management experience as well as a playback device.
   stacked dashboard flow.
 - The sidebar provides Dashboard, One True Playlist, Triage, Retired,
   Search, History, and Settings.
-- Sidebar selection is scene-local and the persistent mini-player remains
-  available over detail content.
+- Sidebar selection is scene-local. In regular width Now Playing is a column
+  beside the list; compact width has the mini player.
 
 **Planned iPad refinements:** improve wide-screen playlist detail and Now
 Playing coexistence; verify Stage Manager, Split View, and multiwindow state;
@@ -1899,8 +1899,8 @@ affected. On an open iPhone Duo held as a book, the Now Playing column starts
 at the fold, so the list and the player each take one half. The player column
 stays clear of the vertical bar, and toolbar items carry a title as well as a
 symbol for the vertical bar's overflow menu.
-The expanded player keeps horizontal bars (a full-screen media view), so on a
-closed iPhone Duo it has the iPhone layout with its art wash edge to edge.
+Full-screen Now Playing keeps horizontal bars (a full-screen media view), so
+on a closed iPhone Duo it has the iPhone layout and fills the screen.
 
 ### Permission screen
 
@@ -2027,8 +2027,11 @@ phone.
 Platform notes:
 
 - iPhone should keep Now Playing immersive and touch-first.
-- iPad uses the same persistent mini-player sheet and expandable Now Playing
-  surface as iPhone.
+- Compact width (iPhone, a closed iPhone Duo, a narrow iPad window) shows a
+  mini player: a glass bar over the bottom of the screen. Tapping it or
+  swiping it up opens Now Playing full screen with the system zoom
+  transition; swiping down or the close button returns to the bar. Regular
+  width shows Now Playing as a column beside the list.
 - On Mac (Designed for iPad) the audio output pill is hidden: the Mac has its
   own output menu, and the system volume cannot be set from the app there.
 - **Planned Mac:** support a compact mini-player style window in addition to the
@@ -2637,7 +2640,7 @@ Generation 2 replaces the old record types and does not migrate historical track
 
 ## Generated playlist artwork
 
-Artwork settings are presented above the persistent player sheet. Saving,
+Artwork settings are presented as a sheet over the mini player. Saving,
 cancelling, or dismissing settings reveals the mini player without interrupting
 playback.
 
