@@ -2,6 +2,7 @@ import SwiftData
 import SwiftUI
 
 struct DashboardView: View {
+    @Environment(\.openWindow) private var openWindow
     @Environment(PlaybackController.self) private var playbackController
 
     @Query(filter: #Predicate<PlaylistRecord> { $0.isActive }, sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
@@ -85,6 +86,30 @@ struct DashboardView: View {
                         .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 0, trailing: 0))
                 }
             }
+
+            // The library by category, as the Music app shows it: played like
+            // a deep dive, never added to Recent Deep Dives.
+            Section {
+                Text("Library")
+                    .font(.headline)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: DashboardLayout.blockSpacing, leading: 16, bottom: 6, trailing: 16))
+                ForEach(LibraryBrowser.Category.allCases) { category in
+                    NavigationLink {
+                        Group {
+                            if category == .songs {
+                                LibrarySongsView()
+                            } else {
+                                LibraryCategoryView(category: category)
+                            }
+                        }
+                        .nowPlayingColumnToggle()
+                    } label: {
+                        Label(category.rawValue, systemImage: category.systemImage)
+                    }
+                    .accessibilityIdentifier("library-\(category.rawValue)")
+                }
+            }
         }
         .listStyle(.plain)
         .background(alignment: .top) {
@@ -109,13 +134,21 @@ struct DashboardView: View {
         .navigationTitle("Overplay")
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                NavigationLink {
-                    SettingsView(settings: settings)
-                        .nowPlayingColumnToggle()
-                } label: {
-                    // A title as well as a symbol: a vertical bar's overflow
-                    // menu (iPhone Duo) lists items by title.
-                    Label("Settings", systemImage: "gearshape")
+                // A title as well as a symbol: a vertical bar's overflow menu
+                // (iPhone Duo) lists items by title. A Mac opens its own window.
+                if ProcessInfo.processInfo.isMacCatalystApp {
+                    Button {
+                        SettingsWindowView.open(with: openWindow)
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                } else {
+                    NavigationLink {
+                        SettingsView(settings: settings)
+                            .nowPlayingColumnToggle()
+                    } label: {
+                        Label("Settings", systemImage: "gearshape")
+                    }
                 }
             }
         }

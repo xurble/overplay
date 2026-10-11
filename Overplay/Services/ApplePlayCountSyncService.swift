@@ -460,6 +460,7 @@ final class ApplePlayCountSyncService {
         let observationsByAlias = prepared.byAlias
         let observationsByTrack = prepared.byTrack
         var changed = 0
+        var raisedTrackIDs: Set<UUID> = []
         for item in items {
             guard let track = tracks[item.trackID], !track.isDeleted else { continue }
             let previous = item.applePlayCountState
@@ -485,6 +486,14 @@ final class ApplePlayCountSyncService {
                 item.updatedAt = .now
                 changed += 1
             }
+            // Overplay's plays never show fewer than Apple's calculated count.
+            if let displayedCount, displayedCount > item.playthroughCount,
+               try ListenLedger.recordAppleFloor(trackID: item.trackID, count: displayedCount, in: context) {
+                raisedTrackIDs.insert(item.trackID)
+            }
+        }
+        if !raisedTrackIDs.isEmpty {
+            changed += try ListenLedger.refreshCounts(forTrackIDs: raisedTrackIDs, in: context)
         }
         return changed
     }

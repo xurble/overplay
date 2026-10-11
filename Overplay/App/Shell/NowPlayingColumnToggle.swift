@@ -33,7 +33,8 @@ private struct NowPlayingColumnToggleToolbar: ViewModifier {
                 // Its own glass, taller than the bar's.
                 .sharedBackgroundVisibility(.hidden)
             }
-            if let columnToggle {
+            // While hidden, the toggle sits inside the mini player.
+            if let columnToggle, columnToggle.isShown {
                 ToolbarItem(placement: .primaryAction) {
                     let title = columnToggle.isShown ? "Hide Now Playing" : "Show Now Playing"
                     Button(action: columnToggle.toggle) {

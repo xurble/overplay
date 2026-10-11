@@ -65,6 +65,16 @@ enum ListenLedger {
                           playthroughDelta: playthroughDelta, skipDelta: skipDelta, at: date, in: context)
     }
 
+    /// Raises the track's plays to Apple's calculated count when it is ahead,
+    /// as an immutable floor event. Idempotent per count; callers save and
+    /// refresh the cache.
+    @discardableResult
+    static func recordAppleFloor(trackID: UUID, count: Int, at date: Date = .now, in context: ModelContext) throws -> Bool {
+        guard count > 0 else { return false }
+        return try record(.appleFloor, trackID: trackID, sessionID: "apple-floor:\(count)", source: .reconciled,
+                          playthroughDelta: count, at: date, in: context)
+    }
+
     /// Records that `keeper` absorbed `donor` (and, transitively, everything
     /// the donor had absorbed). Idempotent; callers save.
     static func recordLineage(keeper: UUID, donor: UUID, in context: ModelContext) throws {
@@ -294,6 +304,10 @@ enum ListenLedger {
             if after(globalResetAt, chosen) { result.playthroughs += max(chosen.playthroughDelta, 0) }
             if after(skipFloor, chosen) { result.skips += max(chosen.skipDelta, 0) }
         }
+
+        // Apple's count is a floor under plays, never an addition.
+        let appleFloor = own.filter { $0.kind == .appleFloor && after(globalResetAt, $0) }.map(\.playthroughDelta).max() ?? 0
+        result.playthroughs = max(result.playthroughs, appleFloor)
         return result
     }
 

@@ -14,6 +14,11 @@ enum ListenEventKind: String, Codable, CaseIterable, Sendable {
     /// is carried in the session ID (`lineage:<donor>`). Immutable, so two
     /// devices merging into the same keeper cannot lose each other's lineage.
     case lineage
+    /// Apple's calculated play count for the track, carried in
+    /// `playthroughDelta`: plays never show fewer than it. A floor, not an
+    /// addition, so devices recording the same or older readings cannot
+    /// inflate the count.
+    case appleFloor
 }
 
 enum ListenEventSource: String, Codable, Sendable {

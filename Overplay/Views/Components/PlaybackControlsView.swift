@@ -141,7 +141,9 @@ enum PlaybackControlSize {
     }
 }
 
-private struct PlaybackControlButtonStyle: ButtonStyle {
+/// A transport button's look, also used for buttons that sit with the
+/// transport (the Mac mini player's Now Playing toggle).
+struct PlaybackControlButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
 
     enum Prominence {
@@ -245,7 +247,16 @@ private struct SystemGlassOrBackdrop: ViewModifier {
 
     func body(content: Content) -> some View {
         if usesSystemGlass {
-            content.glassEffect(.regular.tint(tint).interactive(), in: .circle)
+            if let tint {
+                content.glassEffect(.regular.tint(tint).interactive(), in: .circle)
+            } else {
+                // Glass on the surface's own glass draws white, so a clear
+                // glass button is drawn: a faint fill and a bright rim.
+                content
+                    .background(Circle().fill(.white.opacity(isPressed ? 0.32 : 0.12)))
+                    .overlay(Circle().strokeBorder(.white.opacity(0.6), lineWidth: 0.75))
+                    .shadow(color: .black.opacity(0.08), radius: 2, y: 1)
+            }
         } else {
             content.playbackControlBackdrop(
                 palette,

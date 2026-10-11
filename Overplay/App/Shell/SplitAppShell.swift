@@ -5,6 +5,7 @@ import SwiftUI
 struct SplitAppShell: View {
     private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Overplay", category: "Layout")
     @Environment(PlaybackController.self) private var playbackController
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.shellPlace) private var shellPlace
     @Query(sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
 
@@ -101,15 +102,18 @@ struct SplitAppShell: View {
                     Label("Dashboard", systemImage: "rectangle.grid.2x2")
                         .tag(AppShellDestination.dashboard)
                         .accessibilityIdentifier("sidebar-dashboard")
-                    Label("Search", systemImage: "magnifyingglass")
-                        .tag(AppShellDestination.search)
-                        .accessibilityIdentifier("sidebar-search")
-                    Label("History", systemImage: "clock.arrow.circlepath")
-                        .tag(AppShellDestination.history)
-                        .accessibilityIdentifier("sidebar-history")
-                    Label("Settings", systemImage: "gearshape")
-                        .tag(AppShellDestination.settings)
-                        .accessibilityIdentifier("sidebar-settings")
+                    // A Mac reaches these from its menus (`OverplayCommands`).
+                    if !SplitLayoutPolicy.keepsColumns {
+                        Label("Search", systemImage: "magnifyingglass")
+                            .tag(AppShellDestination.search)
+                            .accessibilityIdentifier("sidebar-search")
+                        Label("History", systemImage: "clock.arrow.circlepath")
+                            .tag(AppShellDestination.history)
+                            .accessibilityIdentifier("sidebar-history")
+                        Label("Settings", systemImage: "gearshape")
+                            .tag(AppShellDestination.settings)
+                            .accessibilityIdentifier("sidebar-settings")
+                    }
                 }
 
                 Section("Playlists") {
@@ -126,6 +130,7 @@ struct SplitAppShell: View {
             }
             .miniPlayerScrollContentInset()
             .listStyle(.sidebar)
+            .modifier(SidebarArtworkTint())
             // The Mac window has no title bar to fill; its sidebar shows none.
             .navigationTitle(SplitLayoutPolicy.keepsColumns ? "" : "Overplay")
         } detail: {
@@ -153,6 +158,7 @@ struct SplitAppShell: View {
         // On the split view, not the detail stack: pushed screens take their
         // environment from here.
         .environment(\.nowPlayingColumnToggle, columnToggle)
+        .focusedSceneValue(\.shellCommands, shellCommands)
     }
 
     private var detailView: some View {
@@ -185,6 +191,19 @@ struct SplitAppShell: View {
     private var isPinnedAtFold: Bool { isSplitAtFold || isStackedAtFold }
 
     private var showsPlayerColumn: Bool { showsNowPlaying || isPinnedAtFold }
+
+    /// The menu bar's view of this window.
+    private var shellCommands: ShellCommands {
+        ShellCommands(
+            navigate: { selection.wrappedValue = $0 },
+            oneTruePlaylist: activePlaylists.first { $0.role == .oneTruePlaylist }.map { .playlist($0.id) },
+            triage: activePlaylists.first(where: \.isTriageBucket).map { .playlist($0.id) },
+            nowPlaying: columnToggle,
+            playPause: { Task { await playbackController.performPrimaryPlaybackAction(settings: settings, context: modelContext) } },
+            next: { Task { await playbackController.next(settings: settings, context: modelContext) } },
+            previous: { Task { await playbackController.previous(context: modelContext) } }
+        )
+    }
 
     /// Divided in halves the player cannot be hidden, so there is no toggle.
     private var columnToggle: NowPlayingColumnToggle? {
@@ -274,6 +293,26 @@ struct SplitAppShell: View {
             storedSelection = (newSelection ?? .dashboard).storageValue
             // The sidebar was slid over the list to choose; close it.
             if sidebarOverlaysList { narrowSidebarShown = false }
+        }
+    }
+}
+
+/// A faint wash of the playing song's artwork colour behind the sidebar's
+/// glass, fainter than the title-bar mini player's; plain glass when nothing
+/// is playing.
+struct SidebarArtworkTint: ViewModifier {
+    static let opacity = 0.16
+
+    func body(content: Content) -> some View {
+        ThemedPlayerHost { artworkTheme, _ in
+            content
+                .scrollContentBackground(.hidden)
+                .background {
+                    if !artworkTheme.isFallback {
+                        artworkTheme.background.opacity(Self.opacity)
+                            .ignoresSafeArea()
+                    }
+                }
         }
     }
 }

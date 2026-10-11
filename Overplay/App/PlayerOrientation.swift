@@ -51,7 +51,16 @@ final class PhoneTurn {
     }
 }
 
-final class OverplayAppDelegate: NSObject, UIApplicationDelegate {
+final class OverplayAppDelegate: UIResponder, UIApplicationDelegate {
+    /// The Mac's menu bar: Overplay has no documents.
+    override func buildMenu(with builder: any UIMenuBuilder) {
+        super.buildMenu(with: builder)
+        guard builder.system == .main else { return }
+        builder.remove(menu: .document)
+        // One main window, plus Settings from the app menu.
+        builder.remove(menu: .newScene)
+    }
+
     func application(
         _ application: UIApplication,
         supportedInterfaceOrientationsFor window: UIWindow?

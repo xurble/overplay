@@ -2,12 +2,19 @@ import Foundation
 @preconcurrency import MusicKit
 
 /// An Apple Music collection Overplay plays instead of one of its own
-/// playlists: the current song's album, or its artist (`PLAY-018`).
+/// playlists: the current song's album, or its artist (`PLAY-018`), or a
+/// playlist, album, artist or the songs in the user's library.
 nonisolated struct PlaybackCollection: Codable, Equatable, Sendable {
     enum Kind: String, Codable, Sendable {
         case album
         case artistEssentials
         case artistTopSongs
+        /// Browsed from the library: played like a deep dive, never recorded
+        /// in Recents.
+        case libraryPlaylist
+        case libraryAlbum
+        case libraryArtist
+        case librarySongs
     }
 
     /// What the user asked for. Which artist collection plays is the
@@ -18,7 +25,8 @@ nonisolated struct PlaybackCollection: Codable, Equatable, Sendable {
     }
 
     var kind: Kind
-    /// The catalog album or artist ID.
+    /// The catalog album or artist ID; for a library collection, its library
+    /// ID ("songs" for all songs).
     var catalogID: String
     /// The album title or the artist name.
     var title: String
@@ -29,6 +37,10 @@ nonisolated struct PlaybackCollection: Codable, Equatable, Sendable {
         case .album: "Album · \(title)"
         case .artistEssentials: "\(title) Essentials"
         case .artistTopSongs: "\(title) · Top Songs"
+        case .libraryPlaylist: "Playlist · \(title)"
+        case .libraryAlbum: "Album · \(title)"
+        case .libraryArtist: title
+        case .librarySongs: "Songs"
         }
     }
 
@@ -38,6 +50,7 @@ nonisolated struct PlaybackCollection: Codable, Equatable, Sendable {
         switch kind {
         case .album: "album:\(catalogID)"
         case .artistEssentials, .artistTopSongs: "artist:\(catalogID)"
+        case .libraryPlaylist, .libraryAlbum, .libraryArtist, .librarySongs: "\(kind.rawValue):\(catalogID)"
         }
     }
 

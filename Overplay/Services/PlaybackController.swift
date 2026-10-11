@@ -1365,7 +1365,7 @@ final class PlaybackController {
         }
         // A newer start or selection happened during the lookup.
         guard startGeneration == generationBeforeLookup else { return false }
-        let playable = collectionPlayable(contents.tracks.filter(Self.isQueueable))
+        let playable = collectionPlayable(contents.tracks.filter(Self.isQueueable).map { ($0.id.rawValue, $0) })
         guard !playable.isEmpty else {
             statusMessage = Self.collectionFailureMessage(request, PlaybackCollectionError.empty)
             return false
@@ -1387,21 +1387,37 @@ final class PlaybackController {
     /// are looked up once; a failed lookup changes nothing.
     @discardableResult
     func playRecent(_ recent: RecentCollectionRecord, startingAt catalogSongID: String?, context: ModelContext) async -> Bool {
+        await playCollection(recent.collection, songs: recent.songs, startingAt: catalogSongID,
+                             recordsRecent: true, context: context)
+    }
+
+    /// Plays saved songs as a collection: a Recents entry, or a playlist,
+    /// album, artist or songs browsed from the library, which are not
+    /// recorded in Recents. The same rules as `playRecent`. `tracks` are
+    /// native tracks the caller already has, keyed by song ID (a library
+    /// browser's own tracks, whose IDs the catalog does not know); they go
+    /// into the device cache that resolution and recovery read first.
+    @discardableResult
+    func playCollection(
+        _ collection: PlaybackCollection, songs: [PlaybackCollectionSong], startingAt catalogSongID: String?,
+        recordsRecent: Bool, tracks: [String: Track] = [:], context: ModelContext
+    ) async -> Bool {
         adopt(context)
-        let collection = recent.collection
-        let songs = recent.songs
+        for (id, track) in tracks {
+            collectionTrackCache.set(try? JSONEncoder().encode(track), forCatalogSongID: id)
+        }
         let shuffle = catalogSongID == nil
         if let catalogSongID, let intent, intent.collection?.groupKey == collection.groupKey,
            let member = intent.members.first(where: { $0.catalogSongID == catalogSongID }) {
             await select(member, in: intent)
-            recordRecent(collection, songs: songs, artworkURLTemplate: nil)
+            if recordsRecent { recordRecent(collection, songs: songs, artworkURLTemplate: nil) }
             return playbackFailure == nil
         }
-        activityLog.record(.playbackSelectionPath, detail: "playRecent \(collection.groupKey) shuffle=\(shuffle)")
+        activityLog.record(.playbackSelectionPath, detail: "playCollection \(collection.groupKey) shuffle=\(shuffle)")
         let generationBeforeLookup = startGeneration
         let resolved = await collectionTracks(songs.map(\.catalogID))
         guard startGeneration == generationBeforeLookup else { return false }
-        let playable = collectionPlayable(songs.compactMap { resolved[$0.catalogID] })
+        let playable = collectionPlayable(songs.compactMap { song in resolved[song.catalogID].map { (song.catalogID, $0) } })
         guard !playable.isEmpty else {
             statusMessage = "Couldn't play \(collection.title): Apple Music didn't return its songs. Check your connection."
             return false
@@ -1415,7 +1431,7 @@ final class PlaybackController {
             startIndex = index
         }
         let started = await startCollection(collection, playable: playable, startIndex: startIndex, shuffle: shuffle)
-        if started { recordRecent(collection, songs: songs, artworkURLTemplate: nil) }
+        if started, recordsRecent { recordRecent(collection, songs: songs, artworkURLTemplate: nil) }
         return started
     }
 
@@ -1494,17 +1510,20 @@ final class PlaybackController {
     /// Members for catalog tracks, in order. A song Overplay tracks carries
     /// its track ID, so it is counted and curated as usual. Identity is by
     /// catalog ID only, never by title.
-    private func collectionPlayable(_ tracks: [Track]) -> [(PlaybackIntent.Member, Track)] {
+    /// Each track comes with its song ID: its catalog ID, or for a library
+    /// song without one, its library ID.
+    private func collectionPlayable(_ tracks: [(String, Track)]) -> [(PlaybackIntent.Member, Track)] {
         let context = countingContext()
         let tracked = context.flatMap { try? TrackRecordRepository.tracksByCatalogID(in: $0) } ?? [:]
         var seen: Set<String> = []
-        return tracks.compactMap { track in
-            let catalogID = track.id.rawValue
+        return tracks.compactMap { catalogID, track in
             if collectionTrackCache.data(forCatalogSongID: catalogID) == nil {
                 collectionTrackCache.set(try? JSONEncoder().encode(track), forCatalogSongID: catalogID)
             }
             var member: PlaybackIntent.Member
-            if let record = tracked[catalogID], let context,
+            // A library song is keyed by its library ID.
+            if let record = tracked[catalogID] ?? context.flatMap({ try? TrackRecordRepository.track(musicItemID: catalogID, in: $0) }),
+               let context,
                let item = try? PlaylistItemRepository.item(trackID: record.id, in: context) {
                 member = Self.member(for: record, item: item, track: track)
             } else {
@@ -1565,10 +1584,19 @@ final class PlaybackController {
     /// to Triage. Playback goes on.
     func moveRecentSong(catalogID: String, in recent: RecentCollectionRecord, toOneTruePlaylist: Bool,
                         context: ModelContext) async {
+        guard let song = recent.songs.first(where: { $0.catalogID == catalogID }) else { return }
+        await moveCollectionSong(song, toOneTruePlaylist: toOneTruePlaylist, context: context)
+    }
+
+    /// Sends a collection's song to the One True Playlist or Triage, from
+    /// Recents or the library: an untracked song is added, a Triage song
+    /// promoted, a retired song restored.
+    func moveCollectionSong(_ song: PlaybackCollectionSong, toOneTruePlaylist: Bool, context: ModelContext) async {
         adopt(context)
-        guard let song = recent.songs.first(where: { $0.catalogID == catalogID }),
-              let context = countingContext() else { return }
-        guard let track = (try? TrackRecordRepository.tracksByCatalogID(in: context))?[catalogID],
+        let catalogID = song.catalogID
+        guard let context = countingContext() else { return }
+        guard let track = (try? TrackRecordRepository.tracksByCatalogID(in: context))?[catalogID]
+                ?? (try? TrackRecordRepository.track(musicItemID: catalogID, in: context)),
               let item = try? PlaylistItemRepository.item(trackID: track.id, in: context) else {
             let result = SearchSongResult(id: catalogID, title: song.title, artistName: song.artistName,
                                           albumTitle: song.albumTitle, artworkURL: song.artworkURLTemplate)

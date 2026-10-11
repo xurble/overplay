@@ -70,11 +70,20 @@ struct OverplayApp: App {
                 .hidesMacTitlebar()
         }
         .modelContainer(modelContainer)
+        .commands { OverplayCommands() }
         .onChange(of: scenePhase) { _, newPhase in
             Task { @MainActor in
                 await handleScenePhaseChange(newPhase)
             }
         }
+
+#if targetEnvironment(macCatalyst)
+        // A Mac opens Settings in its own window (`OverplayCommands`).
+        WindowGroup("Settings", id: SettingsWindowView.windowID, for: String.self) { _ in
+            SettingsWindowView(runtime: .shared)
+        }
+        .modelContainer(modelContainer)
+#endif
     }
 
     /// Suspended-playback reconciliation runs at both edges of a

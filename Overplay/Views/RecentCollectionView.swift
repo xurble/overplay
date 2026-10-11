@@ -12,87 +12,21 @@ struct RecentCollectionView: View {
     @State private var songs: [RecentCollectionPresentation.Song] = []
 
     var body: some View {
-        List {
-            // The same header as a playlist: artwork, kind, title, Shuffle and Play.
-            Section {
-                VStack(alignment: .leading, spacing: 14) {
-                    ArtworkView(urlString: recent.artworkURLTemplate, pixelSize: 512,
-                                playlistID: recent.collection.reservedPlaylistID, cornerRadius: 16)
-                        .aspectRatio(1, contentMode: .fit)
-                        .frame(maxWidth: 420)
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label(RecentCollectionPresentation.subtitle(for: recent),
-                              systemImage: recent.collection.kind == .album ? "square.stack" : "music.mic")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Text(recent.title)
-                            .font(.title2.bold())
-                    }
-
-                    Button {
-                        Task { await playbackController.playRecent(recent, startingAt: nil, context: modelContext) }
-                    } label: {
-                        Label("Shuffle and Play", systemImage: "shuffle")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 4)
-                    }
-                    .buttonStyle(.glass)
-                    .controlSize(.large)
-                    .disabled(songs.isEmpty)
-                    .accessibilityIdentifier("recent-shuffle-and-play")
-
-                    if let statusMessage = playbackController.statusMessage {
-                        Text(statusMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-
-            Section("Songs") {
-                ForEach(songs) { song in
-                    Button {
-                        Task { await playbackController.playRecent(recent, startingAt: song.catalogID, context: modelContext) }
-                    } label: {
-                        PlaylistTrackRowView(
-                            summary: song.summary,
-                            playlistID: recent.collection.reservedPlaylistID,
-                            isCurrent: RecentCollectionPresentation.isCurrent(song, in: recent, controller: playbackController)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
-                    // Right sends the song to the One True Playlist, left to Triage.
-                    .swipeActions(edge: .leading) {
-                        if song.canMoveToOneTruePlaylist {
-                            Button {
-                                Task { await move(song, toOneTruePlaylist: true) }
-                            } label: {
-                                Label("Overplay", systemImage: "arrow.up.circle")
-                            }
-                            .tint(.pink)
-                        }
-                    }
-                    .swipeActions(edge: .trailing) {
-                        if song.canMoveToTriage {
-                            Button {
-                                Task { await move(song, toOneTruePlaylist: false) }
-                            } label: {
-                                Label("Triage", systemImage: "tray.fill")
-                            }
-                            .tint(.green)
-                        }
-                    }
-                }
-            }
+        CollectionSongListView(
+            title: recent.title,
+            subtitle: RecentCollectionPresentation.subtitle(for: recent),
+            systemImage: recent.collection.kind == .album ? "square.stack" : "music.mic",
+            groupKey: recent.groupKey,
+            reservedPlaylistID: recent.collection.reservedPlaylistID,
+            songs: songs
+        ) {
+            ArtworkView(urlString: recent.artworkURLTemplate, pixelSize: 512,
+                        playlistID: recent.collection.reservedPlaylistID, cornerRadius: 16)
+        } onPlay: { song in
+            await playbackController.playRecent(recent, startingAt: song?.catalogID, context: modelContext)
+        } onMove: { song, toOneTruePlaylist in
+            await move(song, toOneTruePlaylist: toOneTruePlaylist)
         }
-        .listStyle(.plain)
-        .miniPlayerScrollContentInset()
-        .navigationTitle(recent.title)
-        .navigationBarTitleDisplayMode(.inline)
         .onAppear { shellPlace?.destination = .recent(recent.id) }
         .task(id: reloadKey) {
             songs = RecentCollectionPresentation.songs(for: recent, in: modelContext)

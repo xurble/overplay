@@ -93,7 +93,7 @@ Music's global play count or skip count.
 | `PLAY-016` | Overplay does not write `MPNowPlayingInfoCenter` or register transport `MPRemoteCommandCenter` handlers; the `ApplicationMusicPlayer` host owns system Now Playing. A default-off diagnostic mirror exists only for device verification. | `Overplay/Services/SystemNowPlayingBridge.swift` |
 | `PLAY-017` | Native `Track` objects needed for playback are cached on disk per device; cold launches do not need to re-resolve the whole playlist, a cached track is reused only while it is the song its record names (its library or catalog ID), a library ID that no longer exists in the account library falls back to the record's catalog ID, and unresolvable songs are omitted rather than failing playback, with each omission recorded in the activity log. | `Overplay/Services/DevicePlaybackCache.swift` |
 | `COUNT-001` | Counting observes playback and never commands, delays or vetoes it. Skips require witnessed listening; playthroughs are position-based; suspended spans never produce skips. | `Overplay/Playback/ListeningSessionTracker.swift`, `Overplay/UseCases/PlaybackSessionEvaluationService.swift` |
-| `COUNT-002` | Counted outcomes are immutable ledger events with idempotent session IDs. Displayed counts are derived from the ledger, including absorbed track identities; merges and resets never edit counts. | `Overplay/Services/ListenLedger.swift`, `Overplay/Models/ListenEvent.swift` |
+| `COUNT-002` | Counted outcomes are immutable ledger events with idempotent session IDs. Displayed counts are derived from the ledger, including absorbed track identities; merges and resets never edit counts. Apple's calculated play count, when higher, is recorded as a floor event that plays never fall below. | `Overplay/Services/ListenLedger.swift`, `Overplay/Models/ListenEvent.swift` |
 | `LOAD-001` | Overplay adds no avoidable Apple Music load during playback: no steady-state queue enumeration, bulk Apple play-count refresh at most every 15 minutes and never while playing, library discovery scans at most every 6 hours, and no background MusicKit work while a playback failure is active. | `Overplay/Services/ApplePlayCountSyncService.swift`, `Overplay/Services/PeriodicPlaylistSyncService.swift` |
 | `CAR-002` | Presented menus retain row and artwork identity. Only changed visible values are published; section replacement requires structural change. Presentation reads never mutate playback or persistence. | `Overplay/CarPlaySupport/CarPlayListRenderer.swift` |
 | `PLAY-018` | Now Playing in the app and CarPlay plays the current song's album from track 1, or its artist's Essentials playlist, else its Top Songs with versions collapsed, through one shared start. Tracked songs are counted and curated as usual; untracked songs offer Add to Triage and Add to One True Playlist. A failed lookup changes nothing. | `Overplay/Playback/PlaybackCollection.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/PlaybackCollectionTests.swift` |
@@ -1247,8 +1247,9 @@ Records are inserted and never edited. The only deletion is an explicit
 whole-database nuke.
 
 - `kind`: `playthrough`, `skip`, `skipReset` (one track's skips),
-  `statsReset` (every track), `baseline` (carried-forward counts), or
-  `lineage` (this track absorbed the donor named in the session ID).
+  `statsReset` (every track), `baseline` (carried-forward counts),
+  `lineage` (this track absorbed the donor named in the session ID), or
+  `appleFloor` (Apple's calculated play count, in `playthroughDelta`).
 - `trackID`: the Overplay track UUID. Counts travel with the track, not with a
   playlist row.
 - `sessionID`: an idempotency key. Two events with the same session ID and kind
@@ -1268,7 +1269,8 @@ different donors into one keeper therefore keep both, even though the keeper's
 list attribute is last-writer-wins:
 
 - playthroughs = distinct playthrough sessions + baseline playthrough deltas,
-  all after the latest `statsReset`;
+  all after the latest `statsReset`, but never fewer than the highest
+  `appleFloor` after it;
 - skips = distinct skip sessions + baseline skip deltas, all after the later of
   the latest `statsReset` and that track's latest `skipReset`.
 
@@ -1311,8 +1313,11 @@ are never the source of counts.
 
 ### Independent Apple play-count comparison
 
-Playback surfaces display `Overplay/Apple plays` alongside the existing skip
-count. The original threshold-based evaluation and reconciliation below keep
+Playback surfaces display one play count, the higher of Overplay's and
+Apple's, alongside the skip count. Whenever a refresh finds Apple's calculated
+count above Overplay's, it records an `appleFloor` ledger event
+(`apple-floor:<count>`, idempotent per count) so Overplay's own count rises to
+match on every device; a floor never adds to the count. The original threshold-based evaluation and reconciliation below keep
 their existing behavior. The second total is seeded from the current Overplay
 playthrough count at the first valid Apple library observation, then advances
 by Apple's cumulative counter deltas. For example, one Overplay play and an
