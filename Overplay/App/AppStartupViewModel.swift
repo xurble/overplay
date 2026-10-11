@@ -83,7 +83,7 @@ final class AppStartupViewModel {
             do {
                 try await TrackIdentityMergeService.mergeDuplicates(in: modelContext)
             } catch {
-                StartupProfiler.mark("Track identity merge failed: \(error.localizedDescription)")
+                StartupProfiler.mark("Track identity merge failed: \(UserFacingError.message(for: error))")
             }
         } restoreLocalPlaybackDisplay: {
             playbackController.restoreLocalPlaybackDisplay(context: modelContext)
@@ -104,13 +104,13 @@ final class AppStartupViewModel {
             do {
                 try HistoryRetentionService.compact(in: modelContext)
             } catch {
-                StartupProfiler.mark("History retention failed: \(error.localizedDescription)")
+                StartupProfiler.mark("History retention failed: \(UserFacingError.message(for: error))")
             }
         } removeVideoTracks: {
             do {
                 try await VideoTrackCleanupService.removeVideos(in: modelContext)
             } catch {
-                StartupProfiler.mark("Video cleanup failed: \(error.localizedDescription)")
+                StartupProfiler.mark("Video cleanup failed: \(UserFacingError.message(for: error))")
             }
         } prepareLibrary: {
             try await LibraryRebuildService.performIfNeeded(in: modelContext)
@@ -120,7 +120,7 @@ final class AppStartupViewModel {
             do {
                 try ListenLedger.reconcile(in: modelContext)
             } catch {
-                StartupProfiler.mark("Listen ledger reconcile failed: \(error.localizedDescription)")
+                StartupProfiler.mark("Listen ledger reconcile failed: \(UserFacingError.message(for: error))")
             }
         } repairTrackLocations: {
             runtime.repairTrackLocations(in: modelContext)
@@ -130,7 +130,7 @@ final class AppStartupViewModel {
                     playbackController.reconcileTrackMembership(context: modelContext)
                 }
             } catch {
-                StartupProfiler.mark("Track retention sweep failed: \(error.localizedDescription)")
+                StartupProfiler.mark("Track retention sweep failed: \(UserFacingError.message(for: error))")
             }
         } authorizationIsReady: {
             authorizationService.readiness.isReady
@@ -165,7 +165,7 @@ final class AppStartupViewModel {
                 dependencies.installRemoteCommands()
             } catch {
                 guard !Task.isCancelled else { return }
-                libraryPreparationError = error.localizedDescription
+                libraryPreparationError = UserFacingError.message(for: error)
                 isPreparingLibrary = false
                 hasStartedAuthorizedServices = false
                 return

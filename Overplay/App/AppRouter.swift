@@ -64,7 +64,7 @@ struct AppRouter: View {
                 do {
                     try runtime.libraryRestoration.createLibrary(in: modelContext)
                     startupViewModel.retryLibraryPreparation(dependencies: startupDependencies)
-                } catch { setupError = error.localizedDescription }
+                } catch { setupError = UserFacingError.message(for: error) }
             }
         } message: {
             Text("Only continue if you have never set up Overplay on another device. If you already have a library, wait for iCloud to restore it.")

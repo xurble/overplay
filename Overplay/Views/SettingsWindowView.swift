@@ -15,10 +15,10 @@ struct SettingsWindowView: View {
     @State private var isPushed = false
     @State private var windowHandle = MacWindowHandle()
 
-    private static let width: CGFloat = 640
+    private static let width: CGFloat = 800
     /// Room for a page pushed from the controls.
     private static let pushedHeight: CGFloat = 640
-    private static let bottomPadding: CGFloat = 8
+    private static let bottomPadding: CGFloat = 0
 
     /// Opens the Settings window, or brings the open one forward.
     static func open(with openWindow: OpenWindowAction) {
@@ -131,24 +131,63 @@ private struct SelectedTabGlass: ViewModifier {
 @MainActor
 final class MacWindowHandle {
     var width: CGFloat = 0
+    weak var window: UIWindow?
     weak var scene: UIWindowScene? {
         didSet { if let height { resize(height: height) } }
     }
     private var height: CGFloat?
 
     func resize(height: CGFloat) {
+        // Never taller than the screen; the pane scrolls beyond that.
+        let height = min(height, (window?.windowScene?.screen.bounds.height ?? .greatestFiniteMagnitude) - 120)
         self.height = height
 #if targetEnvironment(macCatalyst)
         guard let scene else { return }
         // Mac scene frames are measured from the top, so keeping the origin
-        // keeps the top edge.
-        let frame = scene.effectiveGeometry.systemFrame
-        let size = CGSize(width: width > 0 ? width : frame.width, height: height.rounded())
+        // keeps the top edge. They are in Mac points, and the iPad-scaled
+        // app draws smaller (77%): convert from the window's own points.
+        // The live AppKit frame where there is one: the scene's lags behind an
+        // animation.
+        let frame = window.flatMap(MacAppKitWindow.frame(of:)) ?? scene.effectiveGeometry.systemFrame
+        let scale = window.map { $0.bounds.height > 0 ? frame.height / $0.bounds.height : 1 } ?? 1
+        let size = CGSize(width: ((width > 0 ? width : frame.width / scale) * scale).rounded(),
+                          height: (height * scale).rounded())
         guard size != frame.size else { return }
+        if let window, MacAppKitWindow.animateResize(of: window, to: size) { return }
         scene.requestGeometryUpdate(.Mac(systemFrame: CGRect(origin: frame.origin, size: size)))
 #endif
     }
 }
+
+#if targetEnvironment(macCatalyst)
+/// The AppKit window hosting a UIKit window, for what Mac Catalyst has no API
+/// for. Reached at runtime; if AppKit changes, each call does nothing and
+/// reports so.
+@MainActor
+enum MacAppKitWindow {
+    static func nsWindow(for window: UIWindow) -> NSObject? {
+        (NSClassFromString("NSApplication")?.value(forKeyPath: "sharedApplication.windows") as? [NSObject])?
+            .first { ($0.value(forKey: "uiWindows") as? [UIWindow])?.contains(window) == true }
+    }
+
+    /// The AppKit frame, in Mac points.
+    static func frame(of window: UIWindow) -> CGRect? {
+        nsWindow(for: window).flatMap { ($0.value(forKey: "frame") as? NSValue)?.cgRectValue }
+    }
+
+    /// Resizes with AppKit's animation, keeping the top edge (AppKit frames
+    /// are measured from the bottom). `size` is in Mac points.
+    static func animateResize(of window: UIWindow, to size: CGSize) -> Bool {
+        let selector = NSSelectorFromString("setFrame:display:animate:")
+        guard let nsWindow = nsWindow(for: window), nsWindow.responds(to: selector),
+              let frame = (nsWindow.value(forKey: "frame") as? NSValue)?.cgRectValue else { return false }
+        let target = CGRect(x: frame.minX, y: frame.maxY - size.height, width: size.width, height: size.height)
+        typealias SetFrame = @convention(c) (NSObject, Selector, CGRect, Bool, Bool) -> Void
+        unsafeBitCast(nsWindow.method(for: selector), to: SetFrame.self)(nsWindow, selector, target, true, true)
+        return true
+    }
+}
+#endif
 
 /// Names the window holding it and hands its scene to `handle`: a Mac
 /// window's title and frame belong to its UIKit scene, which SwiftUI cannot
@@ -185,11 +224,7 @@ private struct MacWindowConfigurator: UIViewRepresentable {
         /// reaches the AppKit window hosting `window` at runtime; if AppKit
         /// changes, nothing happens.
         private static func disableMinimizeAndZoom(for window: UIWindow) {
-            guard let windows = NSClassFromString("NSApplication")?
-                    .value(forKeyPath: "sharedApplication.windows") as? [NSObject],
-                  let nsWindow = windows.first(where: {
-                      ($0.value(forKey: "uiWindows") as? [UIWindow])?.contains(window) == true
-                  }) else { return }
+            guard let nsWindow = MacAppKitWindow.nsWindow(for: window) else { return }
             let selector = NSSelectorFromString("standardWindowButton:")
             guard nsWindow.responds(to: selector) else { return }
             typealias ButtonGetter = @convention(c) (NSObject, Selector, Int) -> NSObject?
@@ -212,7 +247,7 @@ private struct MacWindowConfigurator: UIViewRepresentable {
             scene.titlebar?.toolbar = nil
             // Sized to its controls (`MacWindowHandle`), never wide.
             scene.sizeRestrictions?.minimumSize = CGSize(width: 480, height: 160)
-            scene.sizeRestrictions?.maximumSize = CGSize(width: width + 160, height: .greatestFiniteMagnitude)
+            scene.sizeRestrictions?.maximumSize = CGSize(width: width + 240, height: .greatestFiniteMagnitude)
             handle.width = width
             let handle = handle
             let window = window
@@ -220,6 +255,7 @@ private struct MacWindowConfigurator: UIViewRepresentable {
                 // The AppKit window, and a restored window's saved frame,
                 // arrive just after the UIKit one.
                 try? await Task.sleep(for: .milliseconds(150))
+                handle.window = window
                 handle.scene = scene
                 if let window { Self.disableMinimizeAndZoom(for: window) }
             }

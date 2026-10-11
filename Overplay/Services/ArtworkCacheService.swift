@@ -30,7 +30,7 @@ actor ArtworkCacheService {
     private let downloader: @Sendable (URL) async throws -> Data
     private var manifest: ArtworkCacheManifest?
     private var inFlightDownloads: [String: Task<[Int: Data], Error>] = [:]
-    private let downloadGate = ArtworkWorkGate(limit: 4)
+    private let downloadGate = ArtworkWorkGate(limit: 6)
     private let processingGate = ArtworkWorkGate(limit: 2)
     private var failedUntil: [String: Date] = [:]
     private var permanentFailures: Set<String> = []
@@ -60,6 +60,14 @@ actor ArtworkCacheService {
     }
 
     static let httpErrorDomain = "OverplayArtworkHTTP"
+
+    /// Artwork the Library browser shows. Under pressure, images used only by
+    /// the Library go before any Overplay playlist's, Recents' or the player's.
+    nonisolated static let libraryPlaylistID = "overplay.library"
+
+    nonisolated static func isLibraryAssociation(_ playlistID: String) -> Bool {
+        playlistID == libraryPlaylistID || playlistID.hasPrefix("overplay.collection.library")
+    }
 
     static func cacheKey(sourceURL: String, pixelSize: Int) -> String {
         let normalizedValue = "v2|\(cacheIdentity(sourceURL))|\(sizeBucket(pixelSize))"
@@ -301,12 +309,13 @@ actor ArtworkCacheService {
                 await downloadGate.release()
                 throw error
             }
+            // The next download starts while this one is processed.
+            await downloadGate.release()
             await processingGate.acquire(priority: priority)
             let result = await Task.detached(priority: priority) {
                 Result { try Self.makeVariants(data) }
             }.value
             await processingGate.release()
-            await downloadGate.release()
             return try result.get()
         }
         inFlightDownloads[key] = task
@@ -520,6 +529,8 @@ actor ArtworkCacheService {
                     return !entry.associatedPlaylistIDs.contains(protectedPlaylistID)
                 }
                 .sorted { left, right in
+                    let leftIsLibrary = Self.isLibraryOnly(left)
+                    if leftIsLibrary != Self.isLibraryOnly(right) { return leftIsLibrary }
                     let leftUsage = left.pixelSize == 512 ? left.lastAccessedAt : mostRecentPlaylistUsage(for: left, manifest: manifest)
                     let rightUsage = right.pixelSize == 512 ? right.lastAccessedAt : mostRecentPlaylistUsage(for: right, manifest: manifest)
                     if leftUsage != rightUsage {
@@ -535,6 +546,11 @@ actor ArtworkCacheService {
                 if entry.pixelSize == 512 { largeBytes -= entry.byteSize }
             }
         }
+    }
+
+    /// Used by the Library browser and nothing else.
+    nonisolated static func isLibraryOnly(_ entry: ArtworkCacheEntry) -> Bool {
+        !entry.associatedPlaylistIDs.isEmpty && entry.associatedPlaylistIDs.allSatisfy(isLibraryAssociation)
     }
 
     private func mostRecentPlaylistUsage(

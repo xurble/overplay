@@ -273,7 +273,7 @@ final class CarPlayCoordinator: NSObject {
             // A failed read is not evidence that the displayed library vanished.
             guard rootRenderer.presentation.sections.isEmpty else { return }
             sections = [Section(id: "error", rows: [Row(id: "error", title: "Could not load playlists",
-                detail: error.localizedDescription, isEnabled: false)])]
+                detail: UserFacingError.message(for: error), isEnabled: false)])]
         }
         rootRenderer.update(.init(sections: sections), on: template, actions: actions)
     }
@@ -462,7 +462,7 @@ final class CarPlayCoordinator: NSObject {
             }
             interfaceController.pushTemplate(try makePlaylistTemplate(summary), animated: true, completion: nil)
         } catch {
-            showError(title: "Playlist failed", message: error.localizedDescription)
+            showError(title: "Playlist failed", message: UserFacingError.message(for: error))
         }
     }
 
@@ -598,7 +598,7 @@ final class CarPlayCoordinator: NSObject {
             refreshAfterTrackAction()
             presentPlaybackOutcome(for: playlist, scope: scope)
         } catch {
-            showError(title: "Playback failed", message: error.localizedDescription)
+            showError(title: "Playback failed", message: UserFacingError.message(for: error))
         }
     }
 
@@ -628,7 +628,7 @@ final class CarPlayCoordinator: NSObject {
             refreshAfterTrackAction()
             presentPlaybackOutcome(for: playlist, scope: scope)
         } catch {
-            showError(title: "Playback failed", message: error.localizedDescription)
+            showError(title: "Playback failed", message: UserFacingError.message(for: error))
         }
     }
 
@@ -902,7 +902,7 @@ final class CarPlayCoordinator: NSObject {
             await playbackController.evictCurrent(settings: settings, context: modelContext)
             refreshAfterTrackAction()
         } catch {
-            showError(title: "Track action failed", message: error.localizedDescription)
+            showError(title: "Track action failed", message: UserFacingError.message(for: error))
         }
     }
 
@@ -914,7 +914,7 @@ final class CarPlayCoordinator: NSObject {
             await playbackController.promoteCurrent(settings: settings, context: modelContext)
             refreshAfterTrackAction()
         } catch {
-            showError(title: "Track action failed", message: error.localizedDescription)
+            showError(title: "Track action failed", message: UserFacingError.message(for: error))
         }
     }
 

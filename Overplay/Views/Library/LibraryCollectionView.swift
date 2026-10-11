@@ -25,8 +25,11 @@ struct LibraryCollectionView: View {
             songs: songs,
             placeholder: placeholder
         ) {
-            LibraryArtworkView(artwork: item.artwork, side: 420, isRound: item.kind == .artist)
+            // Sized by the header, as Library's artwork in Overplay's cache.
+            ArtworkView(urlString: item.artworkURL, pixelSize: 512,
+                        playlistID: ArtworkCacheService.libraryPlaylistID, cornerRadius: 16)
         } onPlay: { song in
+            let tracks = await LibraryBrowser.playableTracks(for: entries)
             await playbackController.playCollection(collection, songs: savedSongs, startingAt: song?.catalogID,
                                                     recordsRecent: false, tracks: tracks, context: modelContext)
         } onMove: { song, toOneTruePlaylist in
@@ -39,7 +42,7 @@ struct LibraryCollectionView: View {
                 entries = try await LibraryBrowser.songs(in: item)
                 placeholder = entries.isEmpty ? "No songs Overplay can play." : nil
             } catch {
-                placeholder = "Couldn't load the songs: \(error.localizedDescription)"
+                placeholder = "Couldn't load the songs: \(UserFacingError.message(for: error))"
             }
         }
         .task(id: reloadKey) {
@@ -52,10 +55,6 @@ struct LibraryCollectionView: View {
     /// Reloads when the songs or anyone's counts change.
     private var reloadKey: String {
         "\(entries.count)-\(playbackController.playbackItemMetadataVersion)"
-    }
-
-    private var tracks: [String: Track] {
-        Dictionary(entries.map { ($0.song.catalogID, $0.track) }, uniquingKeysWith: { first, _ in first })
     }
 
     private var rowID: UUID {

@@ -44,7 +44,7 @@ struct PlaylistTrackRowView: View {
                         Text(summary.playSkipMetricLabel)
                             .lineLimit(1)
                             .layoutPriority(1)
-                            .help("Plays: Overplay / Apple Music")
+                            .help("Plays: the higher of Overplay’s and Apple Music’s")
                             .accessibilityLabel(PlayCountPresentation.accessibilityLabel(
                                 overplay: summary.playthroughCount, apple: summary.applePlayCount, skips: summary.skipCount
                             ))

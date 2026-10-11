@@ -67,13 +67,14 @@ struct HistoryView: View {
                 }
             }
 
-            if let message = viewModel.message {
-                Text(message)
-                    .foregroundStyle(.secondary)
-            }
         }
         .listStyle(.plain)
         .miniPlayerScrollContentInset()
+        .onChange(of: viewModel.message) { _, message in
+            guard let message else { return }
+            StatusToast.shared.show(message)
+            viewModel.message = nil
+        }
         .navigationTitle("History")
         .task(id: historyDataKey) {
             reloadHistoryData()

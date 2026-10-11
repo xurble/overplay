@@ -27,11 +27,6 @@ struct NowPlayingView: View {
                     PlaybackControlsView(settings: settings)
                     secondaryControls(settings: settings)
 
-                    if let statusMessage = playbackController.statusMessage {
-                        Text(statusMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
                     PlaybackFailureRetryView()
                 }
                 .padding()

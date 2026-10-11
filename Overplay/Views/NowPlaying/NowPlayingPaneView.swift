@@ -149,12 +149,6 @@ struct NowPlayingPaneView: View {
             .disabled(playbackController.nowPlayingDisplayTrack?.artworkURLTemplate == nil)
         }
 
-        if let statusMessage = playbackController.statusMessage {
-            Text(statusMessage)
-                .font(.footnote)
-                .foregroundStyle(artworkTheme?.albumName ?? .secondary)
-                .multilineTextAlignment(.center)
-        }
         PlaybackFailureRetryView()
         SysdiagnoseReminderButtonView()
     }

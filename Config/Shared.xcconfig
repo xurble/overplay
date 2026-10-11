@@ -9,6 +9,9 @@ CODE_SIGN_ENTITLEMENTS = Overplay/Overplay.entitlements
 // Mac Catalyst: sandboxed (sharing the iPad app's Mac container), no CarPlay.
 CODE_SIGN_ENTITLEMENTS[sdk=macosx*] = Overplay/Overplay-MacCatalyst.entitlements
 INFOPLIST_FILE = Config/Info.plist
+// Mac Catalyst alone supports multiple windows (its Settings window); keep
+// the two files otherwise identical.
+INFOPLIST_FILE[sdk=macosx*] = Config/Info-MacCatalyst.plist
 
 ICLOUD_CONTAINER_IDENTIFIER = iCloud.com.example.Overplay
 

@@ -41,8 +41,11 @@ enum LibraryBrowser {
         var title: String
         var subtitle: String?
         var artwork: Artwork?
+        /// The artwork's background colour, once Overplay has worked it out.
+        var background: AlbumArtworkRGBColor? = nil
 
         var id: String { "\(kind.rawValue):\(libraryID)" }
+        var artworkURL: String? { artwork?.url(width: 512, height: 512)?.absoluteString }
         var kindName: String { kind.rawValue }
 
         var collection: PlaybackCollection {
@@ -69,6 +72,7 @@ enum LibraryBrowser {
     struct Entry {
         var song: PlaybackCollectionSong
         var track: Track
+        var background: AlbumArtworkRGBColor? = nil
     }
 
     static func items(_ category: Category) async throws -> [Item] {
@@ -115,7 +119,8 @@ enum LibraryBrowser {
     static func songs(in item: Item) async throws -> [Entry] {
         switch item.kind {
         case .playlist, .album:
-            return unique(try await fetchAll(Track.self, item.tracksPath, .playlistTrackFetch).compactMap(entry))
+            let tracks = try await fetchAll(Track.self, item.tracksPath, .playlistTrackFetch)
+            return unique(tracks.compactMap(entry))
         case .artist:
             let albums = try await fetchAll(Album.self, item.tracksPath, .libraryTrackQuery)
                 .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
@@ -124,6 +129,26 @@ enum LibraryBrowser {
             }
             return unique(tracks.compactMap(entry))
         }
+    }
+
+    /// The tracks to queue for these songs, keyed by song ID: this device's
+    /// own library copies where it has them. A web library song lacks the
+    /// local identifiers a Mac's player needs to find its file ("Failed to
+    /// prepare to play"); the same library ID finds the local copy.
+    static func playableTracks(for entries: [Entry]) async -> [String: Track] {
+        var tracks = Dictionary(entries.map { ($0.song.catalogID, $0.track) }, uniquingKeysWith: { first, _ in first })
+        let libraryIDs = entries.map(\.track.id).filter { MusicTrackIdentity.isLibraryID($0.rawValue) }
+        guard !libraryIDs.isEmpty else { return tracks }
+        var request = MusicLibraryRequest<Song>()
+        request.filter(matching: \.id, memberOf: libraryIDs)
+        guard let local = try? await MusicKitActivityLog.shared.measure(.libraryTrackQuery, detail: "library browser local copies", {
+            try await request.response().items
+        }) else { return tracks }
+        let localByID = Dictionary(local.map { ($0.id.rawValue, $0) }, uniquingKeysWith: { first, _ in first })
+        for entry in entries {
+            if let song = localByID[entry.track.id.rawValue] { tracks[entry.song.catalogID] = .song(song) }
+        }
+        return tracks
     }
 
     private static func entry(_ track: Track) -> Entry? {

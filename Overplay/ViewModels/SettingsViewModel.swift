@@ -79,7 +79,7 @@ final class SettingsViewModel {
             message = "Local stats reset."
             return true
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
             return false
         }
     }
@@ -95,7 +95,7 @@ final class SettingsViewModel {
             message = "Database nuked."
             return true
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
             return false
         }
     }
@@ -107,7 +107,7 @@ final class SettingsViewModel {
             let result = try await dependencies.rebuildOneTruePlaylist(context)
             message = Self.rebuildMessage(result)
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
         }
     }
 

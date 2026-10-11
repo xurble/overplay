@@ -67,7 +67,7 @@ struct DuplicateTracksView: View {
             // Existing persisted evidence remains useful while offline.
             groups = (try? DuplicateTrackService.groups(DuplicateTrackService.candidates(in: context))) ?? []
             selected.removeAll()
-            message = "Showing local matches. Apple Music lookup failed: \(error.localizedDescription)"
+            message = "Showing local matches. Apple Music lookup failed: \(UserFacingError.message(for: error))"
         }
     }
 
@@ -78,7 +78,7 @@ struct DuplicateTracksView: View {
             message = try await playbackController.mergeDuplicateTracks(request.candidates, destination: destination, context: context)
             groups = try DuplicateTrackService.groups(DuplicateTrackService.candidates(in: context))
             selected.removeAll()
-        } catch { message = error.localizedDescription }
+        } catch { message = UserFacingError.message(for: error) }
     }
 }
 

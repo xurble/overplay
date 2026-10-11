@@ -77,7 +77,7 @@ struct PlaylistCollageView: View {
             if let rendered { image = rendered }
         } catch {
             guard !Task.isCancelled else { return }
-            errorMessage = "Could not save artwork settings: \(error.localizedDescription)"
+            errorMessage = "Could not save artwork settings: \(UserFacingError.message(for: error))"
         }
         isLoading = false
     }

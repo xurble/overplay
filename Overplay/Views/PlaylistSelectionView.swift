@@ -2,6 +2,8 @@ import SwiftData
 import SwiftUI
 
 struct PlaylistSelectionView: View {
+    @FocusState private var isSearchFocused: Bool
+    @FocusState private var isNameFocused: Bool
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Environment(PlaybackController.self) private var playbackController
@@ -18,6 +20,7 @@ struct PlaylistSelectionView: View {
                 Section("One True Playlist") {
                     VStack(alignment: .leading, spacing: 12) {
                         TextField("Playlist name", text: $viewModel.newPlaylistName)
+                            .focused($isNameFocused)
 
                         Button {
                             Task {
@@ -76,17 +79,18 @@ struct PlaylistSelectionView: View {
                 }
             }
 
-            if let message = viewModel.message {
-                Section {
-                    Text(message)
-                        .foregroundStyle(.secondary)
-                }
-            }
         }
         .listStyle(.plain)
         .miniPlayerScrollContentInset()
+        .onChange(of: viewModel.message) { _, message in
+            guard let message else { return }
+            StatusToast.shared.show(message)
+            viewModel.message = nil
+        }
         .navigationTitle("Linked Playlists")
         .searchable(text: $viewModel.searchText, prompt: "Filter playlists")
+        .searchFocused($isSearchFocused)
+        .focusedSceneValue(\.isEditingText, isSearchFocused || isNameFocused)
         .refreshable {
             await viewModel.loadPlaylists(dependencies: dependencies)
         }

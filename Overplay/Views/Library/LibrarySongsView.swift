@@ -12,9 +12,8 @@ struct LibrarySongsView: View {
 
     static let windowSize = 100
 
-    @State private var entries: [LibraryBrowser.Entry] = []
+    private let cache = LibraryCache.shared
     @State private var songs: [RecentCollectionPresentation.Song] = []
-    @State private var placeholder: String? = "Loading…"
 
     var body: some View {
         let collection = LibraryBrowser.allSongs
@@ -34,22 +33,15 @@ struct LibrarySongsView: View {
                 .background(.quaternary, in: .rect(cornerRadius: 16))
         } onPlay: { song in
             let window = window(from: song?.catalogID)
-            let windowTracks = tracks.filter { id, _ in window.contains { $0.catalogID == id } }
+            let windowIDs = Set(window.map(\.catalogID))
+            let windowTracks = await LibraryBrowser.playableTracks(for: entries.filter { windowIDs.contains($0.song.catalogID) })
             await playbackController.playCollection(collection, songs: window, startingAt: song?.catalogID,
                                                     recordsRecent: false, tracks: windowTracks, context: modelContext)
         } onMove: { song, toOneTruePlaylist in
             guard let saved = savedSongs.first(where: { $0.catalogID == song.catalogID }) else { return }
             await playbackController.moveCollectionSong(saved, toOneTruePlaylist: toOneTruePlaylist, context: modelContext)
         }
-        .task {
-            guard entries.isEmpty else { return }
-            do {
-                entries = try await LibraryBrowser.allLibrarySongs()
-                placeholder = entries.isEmpty ? "No songs Overplay can play." : nil
-            } catch {
-                placeholder = "Couldn't load your songs: \(error.localizedDescription)"
-            }
-        }
+        .task { await cache.prepare(.songs) }
         .task(id: reloadKey) {
             songs = RecentCollectionPresentation.songs(savedSongs, rowID: rowID, in: modelContext)
         }
@@ -63,14 +55,18 @@ struct LibrarySongsView: View {
         return Array(savedSongs[index...].prefix(Self.windowSize))
     }
 
+    private var entries: [LibraryBrowser.Entry] { cache.songs ?? [] }
+
     private var savedSongs: [PlaybackCollectionSong] { entries.map(\.song) }
+
+    private var placeholder: String? {
+        if let failure = cache.failures[.songs] { return "Couldn't load your songs: \(failure)" }
+        if cache.songs == nil { return "Loading…" }
+        return entries.isEmpty ? "No songs Overplay can play." : nil
+    }
 
     private var reloadKey: String {
         "\(entries.count)-\(playbackController.playbackItemMetadataVersion)"
-    }
-
-    private var tracks: [String: Track] {
-        Dictionary(entries.map { ($0.song.catalogID, $0.track) }, uniquingKeysWith: { first, _ in first })
     }
 
     private var rowID: UUID {

@@ -51,11 +51,6 @@ struct CollectionSongListView<Artwork: View>: View {
                     .disabled(songs.isEmpty)
                     .accessibilityIdentifier("recent-shuffle-and-play")
 
-                    if let statusMessage = playbackController.statusMessage {
-                        Text(statusMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
                 }
                 .padding(.vertical, 4)
             }

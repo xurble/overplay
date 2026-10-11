@@ -8,6 +8,9 @@ struct ArtworkView: View {
 
     @State private var image: CGImage?
     @State private var loadedCacheIdentity: String?
+    /// The artwork's background colour, cached when its theme was first
+    /// worked out: a solid fill until the image itself appears.
+    @State private var placeholderColor: Color?
 
     var body: some View {
         artworkContent
@@ -20,6 +23,7 @@ struct ArtworkView: View {
             }
             .onDisappear {
                 image = nil
+                placeholderColor = nil
                 loadedCacheIdentity = nil
             }
             .task(id: cacheIdentity) {
@@ -39,7 +43,15 @@ struct ArtworkView: View {
         }
     }
 
-    private var placeholder: some View {
+    @ViewBuilder private var placeholder: some View {
+        if let placeholderColor {
+            placeholderColor
+        } else {
+            gradientPlaceholder
+        }
+    }
+
+    private var gradientPlaceholder: some View {
         ZStack {
             LinearGradient(
                 colors: [.indigo, .teal, .pink],
@@ -66,7 +78,14 @@ struct ArtworkView: View {
         let identity = cacheIdentity
         if loadedCacheIdentity != identity {
             image = nil
+            placeholderColor = nil
             loadedCacheIdentity = identity
+        }
+        if displayedImage == nil,
+           let theme = await AlbumArtworkThemeProvider.shared.cachedTheme(forArtworkURLTemplate: urlString, requiresIncreasedContrast: false),
+           !theme.isFallback {
+            guard !Task.isCancelled, identity == cacheIdentity else { return }
+            placeholderColor = theme.background
         }
         let pipeline = ArtworkImagePipeline.shared
         if let ready = pipeline.cachedImage(for: urlString, size: pixelSize) {

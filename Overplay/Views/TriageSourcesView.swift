@@ -13,6 +13,7 @@ struct TriageSourcesView: View {
     @Query private var playlistItems: [PlaylistItemRecord]
 
     @State private var viewModel = PlaylistSelectionViewModel()
+    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
         List {
@@ -41,17 +42,18 @@ struct TriageSourcesView: View {
                 }
             }
 
-            if let message = viewModel.message {
-                Section {
-                    Text(message)
-                        .foregroundStyle(.secondary)
-                }
-            }
         }
         .listStyle(.plain)
         .miniPlayerScrollContentInset()
+        .onChange(of: viewModel.message) { _, message in
+            guard let message else { return }
+            StatusToast.shared.show(message)
+            viewModel.message = nil
+        }
         .navigationTitle("Triage Sources")
         .searchable(text: $viewModel.searchText, prompt: "Filter playlists")
+        .searchFocused($isSearchFocused)
+        .focusedSceneValue(\.isEditingText, isSearchFocused)
         .refreshable {
             await viewModel.loadPlaylists(dependencies: dependencies)
         }

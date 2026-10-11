@@ -1,3 +1,4 @@
+@preconcurrency import MusicKit
 //
 //  ContentView.swift
 //  Overplay
@@ -16,10 +17,31 @@ struct ContentView: View {
             .environment(runtime)
             .environment(runtime.authorizationService)
             .environment(runtime.playbackController)
+            // iPhone and iPad take the app icon's purple for buttons and
+            // highlights; the Mac keeps its own accent.
+            .tint(ProcessInfo.processInfo.isMacCatalystApp ? nil : Color.overplayIcon)
+            .modifier(StatusToastOverlay())
+            // The player's messages become the toast. Left set: CarPlay reads
+            // them for its own alerts.
+            .onChange(of: runtime.playbackController.statusMessage) { _, message in
+                StatusToast.shared.show(message)
+            }
+            // Library lists open at once: fill any empty one in the
+            // background, a few seconds after launch.
+            .task {
+                try? await Task.sleep(for: .seconds(5))
+                guard MusicAuthorization.currentStatus == .authorized else { return }
+                await LibraryCache.shared.warmIfEmpty()
+            }
     }
 }
 
 #Preview {
     ContentView(runtime: .shared)
         .modelContainer(PreviewContainer.make())
+}
+
+extension Color {
+    /// The app icon's background (`overplay_default_icon.icon`).
+    static let overplayIcon = Color(.displayP3, red: 0.53600, green: 0.17834, blue: 0.66090)
 }

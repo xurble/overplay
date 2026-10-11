@@ -430,9 +430,14 @@ extension SettingsView {
                     }
                 }
             }
-            .padding(.horizontal, 32)
-            .padding(.vertical, 20)
-            .frame(maxWidth: .infinity)
+            // Both tabs start at the same margin with the same label column,
+            // so the line between labels and controls does not move between
+            // them.
+            .padding(.leading, 24)
+            .padding(.trailing, 32)
+            .padding(.top, 20)
+            .padding(.bottom, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { onMacContentHeight?($0) }
         }
         .background(Color(uiColor: .systemBackground))
@@ -557,13 +562,17 @@ extension SettingsView {
 }
 
 private struct MacSettingsLabel: View {
+    /// Fits the longest label in any tab ("Playthrough threshold:").
+    static let columnWidth: CGFloat = 180
+
     var text: String
     init(_ text: String) { self.text = text }
 
     var body: some View {
         Text(text)
-            .gridColumnAlignment(.trailing)
             .multilineTextAlignment(.trailing)
+            .frame(width: Self.columnWidth, alignment: .trailing)
+            .gridColumnAlignment(.trailing)
     }
 }
 

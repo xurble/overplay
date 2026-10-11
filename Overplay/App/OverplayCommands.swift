@@ -15,10 +15,14 @@ struct ShellCommands {
 
 extension FocusedValues {
     @Entry var shellCommands: ShellCommands?
+    /// A text field has focus: ⌘→ and ⌘← belong to it, not to Next and
+    /// Previous.
+    @Entry var isEditingText: Bool?
 }
 
 struct OverplayCommands: Commands {
     @FocusedValue(\.shellCommands) private var shell
+    @FocusedValue(\.isEditingText) private var isEditingText
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
@@ -61,10 +65,10 @@ struct OverplayCommands: Commands {
                 .disabled(shell == nil)
             Button("Next") { shell?.next() }
                 .keyboardShortcut(.rightArrow)
-                .disabled(shell == nil)
+                .disabled(shell == nil || isEditingText == true)
             Button("Previous") { shell?.previous() }
                 .keyboardShortcut(.leftArrow)
-                .disabled(shell == nil)
+                .disabled(shell == nil || isEditingText == true)
         }
     }
 

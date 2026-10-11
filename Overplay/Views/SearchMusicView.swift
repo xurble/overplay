@@ -10,6 +10,7 @@ struct SearchMusicView: View {
     var initialPlaylistID: String?
 
     @State private var viewModel = SearchMusicViewModel()
+    @FocusState private var isSearchFocused: Bool
 
     init(settings: OverplaySettings, playlistID: String? = nil) {
         self.settings = settings
@@ -86,6 +87,8 @@ struct SearchMusicView: View {
         .miniPlayerScrollContentInset()
         .navigationTitle("Search Apple Music")
         .searchable(text: $viewModel.searchText, prompt: "Search songs")
+        .searchFocused($isSearchFocused)
+        .focusedSceneValue(\.isEditingText, isSearchFocused)
         .onSubmit(of: .search) {
             Task { await viewModel.searchService.search(viewModel.searchText) }
         }

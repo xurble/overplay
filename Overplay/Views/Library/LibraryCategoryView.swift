@@ -6,12 +6,12 @@ import SwiftUI
 struct LibraryCategoryView: View {
     var category: LibraryBrowser.Category
 
-    @State private var items: [LibraryBrowser.Item] = []
-    @State private var message: String?
+    private let cache = LibraryCache.shared
 
     var body: some View {
+        let items = cache.items[category] ?? []
         List {
-            if let message, items.isEmpty {
+            if items.isEmpty, let message {
                 Text(message)
                     .foregroundStyle(.secondary)
             }
@@ -22,67 +22,67 @@ struct LibraryCategoryView: View {
                 } label: {
                     LibraryItemRowView(item: item)
                 }
+                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
             }
         }
         .listStyle(.plain)
         .miniPlayerScrollContentInset()
         .navigationTitle(category.rawValue)
-        .task {
-            guard items.isEmpty else { return }
-            message = "Loading…"
-            do {
-                items = try await LibraryBrowser.items(category)
-                message = items.isEmpty ? "No \(category.rawValue.lowercased()) in your library." : nil
-            } catch {
-                message = "Couldn't load your \(category.rawValue.lowercased()): \(error.localizedDescription)"
-            }
+        .task { await cache.prepare(category) }
+    }
+
+    private var message: String? {
+        if let failure = cache.failures[category] {
+            return "Couldn't load your \(category.rawValue.lowercased()): \(failure)"
         }
+        if !cache.hasContent(category) || cache.refreshing.contains(category) { return "Loading…" }
+        return "No \(category.rawValue.lowercased()) in your library."
     }
 }
 
+/// Drawn as a playlist's track rows are: full-height square artwork flush
+/// to the edge, a headline title and a caption subtitle.
 struct LibraryItemRowView: View {
     var item: LibraryBrowser.Item
 
     var body: some View {
         HStack(spacing: 12) {
-            LibraryArtworkView(artwork: item.artwork, side: 52, isRound: isArtist)
-            VStack(alignment: .leading, spacing: 2) {
+            LibraryArtworkView(artwork: item.artwork, side: 72, cornerRadius: 0)
+            VStack(alignment: .leading, spacing: 4) {
                 Text(item.title)
+                    .font(.headline)
                     .lineLimit(1)
-                if let subtitle = item.subtitle {
+                if let subtitle = item.subtitle, !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.subheadline)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
             }
         }
-        .padding(.vertical, 2)
+        .contentShape(Rectangle())
     }
-
-    private var isArtist: Bool { item.kind == .artist }
 }
 
-/// Library artwork through MusicKit, which loads library images the app's
-/// URL cache cannot; a placeholder when there is none.
+/// Library artwork through Overplay's artwork cache, as Library's: under
+/// pressure it goes before Overplay's own. A known background colour shows
+/// until the image does.
 struct LibraryArtworkView: View {
     var artwork: Artwork?
     var side: CGFloat
     var isRound = false
+    var cornerRadius: CGFloat?
 
     var body: some View {
-        Group {
-            if let artwork {
-                ArtworkImage(artwork, width: side, height: side)
-            } else {
-                Image(systemName: isRound ? "music.mic" : "music.note")
-                    .font(.system(size: side * 0.4))
-                    .foregroundStyle(.secondary)
-                    .frame(width: side, height: side)
-                    .background(.quaternary)
-            }
-        }
-        .clipShape(isRound ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: side * 0.12)))
+        // A thumbnail-sized image for rows: a tenth of the download.
+        let pixels = side <= 96 ? 160 : 512
+        ArtworkView(
+            urlString: artwork?.url(width: pixels, height: pixels)?.absoluteString,
+            pixelSize: side <= 96 ? 128 : 512,
+            playlistID: ArtworkCacheService.libraryPlaylistID,
+            cornerRadius: isRound ? side / 2 : (cornerRadius ?? side * 0.12)
+        )
+        .frame(width: side, height: side)
     }
 }
 

@@ -297,7 +297,7 @@ final class PlaylistManagementViewModel {
             dependencies.reconcileStoredOrder(playlist, context)
             message = "Synced \(count) tracks from \(playlist.name)."
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
         }
     }
 
@@ -318,7 +318,7 @@ final class PlaylistManagementViewModel {
             dependencies.reconcileStoredOrder(playlist, context)
             message = "Overplayed \(track.title)."
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
         }
     }
 
@@ -339,7 +339,7 @@ final class PlaylistManagementViewModel {
             dependencies.reconcileStoredOrder(playlist, context)
             message = "Retired \(track.title)."
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
         }
     }
 
@@ -360,7 +360,7 @@ final class PlaylistManagementViewModel {
             dependencies.reconcileStoredOrder(playlist, context)
             message = "Restored \(track.title)."
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
         }
     }
 

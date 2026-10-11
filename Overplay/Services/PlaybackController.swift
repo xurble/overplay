@@ -832,7 +832,7 @@ final class PlaybackController {
             }
             try context.save()
         } catch {
-            statusMessage = error.localizedDescription
+            statusMessage = UserFacingError.message(for: error)
         }
     }
 
@@ -1048,7 +1048,7 @@ final class PlaybackController {
         do {
             inputs = try PlaybackQueueOrchestrator.playlistInputs(for: playlist.musicPlaylistID, in: context)
         } catch {
-            statusMessage = error.localizedDescription
+            statusMessage = UserFacingError.message(for: error)
             return
         }
         let items = PlaylistDisplayOrder.orderedItems(inputs.items.filter { scope.includes($0) }, scope: scope)
@@ -1417,7 +1417,16 @@ final class PlaybackController {
         let generationBeforeLookup = startGeneration
         let resolved = await collectionTracks(songs.map(\.catalogID))
         guard startGeneration == generationBeforeLookup else { return false }
-        let playable = collectionPlayable(songs.compactMap { song in resolved[song.catalogID].map { (song.catalogID, $0) } })
+        var playable = collectionPlayable(songs.compactMap { song in resolved[song.catalogID].map { (song.catalogID, $0) } })
+        // The saved songs' web artwork, which loads and themes everywhere; a
+        // Mac's local copy reports artwork only MusicKit can draw.
+        let savedArtwork = Dictionary(songs.compactMap { song in song.artworkURLTemplate.map { (song.catalogID, $0) } },
+                                      uniquingKeysWith: { first, _ in first })
+        for index in playable.indices {
+            if let id = playable[index].0.catalogSongID, let artwork = savedArtwork[id] {
+                playable[index].0.artworkURLTemplate = artwork
+            }
+        }
         guard !playable.isEmpty else {
             statusMessage = "Couldn't play \(collection.title): Apple Music didn't return its songs. Check your connection."
             return false
@@ -1504,7 +1513,7 @@ final class PlaybackController {
 
     static func collectionFailureMessage(_ request: PlaybackCollection.Request, _ error: Error) -> String {
         let what = request == .album ? "the album" : "the artist"
-        return "Couldn't play \(what): \(error.localizedDescription)"
+        return "Couldn't play \(what): \(UserFacingError.message(for: error))"
     }
 
     /// Members for catalog tracks, in order. A song Overplay tracks carries
@@ -1621,7 +1630,7 @@ final class PlaybackController {
                 statusMessage = "Moved \(song.title) to Triage."
             }
         } catch {
-            statusMessage = error.localizedDescription
+            statusMessage = UserFacingError.message(for: error)
         }
     }
 
@@ -1643,7 +1652,7 @@ final class PlaybackController {
                 destination = try PlaylistRepository.triageBucket(in: context)
             }
         } catch {
-            statusMessage = error.localizedDescription
+            statusMessage = UserFacingError.message(for: error)
             return
         }
         let memberID = PlaybackIntent.Member.untrackedID(catalogID: song.id)
@@ -1659,7 +1668,7 @@ final class PlaybackController {
             if toOneTruePlaylist {
                 mutations.recordFailedManualAdd(song, to: destination, message: error.localizedDescription, in: context)
             }
-            statusMessage = "Couldn't add \(song.title): \(error.localizedDescription)"
+            statusMessage = "Couldn't add \(song.title): \(UserFacingError.message(for: error))"
         }
     }
 
@@ -1816,11 +1825,7 @@ final class PlaybackController {
         "Overplay has lost its connection to Apple Music. Force-quit Overplay and open it again to keep playing."
 
     static func failureMessage(for error: Error) -> String {
-        let nsError = error as NSError
-        if nsError.domain == "MPMusicPlayerControllerErrorDomain" {
-            return "Apple Music playback couldn't start (\(nsError.code)). Press Play to try again."
-        }
-        return error.localizedDescription
+        UserFacingError.message(for: error)
     }
 
     // MARK: - Curation of the current track
@@ -1836,7 +1841,7 @@ final class PlaybackController {
         do {
             try await promoteTrack(item, playlist: playlist, context: context)
         } catch {
-            statusMessage = error.localizedDescription
+            statusMessage = UserFacingError.message(for: error)
             return
         }
         statusMessage = "Moved to the One True Playlist."
@@ -1857,7 +1862,7 @@ final class PlaybackController {
         do {
             try retireTrack(item, playlist: playlist, message: "Retired manually", context: context)
         } catch {
-            statusMessage = error.localizedDescription
+            statusMessage = UserFacingError.message(for: error)
             return
         }
         if player.currentEntryID != nil {
@@ -1875,7 +1880,7 @@ final class PlaybackController {
         do {
             try restoreTrack(item, playlist: try? PlaylistRepository.playlist(id: item.playlistID, in: context), context: context)
         } catch {
-            statusMessage = error.localizedDescription
+            statusMessage = UserFacingError.message(for: error)
             return false
         }
         statusMessage = "Moved to Triage."
@@ -1894,7 +1899,7 @@ final class PlaybackController {
             _ = try TrackActionService.resetSkipCount(item, playlist: playlist, message: message,
                                                       protectingItemID: protecting, in: context)
         } catch {
-            statusMessage = error.localizedDescription
+            statusMessage = UserFacingError.message(for: error)
             return false
         }
         reconcileTrackMembership(context: context)
@@ -2095,7 +2100,7 @@ final class PlaybackController {
                 statusMessage = Self.notEditableHereMessage
             }
         } catch {
-            statusMessage = "Retired locally, but Apple Music playlist removal failed: \(error.localizedDescription)"
+            statusMessage = "Retired locally, but Apple Music playlist removal failed: \(UserFacingError.message(for: error))"
         }
         reconcileTrackMembership(context: context)
     }
@@ -2258,7 +2263,7 @@ final class PlaybackController {
             }
             activePlaylistSnapshot = candidate
         } catch {
-            statusMessage = "Playback is active, but refreshing the visible playlist failed: \(error.localizedDescription)"
+            statusMessage = "Playback is active, but refreshing the visible playlist failed: \(UserFacingError.message(for: error))"
         }
     }
 

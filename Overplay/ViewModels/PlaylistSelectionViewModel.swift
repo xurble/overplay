@@ -91,7 +91,7 @@ final class PlaylistSelectionViewModel {
             playlists = try await dependencies.fetchLibraryPlaylists()
             message = playlists.isEmpty ? "No Apple Music library playlists were found." : nil
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
         }
     }
 
@@ -112,7 +112,7 @@ final class PlaylistSelectionViewModel {
             refreshPlaylistInBackground(id: playlist.id, context: context, dependencies: dependencies)
             dependencies.dismiss()
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
         }
     }
 
@@ -123,7 +123,7 @@ final class PlaylistSelectionViewModel {
             refreshPlaylistInBackground(id: playlist.id, context: context, dependencies: dependencies)
             dependencies.dismiss()
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
         }
     }
 
@@ -133,7 +133,7 @@ final class PlaylistSelectionViewModel {
             try context.save()
             message = "\(playlist.name) now feeds the triage bucket."
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
         }
     }
 
@@ -149,7 +149,7 @@ final class PlaylistSelectionViewModel {
             }
             message = "\(playlist.name) no longer feeds the triage bucket."
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
         }
     }
 
@@ -164,7 +164,7 @@ final class PlaylistSelectionViewModel {
             refreshPlaylistInBackground(playlist, context: context, dependencies: dependencies)
             dependencies.dismiss()
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
         }
     }
 
@@ -183,7 +183,7 @@ final class PlaylistSelectionViewModel {
             message = "Created \(playlist.name) in Apple Music."
             dependencies.dismiss()
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
         }
     }
 
@@ -206,7 +206,7 @@ final class PlaylistSelectionViewModel {
             message = "Copied \(sourcePlaylist.name) to \(playlist.name)."
             dependencies.dismiss()
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
         }
     }
 
@@ -224,7 +224,7 @@ final class PlaylistSelectionViewModel {
             dependencies.reconcileStoredOrder(playlist, context)
             message = "Synced \(count) tracks from \(playlist.name) (Apple Music)."
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
         }
     }
 
@@ -247,7 +247,7 @@ final class PlaylistSelectionViewModel {
             }
             message = "Synced \(count) tracks across linked playlists."
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
         }
     }
 
@@ -263,7 +263,7 @@ final class PlaylistSelectionViewModel {
                 _ = try await dependencies.syncPlaylist(playlist, context)
                 dependencies.reconcileStoredOrder(playlist, context)
             } catch {
-                playlist.lastSyncError = error.localizedDescription
+                playlist.lastSyncError = UserFacingError.message(for: error)
                 playlist.updatedAt = .now
                 try? context.save()
             }
@@ -275,7 +275,7 @@ final class PlaylistSelectionViewModel {
             do {
                 _ = try await dependencies.syncPlaylistID(playlistID, context)
             } catch {
-                message = error.localizedDescription
+                message = UserFacingError.message(for: error)
             }
         }
     }

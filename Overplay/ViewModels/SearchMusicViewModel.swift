@@ -104,8 +104,8 @@ final class SearchMusicViewModel {
                 searchService.message = "Added \(result.title) to \(playlist.name)."
             }
         } catch {
-            dependencies.recordFailedManualAdd(result, playlist, error.localizedDescription, context)
-            searchService.message = "Could not add \(result.title) to \(playlist.name): \(error.localizedDescription)"
+            dependencies.recordFailedManualAdd(result, playlist, UserFacingError.message(for: error), context)
+            searchService.message = "Could not add \(result.title) to \(playlist.name): \(UserFacingError.message(for: error))"
         }
     }
 
@@ -165,7 +165,7 @@ final class SearchMusicViewModel {
             dependencies.reconcileStoredOrder(playlist, context)
             return nil
         } catch {
-            return "Added to \(playlist.name), but sync failed: \(error.localizedDescription)"
+            return "Added to \(playlist.name), but sync failed: \(UserFacingError.message(for: error))"
         }
     }
 }

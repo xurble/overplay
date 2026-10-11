@@ -114,7 +114,7 @@ struct PlaylistMutationService {
                 source: .user,
                 skipCountAtEvent: previousSkipCount,
                 remoteMutationStatus: .failed,
-                message: "Overplay failed: \(error.localizedDescription)",
+                message: "Overplay failed: \(UserFacingError.message(for: error))",
                 in: context
             )
             try? context.save()

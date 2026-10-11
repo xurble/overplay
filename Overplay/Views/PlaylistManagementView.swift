@@ -96,11 +96,6 @@ private struct PlaylistManagementContentView: View {
                     .controlSize(.large)
                     .disabled(!detail.rows.contains { $0.isPlayable })
 
-                    if let statusMessage = playbackController.statusMessage {
-                        Text(statusMessage)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
                 }
                 .padding(.vertical, 4)
             }
@@ -151,15 +146,14 @@ private struct PlaylistManagementContentView: View {
                 }
             }
 
-            if let message = viewModel.message {
-                Section {
-                    Text(message)
-                        .foregroundStyle(.secondary)
-                }
-            }
         }
         .listStyle(.plain)
         .miniPlayerScrollContentInset()
+        .onChange(of: viewModel.message) { _, message in
+            guard let message else { return }
+            StatusToast.shared.show(message)
+            viewModel.message = nil
+        }
         .navigationTitle(selectedScope == .retired ? "Retired" : playlist.name)
         .navigationBarTitleDisplayMode(.inline)
         .task(id: playlist.musicPlaylistID) {

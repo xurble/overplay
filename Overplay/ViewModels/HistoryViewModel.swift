@@ -69,7 +69,7 @@ final class HistoryViewModel {
             try dependencies.restoreTrack(item, playlist(for: item, playlists: playlists), context)
             message = "Restored \(row.trackTitle)."
         } catch {
-            message = error.localizedDescription
+            message = UserFacingError.message(for: error)
         }
     }
 
