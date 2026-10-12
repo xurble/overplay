@@ -64,6 +64,9 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
     /// An entry change the controller handled: the reported item, the intent
     /// member it was attributed to, and how (#84).
     case playerEntryObserved
+    /// The player's reported status changed, as Overplay saw it. MusicKit
+    /// does not announce every change; the one-second sample finds the rest.
+    case playerStatusObserved
     /// The track every Overplay surface shows changed (#84).
     case nowPlayingDisplayChanged
     /// Player observation set aside while a start loads its queue (#76),
@@ -160,7 +163,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
              .queueEndObserved, .playerModeObserved,
              .playbackQueueInvalidation, .playbackStateInvalidation, .playbackQueueObservationRebound,
              .playbackObservationCoalesced, .playCountLookupResult,
-             .playerCallStarted, .playerEntryObserved, .nowPlayingDisplayChanged, .observationHeld,
+             .playerCallStarted, .playerEntryObserved, .playerStatusObserved, .nowPlayingDisplayChanged, .observationHeld,
              .playerCallStuck, .networkPathChanged, .audioSessionEvent, .diagnosticNote:
             .playbackDecision
         }
@@ -207,6 +210,7 @@ nonisolated enum MusicKitActivityOperation: String, Codable, CaseIterable, Senda
         case .playbackObservationCoalesced: "Player invalidation coalesced"
         case .playerCallStarted: "Player call started"
         case .playerEntryObserved: "Player entry handled"
+        case .playerStatusObserved: "Player status changed"
         case .nowPlayingDisplayChanged: "Now Playing display changed"
         case .observationHeld: "Observation held during start"
         case .playerCallStuck: "Player call unanswered"

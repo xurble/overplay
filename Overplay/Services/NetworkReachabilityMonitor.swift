@@ -10,7 +10,7 @@ final class NetworkReachabilityMonitor {
 
     private let monitor = NWPathMonitor()
     private(set) var isReachable = true
-    private var lastDescription: String?
+    private(set) var lastDescription: String?
 
     private init() {
         monitor.pathUpdateHandler = { [weak self] path in
