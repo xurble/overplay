@@ -8,6 +8,10 @@ struct PlaybackFailure: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
         case command
         case stalled
+        /// The player accepted Play and reported `playing`, then fell back to
+        /// paused without the position ever moving (2026-10-11: low bandwidth
+        /// and nearly full storage).
+        case didNotStart
         /// A player call has not returned within the limit. Only relaunching
         /// Overplay has been seen to recover from this (#84).
         case stuck
@@ -172,6 +176,19 @@ final class PlaybackController {
     @ObservationIgnored private var playerAnswers = 0
     /// When the current stuck episode began; nil while not stuck.
     @ObservationIgnored private var stuckSince: Date?
+    /// The current run of `playing` reports, to tell a play the player never
+    /// delivered from one the user paused.
+    @ObservationIgnored private var playEpisode: PlayEpisode?
+    /// One unbroken run of `playing` reports for one entry.
+    private struct PlayEpisode {
+        var entryID: String
+        var since: Date
+        var lastPosition: Double
+        var progressed = false
+    }
+    @ObservationIgnored private var lastRecordedStatus: MusicPlayer.PlaybackStatus?
+    /// Free bytes on the device's volume; injectable for tests.
+    @ObservationIgnored var freeStorageBytes: @MainActor () -> Int64? = PlaybackController.deviceFreeStorageBytes
     @ObservationIgnored private var prefetchedArtworkTrackID: String?
     @ObservationIgnored private var appleCountLookupTask: Task<Void, Never>?
     @ObservationIgnored private var appleCountLookupTrackID: UUID?
@@ -180,6 +197,11 @@ final class PlaybackController {
     static let samplingInterval: Duration = .seconds(1)
     /// Consecutive frozen samples while playing before a stall is surfaced.
     static let stallSampleThreshold = 10
+    /// How long the player must report `playing` with no progress before a
+    /// fall back to paused counts as a play that did not start.
+    static let didNotStartMinimum: TimeInterval = 2
+    /// Below this, a play that did not start is blamed on storage.
+    static let lowStorageBytes: Int64 = 1_000_000_000
     static let resumeSaveInterval: TimeInterval = 15
 
     init(
@@ -412,6 +434,7 @@ final class PlaybackController {
         } else if lastEntryID != nil {
             await queueBecameEmpty(status: status)
         }
+        noteObservedStatus(status, position: player.playbackTime, now: .now)
         ensureSampling()
     }
 
@@ -427,6 +450,7 @@ final class PlaybackController {
         let position = player.playbackTime
         elapsedSeconds = position
         updateSessionProgress(position: position, now: now)
+        noteObservedStatus(status, position: position, now: now)
         detectStall(status: status, position: position)
         saveResumePoint(force: false, now: now)
     }
@@ -860,6 +884,7 @@ final class PlaybackController {
     }
 
     func pause() {
+        playEpisode = nil
         player.pause()
         isPlaying = false
         saveResumePoint(force: true)
@@ -1175,6 +1200,7 @@ final class PlaybackController {
         refreshCurrentItem()
         rebuildActivePlaylistSnapshot()
 
+        playEpisode = nil
         player.pause()
         player.submitQueue(tracks, startingAt: startIndex)
         do {
@@ -1691,7 +1717,7 @@ final class PlaybackController {
             return
         }
         var firstRung = switch playbackFailure?.kind {
-        case .stalled: 2
+        case .stalled, .didNotStart: 2
         case .stuck: 3
         default: 1
         }
@@ -1789,14 +1815,69 @@ final class PlaybackController {
         }
     }
 
+    /// Logs each status change, and catches a play the player accepted but
+    /// never delivered: it reports `playing`, the position never moves, and
+    /// it falls back to paused without announcing it (2026-10-11). A bare
+    /// Play would repeat that forever, so it becomes a failure and the next
+    /// Play recovers.
+    private func noteObservedStatus(_ status: MusicPlayer.PlaybackStatus, position: Double, now: Date) {
+        if status != lastRecordedStatus {
+            lastRecordedStatus = status
+            activityLog.record(.playerStatusObserved, detail:
+                "status=\(status) entry=\(lastEntryID ?? "nil") position=\(Int(position))")
+        }
+        guard let entryID = lastEntryID else {
+            playEpisode = nil
+            return
+        }
+        if status == .playing {
+            guard var episode = playEpisode, episode.entryID == entryID else {
+                playEpisode = PlayEpisode(entryID: entryID, since: now, lastPosition: position)
+                return
+            }
+            if position > episode.lastPosition + 0.1 { episode.progressed = true }
+            episode.lastPosition = position
+            playEpisode = episode
+            return
+        }
+        defer { playEpisode = nil }
+        guard let episode = playEpisode, episode.entryID == entryID, !episode.progressed,
+              status == .paused || status == .stopped,
+              now.timeIntervalSince(episode.since) >= Self.didNotStartMinimum else { return }
+        playDidNotStart(now: now)
+    }
+
+    private func playDidNotStart(now: Date) {
+        let freeBytes = freeStorageBytes()
+        let storageIsLow = freeBytes.map { $0 < Self.lowStorageBytes } ?? false
+        let afterFreshQueue = recoveryEscalation.map {
+            $0.rung == 3 && now.timeIntervalSince($0.at) < Self.recoveryEscalationWindow
+        } ?? false
+        let message = switch (afterFreshQueue, storageIsLow) {
+        case (true, true): Self.stillNotStartingLowStorageMessage
+        case (true, false): Self.stillNotStartingMessage
+        case (false, true): Self.didNotStartLowStorageMessage
+        case (false, false): Self.didNotStartMessage
+        }
+        let storage = freeBytes.map { "\($0 / 1_000_000)MB" } ?? "unknown"
+        let network = NetworkReachabilityMonitor.shared.lastDescription ?? "unknown"
+        fail(kind: .didNotStart, message: message, evidence: "freeStorage=\(storage) network=[\(network)]")
+    }
+
+    nonisolated static func deviceFreeStorageBytes() -> Int64? {
+        let values = try? URL.homeDirectory.resourceValues(forKeys: [.volumeAvailableCapacityKey])
+        return values?.volumeAvailableCapacity.map(Int64.init)
+    }
+
     private func fail(_ error: Error) {
         fail(kind: .command, message: Self.failureMessage(for: error))
     }
 
-    private func fail(kind: PlaybackFailure.Kind, message: String) {
+    private func fail(kind: PlaybackFailure.Kind, message: String, evidence: String? = nil) {
         if playbackFailure == nil {
             activityLog.record(.deliveryStallDetected, detail:
-                "\(message) kind=\(kind) entry=\(lastEntryID ?? "nil") position=\(Int(elapsedSeconds)) status=\(player.playbackStatus)")
+                "\(message) kind=\(kind) entry=\(lastEntryID ?? "nil") position=\(Int(elapsedSeconds)) status=\(player.playbackStatus)"
+                + (evidence.map { " \($0)" } ?? ""))
         }
         // A stuck player stays stuck until its calls return or it plays: a
         // later, milder failure must not offer Play as the fix.
@@ -1821,6 +1902,14 @@ final class PlaybackController {
         "Playback stopped before the track finished. Press Play to resume."
     static let notRespondingMessage =
         "Apple Music isn't responding. Wait a moment and press Play again."
+    static let didNotStartMessage =
+        "Apple Music couldn't start this song. The connection may be too slow; press Play to try again."
+    static let didNotStartLowStorageMessage =
+        "Apple Music couldn't start this song because storage is almost full. Free up some space, then press Play to try again."
+    static let stillNotStartingMessage =
+        "Apple Music still can't start playback. Force-quit Overplay and open it again."
+    static let stillNotStartingLowStorageMessage =
+        "Apple Music still can't start playback, and storage is almost full. Free up some space, or force-quit Overplay and open it again."
     static let stuckMessage =
         "Overplay has lost its connection to Apple Music. Force-quit Overplay and open it again to keep playing."
 
