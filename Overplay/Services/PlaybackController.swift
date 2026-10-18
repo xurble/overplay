@@ -111,6 +111,14 @@ final class PlaybackController {
     @ObservationIgnored var addCatalogSongToPlaylist: @MainActor (String, PlaylistRecord, ModelContext) async throws -> Void = {
         try await PlaylistMutationService().addCatalogSong(id: $0, to: $1, in: $2)
     }
+    /// The IDs among these that the account's web library holds as library
+    /// songs; injectable for tests.
+    @ObservationIgnored var webLibrarySongIDs: @MainActor ([String]) async throws -> [String] = { ids in
+        try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, magnitude: Double(ids.count),
+                                                     detail: "manual add web library check") {
+            try await MusicLibrarySongResolver.webLibrarySongIDs(ids.map { MusicItemID($0) })
+        }
+    }
     @ObservationIgnored private let sleep: @MainActor (Duration) async -> Void
     /// Where the controller's decisions are recorded; injectable for tests.
     @ObservationIgnored var activityLog = MusicKitActivityLog.shared
@@ -1684,18 +1692,52 @@ final class PlaybackController {
         let memberID = PlaybackIntent.Member.untrackedID(catalogID: song.id)
         let mutations = PlaylistMutationService()
         do {
-            if toOneTruePlaylist { try await addCatalogSongToPlaylist(song.id, destination, context) }
-            let item = try mutations.recordSuccessfulManualAdd(song, to: destination, in: context)
+            guard let identity = try await confirmedIdentity(forSongID: song.id) else {
+                throw PlaylistMutationError.songUnknownToAppleMusic
+            }
+            if toOneTruePlaylist {
+                guard let catalogID = identity.catalogID else { throw PlaylistMutationError.musicItemMissing }
+                try await addCatalogSongToPlaylist(catalogID, destination, context)
+            }
+            let item = try mutations.recordSuccessfulManualAdd(song, identity: identity, to: destination, in: context)
+            activityLog.record(.diagnosticNote, detail: "manual add to \(destination.role.rawValue): "
+                + "\(song.title) catalog=\(identity.catalogID ?? "-") library=\(identity.libraryID ?? "-")")
             if session?.play.localTrackID == memberID { markSessionEvaluatedWithoutSkip() }
             if intent?.member(localTrackID: memberID) != nil { rekeyIntent([memberID: item.trackID.uuidString]) }
             reconcileTrackMembership(context: context)
             statusMessage = toOneTruePlaylist ? "Added to the One True Playlist." : "Added to Triage."
         } catch {
+            activityLog.record(.diagnosticNote, detail: "manual add refused: \(song.title) id=\(song.id)", error: error)
             if toOneTruePlaylist {
                 mutations.recordFailedManualAdd(song, to: destination, message: error.localizedDescription, in: context)
             }
             statusMessage = "Couldn't add \(song.title): \(UserFacingError.message(for: error))"
         }
+    }
+
+    /// Which Apple Music domain an untracked song's ID belongs to, asked of
+    /// Apple Music rather than read from the ID's form: a numeric ID can be
+    /// one device's own library ID (a Mac's persistent ID), which neither the
+    /// catalog nor any other device can resolve. Nil when neither the catalog
+    /// nor the account's web library knows the ID; a failed request throws.
+    private func confirmedIdentity(forSongID id: String) async throws -> MusicTrackIdentity.IDs? {
+        var catalogFailure: Error?
+        do {
+            if try await playbackCatalog.songs([id])[id] != nil { return MusicTrackIdentity.IDs(catalogID: id) }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            catalogFailure = error
+        }
+        do {
+            if try await webLibrarySongIDs([id]) == [id] { return MusicTrackIdentity.IDs(libraryID: id) }
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw catalogFailure ?? error
+        }
+        if let catalogFailure { throw catalogFailure }
+        return nil
     }
 
     // MARK: - Failure and recovery (`PLAY-014`)

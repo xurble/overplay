@@ -1078,12 +1078,21 @@ Titles never decide it.
   current song issues Next (`PLAY-015`).
 - **Untracked songs** are not counted. Now Playing offers **Add to Triage** and
   **Add to One True Playlist**:
+  - Before anything is saved, Overplay asks Apple Music what the song's ID
+    is: a catalog song, or a library song in the account's web library. It is
+    saved in that domain. Never infer the domain from the ID's form: a numeric
+    ID can be one device's own library ID (a Mac's persistent ID), which no
+    other device and not the catalog can resolve. A song neither recognises is
+    not saved, and the add explains why. If Apple Music cannot be asked (for
+    example, offline), nothing is saved and the error is shown. The same
+    applies to swipes in Recent Deep Dives and Library song lists.
   - Add to Triage uses the shared manual-add boundary (**Search and manual
     add**): no remote write, explicit keep intent.
   - Add to One True Playlist adds the song to the linked Apple Music playlist,
     then inserts the local item, as Search does. It is offered only when the
-    One True Playlist's write policy is `managed`. On failure it shows a clear
-    error and adds nothing.
+    One True Playlist's write policy is `managed`, and needs a catalog song: a
+    library-only song is refused. On failure it shows a clear error and adds
+    nothing.
   - Once added, the intent member takes the new track's UUID, the song is
     tracked and Now Playing shows its new location's actions. Playback goes on.
     Counting starts with its next listening session.
@@ -2580,6 +2589,12 @@ The following are not requirements of the current product:
 - Whether `CPNowPlayingShuffleButton` and `CPNowPlayingRepeatButton` reflect
   MusicKit's modes without Overplay publishing remote-command state is
   unverified on hardware.
+- **Manual adds saved with a Mac's local ID.** Two Triage songs added before
+  2026-10-18 were saved with a Mac's local persistent ID as their catalog ID,
+  so no device can play them. Adds now confirm the ID with Apple Music
+  (`PLAY-018`, **Tracked and untracked songs**). Existing rows are not
+  repaired: retire them and add the songs again; a retired, unplayed manual
+  add is deleted by the retention rule (`PLAYLIST-005`, `PLAYLIST-011`).
 - The CarPlay shuffle button still toggles several times after a track
   change, as of 2026-10-07, after the rewrite removed the second Now Playing
   client (History H-7) that was a plausible cause

@@ -9,6 +9,7 @@ enum PlaylistMutationError: LocalizedError {
     case trackMissing
     case musicItemMissing
     case playlistIncomingOnly
+    case songUnknownToAppleMusic
 
     var errorDescription: String? {
         switch self {
@@ -24,6 +25,8 @@ enum PlaylistMutationError: LocalizedError {
             "This track does not have an Apple Music identifier Overplay can add."
         case .playlistIncomingOnly:
             "This playlist is incoming only, so Overplay will not write changes back to Apple Music."
+        case .songUnknownToAppleMusic:
+            "Apple Music doesn't recognise this song, so Overplay can't save it."
         }
     }
 }
@@ -151,15 +154,18 @@ struct PlaylistMutationService {
     @discardableResult
     func recordSuccessfulManualAdd(
         _ result: SearchSongResult,
+        identity: MusicTrackIdentity.IDs? = nil,
         to playlist: PlaylistRecord,
         addedAt: Date = .now,
         in context: ModelContext
     ) throws -> PlaylistItemRecord {
-        // SearchService requests catalog songs; the endpoint establishes the
-        // resource domain. No raw-ID syntax inference enters persistence.
+        // SearchService requests catalog songs, so its endpoint establishes
+        // the domain. Other callers pass the domain Apple Music confirmed.
+        // No raw-ID syntax inference enters persistence.
+        let identity = identity ?? MusicTrackIdentity.IDs(catalogID: result.id)
         let track = try TrackRecordRepository.upsert(
-            catalogID: result.id,
-            libraryID: nil,
+            catalogID: identity.catalogID,
+            libraryID: identity.libraryID,
             title: result.title,
             artistName: result.artistName,
             albumTitle: result.albumTitle,

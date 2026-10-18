@@ -199,6 +199,8 @@ struct PlaybackCollectionTests {
         let item = try #require(try PlaylistItemRepository.item(trackID: trackID, in: fixture.context))
         #expect(item.playlistID == (try PlaylistRepository.triageBucket(in: fixture.context)).id)
         #expect(item.isExplicitlyKept)
+        let track = try #require(try TrackRecordRepository.track(id: trackID, in: fixture.context))
+        #expect(track.catalogID == "alb-1" && track.libraryID == nil)
         #expect(!fixture.controller.canAddCurrentToOverplay)
         #expect(fixture.controller.currentPlaylistRole(context: fixture.context) == .triageBucket)
         #expect(fixture.player.submitCount == 2)
@@ -243,6 +245,79 @@ struct PlaybackCollectionTests {
         await fixture.controller.addCurrentToOneTruePlaylist(context: fixture.context)
 
         #expect(fixture.controller.canAddCurrentToOverplay)
+        #expect(try TrackRecordRepository.allTracks(in: fixture.context).count == 3)
+        #expect(fixture.controller.statusMessage?.hasPrefix("Couldn't add Album Song 1") == true)
+    }
+
+    /// Plays the album and advances to its first untracked song, then makes
+    /// the catalog stop recognising it, as for a device-local ID.
+    private func playingUnknownSong(_ fixture: PlaybackFixture) async throws -> FakePlaybackCatalog {
+        let catalog = try catalog(for: fixture)
+        await playing(fixture)
+        await fixture.controller.playCurrentCollection(.album, context: fixture.context)
+        await fixture.player.externallyAdvance()
+        catalog.contents = [:]
+        return catalog
+    }
+
+    @Test func addRefusesASongAppleMusicDoesNotRecognise() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        _ = try await playingUnknownSong(fixture)
+        var webLookups: [[String]] = []
+        fixture.controller.webLibrarySongIDs = { ids in
+            webLookups.append(ids)
+            return []
+        }
+
+        await fixture.controller.addCurrentToTriage(context: fixture.context)
+
+        #expect(webLookups == [["alb-1"]])
+        #expect(try TrackRecordRepository.allTracks(in: fixture.context).count == 3)
+        #expect(fixture.controller.canAddCurrentToOverplay)
+        #expect(fixture.controller.statusMessage
+            == "Couldn't add Album Song 1: Apple Music doesn't recognise this song, so Overplay can't save it.")
+    }
+
+    @Test func addSavesALibraryOnlySongAsALibrarySong() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        _ = try await playingUnknownSong(fixture)
+        fixture.controller.webLibrarySongIDs = { $0 }
+
+        await fixture.controller.addCurrentToTriage(context: fixture.context)
+
+        #expect(fixture.controller.statusMessage == "Added to Triage.")
+        let trackID = try #require(fixture.controller.currentMember?.trackID)
+        let track = try #require(try TrackRecordRepository.track(id: trackID, in: fixture.context))
+        #expect(track.libraryID == "alb-1" && track.catalogID == nil)
+    }
+
+    @Test func addSavesNothingWhenAppleMusicCannotBeAsked() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        let catalog = try await playingUnknownSong(fixture)
+        catalog.failure = URLError(.notConnectedToInternet)
+        fixture.controller.webLibrarySongIDs = { _ in throw URLError(.notConnectedToInternet) }
+
+        await fixture.controller.addCurrentToTriage(context: fixture.context)
+
+        #expect(try TrackRecordRepository.allTracks(in: fixture.context).count == 3)
+        #expect(fixture.controller.statusMessage
+            == "Couldn't add Album Song 1: You're offline. Check your connection and try again.")
+    }
+
+    @Test func oneTruePlaylistAddRefusesALibraryOnlySong() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        _ = try await playingUnknownSong(fixture)
+        fixture.controller.webLibrarySongIDs = { $0 }
+        var remoteAdds = 0
+        fixture.controller.addCatalogSongToPlaylist = { _, _, _ in remoteAdds += 1 }
+
+        await fixture.controller.addCurrentToOneTruePlaylist(context: fixture.context)
+
+        #expect(remoteAdds == 0)
         #expect(try TrackRecordRepository.allTracks(in: fixture.context).count == 3)
         #expect(fixture.controller.statusMessage?.hasPrefix("Couldn't add Album Song 1") == true)
     }
