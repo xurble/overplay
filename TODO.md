@@ -48,22 +48,18 @@ Developer ID–signed and notarized.
 
 ## Milestone 1: Internal TestFlight
 
-### 1.1 Get the test suite green
+### 1.1 Keep the test suite green
 
-f1caed3 changed the displayed play count to a single number, the higher of
-Overplay's and Apple's, and added `appleFloor` ledger events. Its commit says
-that tests expecting `x/y plays` (for example, `ApplePlayCountTests`) will fail
-and that the ledger change needs its own tests. 2ed2470 (library cache, error
-toasts) was checked by eye only. Bring the suite back to green before trusting
-it as a release gate:
+Green again on 2026-10-18 (c521d73: 905 tests, serial, iPad simulator). The
+play-count wording and error-message expectations were updated, a refresh no
+longer counts a floor-raised item twice, and `appleFloor` and
+`UserFacingError` have their own tests. Still to do:
 
-- Update the play-count wording expectations.
-- Add ledger tests for `appleFloor` (idempotent per count, never adds to the
-  count, converges across devices).
 - Add focused tests for the library cache (`LibraryCache`) and library
-  playback's choice of this device's own copies.
+  playback's choice of this device's own copies (2ed2470 was checked by eye
+  only).
 - Run the full `commands.check` suite serially (`-parallel-testing-enabled NO`)
-  and record the result.
+  before each TestFlight build.
 
 ### 1.2 Privacy manifest
 
