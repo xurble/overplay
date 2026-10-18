@@ -4,9 +4,12 @@
 
 This document is the canonical specification for Overplay. The playback,
 counting and cross-surface sections were rewritten on 2026-10-04 for the
-reliable-playback-core rewrite (`PLAY-010` onwards, `COUNT-*`, `LOAD-*`). Other
-sections describe behaviour implemented as of 2026-09-30, unless they are
-labelled **Planned**. Future work belongs in `TODO.md`. Implementation details
+reliable-playback-core rewrite (`PLAY-010` onwards, `COUNT-*`, `LOAD-*`). The
+platform, Library, Search, Required Screens and Known Defects sections were
+brought up to date on 2026-10-18, after the Mac Catalyst build and Library
+browsing. Other sections describe behaviour implemented as of 2026-09-30,
+unless they are labelled **Planned**. Future work and the release plan belong
+in `TODO.md`. Implementation details
 are requirements only when they create observable behaviour or protect a stated
 invariant.
 
@@ -33,8 +36,8 @@ trades one against another, the higher priority wins.
 2. **CarPlay and Siri first.** Playlist management works with the phone in a
    pocket. Playing a playlist and promoting, retiring or restoring the current
    track are reachable from CarPlay and by voice; an action that needs the
-   phone screen is, in practice, unavailable. Siri support is **Planned**:
-   deferred, not yet built (`TODO.md`, Siri Playlist Management).
+   phone screen is, in practice, unavailable. Siri support is **Planned** for
+   v1 and not yet built (`TODO.md`: Minimal Siri, then Fuller Siri).
 3. **Reliable playlist management.** One True Playlist, Triage and Retired
    stay correct, and deduplication keeps each logical track in exactly one of
    them (`PLAYLIST-007`).
@@ -63,7 +66,7 @@ Music's global play count or skip count.
 
 | ID | Requirement | Primary evidence |
 | --- | --- | --- |
-| `PLAT-001` | The current app supports iPhone and iPad on iOS/iPadOS 26+, with CarPlay supplied by the iPhone app. A native Mac target is planned, not implemented. | `Overplay.xcodeproj/project.pbxproj`, `Overplay/App/Shell/PlatformShell.swift` |
+| `PLAT-001` | The app supports iPhone and iPad on iOS/iPadOS 26+, with CarPlay supplied by the iPhone app, and the Mac on macOS 26+ through a Mac Catalyst build of the same app, which cannot write Apple Music playlists. A native Mac target is planned, not implemented. | `Overplay.xcodeproj/project.pbxproj`, `Overplay/App/Shell/PlatformShell.swift`, `Overplay/App/Shell/SplitLayoutPolicy.swift` |
 | `AUTH-001` | Normal use requires Apple Music authorization, catalogue playback capability, and Sync Library. The simulator supplies a ready state for development. | `Overplay/Services/MusicAuthorizationService.swift`, `Overplay/App/StartupAuthorizationGate.swift` |
 | `PLAYLIST-001` | Exactly one active One True Playlist is selected. Selecting another demotes the previous main playlist to a triage source. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/NewModelRepositoryTests.swift` |
 | `PLAYLIST-003` | There is at most one triage bucket. It owns every triage item, is ensured during startup, and has a reserved `musicPlaylistID` rather than an Apple Music playlist, so it is never fetched or synced directly. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/TriageBucketTests.swift` |
@@ -98,6 +101,7 @@ Music's global play count or skip count.
 | `CAR-002` | Presented menus retain row and artwork identity. Only changed visible values are published; section replacement requires structural change. Presentation reads never mutate playback or persistence. | `Overplay/CarPlaySupport/CarPlayListRenderer.swift` |
 | `PLAY-018` | Now Playing in the app and CarPlay plays the current song's album from track 1, or its artist's Essentials playlist, else its Top Songs with versions collapsed, through one shared start. Tracked songs are counted and curated as usual; untracked songs offer Add to Triage and Add to One True Playlist. A failed lookup changes nothing. | `Overplay/Playback/PlaybackCollection.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/PlaybackCollectionTests.swift` |
 | `PLAY-019` | Recents keeps the 10 most recently played albums and artists, synced through iCloud, one per album or artist, newest first. The main screen shows them as one scrolling row of artwork and CarPlay as a Recents menu; each opens its saved songs with Shuffle and Play, played through the shared selection action and from this device's saved tracks. | `Overplay/Persistence/RecentCollectionRepository.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/RecentsTests.swift` |
+| `LIB-001` | The Library section browses the user's Apple Music library (Playlists, Albums, Artists, Songs) from the web library, so Overplay's tracks match and show their counts on every device. A collection plays through the shared collection start with this device's own library copies; Songs plays a 100-song window; nothing from Library is added to Recent Deep Dives. Lists are cached per device, never synced. | `Overplay/Services/LibraryBrowser.swift`, `Overplay/Services/LibraryCache.swift`, `Overplay/Views/Library/` |
 | `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing; Play Album and Play Artist add one action list above it (`PLAY-018`), and Recents adds one level under the root (`PLAY-019`). | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
 | `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
 | `HISTORY-001` | History is filterable and paged. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. History is never the source of counts. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
@@ -120,8 +124,10 @@ Planned**. They are not current behaviour and have no evidence yet.
   - iPhone on iOS 26 and later.
   - CarPlay through the iPhone app on iOS 26 and later.
   - iPad on iPadOS 26 and later.
+  - Mac on macOS 26 and later, as a Mac Catalyst build of the iPad app,
+    without Apple Music playlist writes (see Mac).
 - Planned platform:
-  - A native Mac target on macOS 26 and later. No Mac target currently exists.
+  - A native Mac target on macOS 26 and later.
 - Language: Swift 6.
 - UI framework: SwiftUI.
 - Persistence: SwiftData backed by iCloud/CloudKit for shared playlist,
@@ -139,8 +145,9 @@ Planned**. They are not current behaviour and have no evidence yet.
 
 ## Platform Strategy
 
-Overplay uses one shared SwiftUI app architecture across iPhone and iPad and
-is intended to extend that architecture to Mac. Product rules, sync,
+Overplay uses one shared SwiftUI app architecture across iPhone, iPad and the
+Mac Catalyst build, and is intended to extend it to a native Mac target.
+Product rules, sync,
 persistence, search, playlist mutation, playback
 tracking, and retirement logic should live in shared services and models.
 Platform-specific code should be limited to presentation shell, scene
@@ -170,10 +177,11 @@ iPad is the review and management experience as well as a playback device.
   it is wider than tall and Now Playing above the list when it is taller. The
   sidebar slides over the list and closes after a choice, and Now Playing
   cannot be hidden. Compact width has the mini player.
+- The iPad app is single-window; only the Mac build enables multiple scenes,
+  for its Settings window.
 
-**Planned iPad refinements:** improve wide-screen playlist detail and Now
-Playing coexistence; verify Stage Manager, Split View, and multiwindow state;
-and add useful hardware-keyboard and pointer interactions.
+**Planned iPad refinements:** hardware-keyboard and pointer interactions
+beyond Next and Previous.
 
 ### Mac
 
@@ -185,17 +193,30 @@ adds to, creates or edits an Apple Music playlist: removals wait for an iPhone
 or iPad, rebuilding is not offered, and adding or promoting a song reports
 that it needs an iPhone or iPad.
 
+The Mac build has its own menus and windows:
+
+- **Go** opens Dashboard, Overplay, Triage, Retired, Search (⌘F) and History,
+  with shortcuts; **Controls** has Play/Pause, Next and Previous, which step
+  aside while a text field is focused; **View** shows or hides the sidebar and
+  Now Playing. Document and New Window items are removed.
+- Search, History and Settings are not in the Mac sidebar.
+- Settings opens in its own window, with General and Troubleshooting tabs,
+  sized to its controls; only Close is enabled.
+- While Now Playing is hidden, a mini player sits in the title bar, with the
+  Now Playing toggle inside it.
+- The audio output pill is hidden: the Mac has its own output menu, and
+  `ApplicationMusicPlayer` does not support the route picker or volume view
+  there (FB13934910, FB21042385).
+
 **Planned:** Mac is the power-user library management and background playback
 experience.
 
 - Prefer a native SwiftUI Mac target rather than treating Mac as only a
   scaled iPad surface.
-- Use sidebar navigation, resizable windows, toolbars, menu commands, keyboard
-  shortcuts, context menus, and table/list layouts where they improve scanning.
+- Add context menus and table/list layouts where they improve scanning.
 - Support multiple windows for playlist management, history, and Now Playing
   where practical.
 - Keep playback state local to the Mac and resilient when windows are closed.
-- Support media keys and Now Playing metadata where available.
 - Use Mac-appropriate spacing, hover affordances, focus rings, and selection
   behaviour.
 
@@ -206,8 +227,9 @@ absorb it.
 
 ### Shared target expectations
 
-- iPhone and iPad read and write the same iCloud-backed Overplay data. The
-  planned Mac target must join the same store.
+- iPhone, iPad and the Mac Catalyst build read and write the same
+  iCloud-backed Overplay data. The planned native Mac target must join the
+  same store.
 - Each current and planned target must keep transient playback and selection
   state local to the device.
 - A sync, promotion, retirement, restore, or settings change made on one device
@@ -971,8 +993,8 @@ Add behaviour:
 
 The shared local manual-add boundary also supports Triage without a remote
 write. It establishes explicit keep intent, reuses/revives the global item,
-and never demotes an active OTP item. A new Triage search experience is separate
-work. Moving from Retired to Triage uses the same explicit keep semantics.
+and never demotes an active OTP item. Search does not use it yet; the search rework in
+`TODO.md` makes it Search's primary action. Moving from Retired to Triage uses the same explicit keep semantics.
 
 OTP sync can promote an active bucket item, logging `promoted` with source
 `sync`. It cannot revive retired rows or override stale-OTP suppression. An OTP
@@ -1082,9 +1104,10 @@ Titles never decide it.
   exception to the three-level navigation of `CAR-001`; Recents is the other
   (`PLAY-019`). Add to
   Triage and Add to One True Playlist are Now Playing custom buttons in the
-  slots Promote and Retire use (see `TODO.md` §3).
-- **Siri:** "play this album" and "play this artist" belong with Siri Playlist
-  Management and are not part of `PLAY-018`.
+  slots Promote and Retire use (hardware check in `TODO.md`, CarPlay hardware
+  pass).
+- **Siri:** "play this album" and "play this artist" belong with Fuller Siri
+  in `TODO.md` and are not part of `PLAY-018`.
 
 ### Open device evidence
 
@@ -1176,6 +1199,31 @@ CloudKit schema.
   after Play Album or Play Artist. When the stack is not already Recents, the
   entry and Now Playing, Overplay rebuilds it without animation, as it does
   for the playing playlist.
+
+## Library
+
+The dashboard's Library section browses the user's Apple Music library as the
+Music app's Library does (`LIB-001`). It is on iPhone, iPad and the Mac, not
+in CarPlay.
+
+- **Categories:** Playlists, Albums, Artists and Songs.
+- **Source:** the Apple Music web library, as playlist sync reads iCloud's
+  copy. Its songs carry web library IDs and the catalog IDs Overplay's tracks
+  hold, on every device, so tracked songs match and show their counts. A Mac's
+  on-device library reports only local persistent IDs, which nothing can
+  match.
+- **Song lists:** a playlist, album or artist opens the same song list as a
+  Recent Deep Dive, with Shuffle and Play at the top and the same swipes.
+  Untracked songs offer Add to Triage and Add to One True Playlist and are not
+  counted (`PLAY-018`).
+- **Playback:** through the shared collection start, as a deep dive, but never
+  added to Recent Deep Dives. The queue uses this device's own library copies
+  of the songs, because a Mac cannot play a web library song, and gives the
+  player the web artwork. Songs plays a window of 100 songs.
+- **Cache:** lists are cached per device in the caches folder and never
+  synced. A list opens at once from the cache, refreshes in the background
+  once it is 30 minutes old, and fills a few seconds after launch. Library
+  artwork shares Overplay's artwork cache and is evicted first under pressure.
 
 ## Play/Skip History
 
@@ -1321,8 +1369,9 @@ match on every device; a floor never adds to the count. The original threshold-b
 their existing behavior. The second total is seeded from the current Overplay
 playthrough count at the first valid Apple library observation, then advances
 by Apple's cumulative counter deltas. For example, one Overplay play and an
-Apple counter of ten display `1/1`, equivalent to an effective baseline of nine.
-Missing initial metadata displays `—`; it does not create a zero baseline.
+Apple counter of ten give a second total of 1, equivalent to an effective
+baseline of nine. Missing initial metadata leaves the second total unknown; it
+does not create a zero baseline, and the display shows Overplay's count.
 
 Unresolved tracks also use a paginated local library scan, at most once every
 six hours and never while the player is playing (`LOAD-001`). Matching prefers Apple identity aliases, then a unique ISRC
@@ -1383,9 +1432,10 @@ rewritten or compacted during ordinary refreshes or merges. Indexed item lookups
 keep display reads scoped to the relevant track. Nuke Database deletes this
 evidence alongside the other app records.
 
-Reset-only state without any observed counter continues to display `—` and stays
-eligible for both discovery paths. The first usable reading after such a reset
-seeds the then-current Overplay count; a real observed zero displays zero.
+Reset-only state without any observed counter keeps the Apple total unknown
+(the display shows Overplay's count) and stays eligible for both discovery
+paths. The first usable reading after such a reset seeds the then-current
+Overplay count; a real observed zero is recorded as zero.
 An explicit stats reset creates a new reset version, zeros its initial credits,
 and rebases known counters at their high-water readings. Reset versions order by
 timestamp and stable identifier. Earlier-version observations cannot undo the
@@ -1968,14 +2018,17 @@ Platform notes:
 
 ### Dashboard
 
-Purpose: provide three entry points: One True Playlist, Triage and Retired.
+Purpose: provide three entry points, One True Playlist, Triage and Retired,
+followed by Recent Deep Dives and the Library.
 
 Show:
 
-- One True Playlist row, or a link to configure it when absent.
+- One True Playlist artwork card, or a link to configure it when absent.
 - Triage bucket row, including on a fresh install and after its last
   contributing playlist is removed.
 - Global Retired row, including when empty.
+- Recent Deep Dives, when there are any (`PLAY-019`).
+- Library: Playlists, Albums, Artists and Songs (`LIB-001`).
 - For each row: representative artwork, role/current-playback icon, total
   tracked count, source, last-sync status, and write policy.
 - Link to the triage sources screen, labelled with the contributing count.
@@ -2069,8 +2122,8 @@ Platform notes:
   player spans the width below the vertical bar's controls.
 - On Mac the audio output pill is hidden: the Mac has its
   own output menu, and the system volume cannot be set from the app there.
-- **Planned Mac:** support a compact mini-player style window in addition to the
-  full Now Playing view where practical.
+- On Mac, while Now Playing is hidden, a mini player sits in the title bar.
+  **Planned Mac:** a separate compact mini-player window, if practical.
 
 ### CarPlay music player
 
@@ -2117,16 +2170,26 @@ Purpose: search Apple Music and add tracks to an active managed playlist.
 
 Show:
 
-- Search field.
-- Results with artwork, title, artist, and album.
-- Destination playlist selector.
+- Search field. A search runs when it is submitted.
+- Up to 20 Apple Music catalogue songs, with artwork, title, artist, and
+  album. Library-only songs, albums and artists are not searched.
+- Destination playlist selector: active playlists that allow remote writes,
+  never Triage or a contributing playlist (`MUT-002`).
 - Add action.
 
 Platform notes:
 
-- iPad currently uses the shared search list in split-view detail.
-- **Planned Mac:** support faster triage with keyboard focus, return-to-add
-  where appropriate, and persistent destination selection.
+- iPhone reaches Search from the menu on a playlist screen. iPad has a
+  sidebar entry, and the Mac has Go → Search (⌘F).
+- Adding needs a MusicKit playlist write, so it fails on the Mac and on
+  playlists Overplay did not create.
+
+**Planned (`TODO.md`, Rework search):** search as you type with suggestions;
+library and catalogue results, including albums and artists; each song's
+place in Overplay; Add to Triage and Add to One True Playlist as in
+`PLAY-018` instead of a destination picker; an iPhone-first layout; and, on
+the Mac, keyboard focus and Return to add. The owner reports the current
+screen does not really work on iPhone.
 
 ### Retirement and history
 
@@ -2175,8 +2238,9 @@ Settings:
 - Diagnostic, device-local: **Mirror Now Playing from Overplay** (default off,
   `PLAY-016`).
 
-There is no separate reset-local-playback-state control. **Planned Mac:** expose the settings
-window through the standard app settings command as well as in-app navigation.
+There is no separate reset-local-playback-state control. On the Mac,
+Settings opens in its own window from the standard Settings command, with
+General and Troubleshooting tabs.
 
 ## Services
 
@@ -2449,7 +2513,8 @@ longer exists.
 
 The following are not requirements of the current product:
 
-- Native Mac target, Mac windows, menus, tables, and media-key integration.
+- A native Mac target, Mac tables and Mac multiwindow beyond the Settings
+  window. The Mac Catalyst build has menus, shortcuts and a Settings window.
 - Widgets, Dynamic Island, or separate watch surfaces.
 - Rich dashboard summaries such as recent promotions, unreviewed queues, or
   high-skip queues.
@@ -2469,9 +2534,18 @@ The following are not requirements of the current product:
 ## Known Defects and Verification Gaps
 
 - The 2026-10-04 playback-core rewrite (`PLAY-010`–`PLAY-017`, `COUNT-*`,
-  `LOAD-*`) needs physical-device acceptance. Run it on My Mac (Designed for
-  iPad) for live MusicKit, and on iPhone with CarPlay hardware for system Now
-  Playing ownership, transport controls and the custom buttons.
+  `LOAD-*`) passed acceptance on the owner's iPhone on 2026-10-06 (start,
+  select, Next/Previous, shuffle/repeat, relaunch while playing, failure and
+  Try Again) and has been in daily use since. Its CarPlay hardware checks
+  (Now Playing following the player, the custom buttons, Lock Screen parity)
+  have not been run, and live playback on My Mac (Mac Catalyst) has no
+  recorded acceptance pass (`TODO.md`, Device Acceptance).
+- **Apple Music stalls (contained, not cured).** A `prepareToPlay` that never
+  returns (2026-10-09) and a play that reports `playing` but never starts
+  (2026-10-11) both left Overplay unable to play until it was force-quit. Both
+  are now shared failures (`PLAY-014`): Play runs recovery, and a stuck player
+  advises force-quitting. The cause is open ([GitHub #90](https://github.com/xurble/overplay/issues/90),
+  `PLAYBACK_RELIABILITY_FINDINGS.md`). No Feedback report has been filed yet.
 - **iOS 27 CarPlay Now Playing (unverified).** A developer report (Apple
   forum thread 847151) says CarPlay's `CPNowPlayingTemplate` on iOS 27 reads
   only the app's own Now Playing client and does not follow
@@ -2506,17 +2580,16 @@ The following are not requirements of the current product:
 - Whether `CPNowPlayingShuffleButton` and `CPNowPlayingRepeatButton` reflect
   MusicKit's modes without Overplay publishing remote-command state is
   unverified on hardware.
-- CarPlay has two open playback-surface reports from before the rewrite:
-  custom Promote, Retire and Restore controls absent on hardware
-  ([GitHub #22](https://github.com/xurble/overplay/issues/22)), and the shuffle
-  button toggling several times after a track change
-  ([GitHub #28](https://github.com/xurble/overplay/issues/28)). Both must be
-  re-checked after the rewrite, because the second Now Playing client
-  (History H-7) is a plausible cause of #28.
-- The distinction between CarPlay Back and the enabled Up Next button needs
-  hardware investigation
-  ([GitHub #27](https://github.com/xurble/overplay/issues/27)). Intended behaviour
-  is Back by one level and Up Next to the root playlist menu.
+- The CarPlay shuffle button still toggles several times after a track
+  change, as of 2026-10-07, after the rewrite removed the second Now Playing
+  client (History H-7) that was a plausible cause
+  ([GitHub #28](https://github.com/xurble/overplay/issues/28)).
+- Two CarPlay reports from before the rewrite were closed without a hardware
+  re-check since: custom Promote, Retire and Restore controls absent
+  ([GitHub #22](https://github.com/xurble/overplay/issues/22)), and Back and
+  Up Next appearing to do the same thing
+  ([GitHub #27](https://github.com/xurble/overplay/issues/27)). Intended
+  behaviour is Back by one level and Up Next to the root playlist menu.
 - Suspended-playback recovery is bounded by the sampled library window and
   metadata availability. Physical-device counter propagation and the necessity
   of `audio` background mode remain unverified after the lifecycle fixes for
@@ -2601,8 +2674,9 @@ same isolation is required for the planned Mac target.
 
 The product is healthy when a user can:
 
-1. Install and run Overplay on iPhone and iPad.
-2. Connect Apple Music on either target.
+1. Install and run Overplay on iPhone and iPad, and on the Mac as a Mac
+   Catalyst build.
+2. Connect Apple Music on any of them.
 3. Choose a One True Playlist.
 4. Add contributing playlists to the triage bucket.
 5. Sync all linked playlists.

@@ -87,7 +87,8 @@ struct SettingsViewModelTests {
         let shouldDismiss = viewModel.resetStats(context: context, dependencies: dependencies)
 
         #expect(!shouldDismiss)
-        #expect(viewModel.message == "Reset failed.")
+        // Errors from outside Overplay are logged raw and shown in plain words.
+        #expect(viewModel.message == "Something went wrong. Try again.")
     }
 
     @Test("diagnostics stores report and clears progress state")

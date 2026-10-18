@@ -81,6 +81,52 @@ struct ListenLedgerTests {
         #expect(store.item.playthroughCount == 1)
     }
 
+    @Test func appleFloorRaisesPlaysWithoutAddingToThem() throws {
+        let store = try makeStore(plays: 2)
+        #expect(try ListenLedger.recordAppleFloor(trackID: store.track.id, count: 5, in: store.context))
+        try ListenLedger.refreshCounts(forTrackIDs: [store.track.id], in: store.context)
+        #expect(store.item.playthroughCount == 5)
+        try ListenLedger.record(.playthrough, trackID: store.track.id, sessionID: "s1", source: .playback, in: store.context)
+        try ListenLedger.refreshCounts(forTrackIDs: [store.track.id], in: store.context)
+        #expect(store.item.playthroughCount == 5) // 2 + 1 counted plays stay under the floor of 5.
+    }
+
+    @Test func appleFloorIsIdempotentPerCountAndOnlyTheHighestApplies() throws {
+        let store = try makeStore()
+        #expect(try ListenLedger.recordAppleFloor(trackID: store.track.id, count: 4, in: store.context))
+        #expect(try !ListenLedger.recordAppleFloor(trackID: store.track.id, count: 4, in: store.context))
+        #expect(try ListenLedger.recordAppleFloor(trackID: store.track.id, count: 3, in: store.context))
+        #expect(try !ListenLedger.recordAppleFloor(trackID: store.track.id, count: 0, in: store.context))
+        try ListenLedger.refreshCounts(forTrackIDs: [store.track.id], in: store.context)
+        #expect(store.item.playthroughCount == 4)
+        #expect(try events(in: store.context).filter { $0.kind == .appleFloor }.count == 2)
+    }
+
+    @Test func statsResetDropsEarlierAppleFloors() throws {
+        let store = try makeStore()
+        try ListenLedger.recordAppleFloor(trackID: store.track.id, count: 6, in: store.context)
+        try PlaylistItemRepository.resetAllStats(in: store.context)
+        #expect(store.item.playthroughCount == 0)
+        try ListenLedger.recordAppleFloor(trackID: store.track.id, count: 2, at: .now.addingTimeInterval(1), in: store.context)
+        try ListenLedger.refreshCounts(forTrackIDs: [store.track.id], in: store.context)
+        #expect(store.item.playthroughCount == 2)
+    }
+
+    @Test func twoDevicesRecordingTheSameAppleFloorConvergeOnIt() throws {
+        let trackID = UUID()
+        let phone = try makeStore(trackID: trackID)
+        let pad = try makeStore(trackID: trackID)
+        try ListenLedger.recordAppleFloor(trackID: trackID, count: 3, in: phone.context)
+        try ListenLedger.recordAppleFloor(trackID: trackID, count: 3, in: pad.context)
+        try phone.context.save()
+        try pad.context.save()
+        try deliver(phone.context, into: pad.context)
+        try deliver(pad.context, into: phone.context)
+        try ListenLedger.refreshCounts(forTrackIDs: [trackID], in: phone.context)
+        try ListenLedger.refreshCounts(forTrackIDs: [trackID], in: pad.context)
+        #expect(phone.item.playthroughCount == 3 && pad.item.playthroughCount == 3)
+    }
+
     @Test func twoDevicesCountingConcurrentlyConvergeOnTheSum() throws {
         let trackID = UUID()
         let phone = try makeStore(trackID: trackID)

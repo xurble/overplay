@@ -1,18 +1,19 @@
 # Overplay
 
-Overplay is an Apple Music player for iPhone, iPad and CarPlay that keeps a
-main playlist fresh. Its priorities, in order, decide every trade-off (see
+Overplay is an Apple Music player for iPhone, iPad, CarPlay and the Mac that
+keeps a main playlist fresh. Its priorities, in order, decide every trade-off (see
 **Product priorities** in [the spec](OVERPLAY_DESIGN_SPEC.md)):
 
 1. **A stable, fast, reliable music player.**
 2. **CarPlay and Siri first:** playlist management with the phone in a pocket.
-   Siri support is planned, not yet built.
+   Siri support is planned for v1, not yet built.
 3. **Reliable playlist management:** a One True Playlist, a single Triage
    bucket and Retired, with each logical track in exactly one of them.
 4. **Statistics:** play and skip counts that inform curation, kept additive and
    best-effort.
 
-A native Mac target is planned.
+The Mac runs a Mac Catalyst build of the iPad app, which cannot write Apple
+Music playlists. A native Mac target is planned.
 
 ## How It Works
 
@@ -59,10 +60,11 @@ Apple Music library evidence prove them. Each counted play or skip is an
 immutable ledger event for the track, and displayed counts are derived from
 those events, so merges and resets add to the history rather than overwrite it.
 
-Track rows and Now Playing also show Apple Music's own count as
-`Overplay/Apple plays` (for example, `1/1 plays`). An unknown Apple count shows
-`—`, never zero. The bulk Apple refresh runs at most every 15 minutes, never
-while playing or during a playback failure; a track that starts with an unknown
+Track rows and Now Playing show one play count, the higher of Overplay's and
+Apple Music's (for example, `3 plays · 1 skip`). When Apple's count is ahead,
+Overplay records an immutable floor event so its own count rises to match on
+every device. The bulk Apple refresh runs at most every 15 minutes, never while
+playing or during a playback failure; a track that starts with an unknown
 count gets one focused lookup. The full rules, and the known cross-device
 caveats, are in the spec under **Play/Skip History** and **Known Defects**.
 
@@ -83,8 +85,8 @@ from Active playback.
 Playback state stays local to each device. The currently playing track,
 queue, position, selected view, shuffle/repeat state, and window-specific
 navigation state do not sync across devices. This lets current iPhone and iPad
-devices share Overplay data without controlling each other's playback, and the
-planned Mac target must preserve the same separation.
+devices and the Mac share Overplay data without controlling each other's
+playback, and the planned native Mac target must preserve the same separation.
 
 Playlist imports resolve native MusicKit song IDs before matching shared tracks.
 An unresolved ID stops that import instead of creating another copy. Library songs
@@ -95,11 +97,13 @@ and remaining playlist-ID/artwork work are recorded in
 ## Project Shape
 
 - Swift 6, SwiftUI
-- iOS 26 and iPadOS 26 or later (native macOS target planned)
+- iOS 26, iPadOS 26 and macOS 26 (Mac Catalyst) or later; a native macOS
+  target is planned
 - MusicKit-first Apple Music integration
 - SwiftData with CloudKit-backed shared state
 - CarPlay music player scene
-- Adaptive shell: compact navigation on iPhone, split view/sidebar on iPad
+- Adaptive shell: compact navigation on iPhone, open-Duo halves on iPad,
+  columns with menus and a Settings window on the Mac
 - Liquid Glass UI direction
 - Swift Testing unit test target (`OverplayTests`) covering repositories,
   playback policies, sync reconciliation, and presentation logic
@@ -108,8 +112,11 @@ and remaining playlist-ID/artwork work are recorded in
 
 - [OVERPLAY_DESIGN_SPEC.md](OVERPLAY_DESIGN_SPEC.md) — full product and
   technical direction.
-- [TODO.md](TODO.md) — the single living roadmap for remaining platform,
-  product, verification, performance, and release-hardening work.
+- [TODO.md](TODO.md) — the single living roadmap: the release plan, then
+  post-release work.
+- [PLAYBACK_RELIABILITY_FINDINGS.md](PLAYBACK_RELIABILITY_FINDINGS.md) — what
+  is known about Apple Music playback stalls, what was tried, and what to
+  collect next time.
 - [AGENTS.md](AGENTS.md) — rules for AI agents working in this repo,
   including the shared playback-surface requirements.
 - [Overplay/CarPlaySupport/README-CarPlay.md](Overplay/CarPlaySupport/README-CarPlay.md)
@@ -178,13 +185,19 @@ successful subscription check do not prove that MusicKit can prepare its queue.
 
 Overplay keeps a local log of its Apple Music calls and timed work: four hours
 of per-minute tallies plus the latest 250 notable events, persisted across
-relaunch. The same events go to the unified log under category
-`MusicKitActivity`, and timed work emits signposts under category
-`Performance`.
+relaunch. Every event is also written to a full log file per launch (the last
+10 launches, up to 5 MB each, in `Application Support/Overplay/ActivityLogs/`),
+which **Share Activity Log** sends with the summary. The same events go to the
+unified log under category `MusicKitActivity`, and timed work emits signposts
+under category `Performance`.
 
-1. Open **Settings → Apple Music Call Activity**. Copy the **Full Activity
-   Report** before clearing it if it holds useful history, then clear it for a
-   clean reproduction.
+If playback is stuck, take a sysdiagnose before force-quitting Overplay:
+relaunching clears what it would show. Now Playing lists the steps.
+
+1. Open **Settings → Apple Music Call Activity** (on the Mac, the Settings
+   window's Troubleshooting tab). Share the activity log or copy the **Full
+   Activity Report** before clearing it if it holds useful history, then clear
+   it for a clean reproduction.
 2. Note the device, build, playlist size, connection, foreground or background
    state, whether artwork was already cached, and the real-world time of the
    symptom. Reproduce one scenario at a time.
@@ -209,11 +222,17 @@ relaunch. The same events go to the unified log under category
 
 ## Current Status
 
-The core product loop is in place: linked playlist management, periodic sync
-with reconciliation, complete playlist queue hand-off with MusicKit-owned
-shuffle and repeat, skip and playthrough tracking, manual retirement and
-promotion, unified history, search and manual add, CarPlay, and the adaptive
-iPhone/iPad shell. The initial cross-surface device acceptance pass is complete,
-but it remains a standing regression gate as playback code changes. Remaining
-work is kept in impact order in `TODO.md`. The app is pre-release: the schema may
-still reset between builds under the pre-release data policy in `AGENTS.md`.
+Overplay is the owner's daily music player and is working toward release. The
+core loop is in place: linked playlist management with sync and
+reconciliation, complete queue hand-off with MusicKit-owned shuffle and
+repeat, skip and playthrough tracking, manual retirement and promotion,
+history, Play Album and Play Artist, Recent Deep Dives, Library browsing,
+search and manual add, CarPlay, and adaptive iPhone, iPhone Duo, iPad and Mac
+layouts.
+
+The playback rewrite passed acceptance on iPhone; its CarPlay hardware pass is
+outstanding. Siri is not built, and search needs reworking. The release plan
+(internal TestFlight, device acceptance, v1 features, then external TestFlight
+and the App Store) is in `TODO.md`. The schema may still reset until the data
+preservation decision there is made (see the pre-release data policy in
+`AGENTS.md`).

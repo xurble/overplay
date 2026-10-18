@@ -459,7 +459,7 @@ final class ApplePlayCountSyncService {
                                    tracks: [UUID: TrackRecord], startedAt: Date, in context: ModelContext) throws -> Int {
         let observationsByAlias = prepared.byAlias
         let observationsByTrack = prepared.byTrack
-        var changed = 0
+        var changedItemIDs: Set<UUID> = []
         var raisedTrackIDs: Set<UUID> = []
         for item in items {
             guard let track = tracks[item.trackID], !track.isDeleted else { continue }
@@ -484,7 +484,7 @@ final class ApplePlayCountSyncService {
                 item.applePlayCountState = state
                 if (state?.count ?? 0) > 0 { item.hasRecordedActivity = true }
                 item.updatedAt = .now
-                changed += 1
+                changedItemIDs.insert(item.id)
             }
             // Overplay's plays never show fewer than Apple's calculated count.
             if let displayedCount, displayedCount > item.playthroughCount,
@@ -492,9 +492,12 @@ final class ApplePlayCountSyncService {
                 raisedTrackIDs.insert(item.trackID)
             }
         }
-        if !raisedTrackIDs.isEmpty {
-            changed += try ListenLedger.refreshCounts(forTrackIDs: raisedTrackIDs, in: context)
-        }
-        return changed
+        guard !raisedTrackIDs.isEmpty else { return changedItemIDs.count }
+        // A new floor always raises its items' plays, so each raised item is
+        // one of the refreshed ones; count an item whose Apple count also
+        // changed only once.
+        let refreshed = try ListenLedger.refreshCounts(forTrackIDs: raisedTrackIDs, in: context)
+        let alreadyCounted = items.filter { raisedTrackIDs.contains($0.trackID) && changedItemIDs.contains($0.id) }.count
+        return changedItemIDs.count + max(refreshed - alreadyCounted, 0)
     }
 }

@@ -1,6 +1,6 @@
 # Overplay playback reliability: findings so far
 
-As of 2026-10-09.
+As of 2026-10-18.
 
 ## Summary
 
@@ -16,7 +16,10 @@ confirmed a similar MusicKit failure on iOS 26.4.2 was not expected behaviour.
   the failure still recurred on 2026-10-09.
 - **Overplay now handles the hang.** Since PR #91 (2026-10-09), a call
   unanswered for 8 seconds marks the player stuck and every surface advises
-  force-quitting.
+  force-quitting. Since PR #97 (2026-10-17), a play that reports `playing` but
+  never starts is a failure too, and Play runs recovery.
+- **Bad conditions may be the trigger.** Both October incidents came with a
+  collapsing network, and the second with storage nearly full.
 - **No public report matches exactly.** Nobody has posted a `prepareToPlay`
   that simply never returns, and we have not yet filed our own Feedback report.
 
@@ -28,6 +31,7 @@ unless noted.
 
 | Date | What happened | Evidence |
 | --- | --- | --- |
+| 2026-10-11 | On CarPlay over cellular, with very low bandwidth and storage nearly full. Every MusicKit call answered in milliseconds, but Play reported `playing` for a few seconds with no audio, then reverted to paused without announcing it. No failure was recorded, so every press repeated the same `play()`. Force-quitting Overplay fixed it. | Activity log; the sysdiagnose was truncated at 22 MB, probably by the full storage |
 | 2026-10-09 | Network collapsed, then a new start's `prepareToPlay` never returned (02:15:50). All 9 Play presses ran recovery, whose `prepareToPlay` also never returned. Apple's Music app recovered by itself in about 15 minutes; Overplay stayed stuck until force-quit. | Activity log: artwork downloads took 54 s and 11 s; no answer, success or failure, to any prepare call |
 | 2026-10-07 | A new queue loads in stages (2, then about 70, then all entries, in 0.3 to 0.4 s). Until the start song has loaded, MusicKit reports track 1 as current and playing. Shuffle set before the load finishes mixes only the first few songs. | Device probes on a 96-song playlist, iOS 26.6.1, Wi-Fi |
 | 2026-10-07 | `prepareToPlay` never returned once; an unbounded wait in Overplay then left Play only pausing until relaunch. | Device probe |
@@ -51,6 +55,7 @@ not return without new device evidence.
 
 | When | Approach | Result | Status |
 | --- | --- | --- | --- |
+| 2026-10-17 | Treat a play that reports `playing` for 2 s or more without progress, then pauses on the same entry, as a failure (`didNotStart`); recovery starts at prepare-and-play; log every player status change, free storage and the network path (PR #97) | Not yet seen under real conditions | Current |
 | 2026-10-09 | Treat a call unanswered for 8 s as a stuck player: show force-quit advice everywhere, allow one fresh-queue attempt, then make no more Apple Music calls (PR #91) | Contains the hang; force-quit then works | Current |
 | 2026-10-09 | Full activity logging: one log file per launch, error chains, audio session events (PRs #86, #91) | Gives evidence after an incident; Settings can share the log | Current |
 | 2026-10-07 | Wait for the whole queue to load (up to 3 s) before shuffling or playing; bound every wait to 8 s (PRs #78, #81) | Fixes the track-1 flash and partial shuffle | Current |
@@ -140,8 +145,10 @@ rest test whether the cause is Apple's or Overplay's.
 - [ ] Use Soor in its Application mode for a few days, including CarPlay and
   long sessions. If it stalls the same way, the cause is Apple's player, and a
   System mode becomes the fix of last resort.
-- [ ] Decide on PR #92 (open): remind the user to take a sysdiagnose before
-  force-quitting a stuck player.
+- [x] Remind the user to take a sysdiagnose before force-quitting a stuck
+  player (PR #92, merged).
+- [ ] Next time conditions are poor (low bandwidth or nearly full storage),
+  check that PR #97 reports the failure and whether Play's recovery works.
 - [ ] Explain the 2026-10-09 stall (Now Playing stuck on one song, Overplay
   stuck after Apple Music recovered), tracked in
   [GitHub #90](https://github.com/xurble/overplay/issues/90).

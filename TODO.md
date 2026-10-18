@@ -2,64 +2,167 @@
 
 This is the single living planning document for Overplay. Read it alongside
 `OVERPLAY_DESIGN_SPEC.md`, which specifies current behaviour and product
-invariants.
+invariants, and `PLAYBACK_RELIABILITY_FINDINGS.md`, which records the playback
+stall investigation.
 
-The order below is the current impact order for reaching a dependable
-iPhone-and-CarPlay beta, following the **Product priorities** in the spec
-(reliable player, then CarPlay and Siri, then playlist management, then
-statistics). Correctness and confidence in the existing product come
-before platform expansion and secondary polish. Reorder it when product goals
-change or new evidence changes the risk.
+Overplay is the owner's daily music player, and this roadmap is now the plan
+for releasing it. It follows the spec's **Product priorities**: reliable
+player, then CarPlay and Siri, then playlist management, then statistics.
+Reorder it when product goals change or new evidence changes the risk.
 
-## 1. Device-Verify the Playback Core Rewrite, Then Keep Re-verifying
+## Where things stand (2026-10-18)
 
-[GitHub issue #61](https://github.com/xurble/overplay/issues/61) rebuilt the
-playback core: a persisted playback intent, player-authoritative display,
-single-call transport, user-initiated recovery, system-owned Now Playing and
-the listen ledger. It has unit evidence only. Run the acceptance pass on My Mac
-(Mac Catalyst) for live MusicKit, and on iPhone with CarPlay hardware.
-After that it remains a standing release gate: repeat the affected parts after
-every change to playback, attribution, MusicKit modes, CarPlay templates,
-suspended-playback reconciliation or counting.
+- **Playback:** the rewrite (#61, PR #62) is merged and passed acceptance on
+  the owner's iPhone on 2026-10-06. Apple Music stalls are contained rather
+  than cured: a stuck player (#84, PR #91) and a play that never starts
+  (PR #97) are reported as failures on every surface, with recovery on Play
+  or advice to force-quit. Why the player stalls is still open (#90).
+- **CarPlay:** in daily use, but the rewrite's CarPlay hardware checks were
+  never run, and the shuffle button still flickers (#28).
+- **Siri:** not started. There are no App Intents.
+- **Playlist management:** One True Playlist, Triage and Retired, global track
+  ownership, sync and rebuild are done (#34, #36, #39–#41, #64–#75). MusicKit
+  can edit only playlists Overplay created, and the Mac cannot write
+  playlists at all.
+- **Statistics:** the listen ledger is done, with one displayed play count
+  that never falls below Apple's. Six accepted limitations are listed in the
+  spec's Known Defects.
+- **Since the last roadmap:** Play Album and Play Artist (`PLAY-018`), Recent
+  Deep Dives (`PLAY-019`), Library browsing (`LIB-001`), iPhone Duo and iPad
+  layouts, and the Mac Catalyst build with menus, a Settings window and a
+  title-bar mini player.
 
-Rewrite-specific checks:
+## Release path
 
-- CarPlay Now Playing follows the playing track on the installed iOS version
-  with the diagnostic mirror off. If it does not (a reported iOS 27 issue),
-  compare with **Settings → Mirror Now Playing from Overplay** on, and record
-  the result in the spec before changing the default.
-- CarPlay shuffle and repeat buttons show MusicKit's real modes (#28).
-- A track Overplay cannot attribute still shows on every surface, and Promote
-  and Retire are disabled for it.
-- Force a failure (airplane mode mid-track): every surface shows it, Pause
-  still works, and Play recovers without restarting the phone.
-- Relaunch while music is still playing: Overplay re-attaches without
-  restarting the queue.
+1. **Internal TestFlight:** a distribution-signed build on the owner's own
+   devices, against Production CloudKit (Milestone 1).
+2. **Device acceptance:** CarPlay hardware pass and the standing playback gate
+   (Milestone 2).
+3. **v1 features:** minimal Siri, a reworked search, beta settings
+   (Milestone 3).
+4. **External TestFlight**, then **App Store** (Milestone 4).
+
+The Mac helper (`HELPER-*`) is unsandboxed and scripts Music, so it cannot
+ship through the App Store. It is post-v1 work and would ship separately,
+Developer ID–signed and notarized.
+
+## Milestone 1: Internal TestFlight
+
+### 1.1 Get the test suite green
+
+f1caed3 changed the displayed play count to a single number, the higher of
+Overplay's and Apple's, and added `appleFloor` ledger events. Its commit says
+that tests expecting `x/y plays` (for example, `ApplePlayCountTests`) will fail
+and that the ledger change needs its own tests. 2ed2470 (library cache, error
+toasts) was checked by eye only. Bring the suite back to green before trusting
+it as a release gate:
+
+- Update the play-count wording expectations.
+- Add ledger tests for `appleFloor` (idempotent per count, never adds to the
+  count, converges across devices).
+- Add focused tests for the library cache (`LibraryCache`) and library
+  playback's choice of this device's own copies.
+- Run the full `commands.check` suite serially (`-parallel-testing-enabled NO`)
+  and record the result.
+
+### 1.2 Privacy manifest
+
+Add `PrivacyInfo.xcprivacy` to the app target. App Store Connect rejects
+builds that use required-reason APIs without declaring them. Overplay uses at
+least UserDefaults/`AppStorage` and, since PR #97, disk space
+(`volumeAvailableCapacityForImportantUsage`). Audit file timestamp and system
+boot time APIs too. Declare no tracking and no collected data, unless the
+audit finds otherwise.
+
+### 1.3 CloudKit Production schema
+
+Deploy every SwiftData record type to the Production CloudKit environment,
+including `RecentCollectionRecord` (`PLAY-019`). TestFlight and App Store
+builds use Production. Deploying a schema does not copy records, so the
+owner's Development data will not appear (spec: **Datastore generation 2**).
+Verify a cross-device restore in Production before claiming it works.
+
+### 1.4 Decide on data preservation
+
+The owner's listening history now matters, which is the decision the
+pre-release data policy in `AGENTS.md` defers. Choose one:
+
+- **Carry the data forward:** freeze the schema, export or migrate the owner's
+  Development data into Production, and add a SwiftData migration path for
+  every later model change.
+- **One deliberate reset:** start Production empty at the first TestFlight
+  build, document that beta testers start fresh, and freeze the schema from
+  then on.
+
+Either way, once the first external tester installs, schema changes need a
+migration. Update the **Pre-release Data Policy** in `AGENTS.md` to match the
+decision.
+
+### 1.5 Distribution signing and metadata
+
+- Confirm that the CarPlay audio entitlement
+  (`com.apple.developer.carplay-audio`) is granted for distribution, not only
+  development, and appears on the App Store provisioning profile.
+- Confirm the MusicKit App Service and the iCloud container for the release
+  bundle ID (`Config/Local.xcconfig`).
+- Set `ITSAppUsesNonExemptEncryption` to `NO` in both Info.plists, unless that
+  turns out to be untrue.
+- Settle versioning: the app target's `MARKETING_VERSION` is `2026`, while the
+  test targets use `1.0`.
+- Background modes: `audio`, `fetch` and `remote-notification` (CloudKit
+  pushes, #54) are declared. Confirm on device whether `audio` is needed for
+  MusicKit and CarPlay. Keep the other two.
+
+### 1.6 Decide which diagnostics ship
+
+Settings currently exposes Apple Music Call Activity and its shared activity
+log, the diagnostic **Mirror Now Playing from Overplay**, and the sysdiagnose
+reminder on a stuck player. Keep them for TestFlight, where they are how
+testers report stalls. Before the App Store, decide whether the mirror and the
+raw activity report move behind a hidden or Troubleshooting-only entry.
+
+## Milestone 2: Device Acceptance
+
+### 2.1 CarPlay hardware pass
+
+Run once on a real head unit, after Milestone 1's build is installed, and
+record the results on GitHub. Each item is a release blocker if it fails.
+
+- CarPlay Now Playing follows the playing track with the diagnostic mirror
+  off. If it does not (a reported iOS 27 issue, forum thread 847151), compare
+  with **Mirror Now Playing from Overplay** on, and record the result in the
+  spec before changing the default.
+- The custom Promote, Retire and Restore buttons appear and work (#22 was
+  closed before the rewrite), and are disabled for a track Overplay cannot
+  attribute.
+- The shuffle and repeat buttons show MusicKit's real modes and do not
+  flicker after a track change (#28, still seen 2026-10-07). First use the
+  activity log to tell whether only the button flickers or MusicKit's mode
+  really changes. Do not hide a real mode change with debouncing. On the same
+  drive, check the `loaded=` counts when a shuffle tap does not take.
+- Back goes up one level and Up Next returns to the root menu (#27). If the
+  two are indistinguishable on hardware, remove Up Next.
+- Lock Screen, Control Center, headset and CarPlay agree with the app after
+  rapid Next presses.
+- Play Album and Play Artist (`PLAY-018`) from the CarPlay album/artist button,
+  and Recent Deep Dives (`PLAY-019`) from the CarPlay root, including Back from
+  Now Playing.
 - Cold launch before iCloud restoration: CarPlay offers Resume and plays.
-- Play Album and Play Artist (`PLAY-018`, #83) from the app and from the
-  CarPlay album/artist button: the album starts at track 1; an artist plays
-  Essentials, or Top Songs without repeated versions, in more than one
-  storefront language; untracked songs offer Add to Triage and Add to One
-  True Playlist and are not counted; tracked songs count; Play after a
-  relaunch resumes the album. Add to One True Playlist is unavailable on Mac
-  Catalyst; check it on iPhone or iPad.
-- Recents (`PLAY-019`, #87): an entry plays from the main screen and CarPlay;
-  Back from Now Playing goes to the entry and then Recents, including after
-  Play Album / Play Artist and when CarPlay opens Now Playing itself; an
-  entry played once plays in airplane mode; a second device shows the same
-  list. Deploy `RecentCollectionRecord` to the production CloudKit schema
-  before release.
 
-For every supported action origin — SwiftUI, CarPlay, and the system
-transport controls (Lock Screen, Control Center, headset, or media key) — and
-for natural MusicKit track advancement, verify that current-track identity,
-queue context, play state, position, outgoing-track statistics/history,
-active-playlist projection, restore state, CarPlay presentation, and system
-Now Playing metadata converge without navigation, relaunch, template reset,
-periodic playlist sync, or manual refresh. Any stale surface is a
-release-blocking regression even when audio remains correct.
+### 2.2 Standing playback gate
 
-Relevant regression checks:
+Repeat the affected parts after every change to playback, attribution,
+MusicKit modes, CarPlay templates, suspended-playback reconciliation or
+counting.
+
+For every action origin (SwiftUI, CarPlay, and the system transport controls)
+and for natural track advancement, the current track, queue context, play
+state, position, outgoing-track statistics and history, active-playlist
+projection, restore state, CarPlay presentation and system Now Playing must
+converge without navigation, relaunch, template reset, sync or manual refresh.
+A stale surface is a release-blocking regression even when the audio is right.
+
+Counting checks:
 
 - Skip at less than 10 seconds: no skip counted.
 - Skip at about 30%: skip counted once.
@@ -69,167 +172,152 @@ Relevant regression checks:
   missing-track misattribution.
 - Pause mid-track, force-quit, relaunch, then play another playlist: no phantom
   event for the restored track.
-- Manual-add a searched track, then sync: one row, counts intact.
-- Promote a bucket track, then sync the contributing playlist and the One True
-  Playlist: one One True Playlist row.
-- Rapid Next presses: app UI, Lock Screen, and CarPlay agree; no bogus history
-  events.
 - At the final track, repeat off stops after crediting the playthrough; repeat
   all wraps under MusicKit control; shuffle state remains unchanged.
 - Retire the current track: playback advances and remote removal is attempted
   according to policy.
-- Two devices on one account: playback remains independent and shared counts
-  converge without duplicate rows.
 
-## 2. Harden Suspended-Playback Reconciliation
+Library and playlist checks:
 
-The lifecycle and service changes for [GitHub issue #9](https://github.com/xurble/overplay/issues/9)
-now persist waypoints before metadata awaits, re-arm refreshes before work, keep
-stale observations out of outcome history, and pre-seed up to 20 following
-tracks. Recovery retains at most 41 baselines for 24 hours and credits at most
-one playthrough per qualifying counter advance. Service regression coverage
-includes cancellation, persistence rollback, deduplication, and relaunch.
+- Manual-add a searched track, then sync: one row, counts intact.
+- Promote a bucket track, then sync the contributing playlist and the One True
+  Playlist: one One True Playlist row.
+- Two devices on one account: playback stays independent, shared counts
+  converge without duplicate rows, and both show the same Recent Deep Dives.
+- Untracked songs from Play Album, Play Artist and Library offer Add to Triage
+  and Add to One True Playlist and are not counted. Check Add to One True
+  Playlist on iPhone or iPad; the Mac cannot write playlists.
 
-Remaining physical-device checks:
+Failure checks:
+
+- Airplane mode mid-track: every surface shows the failure, Pause still works,
+  and Play recovers without restarting the phone.
+- A play that never starts (PR #97) is reported, on low bandwidth or with
+  storage nearly full. Not yet seen under real conditions.
+- Relaunch while music is playing: Overplay re-attaches without restarting the
+  queue.
+
+### 2.3 Suspended playback on device
 
 - Validate delayed MusicKit counter propagation after a long suspended span,
-  including shuffle and unavailable metadata.
-- Confirm whether the existing `audio` background mode is necessary for
-  MusicKit/CarPlay before removing it. `remote-notification` is removed and
-  `fetch` is retained.
+  including shuffle and unavailable metadata (#9).
+- Check whether Apple's play count and last-played date update on iPhone after
+  Overplay plays a song (FB17675148 reports they do not on the Mac).
 
 Skips remain witnessed-only; ambiguous or unsampled playback can under-count.
 
-## 3. Restore CarPlay Curation Controls
+### 2.4 Mac Catalyst playback
 
-Track [GitHub issue #22](https://github.com/xurble/overplay/issues/22).
+Run live playback on My Mac (Mac Catalyst): start, select, transport,
+shuffle/repeat, Library playback, the Settings window and the title-bar mini
+player. Watch for Soor's reported bug where macOS returns the system player's
+queue instead of the app player's (`PLAYBACK_RELIABILITY_FINDINGS.md`).
 
-The shared action policy already specifies Shuffle and Repeat followed by the
-appropriate Promote, Retire, or Restore actions. The outstanding problem is the
-reported absence of custom action controls in the rendered CarPlay Now Playing
-surface. Verify image sizing and rendering on physical CarPlay hardware and keep
-all mutations routed through the shared playback controller.
+### 2.5 Report the stall to Apple
 
-## 4. Stabilize the CarPlay Shuffle Indicator
+File a Feedback report for `prepareToPlay` never returning, with the activity
+log, a sysdiagnose and forum thread 825433, and record the FB number in the
+spec's Known Defects. The open questions and what to collect next time are in
+#90 and `PLAYBACK_RELIABILITY_FINDINGS.md`.
 
-Track [GitHub issue #28](https://github.com/xurble/overplay/issues/28).
+## Milestone 3: v1 Features
 
-First use the existing Apple Music activity diagnostics to determine whether
-only the button presentation flickers or MusicKit's actual shuffle mode changes
-after a track transition. Preserve real player state changes; do not hide a
-functional mode transition with presentation debouncing.
+### 3.1 Minimal Siri
 
-## 5. Close Out Playback Test Isolation
+Product priority 2. Add App Intents backed by the existing shared services:
 
-[GitHub issue #18](https://github.com/xurble/overplay/issues/18) is superseded
-by #61. The controller now takes an injected intent store and player, and every
-fixture uses its own disposable store. Run the full suite repeatedly in
-parallel to confirm the intermittent failure is gone, then close #18.
+- Play the One True Playlist.
+- Play Triage.
+- Promote the current track.
+- Retire the current track.
 
-## 6. Resolve CarPlay Now Playing Navigation Semantics
+Each intent is a thin adapter over the same shared controller action as the
+app and CarPlay (`SURFACE-001`, `SURFACE-003`), with tests at that shared
+entry point. Adopt the system audio schemas where they represent the action
+accurately, so Siri, Shortcuts, Spotlight and the Action button agree. Verify
+by voice in CarPlay with the phone locked. Fuller voice management (Restore,
+Play Album, Play Artist) comes after v1.
 
-Track [GitHub issue #27](https://github.com/xurble/overplay/issues/27).
+### 3.2 Rework search
 
-Current intent is that Back returns one level and Up Next returns to Overplay's
-root playlist menu. Reproduce the reported identical behaviour on hardware. If
-the two controls are effectively redundant, remove Up Next; otherwise make and
-verify the distinction without adding another navigation level.
+Owner report, 2026-10-18: search is rudimentary, and its UI does not really
+work on iPhone.
 
-## 7. Finish the Triage Bucket Restructure
+What it does today (`SearchMusicView`, `SearchMusicViewModel`,
+`SearchService`):
 
-Track [GitHub issue #34](https://github.com/xurble/overplay/issues/34) and
-[GitHub issue #36](https://github.com/xurble/overplay/issues/36).
+- iPhone reaches it only from the menu on a playlist screen (One True
+  Playlist, Triage or Retired), not from the dashboard. iPad has a sidebar
+  entry, and the Mac has Go → Search (⌘F).
+- It searches the Apple Music catalogue only, for songs only, returns 20
+  results, and runs only when the search is submitted.
+- A result cannot be played or previewed, and shows no sign of whether the
+  song is already in the One True Playlist, Triage or Retired.
+- Its only action is adding to a playlist through a MusicKit write. Triage is
+  never a destination, adding fails on the Mac and on playlists Overplay did
+  not create, and a destination picker sits at the top of every search.
 
-Issue #34 is complete: one shared bucket is fed by contributing Apple Music
-playlists. Issue #36 makes track membership
-globally exclusive: one row per track app-wide, with skip and playthrough
-counts travelling with the track as it moves, and retired tracks living in the
-bucket and appearing in a third top-level Retired collection. It also includes
-source-link revival (not ordinary sync), stale OTP suppression, independent
-manual/restore keep intent, and last-source/retirement/reset cleanup. Active
-reset history survives unlink; retired unowned current 0/0 rows do not.
+Direction:
 
-Both reshape persistence, so they must land before the data-preservation
-decision below, while a schema reset is still cheap. The device holding the
-only existing dataset means migration is best effort on stats and strict on
-consistency — merge counts where it is straightforward, and never introduce a
-versioned schema for it. After identity/count convergence, the one historical
-cleanup deletes legacy unowned 0/0 rows even with reset history. Explicit keep,
-active OTP and necessary stale-OTP protection survive. New rows are marked to
-exclude them from the historical exception on repeated startup/CloudKit import.
+1. Start with a pass on the owner's iPhone that lists what breaks, before
+   changing layout.
+2. Search as you type, debounced, with suggestions
+   (`MusicCatalogSearchSuggestionsRequest`).
+3. Combine library results (`MusicLibrarySearchRequest`) with catalogue
+   results, so library-only songs are found too, and include albums and
+   artists. Albums and artists open the existing Library and deep-dive views
+   rather than new ones.
+4. Show each song's place in Overplay: One True Playlist, Triage, Retired or
+   untracked.
+5. Make **Add to Triage** the primary action for an untracked song, and
+   **Add to One True Playlist** the secondary one. Use the same shared actions
+   as untracked songs in Play Album, Play Artist and Library (`PLAY-018`),
+   which go through the shared manual Triage intake boundary and need no
+   playlist write. Drop the destination picker.
+6. Playing a result goes through the shared collection start, never a separate
+   playback path.
+7. iPhone-first layout, with regular width and the Mac following. On the Mac,
+   keyboard focus and Return to add.
 
-Per section 1, treat these as cross-surface playback changes: the bucket is a
-playback context with a reserved identifier rather than an Apple Music
-playlist, so CarPlay browsing, Now Playing actions, restore state and the
-active-playlist projection all need re-verification.
+Update the spec's **Search** screen, **Search and manual add** and `MUT-002`
+to match, and add view-model and use-case tests for each action.
 
-## 8. Complete Beta Settings and Data Hardening
+### 3.3 Beta settings
 
-- Add an explicit reset-local-playback-state control.
-- Clarify the distinction between resetting statistics, resetting device-local
-  playback state, and deleting shared local/iCloud data.
 - Add a direct action to open system Settings when Apple Music permission is
   denied.
-- Before public beta, decide whether existing tester CloudKit data must be
-  preserved.
-  - If preservation is required, add an explicit SwiftData migration from
-    pre-release stores that included `TrackedTrack`, `PlaybackEvent`, or
-    `SettingsRecord`.
-  - Otherwise, document that beta testers must delete local app data and
-    CloudKit development data before installing the release build.
+- Clarify the difference between resetting statistics and deleting shared
+  local and iCloud data.
+- Add a reset-local-playback-state control only if testers need one.
+- Observe `MusicSubscription.subscriptionUpdates`, so a subscription or Sync
+  Library change updates readiness without a relaunch.
 
-The app remains pre-release, so development schema resets are acceptable until
-that decision is made.
+## Milestone 4: External TestFlight and App Store
 
-## 9. Refine the iPad Experience
+- Tester notes: what Overplay is, the Apple Music subscription and Sync
+  Library requirements, how to share the activity log after a stall, and the
+  data decision from 1.4.
+- App Store Connect: privacy policy URL, support URL, privacy nutrition labels
+  (matching 1.2), age rating, screenshots for iPhone, iPad and the Mac, and
+  review notes explaining that an Apple Music subscription is required and
+  how CarPlay is reached.
+- Decide whether the Mac Catalyst build ships in v1 or stays a TestFlight-only
+  platform. Its missing playlist writes must read as intended in review.
+- Consider MusicKit's native subscription offer for non-subscribers, if they
+  are part of the audience.
 
-- Improve playlist management, playlist detail, history, and Now Playing in
-  split layouts.
-- Add toolbar actions for existing workflows.
-- Add useful hardware keyboard shortcuts without breaking touch workflows.
-- Verify Stage Manager, Split View, and scene-local navigation in multiple
-  windows.
+## After v1
 
-Verification:
+In rough priority order.
 
-- Regular-width layouts do not look like stretched phone UI.
-- Window navigation and playback state remain correctly separated.
-- Keyboard shortcuts do not break touch workflows.
-- The app target and relevant tests pass.
+### Fuller Siri
 
-## 10. (Withdrawn) Publish Now Playing Artwork
+Restore, Play Album, Play Artist and Recent Deep Dives by voice, on the same
+shared actions (spec: **Play Album and Play Artist → Surfaces**).
 
-Withdrawn by #61: the `ApplicationMusicPlayer` host publishes system Now
-Playing, including artwork (`PLAY-016`). Overplay writes nothing there unless
-the diagnostic mirror is on.
+### Mac Helper
 
-## 11. Expand the Dashboard Summary
-
-- Add recently promoted counts.
-- Surface useful triage queues such as unreviewed or high-skip items.
-- Add direct play, sync, search, and history actions where they shorten an
-  existing workflow.
-
-## 12. Move Sync Persistence off the Main Actor Only if Profiling Requires It
-
-Playlist sync currently runs on the MainActor against the main `ModelContext`,
-with yield chunking, once-per-cycle identity merge, a shared library-playlist
-fetch, and inter-playlist pacing.
-
-If on-device catch-up sync still hitches:
-
-- Move persistence work to a `@ModelActor`-based background context.
-- Add ID-based re-fetch APIs at live `@Model` boundaries.
-- Keep MusicKit fetches behind sendable snapshot boundaries.
-- Preserve immediate shared playback-state updates after persistence writes
-  that affect current playback UI.
-
-Do not undertake this refactor without profiling evidence.
-
-## 13. Build the Mac Helper
-
-Build the menu bar helper in **Mac Helper — Planned** (`HELPER-001`–`HELPER-011`)
-before the native Mac target, which stays the long-term goal.
+Build the menu bar helper in **Mac Helper — Planned** (`HELPER-001`–`HELPER-011`).
 
 1. Close the spec's open checks with throwaway scripts: song IDs in
    `Library.musicdb`, script adds of playlist-only songs, and iCloud
@@ -255,60 +343,59 @@ Verification:
   a retired song back; nothing changes in playback. With source cleanup on, a
   retired TikTok song leaves TikTok Songs, and moving it to Triage puts it back.
 
-## 14. Add the Native Mac Target
+### Expand the Dashboard Summary
 
-- Add a native SwiftUI macOS target sharing models, repositories, services, and
-  reusable views.
-- Start with dashboard, playlist management, history, settings, and read-only
-  data sync if playback needs a later slice.
-- Isolate platform-specific media APIs behind adapters.
+- Add recently promoted counts.
+- Surface useful triage queues such as unreviewed or high-skip items.
+- Add direct play, sync, search and history actions where they shorten an
+  existing workflow.
 
-Verification:
+### Refine iPad and Mac
 
-- The macOS target builds.
-- Shared unit tests still pass.
-- No iOS-only APIs leak into shared code.
+The iPad matches the open iPhone Duo layout and is single-window. The Mac
+Catalyst build has menus, shortcuts, a Settings window and a title-bar mini
+player.
 
-## 15. Add Mac Interaction Polish
+- iPad: hardware-keyboard and pointer interactions beyond Next and Previous.
+- Mac: context menus for Promote, Retire and Restore, and table-style History
+  and playlist lists where they help scanning.
+- Native Mac target: the long-term goal, shelved. It shares models,
+  repositories, services and reusable views, starts with management and
+  read-only sync, and keeps platform media APIs behind adapters. The Mac
+  helper comes first.
 
-- Add menu commands, keyboard shortcuts, and context menus.
-- Use table-style history and playlist lists where useful.
-- Add media-key and Now Playing support where available.
-- Support a compact mini-player window if practical.
+### Move Sync Persistence off the Main Actor Only if Profiling Requires It
 
-## 16. Consider CarPlay Skip-History Browsing
+Playlist sync runs on the MainActor against the main `ModelContext`, with yield
+chunking, once-per-cycle identity merge, a shared library-playlist fetch and
+inter-playlist pacing. If on-device catch-up sync still hitches:
 
-Add skip-history browsing only if it fits safely within CarPlay templates and
-does not make the primary playlists → tracks → Now Playing flow harder to use.
-CarPlay browsing remains focused on Active playlists; Retired content appears
-only when it is the current playback context started elsewhere.
+- Move persistence work to a `@ModelActor` background context.
+- Add ID-based re-fetch APIs at live `@Model` boundaries.
+- Keep MusicKit fetches behind sendable snapshot boundaries.
+- Preserve immediate shared playback-state updates after persistence writes
+  that affect current playback UI.
 
-## Siri Playlist Management (Committed, Not Yet Scheduled)
+Do not undertake this refactor without profiling evidence.
 
-Product priority 2 (CarPlay and Siri first). This work is deferred until the
-playback core is device-verified; it is not a candidate or a non-goal.
+### Open Enhancements
 
-- Add App Intents backed by the existing shared services for playing the One
-  True Playlist or triage bucket and for promoting, retiring, or restoring the
-  current track. Adopt the system audio schemas where they accurately represent
-  the action so Siri, Shortcuts, Spotlight, the Action button, and Apple
-  Intelligence receive consistent semantics.
+- #42: album-version replacement for Triage tracks.
+- #56: a playback Live Activity with Promote and Archive actions.
+- #73: save a playlist's collage to Photos.
+
+### Consider CarPlay Skip-History Browsing
+
+Only if it fits safely within CarPlay templates and does not make the primary
+playlists → tracks → Now Playing flow harder to use. CarPlay browsing stays
+focused on Active playlists; Retired content appears only when it is the
+current playback context started elsewhere.
 
 ## Unscheduled Music Platform Enhancements
 
-The highest-value MusicKit infrastructure opportunities are tracked separately:
-
-- [GitHub issue #39](https://github.com/xurble/overplay/issues/39) — adopt
-  `Playlist.Entry` for playlist sync and reconciliation.
-- [GitHub issue #40](https://github.com/xurble/overplay/issues/40) — resolve
-  library, catalog, and storefront identities through documented equivalence
-  APIs.
-- [GitHub issue #41](https://github.com/xurble/overplay/issues/41) — observe
-  MusicKit queue and player state for prompt shared reconciliation.
-
-The ideas below are candidates, not committed roadmap priorities. Promote one to
-a scoped issue only when its product benefit justifies its interaction with the
-shared playback, persistence, and cross-surface invariants above.
+These are candidates, not commitments. Promote one to a scoped issue only when
+its product benefit justifies its interaction with the shared playback,
+persistence and cross-surface invariants above.
 
 ### Discovery and Intake
 
@@ -331,12 +418,8 @@ invent a fake playlist or bypass the global ownership/retention rules.
   an explicit opt-in. Promotion and retirement are Overplay concepts and should
   not silently change the user's Apple Music taste profile.
 
-### Search and Library Browsing
+### Library Browsing
 
-- Combine `MusicLibrarySearchRequest` with the current catalog search so
-  purchases, imports, uploads, and library-only tracks can be found without
-  losing catalog results.
-- Add `MusicCatalogSearchSuggestionsRequest` for autocomplete and top results.
 - Offer an offline-focused view or playback filter based on MusicKit's
   `includeOnlyDownloadedContent` support if device testing shows that it maps
   cleanly to Overplay's linked playlists.
@@ -350,7 +433,7 @@ host (`PLAY-016`). Ideas that need Overplay to publish Now Playing metadata or
 register remote commands (ISRC publication for Music Haptics, like/dislike
 commands as Promote/Retire, extra Now Playing identifiers) are withdrawn with
 History H-7. Promote, Retire and Restore away from the phone come from CarPlay
-templates (§3) and Siri (Siri Playlist Management).
+templates and Siri.
 
 - Support Music Haptics only if it works without Overplay-authored Now
   Playing, for example if the player host already publishes the ISRC.
@@ -376,15 +459,9 @@ templates (§3) and Siri (Siri Playlist Management).
   as restrained Lossless, Hi-Res Lossless, or Dolby Atmos badges, following
   Apple's badge guidance and showing the actual active format where possible.
 
-### Reactive Library and Subscription State
+### Reactive Library State
 
 - Use `MPMediaLibraryDidChangeNotification` as a debounced invalidation hint for
   MusicKit playlist caches and linked-playlist sync. Retain periodic sync because
   the notification does not describe the changed resources or guarantee remote
   delivery timing.
-- Observe `MusicSubscription.subscriptionUpdates` so subscription and Sync
-  Library changes update readiness without requiring a relaunch or manual
-  refresh.
-- If non-subscribers become part of the intended audience, present MusicKit's
-  native subscription offer rather than only reporting that catalog playback is
-  unavailable.

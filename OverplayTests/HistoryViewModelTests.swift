@@ -110,6 +110,7 @@ struct HistoryViewModelTests {
             dependencies: dependencies
         )
 
-        #expect(viewModel.message == "Restore failed.")
+        // Errors from outside Overplay are logged raw and shown in plain words.
+        #expect(viewModel.message == "Something went wrong. Try again.")
     }
 }

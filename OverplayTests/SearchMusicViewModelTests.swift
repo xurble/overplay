@@ -84,7 +84,8 @@ struct SearchMusicViewModelTests {
 
         await viewModel.add(result, playlists: [playlist], context: context, dependencies: dependencies)
 
-        #expect(viewModel.searchService.message == "Added to Main, but sync failed: Sync failed.")
+        // Errors from outside Overplay are logged raw and shown in plain words.
+        #expect(viewModel.searchService.message == "Added to Main, but sync failed: Something went wrong. Try again.")
     }
 
     private func makeDependencies(

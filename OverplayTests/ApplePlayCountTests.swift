@@ -35,7 +35,8 @@ struct ApplePlayCountTests {
         #expect(item.applePlayCount == plays)
         try ApplePlayCountSyncService.apply([observation(count: 13)], startedAt: date, in: context)
         #expect(item.applePlayCount == plays + 3)
-        #expect(item.playthroughCount == plays + 1)
+        // Apple's count is ahead, so it becomes a floor under plays (COUNT-002).
+        #expect(item.playthroughCount == plays + 3)
         try context.save()
         let fresh = ModelContext(container)
         #expect(try PlaylistItemRepository.item(id: item.id, in: fresh)?.applePlayCount == plays + 3)
@@ -107,7 +108,8 @@ struct ApplePlayCountTests {
         defer { defaults.cleanUp() }
         try await TrackIdentityMergeService.mergeDuplicates(in: context, defaults: defaults.defaults)
         let item = try #require(try PlaylistItemRepository.allItems(in: context).first)
-        #expect(item.playthroughCount == 3)
+        // Both identities' Apple floors (3 and 4) survive the merge; plays show the higher.
+        #expect(item.playthroughCount == 4)
         #expect(item.applePlayCount == 4) // Highest starting credit (2), plus two shared increases.
         try ApplePlayCountSyncService.apply([observation(count: 13)], startedAt: date, in: context)
         #expect(item.applePlayCount == 5)
@@ -284,8 +286,10 @@ struct ApplePlayCountTests {
         })
         #expect(await service.refresh(in: context) == 1)
         let next = ApplePlayCountSyncService(fetch: { _ in [observation(count: 11)] })
+        // One change, although the Apple count and the floor both moved.
         #expect(await next.refresh(in: context) == 1)
         #expect(item.applePlayCount == 1)
+        #expect(item.playthroughCount == 1)
         #expect(!TrackRetentionPolicy.shouldDelete(item))
     }
 
@@ -311,9 +315,11 @@ struct ApplePlayCountTests {
         let playlist = try #require(try PlaylistRepository.playlist(id: item.playlistID, in: context))
         let rows = PlaylistPresentationBuilder(playlists: [playlist], items: [item], tracks: [track])
             .trackSummaries(forPlaylistID: playlist.id)
-        #expect(rows.first?.playSkipMetricLabel == "1/1 plays · 0 skips")
+        #expect(rows.first?.playSkipMetricLabel == "1 play · 0 skips")
         #expect(CurrentPlaybackTrack(track, musicItemID: "i.song", item: item).applePlayCount == 1)
-        #expect(PlayCountPresentation.metric(overplay: 2, apple: nil, skips: 1) == "2/— plays · 1 skip")
+        #expect(PlayCountPresentation.metric(overplay: 2, apple: nil, skips: 1) == "2 plays · 1 skip")
+        #expect(PlayCountPresentation.metric(overplay: 2, apple: 5, skips: 0) == "5 plays · 0 skips")
+        #expect(PlayCountPresentation.metric(overplay: 6, apple: 5, skips: 0) == "6 plays · 0 skips")
     }
 
     @Test("A save failure restores only count changes and can be retried")
@@ -359,6 +365,6 @@ struct ApplePlayCountTests {
         #expect(snapshot.rows.first?.applePlayCount == 1)
         #expect(CarPlayLibrarySnapshot.trackSummaries(from: snapshot).first?.applePlayCount == 1)
         let presentation = NowPlayingPresentationFactory.presentation(playbackController: controller, settings: OverplaySettings())
-        #expect(presentation.playSkipMetricText == "1/1 plays · 0 skips")
+        #expect(presentation.playSkipMetricText == "1 play · 0 skips")
     }
 }

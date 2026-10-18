@@ -99,8 +99,10 @@ struct ApplePlayCountMatchingTests {
         #expect(await service.refresh(in: context) == 1)
         #expect(item.applePlayCount == 2)
         #expect(track.identityAliases.isEmpty && track.libraryID == nil)
+        // One change, although the Apple count and the floor under plays both moved.
         #expect(await service.refresh(in: context) == 1)
         #expect(item.applePlayCount == 4)
+        #expect(item.playthroughCount == 4)
         #expect(queries.last?.contains("i.found") == true)
         #expect(scans == 1)
     }

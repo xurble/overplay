@@ -90,16 +90,18 @@ The app target builds and unit tests cover CarPlay playlist summary ordering,
 playable counts, Shuffle and Play placement and scope forwarding, empty-list
 behavior, template refresh targeting, Now Playing action policy, and shared
 playlist-row selection, in-queue skip, and playback-mode paths in
-`PlaybackController`. The initial physical-device
-acceptance pass was completed on 2026-09-08, before the October 2026
-playback-core rewrite, which needs its own hardware pass (`TODO.md` §1). Repeat
-the affected hardware checks after every CarPlay, playback, attribution or
-MusicKit-mode change.
+`PlaybackController`. The initial physical-device acceptance pass was
+completed on 2026-09-08, before the October 2026 playback-core rewrite. The
+rewrite passed acceptance on iPhone on 2026-10-06 and CarPlay is in daily use,
+but the rewrite's own CarPlay hardware pass has not been run. It is listed in
+`TODO.md` under Device Acceptance. Repeat the affected hardware checks after
+every CarPlay, playback, attribution or MusicKit-mode change.
 
-Current hardware follow-ups are tracked in GitHub: custom Promote, Retire, and
-Restore controls are reported missing from Now Playing
-([#22](https://github.com/xurble/overplay/issues/22)), the shuffle indicator is
-reported to toggle repeatedly after a track transition
-([#28](https://github.com/xurble/overplay/issues/28)), and the distinction between
-Back and Up Next needs confirmation
-([#27](https://github.com/xurble/overplay/issues/27)).
+Hardware follow-ups:
+
+- The shuffle indicator still toggles repeatedly after a track transition, as
+  of 2026-10-07 ([#28](https://github.com/xurble/overplay/issues/28)).
+- Custom Promote, Retire and Restore controls
+  ([#22](https://github.com/xurble/overplay/issues/22)) and the Back versus Up
+  Next distinction ([#27](https://github.com/xurble/overplay/issues/27)) were
+  closed before the rewrite and need re-checking on hardware.
