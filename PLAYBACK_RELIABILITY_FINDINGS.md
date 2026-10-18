@@ -56,7 +56,7 @@ not return without new device evidence.
 
 | When | Approach | Result | Status |
 | --- | --- | --- | --- |
-| 2026-10-18 | After a start whose prepare failed or never answered, Play recovers with a fresh queue (rung 3) instead of a bare `play()` | Not yet seen on a device | Current |
+| 2026-10-18 | After a start whose prepare failed or never answered, Play recovers with a fresh queue (rung 3) instead of a bare `play()`; if the queue plays anyway (system Play), it is rebuilt once at the next track change; no automatic sync, play-count or Library work in the first minute after launch | Not yet seen on a device | Current |
 | 2026-10-17 | Treat a play that reports `playing` for 2 s or more without progress, then pauses on the same entry, as a failure (`didNotStart`); recovery starts at prepare-and-play; log every player status change, free storage and the network path (PR #97) | Not yet seen under real conditions | Current |
 | 2026-10-09 | Treat a call unanswered for 8 s as a stuck player: show force-quit advice everywhere, allow one fresh-queue attempt, then make no more Apple Music calls (PR #91) | Contains the hang; force-quit then works | Current |
 | 2026-10-09 | Full activity logging: one log file per launch, error chains, audio session events (PRs #86, #91) | Gives evidence after an incident; Settings can share the log | Current |

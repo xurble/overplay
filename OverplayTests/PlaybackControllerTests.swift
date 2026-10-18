@@ -258,6 +258,60 @@ struct PlaybackControllerTests {
         #expect(fixture.controller.currentTrack?.title == "Song 2")
     }
 
+    /// The system Play in CarPlay or on the Lock Screen reaches the player
+    /// directly, so a queue whose prepare failed can play after all.
+    private func playingUnpreparedQueue(prepareFailures: Int) async throws -> PlaybackFixture {
+        let player = FakePlaybackPlayer()
+        player.prepareFailuresRemaining = prepareFailures
+        let fixture = try PlaybackFixture(player: player)
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[0],
+                                              settings: fixture.settings, context: fixture.context)
+        fixture.player.playbackStatus = .playing
+        await fixture.player.notify()
+        return fixture
+    }
+
+    @Test func anUnpreparedQueueIsRebuiltOnceAtTheNextTrackChange() async throws {
+        let fixture = try await playingUnpreparedQueue(prepareFailures: 1)
+        defer { fixture.cleanUp() }
+        #expect(fixture.player.submitCount == 1)
+
+        await fixture.player.externallyAdvance()
+
+        #expect(fixture.player.submitCount == 2)
+        #expect(fixture.player.submittedStartIndices.last == 1)
+        #expect(fixture.controller.currentTrack?.title == "Song 1")
+        #expect(fixture.controller.playbackFailure == nil)
+
+        // Prepared now: later track changes are left to the player.
+        await fixture.player.externallyAdvance()
+        #expect(fixture.player.submitCount == 2)
+    }
+
+    @Test func aFailedRepairIsNotRetried() async throws {
+        let fixture = try await playingUnpreparedQueue(prepareFailures: 2)
+        defer { fixture.cleanUp() }
+
+        await fixture.player.externallyAdvance()
+        #expect(fixture.player.submitCount == 2)
+
+        fixture.player.playbackStatus = .playing
+        await fixture.player.notify()
+        await fixture.player.externallyAdvance()
+        #expect(fixture.player.submitCount == 2)
+    }
+
+    @Test func aPausedTrackChangeDoesNotRebuildTheQueue() async throws {
+        let fixture = try await playingUnpreparedQueue(prepareFailures: 1)
+        defer { fixture.cleanUp() }
+        fixture.player.playbackStatus = .paused
+        await fixture.player.notify()
+
+        await fixture.player.externallyAdvance()
+
+        #expect(fixture.player.submitCount == 1)
+    }
+
     @Test func aPreparedQueueStillRecoversWithPlayFirst() async throws {
         let player = FakePlaybackPlayer()
         player.playFailuresRemaining = 1

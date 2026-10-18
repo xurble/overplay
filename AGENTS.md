@@ -220,6 +220,9 @@ Playback engine changes:
     the player's track or clears context.
 -   Do not add confirmation loops, command rejection, automatic retries or
     automatic queue replacement. Recovery runs only when the user presses Play.
+    The single exception is the once-per-queue rebuild of a queue playing
+    unprepared, at a track change (**Unprepared queue repair**, `PLAY-014`);
+    do not widen it.
 -   When a track changes, evaluate and persist the outgoing track/session
     before replacing shared current-track state with the incoming track.
 -   Add focused tests at the shared policy/controller/use-case layer for

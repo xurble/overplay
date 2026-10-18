@@ -179,7 +179,21 @@ final class PlaybackController {
     /// queue directly brought audio back on 2026-10-18 while CarPlay's Now
     /// Playing stayed empty and ignored its transport controls, so recovery
     /// gives it a fresh queue instead.
-    @ObservationIgnored private var queueNeedsFreshStart = false
+    @ObservationIgnored private var queueNeedsFreshStart = false {
+        didSet {
+            guard !queueNeedsFreshStart else { return }
+            nowPlayingRepairAttempted = false
+            nowPlayingRepairPending = false
+            reportedUnpreparedPlayback = false
+        }
+    }
+    /// The player can also be started by a surface Overplay never sees (the
+    /// system Play in CarPlay or on the Lock Screen), so a queue can play
+    /// unprepared after all. That queue is rebuilt once, at the next track
+    /// change (`PLAY-014`).
+    @ObservationIgnored private var nowPlayingRepairAttempted = false
+    @ObservationIgnored private var nowPlayingRepairPending = false
+    @ObservationIgnored private var reportedUnpreparedPlayback = false
     /// How long a player call may go unanswered before the player is stuck.
     @ObservationIgnored var stuckCallLimit: Duration = .seconds(8)
     /// Counts every answer (return or error) to a call Overplay waits on.
@@ -432,6 +446,11 @@ final class PlaybackController {
         isPlaying = status == .playing
         let entry = player.currentEntry
         hasLiveQueue = entry != nil
+        if status == .playing, queueNeedsFreshStart, !reportedUnpreparedPlayback {
+            reportedUnpreparedPlayback = true
+            activityLog.record(.diagnosticNote, detail:
+                "playing a queue that was never prepared: CarPlay Now Playing may be empty until the next track")
+        }
 
         if let entry {
             if entry.entryID != lastEntryID {
@@ -449,6 +468,22 @@ final class PlaybackController {
         }
         noteObservedStatus(status, position: player.playbackTime, now: .now)
         ensureSampling()
+        if nowPlayingRepairPending {
+            nowPlayingRepairPending = false
+            await repairUnpreparedQueue()
+        }
+    }
+
+    /// Rebuilds a queue that is playing although it was never prepared, from
+    /// the song that has just started: a fresh submit, prepare and play, the
+    /// path every start takes. On 2026-10-18 such a queue played while
+    /// CarPlay's Now Playing stayed empty and ignored its controls. Once per
+    /// queue, at a track boundary, so the gap falls between songs; a repair
+    /// that fails leaves the failure for Play to recover.
+    private func repairUnpreparedQueue() async {
+        guard let intent, let member = currentMember, player.playbackStatus == .playing, !isHoldingStart else { return }
+        activityLog.record(.playbackSelectionPath, detail: "nowPlayingRepair from=\"\(member.title)\"")
+        await resubmit(intent, from: member, position: 0)
     }
 
     /// The one-second sample while playing: cheap reads only (`LOAD-001`).
@@ -561,6 +596,12 @@ final class PlaybackController {
         await attributeCurrent(entry)
         recordEntry(entry, path: "new")
         saveResumePoint(force: true)
+        // A new song on a queue that is playing unprepared: rebuild it once,
+        // after this observation has finished with the outgoing session.
+        if previousEntryID != nil, queueNeedsFreshStart, !nowPlayingRepairAttempted, player.playbackStatus == .playing {
+            nowPlayingRepairAttempted = true
+            nowPlayingRepairPending = true
+        }
     }
 
     /// Moves a session onto a new entry ID for the same song. Unconfirmed
