@@ -91,7 +91,7 @@ Music's global play count or skip count.
 | `PLAY-011` | The player is the authority on what is audible. Every Overplay surface displays the player-reported track, position, status and modes, even when the entry cannot be attributed. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-012` | The current entry is attributed to an intent member by identifier, then by unique normalized title/artist with duration corroboration. An unattributed entry is displayed, not counted, and has curation disabled; attribution never clears context. | `Overplay/Playback/PlaybackAttribution.swift` |
 | `PLAY-013` | Every transport command is one direct MusicKit call: no confirmation loop, no rejection of overlapping commands, no automatic queue replacement or retry. Displayed state changes only through observation. | `Overplay/Services/PlaybackController.swift` |
-| `PLAY-014` | Failures are shared across surfaces and recovered only by a user Play press through a bounded ladder (play; prepare and play; resubmit the intent at the current member and position, looking that member's track up again). A play the player accepted but never delivered (reported playing without progress, then paused) is a failure too. A rung counts once called, so a press while one hangs escalates. A call unanswered for 8 seconds, with no other answer meanwhile, makes the player stuck: advice to relaunch, one rung-3 attempt, then no more calls from Play until the player answers. A rung that answers late ends its press. Pause is never disabled. | `Overplay/Services/PlaybackController.swift` |
+| `PLAY-014` | Failures are shared across surfaces and recovered only by a user Play press through a bounded ladder (play; prepare and play; resubmit the intent at the current member and position, looking that member's track up again). A play the player accepted but never delivered (reported playing without progress, then paused) is a failure too. A queue whose last prepare failed or has not answered recovers from rung 3, never a bare play. A rung counts once called, so a press while one hangs escalates. A call unanswered for 8 seconds, with no other answer meanwhile, makes the player stuck: advice to relaunch, one rung-3 attempt, then no more calls from Play until the player answers. A rung that answers late ends its press. Pause is never disabled. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-015` | Membership changes never mutate the live queue. Retiring the current track issues Next; a member that left the scope is skipped when reached; additions appear at the next start. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-016` | Overplay does not write `MPNowPlayingInfoCenter` or register transport `MPRemoteCommandCenter` handlers; the `ApplicationMusicPlayer` host owns system Now Playing. A default-off diagnostic mirror exists only for device verification. | `Overplay/Services/SystemNowPlayingBridge.swift` |
 | `PLAY-017` | Native `Track` objects needed for playback are cached on disk per device; cold launches do not need to re-resolve the whole playlist, a cached track is reused only while it is the song its record names (its library or catalog ID), a library ID that no longer exists in the account library falls back to the record's catalog ID, and unresolvable songs are omitted rather than failing playback, with each omission recorded in the activity log. | `Overplay/Services/DevicePlaybackCache.swift` |
@@ -1737,7 +1737,13 @@ works:
    if the lookup fails, the cached track is used.
 
 A stalled player already reports `playing`, so a bare `play()` proves nothing:
-a stall, like a play that did not start, starts at rung 2. A play that does not
+a stall, like a play that did not start, starts at rung 2. A queue whose last
+prepare failed or has not answered starts at rung 3: on 2026-10-18 a CarPlay
+start's `prepareToPlay` failed after 9 seconds ("Remote call timed out"), and
+rung 1's `play()` brought the audio back while CarPlay's Now Playing stayed
+empty, showed no artwork, ignored its play, pause and skip controls, and the
+menus lost their Now Playing button. A successful rung-2 prepare or a new start
+clears this. A play that does not
 start within two minutes of a rung-3 resubmission keeps Try Again but advises
 force-quitting Overplay and opening it again. Each recovery gets a fresh stall window, and the
 failure stays shown while a rung-3 resubmission prepares. A Play press while it
@@ -2589,6 +2595,14 @@ The following are not requirements of the current product:
 - Whether `CPNowPlayingShuffleButton` and `CPNowPlayingRepeatButton` reflect
   MusicKit's modes without Overplay publishing remote-command state is
   unverified on hardware.
+- **CarPlay Now Playing lost on an unprepared queue (2026-10-18).** After a
+  start whose prepare timed out, a bare `play()` played audio that system Now
+  Playing did not show: CarPlay had no track, artwork or working transport, and
+  no Now Playing button, while the phone UI and Overplay's own CarPlay buttons
+  worked. Recovery now starts such a queue fresh (`PLAY-014`). The cause is
+  inferred from one incident; Overplay cannot read system Now Playing, so the
+  state cannot be detected directly. If it recurs, start a song from a CarPlay
+  list (a fresh start) or relaunch Overplay, and keep the activity log.
 - **Manual adds saved with a Mac's local ID.** Two Triage songs added before
   2026-10-18 were saved with a Mac's local persistent ID as their catalog ID,
   so no device can play them. Adds now confirm the ID with Apple Music

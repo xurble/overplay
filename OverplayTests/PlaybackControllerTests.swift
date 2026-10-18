@@ -237,6 +237,43 @@ struct PlaybackControllerTests {
         #expect(fixture.controller.currentTrack?.title == "Song 2")
     }
 
+    /// 2026-10-18: a CarPlay start's prepare timed out ("Remote call timed
+    /// out"); Play's bare play() brought audio back, but CarPlay's Now Playing
+    /// stayed empty and its transport controls did nothing.
+    @Test func recoveryAfterAFailedStartPrepareResubmitsInsteadOfPlaying() async throws {
+        let player = FakePlaybackPlayer()
+        player.prepareFailuresRemaining = 1
+        let fixture = try PlaybackFixture(player: player)
+        defer { fixture.cleanUp() }
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[2],
+                                              settings: fixture.settings, context: fixture.context)
+        #expect(fixture.controller.playbackFailure != nil)
+        let commandsBefore = fixture.player.commands.count
+
+        await fixture.controller.play(context: fixture.context)
+
+        #expect(Array(fixture.player.commands.dropFirst(commandsBefore)) == ["pause", "submit", "prepare", "play"])
+        #expect(fixture.player.submittedStartIndices.last == 2)
+        #expect(fixture.controller.playbackFailure == nil)
+        #expect(fixture.controller.currentTrack?.title == "Song 2")
+    }
+
+    @Test func aPreparedQueueStillRecoversWithPlayFirst() async throws {
+        let player = FakePlaybackPlayer()
+        player.playFailuresRemaining = 1
+        let fixture = try PlaybackFixture(player: player)
+        defer { fixture.cleanUp() }
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[2],
+                                              settings: fixture.settings, context: fixture.context)
+        let commandsBefore = fixture.player.commands.count
+
+        await fixture.controller.play(context: fixture.context)
+
+        #expect(Array(fixture.player.commands.dropFirst(commandsBefore)) == ["play"])
+        #expect(fixture.player.submitCount == 1)
+        #expect(fixture.controller.playbackFailure == nil)
+    }
+
     @Test func pauseIsNeverDisabledByAFailure() async throws {
         let fixture = try PlaybackFixture()
         defer { fixture.cleanUp() }

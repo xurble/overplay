@@ -31,6 +31,7 @@ unless noted.
 
 | Date | What happened | Evidence |
 | --- | --- | --- |
+| 2026-10-18 | CarPlay cold launch on cellular. The first start's `prepareToPlay` failed after 9 s with "Prepare to play failed" ← "Remote call timed out" (MPMusicPlayerControllerErrorDomain 6 ← 9), while launch work (play-count refresh, sync, library lookups) was running. Play in CarPlay ran rung 1, a bare `play()`: audio came back, but CarPlay's Now Playing showed no track or artwork, its transport did nothing, and the menus lost the Now Playing button. The phone UI and Overplay's own CarPlay shuffle buttons worked; later skips all came from the phone. | Activity log; `origin=carPlay` on the start and the Play press |
 | 2026-10-11 | On CarPlay over cellular, with very low bandwidth and storage nearly full. Every MusicKit call answered in milliseconds, but Play reported `playing` for a few seconds with no audio, then reverted to paused without announcing it. No failure was recorded, so every press repeated the same `play()`. Force-quitting Overplay fixed it. | Activity log; the sysdiagnose was truncated at 22 MB, probably by the full storage |
 | 2026-10-09 | Network collapsed, then a new start's `prepareToPlay` never returned (02:15:50). All 9 Play presses ran recovery, whose `prepareToPlay` also never returned. Apple's Music app recovered by itself in about 15 minutes; Overplay stayed stuck until force-quit. | Activity log: artwork downloads took 54 s and 11 s; no answer, success or failure, to any prepare call |
 | 2026-10-07 | A new queue loads in stages (2, then about 70, then all entries, in 0.3 to 0.4 s). Until the start song has loaded, MusicKit reports track 1 as current and playing. Shuffle set before the load finishes mixes only the first few songs. | Device probes on a 96-song playlist, iOS 26.6.1, Wi-Fi |
@@ -55,6 +56,7 @@ not return without new device evidence.
 
 | When | Approach | Result | Status |
 | --- | --- | --- | --- |
+| 2026-10-18 | After a start whose prepare failed or never answered, Play recovers with a fresh queue (rung 3) instead of a bare `play()` | Not yet seen on a device | Current |
 | 2026-10-17 | Treat a play that reports `playing` for 2 s or more without progress, then pauses on the same entry, as a failure (`didNotStart`); recovery starts at prepare-and-play; log every player status change, free storage and the network path (PR #97) | Not yet seen under real conditions | Current |
 | 2026-10-09 | Treat a call unanswered for 8 s as a stuck player: show force-quit advice everywhere, allow one fresh-queue attempt, then make no more Apple Music calls (PR #91) | Contains the hang; force-quit then works | Current |
 | 2026-10-09 | Full activity logging: one log file per launch, error chains, audio session events (PRs #86, #91) | Gives evidence after an incident; Settings can share the log | Current |

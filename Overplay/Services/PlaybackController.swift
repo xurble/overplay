@@ -175,6 +175,11 @@ final class PlaybackController {
     @ObservationIgnored private var samplingGeneration = 0
     /// The last recovery rung that ran, so repeated presses escalate.
     @ObservationIgnored private var recoveryEscalation: (rung: Int, at: Date)?
+    /// The queue's last prepare failed or has not answered. Playing such a
+    /// queue directly brought audio back on 2026-10-18 while CarPlay's Now
+    /// Playing stayed empty and ignored its transport controls, so recovery
+    /// gives it a fresh queue instead.
+    @ObservationIgnored private var queueNeedsFreshStart = false
     /// How long a player call may go unanswered before the player is stuck.
     @ObservationIgnored var stuckCallLimit: Duration = .seconds(8)
     /// Counts every answer (return or error) to a call Overplay waits on.
@@ -1252,7 +1257,10 @@ final class PlaybackController {
             watchdog.cancel()
             if startHold == generation { startHold = nil }
         }
+        queueNeedsFreshStart = true
         try await awaitPlayer("prepare start=\(generation)") { try await player.prepareToPlay() }
+        // A late answer for an older queue says nothing about the current one.
+        if generation == startGeneration { queueNeedsFreshStart = false }
         guard isHoldingStart(generation) else { return }
         // Nothing is playing yet; past the limit, start anyway.
         let clock = ContinuousClock()
@@ -1767,8 +1775,10 @@ final class PlaybackController {
             firstRung = max(firstRung, escalation.rung + 1)
         }
         if player.currentEntryID == nil { firstRung = 3 }
+        if queueNeedsFreshStart { firstRung = 3 }
         firstRung = min(firstRung, 3)
-        activityLog.record(.playbackRecoveryAttempt, magnitude: Double(firstRung), detail: "user play")
+        activityLog.record(.playbackRecoveryAttempt, magnitude: Double(firstRung),
+                           detail: queueNeedsFreshStart ? "user play: queue never prepared" : "user play")
         resetStallEvidence()
         // A later press's rung 3 replaces the queue; this press then yields.
         let generation = startGeneration
@@ -1796,6 +1806,7 @@ final class PlaybackController {
             let didPrepare = (try? await awaitPlayer("prepare recovery rung=2", outcome: prepared) { try await player.prepareToPlay() }) != nil
             if superseded(prepared) { return }
             if didPrepare {
+                queueNeedsFreshStart = false
                 let played = PlayerCallOutcome()
                 let didPlay = (try? await awaitPlayer("play recovery rung=2", outcome: played) { try await player.play() }) != nil
                 if superseded(played) { return }
