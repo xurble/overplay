@@ -5,6 +5,18 @@ import Foundation
 /// while a playback failure is active, so Overplay adds no load to a struggling
 /// Apple Music stack. Explicit user actions are never gated here.
 enum BackgroundMusicKitWorkPolicy {
+    /// Nothing automatic starts in the first minute after launch: Overplay is
+    /// launched to play music. On 2026-10-18 a CarPlay cold start's prepare
+    /// timed out while launch-time sync and play-count work were running.
+    static let launchQuietPeriod: Duration = .seconds(60)
+    /// When this process launched; `OverplayApp` sets it first thing.
+    static var launchedAt = ContinuousClock.now
+    static var launchQuietEnds: ContinuousClock.Instant { launchedAt + launchQuietPeriod }
+
+    static func isInLaunchQuietPeriod(now: ContinuousClock.Instant = .now) -> Bool {
+        now < launchQuietEnds
+    }
+
     static let periodicPlayCountInterval: Duration = .seconds(15 * 60)
     static let discoveryInterval: TimeInterval = 6 * 60 * 60
 

@@ -27,9 +27,9 @@ struct ContentView: View {
                 StatusToast.shared.show(message)
             }
             // Library lists open at once: fill any empty one in the
-            // background, a few seconds after launch.
+            // background, once the launch quiet period is over (`LOAD-001`).
             .task {
-                try? await Task.sleep(for: .seconds(5))
+                try? await Task.sleep(until: max(BackgroundMusicKitWorkPolicy.launchQuietEnds, .now + .seconds(5)))
                 guard MusicAuthorization.currentStatus == .authorized else { return }
                 await LibraryCache.shared.warmIfEmpty()
             }

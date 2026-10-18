@@ -56,6 +56,9 @@ final class PeriodicPlaylistSyncService {
         guard syncTask == nil else { return }
 
         playCountTask = Task(priority: .background) { @MainActor in
+            // Launching Overplay is for playing music (`LOAD-001`).
+            try? await Task.sleep(until: BackgroundMusicKitWorkPolicy.launchQuietEnds)
+            guard !Task.isCancelled else { return }
             if playbackController.playbackFailure == nil {
                 await LibraryArtworkService.refreshMissingArtwork(in: context, playbackController: playbackController)
             }
@@ -73,7 +76,7 @@ final class PeriodicPlaylistSyncService {
         syncTask = Task(priority: .background) { @MainActor [weak self] in
             guard let self else { return }
 
-            try? await Task.sleep(for: initialDelay)
+            try? await Task.sleep(until: max(BackgroundMusicKitWorkPolicy.launchQuietEnds, .now + initialDelay))
 
             while !Task.isCancelled {
                 await syncLinkedPlaylists(

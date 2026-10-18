@@ -11,6 +11,19 @@ struct BackgroundMusicKitWorkPolicyTests {
         #expect(BackgroundMusicKitWorkPolicy.periodicPlayCountInterval == .seconds(900))
     }
 
+    @Test func nothingAutomaticStartsInTheFirstMinuteAfterLaunch() {
+        let launched = ContinuousClock.now
+        let saved = BackgroundMusicKitWorkPolicy.launchedAt
+        defer { BackgroundMusicKitWorkPolicy.launchedAt = saved }
+        BackgroundMusicKitWorkPolicy.launchedAt = launched
+
+        #expect(BackgroundMusicKitWorkPolicy.launchQuietPeriod == .seconds(60))
+        #expect(BackgroundMusicKitWorkPolicy.launchQuietEnds == launched + .seconds(60))
+        #expect(BackgroundMusicKitWorkPolicy.isInLaunchQuietPeriod(now: launched))
+        #expect(BackgroundMusicKitWorkPolicy.isInLaunchQuietPeriod(now: launched + .seconds(59)))
+        #expect(!BackgroundMusicKitWorkPolicy.isInLaunchQuietPeriod(now: launched + .seconds(60)))
+    }
+
     @Test func automaticSyncPausesDuringAPlaybackFailure() {
         #expect(BackgroundMusicKitWorkPolicy.allowsAutomaticSync(hasPlaybackFailure: false))
         #expect(!BackgroundMusicKitWorkPolicy.allowsAutomaticSync(hasPlaybackFailure: true))

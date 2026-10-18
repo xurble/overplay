@@ -6,7 +6,9 @@ import SwiftData
 /// from their remote playlist. Apple counts are independent of playlist edits.
 @MainActor
 final class ApplePlayCountSyncService {
-    static let shared = ApplePlayCountSyncService(minimumRefreshInterval: 15)
+    static let shared = ApplePlayCountSyncService(
+        minimumRefreshInterval: 15, readyAt: BackgroundMusicKitWorkPolicy.launchQuietEnds
+    )
 
     private let fetch: ([String]) async throws -> [MusicLibraryPlaybackObservation]
     private let saveChanges: (ModelContext) throws -> Void
@@ -32,7 +34,10 @@ final class ApplePlayCountSyncService {
     /// Items applied between yields, so a full pass never blocks a frame for long.
     private static let applySliceSize = 100
 
-    init(minimumRefreshInterval: TimeInterval = 0, saveChanges: @escaping (ModelContext) throws -> Void = { try $0.save() },
+    /// `readyAt`: no refresh or import reconcile runs before it (the launch
+    /// quiet period, `LOAD-001`).
+    init(minimumRefreshInterval: TimeInterval = 0, readyAt: ContinuousClock.Instant? = nil,
+         saveChanges: @escaping (ModelContext) throws -> Void = { try $0.save() },
          fetchRecentlyPlayed: @escaping () async throws -> [MusicLibraryPlaybackObservation] = {
         guard MusicAuthorization.currentStatus == .authorized else { return [] }
         return try await MusicKitLibraryPlaybackHistoryFetcher().recentlyPlayedObservations()
@@ -59,7 +64,7 @@ final class ApplePlayCountSyncService {
         self.fetchPlaylist = fetchPlaylist
         self.fetchRecentlyPlayed = fetchRecentlyPlayed
         self.logRecentLookup = logRecentLookup
-        self.readyAt = minimumRefreshInterval > 0 ? .now + .seconds(10) : nil
+        self.readyAt = readyAt
     }
 
     @discardableResult

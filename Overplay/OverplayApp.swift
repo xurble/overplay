@@ -43,6 +43,7 @@ struct OverplayApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        BackgroundMusicKitWorkPolicy.launchedAt = .now
         do {
             modelContainer = try Self.makeModelContainer()
             #if targetEnvironment(simulator)
@@ -127,9 +128,13 @@ struct OverplayApp: App {
         // Overplay was away stay stale on screen.
         if phase == .active {
             await AppRuntime.shared.playbackController.reconcilePlayerState(context: context)
-            await ApplePlayCountSyncService.shared.refresh(
-                in: context, playbackController: AppRuntime.shared.playbackController
-            )
+            // At launch the periodic refresh comes after the quiet minute,
+            // and only while nothing is playing (`LOAD-001`).
+            if !BackgroundMusicKitWorkPolicy.isInLaunchQuietPeriod() {
+                await ApplePlayCountSyncService.shared.refresh(
+                    in: context, playbackController: AppRuntime.shared.playbackController
+                )
+            }
         }
     }
 }
