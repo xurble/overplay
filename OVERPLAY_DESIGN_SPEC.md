@@ -2208,7 +2208,10 @@ Triage, play one, or add it to another playlist.
 Show:
 
 - The search field at the top, always visible, clear of the mini player. A
-  search runs when it is submitted. No destination picker.
+  search runs when it is submitted. No destination picker. On iPhone the
+  field is the whole top bar, in place of the navigation bar, with X beside it
+  to go back; it never moves to a separate search layer. iPad and Mac show the
+  system search field in the toolbar.
 - Up to 20 Apple Music catalogue songs below, drawn as playlist track rows,
   with counts and retired state for songs Overplay tracks. Library-only
   songs, albums and artists are not searched.

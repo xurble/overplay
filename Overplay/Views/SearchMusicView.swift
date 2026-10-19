@@ -2,11 +2,15 @@ import SwiftData
 import SwiftUI
 
 /// Apple Music search: the field at the top, clear of the mini player, and
-/// the songs below. Swiping a song right sends it to the One True Playlist
+/// the songs below. On iPhone the field is the whole top bar, with X to leave
+/// search; elsewhere it is the system search field in the toolbar. Swiping a song right sends it to the One True Playlist
 /// and left to Triage, as in a collection's song list; More, beside Triage,
 /// plays it on its own or adds it to another Apple Music playlist.
 struct SearchMusicView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(PlaybackController.self) private var playbackController
 
     @State private var viewModel = SearchMusicViewModel()
@@ -17,7 +21,59 @@ struct SearchMusicView: View {
 
     var body: some View {
         let results = viewModel.searchService.results
-        List {
+        searchField(resultsList)
+            .focusedSceneValue(\.isEditingText, isSearchFocused)
+            .onChange(of: viewModel.searchText) { _, newValue in
+                Task { await viewModel.clearSearchIfNeeded(newValue) }
+            }
+            .task(id: "\(results.map(\.id))-\(playbackController.playbackItemMetadataVersion)") {
+                let presented = RecentCollectionPresentation.songs(results.map(Self.song), rowID: Self.rowID, in: modelContext)
+                songs = Dictionary(presented.map { ($0.catalogID, $0) }, uniquingKeysWith: { first, _ in first })
+            }
+            .onAppear {
+                if results.isEmpty { isSearchFocused = true }
+            }
+            .confirmationDialog(moreResult?.title ?? "", isPresented: isShowingMore, titleVisibility: .visible,
+                                presenting: moreResult) { result in
+                moreActions(for: result)
+            }
+            .sheet(item: $playlistResult) { result in
+                NavigationStack {
+                    AddToPlaylistView(result: result) { playlistID, name in
+                        await viewModel.add(result, toLibraryPlaylistID: playlistID, named: name)
+                    }
+                }
+            }
+    }
+
+    /// iPhone: a single bar replaces the navigation bar, so search never
+    /// moves between layers. iPad and Mac keep the toolbar search field.
+    @ViewBuilder
+    private func searchField(_ content: some View) -> some View {
+        if PlayerPlacement(horizontalSizeClass, verticalSizeClass) == .sheet {
+            content
+                .toolbar(.hidden, for: .navigationBar)
+                .safeAreaBar(edge: .top) {
+                    SearchBarView(text: $viewModel.searchText, isFocused: $isSearchFocused) {
+                        Task { await viewModel.searchService.search(viewModel.searchText) }
+                    } close: {
+                        dismiss()
+                    }
+                }
+        } else {
+            content
+                .searchable(text: $viewModel.searchText, placement: .navigationBarDrawer(displayMode: .always),
+                            prompt: "Songs in Apple Music")
+                .searchFocused($isSearchFocused)
+                .onSubmit(of: .search) {
+                    Task { await viewModel.searchService.search(viewModel.searchText) }
+                }
+        }
+    }
+
+    private var resultsList: some View {
+        let results = viewModel.searchService.results
+        return List {
             if viewModel.searchService.isSearching {
                 ProgressView("Searching Apple Music")
             }
@@ -83,36 +139,6 @@ struct SearchMusicView: View {
         .miniPlayerScrollContentInset()
         .navigationTitle("Search")
         .navigationBarTitleDisplayMode(.inline)
-        // At the top on iPhone, where iOS 26 would otherwise put it beside
-        // the mini player.
-        .searchable(text: $viewModel.searchText, placement: .navigationBarDrawer(displayMode: .always),
-                    prompt: "Songs in Apple Music")
-        .searchFocused($isSearchFocused)
-        .focusedSceneValue(\.isEditingText, isSearchFocused)
-        .onSubmit(of: .search) {
-            Task { await viewModel.searchService.search(viewModel.searchText) }
-        }
-        .onChange(of: viewModel.searchText) { _, newValue in
-            Task { await viewModel.clearSearchIfNeeded(newValue) }
-        }
-        .task(id: "\(results.map(\.id))-\(playbackController.playbackItemMetadataVersion)") {
-            let presented = RecentCollectionPresentation.songs(results.map(Self.song), rowID: Self.rowID, in: modelContext)
-            songs = Dictionary(presented.map { ($0.catalogID, $0) }, uniquingKeysWith: { first, _ in first })
-        }
-        .onAppear {
-            if results.isEmpty { isSearchFocused = true }
-        }
-        .confirmationDialog(moreResult?.title ?? "", isPresented: isShowingMore, titleVisibility: .visible,
-                            presenting: moreResult) { result in
-            moreActions(for: result)
-        }
-        .sheet(item: $playlistResult) { result in
-            NavigationStack {
-                AddToPlaylistView(result: result) { playlistID, name in
-                    await viewModel.add(result, toLibraryPlaylistID: playlistID, named: name)
-                }
-            }
-        }
     }
 
     @ViewBuilder
@@ -152,6 +178,57 @@ struct SearchMusicView: View {
     }
 
     private static let rowID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+}
+
+/// The iPhone search bar: a full-width glass field and, beside it, X to
+/// leave search.
+private struct SearchBarView: View {
+    @Binding var text: String
+    var isFocused: FocusState<Bool>.Binding
+    var submit: () -> Void
+    var close: () -> Void
+
+    var body: some View {
+        GlassEffectContainer {
+            HStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Songs in Apple Music", text: $text)
+                        .focused(isFocused)
+                        .submitLabel(.search)
+                        .autocorrectionDisabled()
+                        .onSubmit(submit)
+                    if !text.isEmpty {
+                        Button {
+                            text = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Clear")
+                    }
+                }
+                .padding(.horizontal, 14)
+                .frame(height: 44)
+                .glassEffect(.regular.interactive(), in: Capsule())
+
+                Button(action: close) {
+                    Image(systemName: "xmark")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .glassEffect(.regular.interactive(), in: Circle())
+                .accessibilityLabel("Close Search")
+                .accessibilityIdentifier("search-close")
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
 }
 
 /// The user's Apple Music playlists to add a song to. The One True Playlist

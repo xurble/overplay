@@ -74,25 +74,32 @@ struct AppRouter: View {
         } message: { Text(setupError ?? "") }
         .environment(artworkPresentation)
         .overlay(alignment: .bottom) {
-            if showsPlayer, let settings {
-                MiniPlayerLozengeView(settings: settings, onOpen: openPlayer) { distance in
-                    guard distance > 0 || openDrag.progress != nil else { return }
-                    openDrag.outcome = nil
-                    openDrag.progress = PlayerOpenDrag.progress(draggedUp: distance, miniPlayerTop: miniPlayerFrame.minY)
-                    if !isPlayerExpanded { openPlayer() }
-                } onOpenDragEnded: { value in
-                    guard openDrag.progress != nil else { return }
-                    let up = CGSize(width: value.translation.width, height: -value.translation.height)
-                    let predictedUp = CGSize(width: value.predictedEndTranslation.width, height: -value.predictedEndTranslation.height)
-                    openDrag.outcome = FullScreenPlayerView.closesPlayer(translation: up, predictedEnd: predictedUp) ? .open : .cancel
-                    openDrag.progress = nil
+            // The layer, not the lozenge, ignores the keyboard: the overlay's
+            // frame ends at the keyboard, so the lozenge would ride above it.
+            // Laid out to the screen's bottom, the keyboard covers it instead.
+            ZStack(alignment: .bottom) {
+                Color.clear
+                    .allowsHitTesting(false)
+                if showsPlayer, let settings {
+                    MiniPlayerLozengeView(settings: settings, onOpen: openPlayer) { distance in
+                        guard distance > 0 || openDrag.progress != nil else { return }
+                        openDrag.outcome = nil
+                        openDrag.progress = PlayerOpenDrag.progress(draggedUp: distance, miniPlayerTop: miniPlayerFrame.minY)
+                        if !isPlayerExpanded { openPlayer() }
+                    } onOpenDragEnded: { value in
+                        guard openDrag.progress != nil else { return }
+                        let up = CGSize(width: value.translation.width, height: -value.translation.height)
+                        let predictedUp = CGSize(width: value.predictedEndTranslation.width, height: -value.predictedEndTranslation.height)
+                        openDrag.outcome = FullScreenPlayerView.closesPlayer(translation: up, predictedEnd: predictedUp) ? .open : .cancel
+                        openDrag.progress = nil
+                    }
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { miniPlayerFrame = $0 }
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 4)
+                        .modifier(UnderVerticalBar())
                 }
-                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { miniPlayerFrame = $0 }
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 4)
-                    .modifier(UnderVerticalBar())
-                    .ignoresSafeArea(.keyboard)
             }
+            .ignoresSafeArea(.keyboard)
         }
         .onChange(of: showsFullScreenPlayer) { _, shows in
             if !shows, isPlayerExpanded { playerReturnsInPlace = true }
