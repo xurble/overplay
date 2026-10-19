@@ -24,6 +24,7 @@ enum RecentCollectionPresentation {
         case .libraryAlbum: "Album"
         case .libraryArtist: "Artist"
         case .librarySongs: "Songs"
+        case .searchSong: "Song"
         }
         let count = recent.songs.count
         return "\(kind) · \(count == 1 ? "1 song" : "\(count) songs")"

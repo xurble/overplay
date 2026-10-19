@@ -43,7 +43,7 @@ struct AppShellDestinationView: View {
                 ContentUnavailableView("Deep Dive Unavailable", systemImage: "square.stack")
             }
         case .search:
-            SearchMusicView(settings: settings)
+            SearchMusicView()
         case .history:
             HistoryView()
         case .settings:

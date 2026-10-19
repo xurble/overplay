@@ -3,14 +3,11 @@ import SwiftUI
 
 struct DashboardView: View {
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackController.self) private var playbackController
 
     @Query(filter: #Predicate<PlaylistRecord> { $0.isActive }, sort: \PlaylistRecord.name) private var playlists: [PlaylistRecord]
     @Query(sort: \RecentCollectionRecord.lastPlayedAt, order: .reverse) private var recentRecords: [RecentCollectionRecord]
-    @State private var leadArtworkSide = DashboardLayout.defaultLeadArtworkSide
-    /// Fitting bookkeeping. Not observed: updating it must never redraw the
-    /// screen, least of all mid-scroll.
-    @State private var leadArtworkFit = LeadArtworkFit()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.shellPlace) private var shellPlace
@@ -112,26 +109,10 @@ struct DashboardView: View {
             }
         }
         .listStyle(.plain)
-        .background(alignment: .top) {
-            DeepDivesPlaceholderView()
-                .fixedSize(horizontal: false, vertical: true)
-                .hidden()
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { leadArtworkFit.deepDivesHeight = $0 }
-        }
-        .onScrollGeometryChange(for: DashboardFit.self) { geometry in
-            DashboardFit(
-                containerHeight: geometry.containerSize.height,
-                contentHeight: geometry.contentSize.height,
-                topInset: geometry.contentInsets.top,
-                scrolledDistance: geometry.contentOffset.y + geometry.contentInsets.top,
-                width: geometry.containerSize.width
-            )
-        } action: { _, fit in
-            fitLeadArtwork(fit)
-        }
         .miniPlayerScrollContentInset()
         .onAppear { shellPlace?.destination = .dashboard }
         .navigationTitle("Overplay")
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 // A title as well as a symbol: a vertical bar's overflow menu
@@ -151,52 +132,47 @@ struct DashboardView: View {
                     }
                 }
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink {
+                    SearchMusicView()
+                        .nowPlayingColumnToggle()
+                } label: {
+                    Label("Search", systemImage: "magnifyingglass")
+                }
+                .accessibilityIdentifier("dashboard-search")
+            }
         }
-    }
-
-    /// Sizes the lead artwork once, as if every element is present: the large
-    /// title, Triage, Retired and a full Recent Deep Dives section (measured
-    /// from a stand-in when there are none). With all of them, the last row
-    /// ends one block spacing above the mini player. The size locks at the
-    /// first scroll and never changes; scrolling only moves the page.
-    private func fitLeadArtwork(_ fit: DashboardFit) {
-        guard !leadArtworkFit.isLocked, oneTruePlaylist != nil else { return }
-        guard PlayerPlacement(horizontalSizeClass, verticalSizeClass) == .sheet else {
-            leadArtworkSide = DashboardLayout.defaultLeadArtworkSide
-            return
-        }
-        leadArtworkFit.restingTopInset = max(leadArtworkFit.restingTopInset, fit.topInset)
-        guard fit.scrolledDistance <= 1 else {
-            if leadArtworkFit.isSized { leadArtworkFit.isLocked = true }
-            return
-        }
-        let deepDivesHeight = leadArtworkFit.deepDivesHeight
-        guard fit.contentHeight > 0, deepDivesHeight > 0 else { return }
-        let artworkRowInsets = DashboardLayout.leadArtworkTopInset + DashboardLayout.blockSpacing
-        var otherRowsHeight = fit.contentHeight - leadArtworkSide - artworkRowInsets
-        if recentRecords.isEmpty { otherRowsHeight += deepDivesHeight }
-        let available = fit.containerHeight - leadArtworkFit.restingTopInset - MiniPlayerLayout.collapsedHeight
-            - DashboardLayout.blockSpacing - otherRowsHeight - artworkRowInsets
-        let side = min(max(available, DashboardLayout.minimumLeadArtworkSide), fit.width - 32)
-        if abs(side - leadArtworkSide) >= 1 { leadArtworkSide = side }
-        leadArtworkFit.isSized = true
     }
 
     /// The One True Playlist leads the screen as artwork over its track count,
-    /// sized to fill the first screen.
+    /// at a fixed size.
+    private var leadArtworkSide: CGFloat {
+        PlayerPlacement(horizontalSizeClass, verticalSizeClass) == .sheet
+            ? DashboardLayout.compactLeadArtworkSide
+            : DashboardLayout.regularLeadArtworkSide
+    }
+
     private func oneTruePlaylistArtwork(for playlist: PlaylistRecord, summary: PlaylistSummaryPresentation) -> some View {
         VStack(spacing: 6) {
             ZStack(alignment: .bottomTrailing) {
                 PlaylistCollageThumbnailView(playlist: playlist)
                     .frame(width: leadArtworkSide, height: leadArtworkSide)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
-                Image(systemName: summary.iconIntent.systemImage)
-                    .font(.footnote.weight(.bold))
-                    .foregroundStyle(.white)
-                    .padding(6)
-                    .background(badgeTint(for: summary, role: playlist.role), in: Circle())
+                if isPlaying(summary) {
+                    Image(systemName: summary.iconIntent.systemImage)
+                        .font(.footnote.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(6)
+                        .background(badgeTint(for: summary, role: playlist.role), in: Circle())
+                }
             }
-            .accessibilityElement(children: .ignore)
+            .overlay {
+                if !isPlaying(summary) {
+                    playButton(for: playlist, summary: summary)
+                }
+            }
+            .accessibilityElement(children: .contain)
             .accessibilityLabel(playlist.name)
 
             OneTruePlaylistTrackCountView(playlist: playlist)
@@ -204,6 +180,34 @@ struct DashboardView: View {
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// The One True Playlist is what is audible now.
+    private func isPlaying(_ summary: PlaylistSummaryPresentation) -> Bool {
+        summary.isCurrentPlaybackPlaylist && playbackController.isPlaying
+    }
+
+    /// A glass Play over the artwork while the One True Playlist is not
+    /// playing: it resumes the playlist when it is the paused context, and
+    /// otherwise starts it, through the shared playback actions.
+    private func playButton(for playlist: PlaylistRecord, summary: PlaylistSummaryPresentation) -> some View {
+        Button {
+            Task {
+                if summary.isCurrentPlaybackPlaylist {
+                    await playbackController.play(context: modelContext)
+                } else {
+                    await playbackController.playPlaylist(playlist, scope: .active, settings: settings, context: modelContext)
+                }
+            }
+        } label: {
+            Image(systemName: "play.fill")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 59, height: 59)
+                .glassEffect(.clear.interactive(), in: Circle())
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel("Play \(playlist.name)")
     }
 
     private func badgeTint(for summary: PlaylistSummaryPresentation, role: PlaylistRole) -> Color {
@@ -255,45 +259,10 @@ private enum DashboardLayout {
     /// the last row and the mini player.
     static let blockSpacing: CGFloat = 14
     static let leadArtworkTopInset: CGFloat = 8
-    static let defaultLeadArtworkSide: CGFloat = 192
-    static let minimumLeadArtworkSide: CGFloat = 120
-}
-
-private struct DashboardFit: Equatable {
-    var containerHeight: CGFloat
-    var contentHeight: CGFloat
-    var topInset: CGFloat
-    var scrolledDistance: CGFloat
-    var width: CGFloat
-}
-
-/// Invisible copy of the Recent Deep Dives rows (heading, then a tile row)
-/// with the same fonts and insets, so the lead artwork reserves their height.
-private struct DeepDivesPlaceholderView: View {
-    @Environment(\.defaultMinListRowHeight) private var minimumRowHeight
-
-    var body: some View {
-        // Each list row is its content plus insets, but never under the
-        // list's minimum row height.
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Recent Deep Dives")
-                .font(.headline)
-                .padding(.top, DashboardLayout.blockSpacing)
-                .padding(.bottom, 6)
-                .frame(minHeight: minimumRowHeight)
-            RecentTilePlaceholderView()
-                .padding(.top, 4)
-                .frame(minHeight: minimumRowHeight)
-        }
-        .accessibilityHidden(true)
-    }
-}
-
-private final class LeadArtworkFit {
-    var restingTopInset: CGFloat = 0
-    var deepDivesHeight: CGFloat = 0
-    var isSized = false
-    var isLocked = false
+    /// The lead artwork's side where the player is a sheet (iPhone), and
+    /// everywhere else.
+    static let compactLeadArtworkSide: CGFloat = 180
+    static let regularLeadArtworkSide: CGFloat = 288
 }
 
 private enum DashboardBadge {
@@ -338,12 +307,17 @@ private struct TriageHomeRowView: View {
     }
 
     var body: some View {
-        PlaylistHomeRowView(
-            title: bucket.name,
-            detail: PlaylistSummaryPresentation.triageDetail(trackCount: activeItems.count, sourceCount: sourceCount),
-            playlist: bucket,
-            systemImage: summary.iconIntent.systemImage,
-            badgeTint: DashboardBadge.tint(for: summary, role: bucket.role)
-        )
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(bucket.name)
+                Text(PlaylistSummaryPresentation.triageDetail(trackCount: activeItems.count, sourceCount: sourceCount))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } icon: {
+            // The inbox, not the collage; green while Triage plays, as Retired.
+            Image(systemName: "tray.fill")
+                .foregroundStyle(summary.isCurrentPlaybackPlaylist ? .green : .teal)
+        }
     }
 }

@@ -236,12 +236,14 @@ final class CarPlayCoordinator: NSObject {
             if let triage = summaries.first(where: { $0.role == .triageBucket && $0.playbackScope == .active }) {
                 var triageRow = row(triage)
                 triageRow.detail = triage.triageDetail(sourceCount: triageSourceCount())
+                // The inbox icon, not artwork, as on the phone dashboard.
+                triageRow.artwork = .symbol("tray.fill")
                 triageRows.append(triageRow)
             }
             if let retired = summaries.first(where: { $0.playbackScope == .retired }) {
                 var retiredRow = row(retired)
                 retiredRow.detail = nil
-                retiredRow.artwork = .symbol("archivebox.fill", tint: .systemGray)
+                retiredRow.artwork = .symbol("archivebox.fill")
                 triageRows.append(retiredRow)
             }
             if !triageRows.isEmpty { sections.append(Section(id: "triage", rows: triageRows)) }
@@ -360,9 +362,14 @@ final class CarPlayCoordinator: NSObject {
                 isPlaying: RecentCollectionPresentation.isCurrent(song, in: recent, controller: playbackController),
                 artwork: .track(url: song.summary.artworkURLString, playlistID: playlistID))
         }
-        recentRenderer.update(.init(sections: [
-            .init(id: "actions", rows: [Row(id: "shuffle", title: "Shuffle and Play",
-                isEnabled: !rows.isEmpty, artwork: .symbol("shuffle"))]),
+        let header = CarPlayListPresentation.Header(
+            title: recent.title,
+            subtitle: PlaylistSummaryPresentation.trackCountLabel(songs.count),
+            artwork: .track(url: recent.artworkURLTemplate, playlistID: playlistID, size: 512),
+            shuffleActionID: "shuffle",
+            canShuffle: !rows.isEmpty
+        )
+        recentRenderer.update(.init(header: header, sections: [
             .init(id: "tracks", rows: rows.isEmpty
                 ? [Row(id: "empty", title: "No songs saved", isEnabled: false)] : rows)
         ]), on: template, actions: actions)
@@ -559,9 +566,17 @@ final class CarPlayCoordinator: NSObject {
                 isPlaying: isCurrentTrack(summary, in: playlist), isEnabled: summary.isPlayable,
                 artwork: .track(url: summary.artworkURLString, playlistID: playlist.musicPlaylistID))
         }
-        playlistRenderer.update(.init(sections: [
-            .init(id: "actions", rows: [Row(id: "shuffle", title: "Shuffle and Play",
-                isEnabled: !rows.isEmpty, artwork: .symbol("shuffle"))]),
+        // The playlist's art over its tracks, as on the phone, with a shuffle
+        // button in the header.
+        let header = CarPlayListPresentation.Header(
+            title: template.title ?? playlist.name,
+            subtitle: PlaylistSummaryPresentation.trackCountLabel(tracks.count),
+            artwork: PlaylistCollageService.snapshot(for: playlist, scope: scope)
+                .map { .collage($0, playlistID: playlist.musicPlaylistID, scope: scope) },
+            shuffleActionID: "shuffle",
+            canShuffle: !rows.isEmpty
+        )
+        playlistRenderer.update(.init(header: header, sections: [
             .init(id: "tracks", rows: rows.isEmpty
                 ? [Row(id: "empty", title: "No playable tracks", detail: "Sync this playlist in Overplay.", isEnabled: false)] : rows)
         ]), on: template, actions: actions)

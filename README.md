@@ -97,7 +97,7 @@ and remaining playlist-ID/artwork work are recorded in
 ## Project Shape
 
 - Swift 6, SwiftUI
-- iOS 26, iPadOS 26 and macOS 26 (Mac Catalyst) or later; a native macOS
+- iOS 26.4, iPadOS 26.4 and macOS 26.4 (Mac Catalyst) or later; a native macOS
   target is planned
 - MusicKit-first Apple Music integration
 - SwiftData with CloudKit-backed shared state

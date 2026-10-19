@@ -83,7 +83,7 @@ Music's global play count or skip count.
 | `SYNC-001` | Automatic sync starts no sooner than a minute after launch (and 10 seconds after authorization), runs every 30 minutes, skips fresh successful playlists, retries failed playlists, prioritizes the playing and selected playlists, and pauses while a playback failure is active. | `Overplay/Services/PeriodicPlaylistSyncService.swift`, `OverplayTests/PeriodicPlaylistSyncServiceTests.swift` |
 | `SYNC-002` | Sync is idempotent, collapses duplicate identities, preserves history, and leaves remotely missing tracks locally playable unless retired. Sync never mutates the live playback queue. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/PlaylistSyncReconciliationTests.swift` |
 | `MUT-001` | Successful promotion moves the existing item into OTP with its statistics and history; no source copy remains. Retired offers Move to Triage (explicit keep) and Move to One True Playlist. | `Overplay/Services/PlaylistMutationService.swift`, `OverplayTests/PlaylistMutationServiceTests.swift` |
-| `MUT-002` | Apple Music search can add songs only to active playlists that allow remote writes. | `Overplay/ViewModels/SearchMusicViewModel.swift`, `OverplayTests/SearchMusicViewModelTests.swift` |
+| `MUT-002` | Search adds a song to the One True Playlist or Triage through the shared song action (`PLAY-018`), or to another Apple Music library playlist through a MusicKit add; the One True Playlist is never offered as an "other" playlist. | `Overplay/ViewModels/SearchMusicViewModel.swift`, `OverplayTests/SearchMusicViewModelTests.swift` |
 | `RETIRE-001` | Retirement is authoritative locally and globally equivalent from OTP/Triage. Managed OTP retirement attempts remote removal from rows and Now Playing; incoming-only OTP and Triage retirement stay local. Stale OTP membership cannot revive or silently re-promote the row. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/TrackLocationService.swift` |
 | `PLAY-004` | MusicKit owns shuffle and repeat. Overplay writes what a surface asked for, displays what the player reports, and never reorders or rebuilds the queue to emulate them. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-005` | Starting playback hands MusicKit the complete display order for the selected scope in one queue, omitting only tracks that cannot be prepared. | `Overplay/Services/PlaybackController.swift` |
@@ -121,10 +121,11 @@ Planned**. They are not current behaviour and have no evidence yet.
 ## Platform
 
 - Current platforms:
-  - iPhone on iOS 26 and later.
-  - CarPlay through the iPhone app on iOS 26 and later.
-  - iPad on iPadOS 26 and later.
-  - Mac on macOS 26 and later, as a Mac Catalyst build of the iPad app,
+  - iPhone on iOS 26.4 and later.
+  - CarPlay through the iPhone app on iOS 26.4 and later (its list headers
+    need 26.4).
+  - iPad on iPadOS 26.4 and later.
+  - Mac on macOS 26.4 and later, as a Mac Catalyst build of the iPad app,
     without Apple Music playlist writes (see Mac).
 - Planned platform:
   - A native Mac target on macOS 26 and later.
@@ -433,7 +434,7 @@ Artwork loading must not block playlist rendering or playback. Store actual
 for expanded artwork and recognition (longest edge, preserving aspect ratio).
 The expanded player shows available 128 artwork while 512 loads. Lists may use
 cached images and load missing artwork while scrolling. CarPlay track rows show
-artwork with the playing indicator beside it.
+artwork with the playing indicator over it, as Music does.
 
 Decoded images share a 24 MiB cost budget across playlists. Source downloads and
 image processing are bounded and coalesced. Artwork failures cool down for 60
@@ -985,22 +986,17 @@ pretend the promotion succeeded.
 
 ### Search and manual add
 
-Users can search Apple Music and manually add tracks to active linked playlists
-whose write policy is `managed`. Incoming-only and inactive playlists are not
-offered as destinations.
-
-Add behaviour:
-
-- User selects the destination playlist.
-- Overplay attempts to add the track to the Apple Music playlist.
-- On success, Overplay syncs that playlist or inserts the local item using the
-  returned identifiers.
-- On failure, Overplay displays a clear error.
+Search adds through the same shared song action as a collection's song list
+(`PLAY-018`): an untracked song goes to the One True Playlist (an Apple Music
+add first) or to Triage (local, explicit keep); a Triage song is promoted and a
+retired song restored. Add to Playlist adds the song to any other Apple Music
+library playlist with a MusicKit add and records nothing in Overplay; a
+contributing playlist brings it into Triage at its next sync. Failures show a
+clear message.
 
 The shared local manual-add boundary also supports Triage without a remote
 write. It establishes explicit keep intent, reuses/revives the global item,
-and never demotes an active OTP item. Search does not use it yet; the search rework in
-`TODO.md` makes it Search's primary action. Moving from Retired to Triage uses the same explicit keep semantics.
+and never demotes an active OTP item. Search's swipes use it. Moving from Retired to Triage uses the same explicit keep semantics.
 
 OTP sync can promote an active bucket item, logging `promoted` with source
 `sync`. It cannot revive retired rows or override stale-OTP suppression. An OTP
@@ -1205,7 +1201,7 @@ CloudKit schema.
   left on an active one) is not offered. Playback goes on.
 - **CarPlay:** a "Recent Deep Dives" strip of artwork tiles under the
   playlists on the root (hidden when empty). A tile opens that entry's songs
-  with Shuffle and Play at the top, and then Now Playing; the strip's title
+  under a header with its art and Shuffle and Play, and then Now Playing; the strip's title
   opens the list of up to 10 entries. Strip tiles have no system playing
   indicator, so the playing entry's subtitle reads "Now Playing".
 - **CarPlay Back:** while an entry plays, Back from Now Playing goes to that
@@ -2206,30 +2202,36 @@ Platform notes:
 
 ### Search
 
-Purpose: search Apple Music and add tracks to an active managed playlist.
+Purpose: search Apple Music, then send songs to the One True Playlist or
+Triage, play one, or add it to another playlist.
 
 Show:
 
-- Search field. A search runs when it is submitted.
-- Up to 20 Apple Music catalogue songs, with artwork, title, artist, and
-  album. Library-only songs, albums and artists are not searched.
-- Destination playlist selector: active playlists that allow remote writes,
-  never Triage or a contributing playlist (`MUT-002`).
-- Add action.
+- The search field at the top, always visible, clear of the mini player. A
+  search runs when it is submitted. No destination picker.
+- Up to 20 Apple Music catalogue songs below, drawn as playlist track rows,
+  with counts and retired state for songs Overplay tracks. Library-only
+  songs, albums and artists are not searched.
+- Swipe right: Overplay (One True Playlist). Swipe left: Triage, and beside it
+  More. Each swipe is offered only when it would move the song, as in a
+  collection's song list. A context menu offers the same actions.
+- More: **Play Now** plays just that song outside any playlist (a `searchSong`
+  collection through the shared collection start, not added to Recents), and
+  **Add to Playlist…** lists the library's playlists except the One True
+  Playlist (`MUT-002`).
 
 Platform notes:
 
-- iPhone reaches Search from the menu on a playlist screen. iPad has a
-  sidebar entry, and the Mac has Go → Search (⌘F).
-- Adding needs a MusicKit playlist write, so it fails on the Mac and on
-  playlists Overplay did not create.
+- iPhone reaches Search from the dashboard's top-right button and the menu on
+  a playlist screen. iPad has a sidebar entry, and the Mac has Go → Search
+  (⌘F).
+- The Mac has no MusicKit playlist writes, so adding to the One True Playlist
+  or another playlist fails there; Triage and Play Now work.
 
 **Planned (`TODO.md`, Rework search):** search as you type with suggestions;
-library and catalogue results, including albums and artists; each song's
-place in Overplay; Add to Triage and Add to One True Playlist as in
-`PLAY-018` instead of a destination picker; an iPhone-first layout; and, on
-the Mac, keyboard focus and Return to add. The owner reports the current
-screen does not really work on iPhone.
+library and catalogue results, including albums and artists; a clearer mark
+of each song's place in Overplay; and, on the Mac, keyboard focus and Return
+to add.
 
 ### Retirement and history
 

@@ -23,24 +23,30 @@ entitlement, and `Config/Info.plist` declares a CarPlay scene using
 
 The root template has no navigation-bar actions. It shows:
 
-- A large artwork card for the One True Playlist (an iOS 26 image-row card),
-  which opens its track list. Cards have no playing indicator, so the card's
+- A large artwork card for the One True Playlist (an iOS 26 image-row card,
+  its art a rounded square inside the card), which opens its track list. Cards have no playing indicator, so the card's
   subtitle reads "Now Playing" while it plays. There is no one-tap entry point
   above it: two similar-looking entries is one too many to disambiguate while
   driving.
-- A headerless section with the Triage row ("X tracks from Y playlists") and a
-  compact Retired row with a grey archive icon, matching the phone dashboard.
+- A headerless section with the Triage row ("X tracks from Y playlists") under
+  an inbox icon, and a compact Retired row with an archive icon, matching the
+  phone dashboard.
 - Recent Deep Dives, when there are any: a strip of artwork tiles. A tile opens
   that album or artist; the title opens the full list.
 
-Each of these three track lists starts with a **Shuffle and Play** row above
+Each of these three track lists, and each Recent Deep Dive's songs, opens under
+a list header (iOS 26.4): the list's art, its title and track count, a background
+tinted from the art, and a **Shuffle and Play** button (the shuffle symbol
+alone: a title squeezes it beside the art), above the
 tracks in display order (newest-added first; Retired newest-retired first). The action uses the shared controller's
 playlist playback path, stops existing playback, selects a random starting track,
 and enables MusicKit shuffle without changing the displayed playlist order. It
 preserves the displayed Active or Retired scope and opens Now Playing on success.
 It remains available when that playlist is already playing, matching the phone's
-Shuffle and Play button. Empty lists show the action
-disabled. Shuffle and repeat also remain available as Now Playing controls.
+Shuffle and Play button. Empty lists show the button
+disabled. Row symbols are left to CarPlay's default colours: tinting them was
+tried and did not show in the car. The playing track's indicator sits over its
+artwork, as in Music. Shuffle and repeat also remain available as Now Playing controls.
 
 Tapping any track calls the same `PlaybackController.playPlaylist(_:startingAt:scope:settings:context:)`
 action as the iPhone/iPad playlist UI. The shared action decides whether to

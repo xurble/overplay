@@ -109,6 +109,19 @@ final class SearchMusicViewModel {
         }
     }
 
+    /// Adds a result to any Apple Music playlist, as the Music app does.
+    /// MusicKit can add to a playlist Overplay didn't create.
+    func add(_ result: SearchSongResult, toLibraryPlaylistID playlistID: String, named name: String) async {
+        guard addingSongIDs.insert(result.id).inserted else { return }
+        defer { addingSongIDs.remove(result.id) }
+        do {
+            _ = try await searchService.addSong(id: result.id, toPlaylistID: playlistID)
+            searchService.message = "Added \(result.title) to \(name)."
+        } catch {
+            searchService.message = "Could not add \(result.title) to \(name): \(UserFacingError.message(for: error))"
+        }
+    }
+
     func clearSearchIfNeeded(_ newValue: String) async {
         if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             await searchService.search("")

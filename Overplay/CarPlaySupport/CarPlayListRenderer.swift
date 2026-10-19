@@ -28,7 +28,7 @@ struct CarPlayListPresentation: Equatable {
         }
         enum Artwork: Equatable {
             case symbol(String, tint: UIColor? = nil)
-            case track(url: String?, playlistID: String)
+            case track(url: String?, playlistID: String, size: Int = 128)
             case collage(PlaylistCollage, playlistID: String, scope: PlaylistPlaybackScope)
         }
         var id: String
@@ -41,6 +41,17 @@ struct CarPlayListPresentation: Equatable {
         var style: Style = .standard
     }
 
+    /// The art, title and shuffle button above a track list.
+    struct Header: Equatable {
+        var title: String
+        var subtitle: String? = nil
+        var artwork: Row.Artwork? = nil
+        /// The action run by the header's shuffle button (Shuffle and Play).
+        var shuffleActionID: String
+        var canShuffle: Bool
+    }
+
+    var header: Header? = nil
     var sections: [Section]
 }
 
@@ -60,6 +71,8 @@ final class CarPlayListRenderer {
     private var requestedArtwork: [String: Row.Artwork] = [:]
     private var loadedArtwork: [String: Row.Artwork] = [:]
     private var artworkTask: Task<Void, Never>?
+    private weak var template: CPListTemplate?
+    private static let headerSlotID = "listHeader"
     private let loadArtwork: @MainActor (Row.Artwork) async -> UIImage?
     private let record: (MusicKitActivityOperation, String) -> Void
 
@@ -91,11 +104,12 @@ final class CarPlayListRenderer {
         actions: [String: @MainActor () async -> Void]
     ) {
         self.actions = actions
+        self.template = template
         guard next != presentation else { return }
         let oldRows = Dictionary(uniqueKeysWithValues: presentation.sections.flatMap(\.rows).map { ($0.id, $0) })
         let rows = next.sections.flatMap(\.rows)
         let styles = Dictionary(rows.map { ($0.id, $0.style) }, uniquingKeysWith: { first, _ in first })
-        let slotIDs = Set(Self.artworkSlots(in: rows).map(\.id))
+        let slotIDs = Set((Self.headerSlots(next.header) + Self.artworkSlots(in: rows)).map(\.id))
         items = items.filter { styles[$0.key] == .standard }
         imageRows = imageRows.filter { styles[$0.key].map { $0 != .standard } ?? false }
         elements = elements.filter { slotIDs.contains($0.key) }
@@ -125,7 +139,8 @@ final class CarPlayListRenderer {
                 let item = CPListItem(text: row.title, detailText: row.detail)
                 item.isEnabled = row.isEnabled
                 item.isPlaying = row.isPlaying
-                item.playingIndicatorLocation = .trailing
+                // Leading: CarPlay draws the indicator over the artwork, as Music does.
+                item.playingIndicatorLocation = .leading
                 item.accessoryType = row.disclosure ? .disclosureIndicator : .none
                 item.handler = { [weak self] _, completion in
                     Task { @MainActor in
@@ -147,7 +162,9 @@ final class CarPlayListRenderer {
             || zip(next.sections, presentation.sections).contains {
                 $0.id != $1.id || $0.header != $1.header || $0.rows.map(\.id) != $1.rows.map(\.id)
             }
+        let headerChanged = next.header != presentation.header
         presentation = next
+        if headerChanged { applyHeader(on: template) }
         if structureChanged {
             template.updateSections(next.sections.map { section in
                 CPListSection(
@@ -170,8 +187,10 @@ final class CarPlayListRenderer {
         case .standard:
             return false
         case .card:
+            // A rounded square inside the card, not a crop filling it.
+            // CarPlay places the square; it can't be centred.
             let card = CPListImageRowItemCardElement(
-                image: images[row.id] ?? Self.placeholder, showsImageFullHeight: true,
+                image: images[row.id] ?? Self.placeholder, showsImageFullHeight: false,
                 title: row.title, subtitle: row.detail, tintColor: nil
             )
             elements[row.id] = card
@@ -234,6 +253,34 @@ final class CarPlayListRenderer {
 
     private static let placeholder = UIImage(systemName: "music.note") ?? UIImage()
 
+    /// Builds the list header afresh: CarPlay updates it on assignment.
+    private func applyHeader(on template: CPListTemplate) {
+        guard let header = presentation.header else {
+            if template.listHeader != nil {
+                template.listHeader = nil
+                record(.carPlayListMutation, "header cleared")
+            }
+            return
+        }
+        let actionID = header.shuffleActionID
+        // Icon only: a title squeezes the button beside the art.
+        let shuffle = CPButton(image: UIImage(systemName: "shuffle") ?? UIImage()) { [weak self] _ in
+            Task { @MainActor in await self?.actions[actionID]?() }
+        }
+        shuffle.isEnabled = header.canShuffle
+        let details = CPListTemplateDetailsHeader(
+            thumbnail: CPThumbnailImage(image: images[Self.headerSlotID] ?? Self.placeholder),
+            title: header.title, subtitle: header.subtitle, actionButtons: [shuffle]
+        )
+        details.wantsAdaptiveBackgroundStyle = true
+        template.listHeader = details
+        record(.carPlayListMutation, "header")
+    }
+
+    private static func headerSlots(_ header: CarPlayListPresentation.Header?) -> [(id: String, artwork: Row.Artwork)] {
+        header?.artwork.map { [(headerSlotID, $0)] } ?? []
+    }
+
     /// Every artwork the list shows, in display order: one per standard row
     /// or card, one per strip tile.
     private static func artworkSlots(in rows: some Sequence<Row>) -> [(id: String, artwork: Row.Artwork)] {
@@ -252,7 +299,8 @@ final class CarPlayListRenderer {
                 // One request at a time, in display order, bounded by what
                 // CarPlay can display. Unchanged rows never restart artwork.
                 let rows = self.presentation.sections.flatMap(\.rows).prefix(CPListTemplate.maximumItemCount)
-                guard let slot = Self.artworkSlots(in: rows).first(where: { self.requestedArtwork[$0.id] != $0.artwork }) else {
+                let header = Self.headerSlots(self.presentation.header)
+                guard let slot = (header + Self.artworkSlots(in: rows)).first(where: { self.requestedArtwork[$0.id] != $0.artwork }) else {
                     self.artworkTask = nil
                     return
                 }
@@ -260,9 +308,14 @@ final class CarPlayListRenderer {
                 let image = await self.loadArtwork(slot.artwork)
                 guard !Task.isCancelled else { return }
                 let allRows = self.presentation.sections.flatMap(\.rows)
-                guard Self.artworkSlots(in: allRows).first(where: { $0.id == slot.id })?.artwork == slot.artwork else { continue }
+                let current = Self.headerSlots(self.presentation.header) + Self.artworkSlots(in: allRows)
+                guard current.first(where: { $0.id == slot.id })?.artwork == slot.artwork else { continue }
                 // Keep the previous image through loading and failures.
-                if let image {
+                if let image, slot.id == Self.headerSlotID {
+                    self.images[slot.id] = image
+                    self.loadedArtwork[slot.id] = slot.artwork
+                    if let template = self.template { self.applyHeader(on: template) }
+                } else if let image {
                     self.items[slot.id]?.setImage(image)
                     self.elements[slot.id]?.image = image
                     self.images[slot.id] = image
@@ -278,8 +331,8 @@ final class CarPlayListRenderer {
         case .symbol(let name, let tint):
             let image = UIImage(systemName: name)
             return tint.flatMap { image?.withTintColor($0, renderingMode: .alwaysOriginal) } ?? image
-        case .track(let url, let playlistID):
-            let image = await ArtworkImagePipeline.shared.image(for: url, size: 128, playlistID: playlistID, priority: .utility)
+        case .track(let url, let playlistID, let size):
+            let image = await ArtworkImagePipeline.shared.image(for: url, size: size, playlistID: playlistID, priority: .utility)
             return image.map { UIImage(cgImage: $0) }
         case .collage(let snapshot, let playlistID, let scope):
             let image = await PlaylistCollageService.shared.image(for: snapshot, playlistID: playlistID, scope: scope)

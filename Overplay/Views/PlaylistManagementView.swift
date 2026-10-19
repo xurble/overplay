@@ -200,7 +200,7 @@ private struct PlaylistManagementContentView: View {
                     Divider()
 
                     NavigationLink {
-                        SearchMusicView(settings: settings, playlistID: playlist.musicPlaylistID)
+                        SearchMusicView()
                             .nowPlayingColumnToggle()
                     } label: {
                         Label("Search Apple Music", systemImage: "magnifyingglass")

@@ -64,19 +64,6 @@ struct RecentTileView: View {
     }
 }
 
-/// A tile's exact footprint without a recent, for layouts that reserve room
-/// for the Recent Deep Dives row before it exists.
-struct RecentTilePlaceholderView: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Color.clear.frame(width: RecentTileView.side, height: RecentTileView.side)
-            Text(verbatim: " ").font(.subheadline.weight(.semibold)).lineLimit(1)
-            Text(verbatim: " ").font(.caption)
-        }
-        .frame(width: RecentTileView.side)
-    }
-}
-
 #Preview {
     let container = PreviewContainer.make()
     let context = container.mainContext

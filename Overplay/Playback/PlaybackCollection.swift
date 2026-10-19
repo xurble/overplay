@@ -15,6 +15,9 @@ nonisolated struct PlaybackCollection: Codable, Equatable, Sendable {
         case libraryAlbum
         case libraryArtist
         case librarySongs
+        /// One song played from search, outside any playlist. Never
+        /// recorded in Recents.
+        case searchSong
     }
 
     /// What the user asked for. Which artist collection plays is the
@@ -41,6 +44,7 @@ nonisolated struct PlaybackCollection: Codable, Equatable, Sendable {
         case .libraryAlbum: "Album · \(title)"
         case .libraryArtist: title
         case .librarySongs: "Songs"
+        case .searchSong: "Search"
         }
     }
 
@@ -50,7 +54,7 @@ nonisolated struct PlaybackCollection: Codable, Equatable, Sendable {
         switch kind {
         case .album: "album:\(catalogID)"
         case .artistEssentials, .artistTopSongs: "artist:\(catalogID)"
-        case .libraryPlaylist, .libraryAlbum, .libraryArtist, .librarySongs: "\(kind.rawValue):\(catalogID)"
+        case .libraryPlaylist, .libraryAlbum, .libraryArtist, .librarySongs, .searchSong: "\(kind.rawValue):\(catalogID)"
         }
     }
 

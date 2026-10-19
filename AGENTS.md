@@ -57,7 +57,7 @@ Avoid:
 
 ## Deployment Targets
 
-This project targets **iOS 26, iPadOS 26, and macOS 26 and later only**.
+This project targets **iOS 26.4, iPadOS 26.4, and macOS 26.4 and later only**.
 
 Agents should:
 
