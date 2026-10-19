@@ -85,6 +85,9 @@ final class PlaybackController {
     /// Whether the player holds a current entry Overplay can command.
     private(set) var hasLiveQueue = false
     private(set) var playbackModes = PlaybackModeState()
+    /// Shuffle was on when the restored intent was saved; the next resume of
+    /// it turns shuffle back on (a relaunched player starts unshuffled).
+    private var resumesShuffled = false
     private(set) var playbackFailure: PlaybackFailure?
     var statusMessage: String?
     private(set) var activePlaylistSnapshot: ActivePlaylistSnapshot?
@@ -357,6 +360,7 @@ final class PlaybackController {
         currentMember = member
         // A saved position belongs to the saved track only.
         elapsedSeconds = resumeMember != nil ? resume?.positionSeconds ?? 0 : 0
+        resumesShuffled = resume?.wasShuffled ?? false
         isPlaying = false
         applyDisplay(entry: nil, member: member)
     }
@@ -535,7 +539,11 @@ final class PlaybackController {
         modes.observe(shuffle: player.reportedShuffleMode, repeatMode: player.reportedRepeatMode)
         guard modes != playbackModes else { return }
         activityLog.record(.playerModeObserved, detail: "shuffle=\(Self.describe(modes.shuffle)) repeat=\(Self.describe(modes.repeatMode))")
+        let shuffleChanged = modes.shuffle != playbackModes.shuffle
         playbackModes = modes
+        // Record shuffle at once, from any surface: the app may be killed
+        // before the next timed save, and resuming restores it.
+        if shuffleChanged { saveResumePoint(force: true) }
     }
 
     private func transition(to entry: PlayerEntrySnapshot) async {
@@ -773,7 +781,8 @@ final class PlaybackController {
         applyDisplay(entry: nil, member: currentMember)
         refreshCurrentItem()
         intentStore.save(PlaybackResumePoint(intentID: intent.id, localTrackID: currentMember?.localTrackID,
-                                             positionSeconds: 0, wasPlaying: false, updatedAt: .now))
+                                             positionSeconds: 0, wasPlaying: false, updatedAt: .now,
+                                             wasShuffled: shuffleEnabled || resumesShuffled))
     }
 
     // MARK: - Sessions and counting (`COUNT-001`)
@@ -1006,6 +1015,7 @@ final class PlaybackController {
     /// MusicKit owns shuffle (`PLAY-004`): write it, then read back.
     func setShuffleEnabled(_ isEnabled: Bool, context: ModelContext) async {
         adopt(context)
+        resumesShuffled = false
         player.setShuffleMode(isEnabled ? .songs : .off)
         observeModes()
     }
@@ -1224,8 +1234,10 @@ final class PlaybackController {
         let startPosition = playable[startIndex].0.localTrackID == member?.localTrackID ? position : 0
         // Resuming the track that is playing continues its listening session.
         let continuesSession = startPosition > 0 && session?.play.localTrackID == playable[startIndex].0.localTrackID
+        // The same intent keeps its shuffle, including across a relaunch.
+        let keepsShuffle = shuffleEnabled || resumesShuffled
         await submit(resubmitted, tracks: playable.map(\.1), startIndex: startIndex, position: startPosition, shuffle: false,
-                     generation: generation, continuesSession: continuesSession)
+                     keepsShuffle: keepsShuffle, generation: generation, continuesSession: continuesSession)
     }
 
     /// Records the intent, then hands MusicKit the queue in single calls.
@@ -1235,9 +1247,11 @@ final class PlaybackController {
         startIndex: Int,
         position: Double,
         shuffle: Bool,
+        keepsShuffle: Bool = false,
         generation: Int,
         continuesSession: Bool = false
     ) async {
+        resumesShuffled = false
         let carried = continuesSession ? session : nil
         if carried == nil, let outgoing = session { finish(outgoing, end: .replaced) }
         install(intent, persist: true)
@@ -1258,7 +1272,8 @@ final class PlaybackController {
         player.pause()
         player.submitQueue(tracks, startingAt: startIndex)
         do {
-            try await startLoaded(trackCount: tracks.count, shuffle: shuffle, generation: generation)
+            try await startLoaded(trackCount: tracks.count, shuffle: shuffle, keepsShuffle: keepsShuffle,
+                                  generation: generation)
             // A newer start replaced this queue while play was in flight.
             guard generation == startGeneration else { return }
             if let duration = currentMember?.durationSeconds, position > 5, position < duration - 5 {
@@ -1279,7 +1294,9 @@ final class PlaybackController {
     /// 2026-10-07). Shuffle and Play also enables shuffle on the loaded queue
     /// and skips to a random song first; shuffle written earlier mixes only
     /// the first few songs. Nothing is heard or shown before the chosen song.
-    private func startLoaded(trackCount: Int, shuffle: Bool, generation: Int) async throws {
+    /// A resubmission that keeps shuffle reshuffles the loaded queue the same
+    /// way but stays on its start song.
+    private func startLoaded(trackCount: Int, shuffle: Bool, keepsShuffle: Bool = false, generation: Int) async throws {
         startHold = generation
         // The player was paused for this start; never offer Pause meanwhile.
         isPlaying = false
@@ -1318,6 +1335,10 @@ final class PlaybackController {
                 try await awaitPlayer("shuffle skip start=\(generation)") { try await player.skipToNextEntry() }
             }
             guard isHoldingStart(generation) else { return }
+        } else if keepsShuffle {
+            player.setShuffleMode(.off)
+            player.setShuffleMode(.songs)
+            observeModes()
         }
         try await awaitPlayer("play start=\(generation)") { try await player.play() }
     }
@@ -2550,7 +2571,8 @@ final class PlaybackController {
             localTrackID: currentMember?.localTrackID,
             positionSeconds: elapsedSeconds,
             wasPlaying: isPlaying,
-            updatedAt: now
+            updatedAt: now,
+            wasShuffled: shuffleEnabled || resumesShuffled
         ))
     }
 

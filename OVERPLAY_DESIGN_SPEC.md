@@ -1843,6 +1843,13 @@ keeps the last confirmed value. The repeat control toggles off and repeat-all.
 Repeat-one set elsewhere is shown as not-all. Turning shuffle on or off never
 reorders, replaces or restarts the queue.
 
+A resubmission of the same intent (Play after the queue is gone, recovery, or
+selecting a song no longer in the queue) keeps shuffle: once the queue has
+loaded, shuffle is written off and on, which mixes the whole queue around the
+start song. The resume point records whether shuffle was on, saved as soon as
+it changes, because a relaunched app's player starts unshuffled. Turning
+shuffle off before Play cancels the restore.
+
 ### Queue end
 
 When the player reports no current entry and stops after an attributed session

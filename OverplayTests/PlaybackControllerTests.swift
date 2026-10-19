@@ -698,6 +698,54 @@ struct PlaybackControllerTests {
         relaunched.stopMonitoring()
     }
 
+    /// Shuffle turned on just before the app is killed is saved at once, and
+    /// a relaunched (unshuffled) player gets it back on Play, on the same song.
+    @Test func resumeAfterRelaunchRestoresShuffle() async throws {
+        let first = try PlaybackFixture()
+        defer { first.cleanUp() }
+        await first.controller.playPlaylist(first.playlist, startingAt: first.tracks[2],
+                                            settings: first.settings, context: first.context)
+        await first.controller.setShuffleEnabled(true, context: first.context)
+        first.controller.stopMonitoring()
+
+        let player = FakePlaybackPlayer()
+        let relaunched = PlaybackController(player: player, intentStore: first.intentStore,
+                                            preparePlaybackTracks: { _, _ in }, refreshUnknownApplePlayCount: { _, _ in 0 },
+                                            sleep: PlaybackFixture.manualSampling)
+        relaunched.restoreIntent()
+        relaunched.startMonitoring()
+        await relaunched.play(context: first.context)
+
+        #expect(player.submittedStartIndices == [2])
+        #expect(player.commands.contains("shuffle=songs"))
+        #expect(!player.commands.contains("next"))
+        #expect(relaunched.shuffleEnabled)
+        #expect(relaunched.currentTrack?.title == "Song 2")
+        relaunched.stopMonitoring()
+    }
+
+    @Test func shuffleTurnedOffBeforeResumeIsNotRestored() async throws {
+        let first = try PlaybackFixture()
+        defer { first.cleanUp() }
+        await first.controller.playPlaylist(first.playlist, startingAt: first.tracks[2],
+                                            settings: first.settings, context: first.context)
+        await first.controller.setShuffleEnabled(true, context: first.context)
+        first.controller.stopMonitoring()
+
+        let player = FakePlaybackPlayer()
+        let relaunched = PlaybackController(player: player, intentStore: first.intentStore,
+                                            preparePlaybackTracks: { _, _ in }, refreshUnknownApplePlayCount: { _, _ in 0 },
+                                            sleep: PlaybackFixture.manualSampling)
+        relaunched.restoreIntent()
+        relaunched.startMonitoring()
+        await relaunched.setShuffleEnabled(false, context: first.context)
+        await relaunched.play(context: first.context)
+
+        #expect(!player.commands.contains("shuffle=songs"))
+        #expect(!relaunched.shuffleEnabled)
+        relaunched.stopMonitoring()
+    }
+
     @Test func playbackWorksBeforeTheLibraryIsRestoredButDoesNotCount() async throws {
         let first = try PlaybackFixture()
         defer { first.cleanUp() }

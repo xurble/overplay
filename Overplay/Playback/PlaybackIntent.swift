@@ -61,6 +61,9 @@ struct PlaybackResumePoint: Codable, Equatable, Sendable {
     var positionSeconds: Double
     var wasPlaying: Bool
     var updatedAt: Date
+    /// MusicKit shuffle was on. A relaunched app's player starts unshuffled,
+    /// so resuming restores it. Optional: older saves lack it.
+    var wasShuffled: Bool? = nil
 }
 
 /// Device-local persistence for the intent and resume point. Never synced.
