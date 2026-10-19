@@ -253,14 +253,14 @@ What it does today (`SearchMusicView`, `SearchMusicViewModel`,
   never a destination, adding fails on the Mac and on playlists Overplay did
   not create, and a destination picker sits at the top of every search.
 
-Done on 2026-10-19 (fast-turnaround, no tests yet): the field sits at the
-top on iPhone with no destination picker; the dashboard has a Search button
-top right; results are track rows that swipe right to Overplay and left to
-Triage through the shared song action, with More beside Triage for Play Now
-(one song, outside any playlist) and Add to Playlist… (any library playlist
-but the One True Playlist). Still to do: items 2, 3, a clearer item 4 and the
-Mac part of 7 below, view-model and use-case tests for the new actions, and
-the existing `SearchMusicViewModel` destination code, now unused by the view.
+Done on 2026-10-19: the field is the whole top bar on iPhone, with X to go
+back, and no destination picker; the dashboard has a Search button top right;
+results are track rows that swipe right to Overplay and left to Triage through
+the shared song action, with More beside Triage for Play Now (one song,
+outside any playlist) and Add to Playlist… (any library playlist but the One
+True Playlist). The shared song action, Play Now and Add to Playlist have
+tests; the old destination code is gone. Still to do: items 2, 3, a clearer
+item 4 and the Mac part of 7 below.
 
 Direction:
 

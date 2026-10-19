@@ -233,6 +233,104 @@ struct PlaybackCollectionTests {
         #expect(fixture.controller.statusMessage == "Added to the One True Playlist.")
     }
 
+    // MARK: - Collection and search song lists
+
+    private static func song(_ id: String, _ title: String) -> PlaybackCollectionSong {
+        PlaybackCollectionSong(catalogID: id, title: title, artistName: "Artist 0")
+    }
+
+    @Test func swipingAnUntrackedSongLeftAddsItToTriage() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        _ = try catalog(for: fixture)
+
+        await fixture.controller.moveCollectionSong(Self.song("alb-1", "Album Song 1"), toOneTruePlaylist: false,
+                                                    context: fixture.context)
+
+        #expect(fixture.controller.statusMessage == "Added to Triage.")
+        let track = try #require(try TrackRecordRepository.tracksByCatalogID(in: fixture.context)["alb-1"])
+        let item = try #require(try PlaylistItemRepository.item(trackID: track.id, in: fixture.context))
+        #expect(item.playlistID == (try PlaylistRepository.triageBucket(in: fixture.context)).id)
+        #expect(item.isExplicitlyKept)
+    }
+
+    @Test func swipingAnUntrackedSongRightWritesAppleMusicFirst() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        _ = try catalog(for: fixture)
+        var remoteAdds: [(String, String)] = []
+        fixture.controller.addCatalogSongToPlaylist = { songID, playlist, _ in
+            remoteAdds.append((songID, playlist.musicPlaylistID))
+        }
+
+        await fixture.controller.moveCollectionSong(Self.song("alb-1", "Album Song 1"), toOneTruePlaylist: true,
+                                                    context: fixture.context)
+
+        #expect(remoteAdds.map(\.0) == ["alb-1"])
+        #expect(remoteAdds.map(\.1) == [fixture.playlist.musicPlaylistID])
+        let track = try #require(try TrackRecordRepository.tracksByCatalogID(in: fixture.context)["alb-1"])
+        let item = try #require(try PlaylistItemRepository.item(trackID: track.id, in: fixture.context))
+        #expect(item.playlistID == fixture.playlist.id)
+        #expect(fixture.controller.statusMessage == "Added to the One True Playlist.")
+    }
+
+    @Test func swipingARetiredSongLeftRestoresItToTriage() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        _ = try catalog(for: fixture)
+        let item = try fixture.item(0)
+        _ = try TrackActionService.evictTrack(item, playlist: fixture.playlist, message: "Retired", in: fixture.context)
+        #expect(item.evictedAt != nil)
+
+        await fixture.controller.moveCollectionSong(Self.song("cat-0", "Song 0"), toOneTruePlaylist: false,
+                                                    context: fixture.context)
+
+        #expect(fixture.controller.statusMessage == "Moved Song 0 to Triage.")
+        let restored = try #require(try PlaylistItemRepository.item(trackID: item.trackID, in: fixture.context))
+        #expect(restored.evictedAt == nil)
+        #expect(restored.playlistID == (try PlaylistRepository.triageBucket(in: fixture.context)).id)
+    }
+
+    @Test func swipingAnActiveSongChangesNothing() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        _ = try catalog(for: fixture)
+        var remoteAdds = 0
+        fixture.controller.addCatalogSongToPlaylist = { _, _, _ in remoteAdds += 1 }
+        let song = Self.song("cat-0", "Song 0")
+
+        await fixture.controller.moveCollectionSong(song, toOneTruePlaylist: true, context: fixture.context)
+        #expect(fixture.controller.statusMessage == "Song 0 is already in the One True Playlist.")
+        await fixture.controller.moveCollectionSong(song, toOneTruePlaylist: false, context: fixture.context)
+        #expect(fixture.controller.statusMessage == "Only a retired or untracked song can go to Triage.")
+
+        #expect(remoteAdds == 0)
+        #expect(try fixture.item(0).playlistID == fixture.playlist.id)
+        #expect(try fixture.item(0).evictedAt == nil)
+    }
+
+    /// Search's Play Now: just that song, outside any playlist, never in Recents.
+    @Test func playNowFromSearchPlaysOnlyThatSongAndSkipsRecents() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        _ = try catalog(for: fixture)
+        let collection = PlaybackCollection(kind: .searchSong, catalogID: "alb-1", title: "Album Song 1")
+
+        let started = await fixture.controller.playCollection(
+            collection, songs: [Self.song("alb-1", "Album Song 1")], startingAt: "alb-1",
+            recordsRecent: false, context: fixture.context
+        )
+
+        #expect(started)
+        #expect(fixture.player.submittedTitles.last == ["Album Song 1"])
+        #expect(fixture.controller.playbackCollectionTitle == "Search")
+        #expect(fixture.controller.currentTrack?.title == "Album Song 1")
+        let intent = try #require(fixture.intentStore.loadIntent())
+        #expect(intent.collection?.kind == .searchSong)
+        #expect(intent.musicPlaylistID == collection.reservedPlaylistID)
+        #expect(try fixture.context.fetch(FetchDescriptor<RecentCollectionRecord>()).isEmpty)
+    }
+
     @Test func failedOneTruePlaylistAddAddsNothing() async throws {
         let fixture = try PlaybackFixture()
         defer { fixture.cleanUp() }

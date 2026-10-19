@@ -95,4 +95,69 @@ struct CarPlayListRendererTests {
         #expect(artworkWrites == 1)
         #expect(renderer.items["main"]?.image != nil)
     }
+
+    @Test("a track list's header carries the list's art, title, count and an icon-only shuffle button")
+    func headerIsApplied() async throws {
+        var details: [String] = []
+        var loaded: [CarPlayListPresentation.Row.Artwork] = []
+        let renderer = CarPlayListRenderer(loadArtwork: { artwork in
+            loaded.append(artwork)
+            return UIImage(systemName: "star")
+        }, record: { _, detail in details.append(detail) })
+        defer { renderer.stop() }
+        let template = CPListTemplate(title: "Overplay", sections: [])
+        let art = CarPlayListPresentation.Row.Artwork.track(url: "https://example.com/{w}x{h}.jpg", playlistID: "p", size: 512)
+        var state = CarPlayListPresentation(
+            header: .init(title: "Overplay", subtitle: "2 tracks", artwork: art, shuffleActionID: "shuffle", canShuffle: true),
+            sections: [.init(id: "tracks", rows: [
+                .init(id: "one", title: "One", artwork: .symbol("music.note")),
+                .init(id: "two", title: "Two")
+            ])]
+        )
+        renderer.update(state, on: template, actions: ["shuffle": {}])
+
+        let header = try #require(template.listHeader as? CPListTemplateDetailsHeader)
+        #expect(header.title == "Overplay")
+        #expect(header.subtitle == "2 tracks")
+        #expect(header.wantsAdaptiveBackgroundStyle)
+        let button = try #require(header.actionButtons.first)
+        #expect(header.actionButtons.count == 1)
+        #expect(button.title == nil)
+        #expect(button.isEnabled)
+        #expect(template.sections.map { $0.items.count } == [2])
+
+        // The header's art loads first, then is applied to a new header.
+        let deadline = ContinuousClock.now + .seconds(2)
+        while loaded.count < 2, ContinuousClock.now < deadline { await Task.yield() }
+        #expect(loaded.first == art)
+        #expect(template.listHeader !== header)
+
+        // An unchanged refresh leaves the header alone; an empty list disables Shuffle.
+        details.removeAll()
+        renderer.update(state, on: template, actions: ["shuffle": {}])
+        #expect(!details.contains("header"))
+        state.header?.canShuffle = false
+        renderer.update(state, on: template, actions: ["shuffle": {}])
+        #expect(details.contains("header"))
+        let disabled = try #require((template.listHeader as? CPListTemplateDetailsHeader)?.actionButtons.first)
+        #expect(!disabled.isEnabled)
+
+        state.header = nil
+        renderer.update(state, on: template, actions: [:])
+        #expect(template.listHeader == nil)
+        #expect(details.last == "header cleared")
+    }
+
+    @Test("the playing indicator sits over the row art, as in Music")
+    func playingIndicatorIsLeading() throws {
+        let renderer = CarPlayListRenderer(record: { _, _ in })
+        defer { renderer.stop() }
+        let template = CPListTemplate(title: "Tracks", sections: [])
+        renderer.update(CarPlayListPresentation(sections: [.init(id: "tracks", rows: [
+            .init(id: "one", title: "One", isPlaying: true)
+        ])]), on: template, actions: [:])
+        let item = try #require(renderer.items["one"])
+        #expect(item.isPlaying)
+        #expect(item.playingIndicatorLocation == .leading)
+    }
 }
