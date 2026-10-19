@@ -33,6 +33,24 @@ struct PlaybackFailure: Equatable, Sendable {
     }
 }
 
+/// What a curation action did, for a surface to report (`MUT-003`, `SIRI-001`).
+enum CurationOutcome: Equatable, Sendable {
+    /// The song moved; `to` is where it is now.
+    case moved(title: String, to: CurationUndoRecord.Location)
+    /// Nothing changed, and why.
+    case unavailable(String)
+    case failed(String)
+
+    var message: String {
+        switch self {
+        case .moved(let title, .oneTruePlaylist): "Moved \(title) to your One True Playlist."
+        case .moved(let title, .triage): "Moved \(title) to Triage."
+        case .moved(let title, .retired): "Retired \(title)."
+        case .unavailable(let message), .failed(let message): message
+        }
+    }
+}
+
 /// The single owner of playback (`PLAY-010`–`PLAY-017`).
 ///
 /// Overplay records what it asked MusicKit to play (the intent) and then
@@ -104,6 +122,7 @@ final class PlaybackController {
     @ObservationIgnored var isLibraryReady: @MainActor () -> Bool = { true }
     /// Apple Music membership of the One True Playlist (`PLAYLIST-008`); injectable for tests.
     @ObservationIgnored var remoteMembership = OneTruePlaylistRemoteMembership()
+    @ObservationIgnored var playlistMutations = PlaylistMutationService()
     /// Rebuilds the One True Playlist's Apple Music playlist (`PLAYLIST-009`); injectable for tests.
     @ObservationIgnored var playlistRebuild = OneTruePlaylistRebuildService()
     /// The Apple Music catalog behind Play Album and Play Artist (`PLAY-018`); injectable for tests.
@@ -1041,7 +1060,8 @@ final class PlaybackController {
         await playPlaylist(playlist, settings: settings, context: context)
     }
 
-    /// Shuffle and Play.
+    /// Shuffle and Play. The playlist and scope already in the intent are
+    /// not restarted: playing carries on, anything else is Play (`PLAY-020`).
     func playPlaylist(
         _ playlist: PlaylistRecord,
         scope: PlaylistPlaybackScope = .active,
@@ -1049,6 +1069,12 @@ final class PlaybackController {
         context: ModelContext
     ) async {
         adopt(context)
+        if let intent, intent.collection == nil, intent.musicPlaylistID == playlist.musicPlaylistID, intent.scope == scope {
+            activityLog.record(.playbackSelectionPath, detail: "resumeCurrentPlaylist")
+            if playbackFailure == nil, isPlaying || player.playbackStatus == .playing { return }
+            await play(context: context)
+            return
+        }
         await startPlayback(playlist, scope: scope, startingTrackID: nil, shuffle: true, context: context)
     }
 
@@ -2034,32 +2060,45 @@ final class PlaybackController {
 
     // MARK: - Curation of the current track
 
-    func promoteCurrent(settings: OverplaySettings, context: ModelContext) async {
+    @discardableResult
+    func promoteCurrent(settings: OverplaySettings, context: ModelContext) async -> CurationOutcome {
         adopt(context)
         guard let item = displayedPlaylistItem(context: context),
               let playlist = try? PlaylistRepository.playlist(id: item.playlistID, in: context) else {
             statusMessage = "Choose a linked triage track to promote."
-            return
+            return .unavailable(nothingToCurateMessage)
         }
+        let title = Self.title(of: item, in: context)
         let entryID = player.currentEntryID
         do {
             try await promoteTrack(item, playlist: playlist, context: context)
         } catch {
             statusMessage = UserFacingError.message(for: error)
-            return
+            if case PlaylistMutationError.sourcePlaylistNotTriage = error {
+                return .unavailable("\(title) is already in your One True Playlist.")
+            }
+            return .failed(UserFacingError.message(for: error))
         }
         statusMessage = "Moved to the One True Playlist."
-        guard player.currentEntryID == entryID else { return }
+        guard player.currentEntryID == entryID else { return .moved(title: title, to: .oneTruePlaylist) }
         markSessionEvaluatedWithoutSkip()
         await next(settings: settings, context: context)
+        return .moved(title: title, to: .oneTruePlaylist)
     }
 
-    func evictCurrent(settings: OverplaySettings, context: ModelContext) async {
+    @discardableResult
+    func evictCurrent(settings: OverplaySettings, context: ModelContext) async -> CurationOutcome {
         adopt(context)
         guard let item = displayedPlaylistItem(context: context),
               let playlist = try? PlaylistRepository.playlist(id: item.playlistID, in: context) else {
             statusMessage = "Choose a linked playlist track to retire."
-            return
+            return .unavailable(nothingToCurateMessage)
+        }
+        let title = Self.title(of: item, in: context)
+        // Retired songs offer Restore and Promote instead, on every surface.
+        guard item.evictedAt == nil else {
+            statusMessage = "\(title) is already retired."
+            return .unavailable("\(title) is already retired.")
         }
         evaluatePlaythroughIfNeeded()
         markSessionEvaluatedWithoutSkip()
@@ -2067,11 +2106,115 @@ final class PlaybackController {
             try retireTrack(item, playlist: playlist, message: "Retired manually", context: context)
         } catch {
             statusMessage = UserFacingError.message(for: error)
-            return
+            return .failed(UserFacingError.message(for: error))
         }
         if player.currentEntryID != nil {
             await next(settings: settings, context: context)
         }
+        return .moved(title: title, to: .retired)
+    }
+
+    /// Why there is no current song to promote or retire.
+    private var nothingToCurateMessage: String {
+        if let currentTrack { "\(currentTrack.title) isn't in Overplay." } else { "Nothing from Overplay is playing." }
+    }
+
+    private static func title(of item: PlaylistItemRecord, in context: ModelContext) -> String {
+        (try? TrackRecordRepository.track(id: item.trackID, in: context))?.title ?? "This song"
+    }
+
+    // MARK: - Undo (`MUT-003`)
+
+    static let curationUndoWindow: TimeInterval = 10 * 60
+
+    /// Reverses this device's latest promote or retire, from any surface,
+    /// putting the song back where it was. One level, within the window, and
+    /// only while nothing has moved the song since. Never touches playback.
+    @discardableResult
+    func undoLastCuration(context: ModelContext, now: Date = .now) async -> CurationOutcome {
+        adopt(context)
+        guard let record = intentStore.loadCurationUndo() else { return .unavailable("There's nothing to undo.") }
+        let verb = record.action == .promote ? "promoting" : "retiring"
+        guard now.timeIntervalSince(record.movedAt) <= Self.curationUndoWindow else {
+            intentStore.save(nil)
+            return .unavailable("It's too late to undo \(verb) \(record.title).")
+        }
+        guard let item = try? PlaylistItemRepository.item(id: record.itemID, in: context) else {
+            intentStore.save(nil)
+            return .unavailable("\(record.title) is no longer in Overplay, so it can't be put back.")
+        }
+        guard item.locationChangedAt == record.movedAt else {
+            intentStore.save(nil)
+            return .unavailable("\(record.title) has moved since, so there's nothing to undo.")
+        }
+
+        let destination: CurationUndoRecord.Location
+        do {
+            switch (record.action, record.from) {
+            case (.retire, .oneTruePlaylist):
+                // An ordinary promotion: Apple Music gets the song back unless iCloud still has it.
+                let bucket = try PlaylistRepository.triageBucket(in: context)
+                try await promoteTrack(item, playlist: bucket, context: context, recordingUndo: false)
+                destination = .oneTruePlaylist
+            case (.retire, _):
+                settleSessionBeforeMoving(item)
+                // A deletion deferred while it played no longer applies.
+                item.pendingRetentionCleanup = false
+                try TrackLocationService.moveToTriage(item, explicitKeep: false, in: context)
+                try context.save()
+                reconcileTrackMembership(context: context)
+                destination = .triage
+            case (.promote, .retired):
+                guard let otp = try PlaylistRepository.playlist(id: item.playlistID, in: context) else {
+                    throw PlaylistMutationError.oneTruePlaylistMissing
+                }
+                try retireTrack(item, playlist: otp, message: "Promotion undone", context: context, recordingUndo: false)
+                destination = .retired
+            case (.promote, _):
+                try moveBackToTriage(item, context: context)
+                destination = .triage
+            }
+        } catch {
+            statusMessage = UserFacingError.message(for: error)
+            return .failed(UserFacingError.message(for: error))
+        }
+        intentStore.save(nil)
+        let outcome = CurationOutcome.moved(title: record.title, to: destination)
+        statusMessage = outcome.message
+        return outcome
+    }
+
+    /// Undoing a promotion: the song leaves the One True Playlist for active
+    /// Triage, and Apple Music's copy loses it as a retirement's would
+    /// (`PLAYLIST-008`). Suppression keeps the next sync from promoting it again.
+    private func moveBackToTriage(_ item: PlaylistItemRecord, context: ModelContext) throws {
+        guard let otp = try PlaylistRepository.playlist(id: item.playlistID, in: context),
+              otp.role == .oneTruePlaylist else { throw PlaylistMutationError.trackMissing }
+        settleSessionBeforeMoving(item)
+        if !item.suppressedOTPMusicPlaylistIDs.contains(otp.musicPlaylistID) {
+            item.suppressedOTPMusicPlaylistIDs.append(otp.musicPlaylistID)
+        }
+        try TrackLocationService.moveToTriage(item, explicitKeep: false, in: context)
+        try context.save()
+        reconcileTrackMembership(context: context)
+        let otpID = otp.id
+        let container = context.container
+        Task {
+            let remoteContext = ModelContext(container)
+            guard let livePlaylist = try? PlaylistRepository.playlist(id: otpID, in: remoteContext) else { return }
+            do {
+                _ = try await self.remoteMembership.removeSongsHeldOutside(livePlaylist, in: remoteContext)
+            } catch {
+                TrackMetadataDiagnostics.log("undo promotion: Apple Music removal failed: \(error.localizedDescription)")
+            }
+            self.reconcileTrackMembership(context: remoteContext)
+        }
+    }
+
+    private func recordUndo(_ action: CurationUndoRecord.Action, item: PlaylistItemRecord,
+                            from: CurationUndoRecord.Location, title: String) {
+        guard !item.isDeleted, let movedAt = item.locationChangedAt else { return }
+        intentStore.save(CurationUndoRecord(action: action, itemID: item.id, from: from, movedAt: movedAt, title: title))
     }
 
     @discardableResult
@@ -2112,10 +2255,17 @@ final class PlaybackController {
 
     // MARK: - Shared mutations (never touch the live queue, `PLAY-015`)
 
-    func retireTrack(_ item: PlaylistItemRecord, playlist: PlaylistRecord, message: String, context: ModelContext) throws {
+    func retireTrack(_ item: PlaylistItemRecord, playlist: PlaylistRecord, message: String, context: ModelContext,
+                     recordingUndo: Bool = true) throws {
         settleSessionBeforeMoving(item)
         let itemID = item.id
-        _ = try TrackActionService.evictTrack(item, playlist: playlist, message: message, in: context)
+        let from: CurationUndoRecord.Location = playlist.role == .oneTruePlaylist ? .oneTruePlaylist : .triage
+        let title = Self.title(of: item, in: context)
+        let retained = try TrackActionService.evictTrack(item, playlist: playlist, message: message, in: context)
+        if recordingUndo {
+            // A song the retention rule deleted cannot come back.
+            if retained { recordUndo(.retire, item: item, from: from, title: title) } else { intentStore.save(nil) }
+        }
         reconcileTrackMembership(context: context)
         guard playlist.role == .oneTruePlaylist else { return }
         let playlistID = playlist.id
@@ -2135,10 +2285,14 @@ final class PlaybackController {
     }
 
     @discardableResult
-    func promoteTrack(_ item: PlaylistItemRecord, playlist: PlaylistRecord, context: ModelContext) async throws -> PlaylistItemRecord {
-        let promoted = try await PlaylistMutationService().promote(
+    func promoteTrack(_ item: PlaylistItemRecord, playlist: PlaylistRecord, context: ModelContext,
+                      recordingUndo: Bool = true) async throws -> PlaylistItemRecord {
+        let from: CurationUndoRecord.Location = item.evictedAt == nil ? .triage : .retired
+        let title = Self.title(of: item, in: context)
+        let promoted = try await playlistMutations.promote(
             item: item, beforeMove: { self.settleSessionBeforeMoving(item) }, in: context
         )
+        if recordingUndo { recordUndo(.promote, item: promoted, from: from, title: title) }
         reconcileTrackMembership(context: context)
         return promoted
     }

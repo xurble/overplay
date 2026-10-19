@@ -502,7 +502,17 @@ struct PlaybackControllerTests {
         let fixture = try PlaybackFixture(trackCount: 4)
         defer { fixture.cleanUp() }
         fixture.controller.startHoldLimit = .milliseconds(150)
-        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[2],
+        // Playing Triage first: Shuffle and Play of the playlist already
+        // playing would carry on rather than start (`PLAY-020`).
+        let bucket = try PlaylistRepository.triageBucket(in: fixture.context)
+        let other = TrackRecord(catalogID: "cat-other", libraryID: "i.lib-other", title: "Other",
+                                artistName: "Elsewhere", durationSeconds: 180)
+        fixture.context.insert(other)
+        fixture.context.insert(PlaylistItemRecord(playlistID: bucket.id, trackID: other.id))
+        DevicePlaybackCache.shared.set(try PlaybackFixture.encodedTrack(id: "i.lib-other", title: "Other",
+                                                                        artist: "Elsewhere"), for: other.id)
+        try fixture.context.save()
+        await fixture.controller.playPlaylist(bucket, startingAt: other,
                                               settings: fixture.settings, context: fixture.context)
         #expect(fixture.controller.isPlaying)
         var releasePrepare: CheckedContinuation<Void, Never>?
@@ -513,7 +523,7 @@ struct PlaybackControllerTests {
         await Self.waitUntil { releasePrepare != nil }
         // The player was paused for the start, so Pause is not offered.
         #expect(!fixture.controller.isPlaying)
-        #expect(fixture.controller.currentTrack?.title == "Song 2")
+        #expect(fixture.controller.currentTrack?.title == "Other")
 
         // Past the limit the player is observed again, so Play plays.
         await Self.waitUntil { fixture.controller.currentTrack?.title == "Song 0" }

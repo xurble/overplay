@@ -86,6 +86,25 @@ final class AppRuntime {
         PlaylistCollageService.shared.maintainSnapshots(in: modelContainer)
     }
 
+    /// Siri and Shortcuts can launch Overplay with no window, so nothing has
+    /// started the library. Start it as CarPlay does and wait a bounded time
+    /// (`SIRI-002`). Nil when it is not ready in time; nothing changes then.
+    func prepareForBackgroundAction(timeout: Duration = .seconds(8)) async -> ModelContext? {
+        guard let context = mainModelContext else { return nil }
+        if !libraryRestoration.isReady {
+            await startupViewModel.bootstrap(
+                isReady: authorizationService.readiness.isReady,
+                dependencies: startupViewModel.dependencies(modelContext: context, runtime: self,
+                    authorizationService: authorizationService, playbackController: playbackController)
+            )
+        }
+        let deadline = ContinuousClock.now + timeout
+        while !libraryRestoration.isReady, startupViewModel.libraryPreparationError == nil, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return libraryRestoration.isReady ? context : nil
+    }
+
     func makeModelContext() -> ModelContext? {
         guard libraryRestoration.isReady, let modelContainer else { return nil }
         return ModelContext(modelContainer)

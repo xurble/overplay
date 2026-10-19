@@ -289,6 +289,8 @@ nonisolated enum MusicKitActivityNote: String, Codable, Sendable {
 nonisolated enum MusicKitActivityOrigin: String, Codable, Equatable, Sendable {
     case carPlay
     case remoteCommand
+    /// Siri, Shortcuts and the Action button (`SIRI-001`).
+    case siri
     /// Overplay acting without anyone asking: the end-of-playlist rebuild and
     /// delivery-stall recovery. The shape most worth telling apart from a
     /// user retrying.
@@ -298,6 +300,7 @@ nonisolated enum MusicKitActivityOrigin: String, Codable, Equatable, Sendable {
         switch self {
         case .carPlay: "CarPlay"
         case .remoteCommand: "remote command"
+        case .siri: "Siri"
         case .automatic: "automatic"
         }
     }

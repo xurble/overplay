@@ -19,7 +19,9 @@ Reorder it when product goals change or new evidence changes the risk.
   or advice to force-quit. Why the player stalls is still open (#90).
 - **CarPlay:** in daily use, but the rewrite's CarPlay hardware checks were
   never run, and the shuffle button still flickers (#28).
-- **Siri:** not started. There are no App Intents.
+- **Siri:** minimal Siri is built (2026-10-19, spec **Siri**): play the One
+  True Playlist or Triage, promote, retire and undo. Not yet checked by voice
+  on a device.
 - **Playlist management:** One True Playlist, Triage and Retired, global track
   ownership, sync and rebuild are done (#34, #36, #39–#41, #64–#75). MusicKit
   can edit only playlists Overplay created, and the Mac cannot write
@@ -220,19 +222,20 @@ spec's Known Defects. The open questions and what to collect next time are in
 
 ### 3.1 Minimal Siri
 
-Product priority 2. Add App Intents backed by the existing shared services:
+Product priority 2. **Built 2026-10-19** (spec **Siri**, `SIRI-001`,
+`SIRI-002`; **Undo Promote or Retire**, `MUT-003`; `PLAY-020`): Play One True
+Playlist ("Play Overplay"), Play Triage, Promote, Retire and Undo, each a thin
+adapter over the shared action, with tests at the shared entry points. The
+iOS 27 audio schemas need iOS 27 and wait for Fuller Siri.
 
-- Play the One True Playlist.
-- Play Triage.
-- Promote the current track.
-- Retire the current track.
+Remaining:
 
-Each intent is a thin adapter over the same shared controller action as the
-app and CarPlay (`SURFACE-001`, `SURFACE-003`), with tests at that shared
-entry point. Adopt the system audio schemas where they represent the action
-accurately, so Siri, Shortcuts, Spotlight and the Action button agree. Verify
-by voice in CarPlay with the phone locked. Fuller voice management (Restore,
-Play Album, Play Artist) comes after v1.
+- Verify by voice on the owner's iPhone: every phrase, in CarPlay with the
+  phone locked, after a force-quit, and that "Play Overplay" reaches
+  Overplay rather than an Apple Music search.
+- Decide whether the app and CarPlay should offer Undo too.
+
+Fuller voice management (Restore, Play Album, Play Artist) comes after v1.
 
 ### 3.2 Rework search
 

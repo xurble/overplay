@@ -66,9 +66,25 @@ struct PlaybackResumePoint: Codable, Equatable, Sendable {
     var wasShuffled: Bool? = nil
 }
 
+/// The latest promote or retire on this device, so it can be undone
+/// (`MUT-003`). Device-local and never synced.
+struct CurationUndoRecord: Codable, Equatable, Sendable {
+    enum Action: String, Codable, Sendable { case promote, retire }
+    enum Location: String, Codable, Sendable { case oneTruePlaylist, triage, retired }
+
+    var action: Action
+    var itemID: UUID
+    /// Where the song was before the action.
+    var from: Location
+    /// The item's `locationChangedAt` after the action: any later move ends the undo.
+    var movedAt: Date
+    var title: String
+}
+
 /// Device-local persistence for the intent and resume point. Never synced.
 struct PlaybackIntentStore {
     private static let resumeKey = "overplay.playbackResumePoint.v1"
+    private static let curationUndoKey = "overplay.curationUndo.v1"
 
     let fileURL: URL
     let defaults: UserDefaults
@@ -102,9 +118,23 @@ struct PlaybackIntentStore {
         defaults.set(data, forKey: Self.resumeKey)
     }
 
+    func loadCurationUndo() -> CurationUndoRecord? {
+        guard let data = defaults.data(forKey: Self.curationUndoKey) else { return nil }
+        return try? JSONDecoder().decode(CurationUndoRecord.self, from: data)
+    }
+
+    func save(_ record: CurationUndoRecord?) {
+        guard let record, let data = try? JSONEncoder().encode(record) else {
+            defaults.removeObject(forKey: Self.curationUndoKey)
+            return
+        }
+        defaults.set(data, forKey: Self.curationUndoKey)
+    }
+
     /// Only a database reset clears playback state.
     func clear() {
         try? FileManager.default.removeItem(at: fileURL)
         defaults.removeObject(forKey: Self.resumeKey)
+        defaults.removeObject(forKey: Self.curationUndoKey)
     }
 }
