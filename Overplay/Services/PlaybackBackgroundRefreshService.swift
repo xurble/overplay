@@ -33,9 +33,13 @@ final class PlaybackBackgroundRefreshService {
         guard !isRegistered else { return }
         isRegistered = true
 
+        // The handler is MainActor-isolated, so it must be delivered on the
+        // main queue. With `nil`, iOS runs it on a background queue and the
+        // Swift runtime traps, killing the app (and its playback) in the
+        // background.
         BGTaskScheduler.shared.register(
             forTaskWithIdentifier: Self.taskIdentifier,
-            using: nil
+            using: .main
         ) { task in
             guard let task = task as? BGAppRefreshTask else {
                 task.setTaskCompleted(success: false)
@@ -44,9 +48,12 @@ final class PlaybackBackgroundRefreshService {
             let operation = Task { @MainActor in
                 await Self.shared.handle(task: task)
             }
-            task.expirationHandler = {
+            // iOS calls this on a queue of its choosing; keep it nonisolated.
+            task.expirationHandler = { @Sendable in
                 operation.cancel()
-                TrackMetadataDiagnostics.log("background refresh expired before completing")
+                Task { @MainActor in
+                    TrackMetadataDiagnostics.log("background refresh expired before completing")
+                }
             }
         }
     }
