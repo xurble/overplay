@@ -329,8 +329,7 @@ final class CarPlayListRenderer {
     private static func loadArtwork(_ artwork: Row.Artwork) async -> UIImage? {
         switch artwork {
         case .symbol(let name, let tint):
-            let image = UIImage(systemName: name)
-            return tint.flatMap { image?.withTintColor($0, renderingMode: .alwaysOriginal) } ?? image
+            return CarPlayListSymbolImage.image(systemName: name, color: tint ?? .label)
         case .track(let url, let playlistID, let size):
             let image = await ArtworkImagePipeline.shared.image(for: url, size: size, playlistID: playlistID, priority: .utility)
             return image.map { UIImage(cgImage: $0) }
@@ -338,5 +337,39 @@ final class CarPlayListRenderer {
             let image = await PlaylistCollageService.shared.image(for: snapshot, playlistID: playlistID, scope: scope)
             return image.map { UIImage(cgImage: $0) }
         }
+    }
+}
+
+/// A symbol for a CarPlay list row. CarPlay draws list images as given, never
+/// as templates, so a bare symbol shows black on the dark list. The symbol is
+/// drawn in its colour once for light and once for dark, and CarPlay picks
+/// between them as its own appearance changes, whatever the phone's.
+enum CarPlayListSymbolImage {
+    /// Car screens are at most 3x; a sharper bitmap only scales down.
+    static let scale: CGFloat = 3
+
+    static func image(systemName: String, color: UIColor, size: CGSize = CPListItem.maximumImageSize) -> UIImage? {
+        guard let symbol = UIImage(systemName: systemName), symbol.size.width > 0, symbol.size.height > 0 else { return nil }
+        let fit = min(size.width / symbol.size.width, size.height / symbol.size.height)
+        let fitted = CGSize(width: symbol.size.width * fit, height: symbol.size.height * fit)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        format.opaque = false
+        let asset = UIImageAsset()
+        for style in [UIUserInterfaceStyle.light, .dark] {
+            // Registered with its scale too, or the asset hands back the
+            // bitmap as a 1x image three times too large.
+            let traits = UITraitCollection(traitsFrom: [
+                UITraitCollection(userInterfaceStyle: style), UITraitCollection(displayScale: scale),
+            ])
+            let tinted = symbol.withTintColor(color.resolvedColor(with: traits), renderingMode: .alwaysOriginal)
+            let image = UIGraphicsImageRenderer(size: fitted, format: format).image { _ in
+                tinted.draw(in: CGRect(origin: .zero, size: fitted))
+            }
+            asset.register(image, with: traits)
+        }
+        return asset.image(with: UITraitCollection(traitsFrom: [
+            UITraitCollection(userInterfaceStyle: .dark), UITraitCollection(displayScale: scale),
+        ]))
     }
 }

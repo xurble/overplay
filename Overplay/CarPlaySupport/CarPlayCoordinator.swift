@@ -236,14 +236,14 @@ final class CarPlayCoordinator: NSObject {
             if let triage = summaries.first(where: { $0.role == .triageBucket && $0.playbackScope == .active }) {
                 var triageRow = row(triage)
                 triageRow.detail = triage.triageDetail(sourceCount: triageSourceCount())
-                // The inbox icon, not artwork, as on the phone dashboard.
-                triageRow.artwork = .symbol("tray.fill")
+                // The inbox icon, not artwork, coloured as on the phone dashboard.
+                triageRow.artwork = .symbol("tray.fill", tint: triageRow.isPlaying ? .systemGreen : .systemTeal)
                 triageRows.append(triageRow)
             }
             if let retired = summaries.first(where: { $0.playbackScope == .retired }) {
                 var retiredRow = row(retired)
                 retiredRow.detail = nil
-                retiredRow.artwork = .symbol("archivebox.fill")
+                retiredRow.artwork = .symbol("archivebox.fill", tint: retiredRow.isPlaying ? .systemGreen : .systemGray)
                 triageRows.append(retiredRow)
             }
             if !triageRows.isEmpty { sections.append(Section(id: "triage", rows: triageRows)) }
@@ -963,7 +963,7 @@ final class CarPlayCoordinator: NSObject {
     private func showCollectionActions() {
         guard let interfaceController, let track = playbackController?.currentTrack else { return }
         let album = CPListItem(text: track.albumTitle.map { "Play album \($0)" } ?? "Play album", detailText: nil,
-                               image: UIImage(systemName: "square.stack"))
+                               image: CarPlayListSymbolImage.image(systemName: "square.stack", color: .label))
         album.handler = { [weak self] _, completion in
             Task { @MainActor in
                 await self?.playCollection(.album)
@@ -971,7 +971,7 @@ final class CarPlayCoordinator: NSObject {
             }
         }
         let artist = CPListItem(text: track.artistName.isEmpty ? "Play artist" : "Play \(track.artistName)", detailText: nil,
-                                image: UIImage(systemName: "music.mic"))
+                                image: CarPlayListSymbolImage.image(systemName: "music.mic", color: .label))
         artist.handler = { [weak self] _, completion in
             Task { @MainActor in
                 await self?.playCollection(.artist)
