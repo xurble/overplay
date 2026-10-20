@@ -41,10 +41,10 @@ struct CarPlayListPresentation: Equatable {
         var style: Style = .standard
     }
 
-    /// The art, title and shuffle button above a track list.
+    /// The art and shuffle button above a track list. No title or count:
+    /// CarPlay leaves the text beside the art only a few letters on a narrow
+    /// screen, and the template's own title already names the list.
     struct Header: Equatable {
-        var title: String
-        var subtitle: String? = nil
         var artwork: Row.Artwork? = nil
         /// The action run by the header's shuffle button (Shuffle and Play).
         var shuffleActionID: String
@@ -270,7 +270,7 @@ final class CarPlayListRenderer {
         shuffle.isEnabled = header.canShuffle
         let details = CPListTemplateDetailsHeader(
             thumbnail: CPThumbnailImage(image: images[Self.headerSlotID] ?? Self.placeholder),
-            title: header.title, subtitle: header.subtitle, actionButtons: [shuffle]
+            title: nil, subtitle: nil, actionButtons: [shuffle]
         )
         details.wantsAdaptiveBackgroundStyle = true
         template.listHeader = details

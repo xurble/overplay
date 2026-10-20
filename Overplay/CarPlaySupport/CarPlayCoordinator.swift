@@ -363,8 +363,6 @@ final class CarPlayCoordinator: NSObject {
                 artwork: .track(url: song.summary.artworkURLString, playlistID: playlistID))
         }
         let header = CarPlayListPresentation.Header(
-            title: recent.title,
-            subtitle: PlaylistSummaryPresentation.trackCountLabel(songs.count),
             artwork: .track(url: recent.artworkURLTemplate, playlistID: playlistID, size: 512),
             shuffleActionID: "shuffle",
             canShuffle: !rows.isEmpty
@@ -569,8 +567,6 @@ final class CarPlayCoordinator: NSObject {
         // The playlist's art over its tracks, as on the phone, with a shuffle
         // button in the header.
         let header = CarPlayListPresentation.Header(
-            title: template.title ?? playlist.name,
-            subtitle: PlaylistSummaryPresentation.trackCountLabel(tracks.count),
             artwork: PlaylistCollageService.snapshot(for: playlist, scope: scope)
                 .map { .collage($0, playlistID: playlist.musicPlaylistID, scope: scope) },
             shuffleActionID: "shuffle",

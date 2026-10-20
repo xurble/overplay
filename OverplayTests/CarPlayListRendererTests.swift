@@ -96,7 +96,7 @@ struct CarPlayListRendererTests {
         #expect(renderer.items["main"]?.image != nil)
     }
 
-    @Test("a track list's header carries the list's art, title, count and an icon-only shuffle button")
+    @Test("a track list's header carries the list's art and an icon-only shuffle button, and no text to truncate")
     func headerIsApplied() async throws {
         var details: [String] = []
         var loaded: [CarPlayListPresentation.Row.Artwork] = []
@@ -108,7 +108,7 @@ struct CarPlayListRendererTests {
         let template = CPListTemplate(title: "Overplay", sections: [])
         let art = CarPlayListPresentation.Row.Artwork.track(url: "https://example.com/{w}x{h}.jpg", playlistID: "p", size: 512)
         var state = CarPlayListPresentation(
-            header: .init(title: "Overplay", subtitle: "2 tracks", artwork: art, shuffleActionID: "shuffle", canShuffle: true),
+            header: .init(artwork: art, shuffleActionID: "shuffle", canShuffle: true),
             sections: [.init(id: "tracks", rows: [
                 .init(id: "one", title: "One", artwork: .symbol("music.note")),
                 .init(id: "two", title: "Two")
@@ -117,8 +117,8 @@ struct CarPlayListRendererTests {
         renderer.update(state, on: template, actions: ["shuffle": {}])
 
         let header = try #require(template.listHeader as? CPListTemplateDetailsHeader)
-        #expect(header.title == "Overplay")
-        #expect(header.subtitle == "2 tracks")
+        #expect(header.title == nil)
+        #expect(header.subtitle == nil)
         #expect(header.wantsAdaptiveBackgroundStyle)
         let button = try #require(header.actionButtons.first)
         #expect(header.actionButtons.count == 1)

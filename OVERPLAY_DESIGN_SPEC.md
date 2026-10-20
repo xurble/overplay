@@ -2285,6 +2285,10 @@ Show:
 - The triage bucket in a separate section, opening the same track
   list.
 - Tracks in newest-added or newest-retired display order, independent of shuffle.
+- Above a track list, a header with the list's art and an icon-only Shuffle
+  and Play button. It has no title or track count: CarPlay lays the header
+  out itself, and on a narrow portrait screen it leaves only a few letters
+  beside the art. The template's title names the list.
 - Global Retired as its own root destination, playable directly from CarPlay.
 - Current track title, artist, album, and artwork where CarPlay templates
   support it.
