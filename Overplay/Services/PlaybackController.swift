@@ -1061,7 +1061,8 @@ final class PlaybackController {
     }
 
     /// Shuffle and Play. The playlist and scope already in the intent are
-    /// not restarted: playing carries on, anything else is Play (`PLAY-020`).
+    /// not restarted: shuffle is turned on if it is off, then playing carries
+    /// on and anything else is Play (`PLAY-020`).
     func playPlaylist(
         _ playlist: PlaylistRecord,
         scope: PlaylistPlaybackScope = .active,
@@ -1071,6 +1072,12 @@ final class PlaybackController {
         adopt(context)
         if let intent, intent.collection == nil, intent.musicPlaylistID == playlist.musicPlaylistID, intent.scope == scope {
             activityLog.record(.playbackSelectionPath, detail: "resumeCurrentPlaylist")
+            if !shuffleEnabled {
+                // MusicKit shuffles what is still to come; the song playing goes on.
+                await setShuffleEnabled(true, context: context)
+                // A queue Play has to resubmit keeps the shuffle too.
+                resumesShuffled = true
+            }
             if playbackFailure == nil, isPlaying || player.playbackStatus == .playing { return }
             await play(context: context)
             return
@@ -2069,7 +2076,6 @@ final class PlaybackController {
             return .unavailable(nothingToCurateMessage)
         }
         let title = Self.title(of: item, in: context)
-        let entryID = player.currentEntryID
         do {
             try await promoteTrack(item, playlist: playlist, context: context)
         } catch {
@@ -2080,9 +2086,8 @@ final class PlaybackController {
             return .failed(UserFacingError.message(for: error))
         }
         statusMessage = "Moved to the One True Playlist."
-        guard player.currentEntryID == entryID else { return .moved(title: title, to: .oneTruePlaylist) }
-        markSessionEvaluatedWithoutSkip()
-        await next(settings: settings, context: context)
+        // A promoted song is one you like: it keeps playing, and its listen
+        // goes on counting (`MUT-004`).
         return .moved(title: title, to: .oneTruePlaylist)
     }
 

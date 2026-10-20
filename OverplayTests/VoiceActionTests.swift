@@ -5,6 +5,7 @@ import Testing
 
 /// Siri's actions (`SIRI-001`) through the shared entry points the app and
 /// CarPlay use, Shuffle and Play resuming the current playlist (`PLAY-020`),
+/// Promote keeping the song playing (`MUT-004`),
 /// and undoing the last promote or retire (`MUT-003`).
 @MainActor
 @Suite("Voice actions and undo", .serialized)
@@ -34,6 +35,33 @@ struct VoiceActionTests {
 
         #expect(fixture.player.commands == commands)
         #expect(fixture.player.submitCount == 1)
+    }
+
+    @Test func shuffleAndPlayShufflesThePlayingPlaylistWithoutRestartingIt() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        await play(fixture, startingAt: 1)
+        #expect(!fixture.controller.shuffleEnabled)
+        let before = fixture.player.commands.count
+
+        await fixture.controller.playPlaylist(fixture.playlist, settings: fixture.settings, context: fixture.context)
+
+        #expect(Array(fixture.player.commands.dropFirst(before)) == ["shuffle=songs"])
+        #expect(fixture.controller.shuffleEnabled)
+        #expect(fixture.player.submitCount == 1)
+        #expect(fixture.controller.currentTrack?.title == "Song 1")
+    }
+
+    @Test func shuffleAndPlayOfThePausedUnshuffledPlaylistShufflesAndThenPlays() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        await play(fixture, startingAt: 1)
+        fixture.controller.pause()
+        let before = fixture.player.commands.count
+
+        await fixture.controller.playPlaylist(fixture.playlist, settings: fixture.settings, context: fixture.context)
+
+        #expect(Array(fixture.player.commands.dropFirst(before)) == ["shuffle=songs", "play"])
+        #expect(fixture.controller.currentTrack?.title == "Song 1")
+        #expect(fixture.controller.isPlaying)
     }
 
     @Test func shuffleAndPlayOfAnotherScopeStartsFresh() async throws {
@@ -98,6 +126,47 @@ struct VoiceActionTests {
 
         #expect(outcome == .unavailable("Song 0 is already in your One True Playlist."))
         #expect(try fixture.item(0).playlistID == fixture.playlist.id)
+    }
+
+    // MARK: - Promote keeps playing (`MUT-004`)
+
+    @Test func promotingTheCurrentTriageSongKeepsItPlayingAndCounting() async throws {
+        let fixture = try PlaybackFixture(role: .triageBucket); defer { fixture.cleanUp() }
+        let otp = try addOneTruePlaylist(to: fixture)
+        stubAppleMusic(fixture)
+        await play(fixture, startingAt: 0)
+        let commands = fixture.player.commands
+
+        let promoted = await VoiceActions.curate(.promote, controller: fixture.controller, context: fixture.context)
+
+        #expect(promoted == .moved(title: "Song 0", to: .oneTruePlaylist))
+        #expect(fixture.player.commands == commands)
+        #expect(fixture.controller.currentTrack?.title == "Song 0")
+        #expect(fixture.controller.currentPlaylistRole(context: fixture.context) == .oneTruePlaylist)
+        await fixture.listen(to: 170)
+        let item = try fixture.item(0)
+        #expect(item.playlistID == otp.id)
+        #expect(item.playthroughCount == 1)
+    }
+
+    @Test func promotingATriageSongInAnAlbumKeepsItPlaying() async throws {
+        let fixture = try PlaybackFixture(role: .triageBucket); defer { fixture.cleanUp() }
+        let otp = try addOneTruePlaylist(to: fixture)
+        stubAppleMusic(fixture)
+        let catalog = FakePlaybackCatalog()
+        catalog.contents[.album] = try FakePlaybackCatalog.album()
+        fixture.controller.playbackCatalog = catalog.catalog
+        fixture.controller.collectionTrackCache = DevicePlaybackCache(directory: nil)
+        await play(fixture, startingAt: 1)
+        await fixture.controller.playCurrentCollection(.album, context: fixture.context)
+        #expect(fixture.controller.currentTrack?.title == "Song 0")
+        let commands = fixture.player.commands
+
+        await fixture.controller.promoteCurrent(settings: fixture.settings, context: fixture.context)
+
+        #expect(fixture.player.commands == commands)
+        #expect(fixture.controller.currentTrack?.title == "Song 0")
+        #expect(try fixture.item(0).playlistID == otp.id)
     }
 
     @Test func retiringAnAlreadyRetiredSongChangesNothing() async throws {

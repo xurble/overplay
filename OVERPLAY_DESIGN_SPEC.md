@@ -8,7 +8,8 @@ reliable-playback-core rewrite (`PLAY-010` onwards, `COUNT-*`, `LOAD-*`). The
 platform, Library, Search, Required Screens and Known Defects sections were
 brought up to date on 2026-10-18, after the Mac Catalyst build and Library
 browsing. **Siri**, **Undo Promote or Retire** and `PLAY-020` were added on
-2026-10-19. Other sections describe behaviour implemented as of 2026-09-30,
+2026-10-19; on 2026-10-20 Promote stopped skipping (`MUT-004`) and Shuffle and
+Play of the current playlist started turning shuffle on. Other sections describe behaviour implemented as of 2026-09-30,
 unless they are labelled **Planned**. Future work and the release plan belong
 in `TODO.md`. Implementation details
 are requirements only when they create observable behaviour or protect a stated
@@ -87,6 +88,7 @@ Music's global play count or skip count.
 | `MUT-001` | Successful promotion moves the existing item into OTP with its statistics and history; no source copy remains. Retired offers Move to Triage (explicit keep) and Move to One True Playlist. | `Overplay/Services/PlaylistMutationService.swift`, `OverplayTests/PlaylistMutationServiceTests.swift` |
 | `MUT-002` | Search adds a song to the One True Playlist or Triage through the shared song action (`PLAY-018`), or to another Apple Music library playlist through a MusicKit add; the One True Playlist is never offered as an "other" playlist. | `Overplay/ViewModels/SearchMusicViewModel.swift`, `OverplayTests/SearchMusicViewModelTests.swift` |
 | `MUT-003` | Undo reverses this device's latest promote or retire, from any surface, within 10 minutes and while nothing has moved the song since. The song goes back where it was; Apple Music follows as for an ordinary promotion or retirement. One level; playback is untouched. | `Overplay/Services/PlaybackController.swift`, `OverplayTests/VoiceActionTests.swift` |
+| `MUT-004` | Promoting the current song keeps it playing, from any intent (playlist, album, artist or Recents) and any surface; its listen counts as usual. Adds and moves from Now Playing, Recents and the Library never skip. Retire is the only curation that skips. | `Overplay/Services/PlaybackController.swift`, `OverplayTests/VoiceActionTests.swift` |
 | `RETIRE-001` | Retirement is authoritative locally and globally equivalent from OTP/Triage. Managed OTP retirement attempts remote removal from rows and Now Playing; incoming-only OTP and Triage retirement stay local. Stale OTP membership cannot revive or silently re-promote the row. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/TrackLocationService.swift` |
 | `PLAY-004` | MusicKit owns shuffle and repeat. Overplay writes what a surface asked for, displays what the player reports, and never reorders or rebuilds the queue to emulate them. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-005` | Starting playback hands MusicKit the complete display order for the selected scope in one queue, omitting only tracks that cannot be prepared. | `Overplay/Services/PlaybackController.swift` |
@@ -104,7 +106,7 @@ Music's global play count or skip count.
 | `CAR-002` | Presented menus retain row and artwork identity. Only changed visible values are published; section replacement requires structural change. Presentation reads never mutate playback or persistence. | `Overplay/CarPlaySupport/CarPlayListRenderer.swift` |
 | `PLAY-018` | Now Playing in the app and CarPlay plays the current song's album from track 1, or its artist's Essentials playlist, else its Top Songs with versions collapsed, through one shared start. Tracked songs are counted and curated as usual; untracked songs offer Add to Triage and Add to One True Playlist. A failed lookup changes nothing. | `Overplay/Playback/PlaybackCollection.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/PlaybackCollectionTests.swift` |
 | `PLAY-019` | Recents keeps the 10 most recently played albums and artists, synced through iCloud, one per album or artist, newest first. The main screen shows them as one scrolling row of artwork and CarPlay as a Recents menu; each opens its saved songs with Shuffle and Play, played through the shared selection action and from this device's saved tracks. | `Overplay/Persistence/RecentCollectionRepository.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/RecentsTests.swift` |
-| `PLAY-020` | Shuffle and Play of the playlist and scope already in the intent does not restart it: playing carries on, otherwise it is Play. Every surface, Siri included. | `Overplay/Services/PlaybackController.swift`, `OverplayTests/VoiceActionTests.swift` |
+| `PLAY-020` | Shuffle and Play of the playlist and scope already in the intent does not restart it: shuffle is turned on if it is off, then playing carries on, otherwise it is Play. Every surface, Siri included. | `Overplay/Services/PlaybackController.swift`, `OverplayTests/VoiceActionTests.swift` |
 | `LIB-001` | The Library section browses the user's Apple Music library (Playlists, Albums, Artists, Songs) from the web library, so Overplay's tracks match and show their counts on every device. A collection plays through the shared collection start with this device's own library copies; Songs plays a 100-song window; nothing from Library is added to Recent Deep Dives. Lists are cached per device, never synced. | `Overplay/Services/LibraryBrowser.swift`, `Overplay/Services/LibraryCache.swift`, `Overplay/Views/Library/` |
 | `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing; Play Album and Play Artist add one action list above it (`PLAY-018`), and Recents adds one level under the root (`PLAY-019`). | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
 | `SIRI-001` | Siri, Shortcuts, Spotlight and the Action button offer Play One True Playlist, Play Triage, Promote, Retire and Undo, each a thin adapter over the shared action the app and CarPlay use. They run in the background with the phone locked, speak the result of Promote, Retire and Undo, and speak only failures for Play. | `Overplay/Intents/OverplayIntents.swift`, `Overplay/Intents/VoiceActions.swift`, `OverplayTests/VoiceActionTests.swift` |
@@ -1220,9 +1222,9 @@ CloudKit schema.
 ## Undo Promote or Retire
 
 A promote or retire is one tap or one sentence, and a misheard voice command
-must be easy to reverse with the phone in a pocket. Retiring and promoting
-the current song both skip to the next one, so "restore this" cannot undo
-them.
+must be easy to reverse with the phone in a pocket. Retiring the current
+song skips to the next one, so "restore this" cannot undo it; a promoted song
+keeps playing (`MUT-004`), and Undo reverses either in the same words.
 
 ### The action (`MUT-003`)
 
@@ -1598,6 +1600,15 @@ session evaluated without a skip, then issues Next. Retiring any other track
 leaves the live queue alone. If that track's entry is reached later in the same
 intent, the controller issues Next when the entry is observed (`PLAY-015`).
 
+Promoting the current track (app, CarPlay or Siri) moves it and keeps it
+playing (`MUT-004`): a promotion means "I like this one". This holds for a
+Triage or retired song in any intent, including an album, artist or Recents
+entry, as do Add to Triage, Add to One True Playlist, Move to Triage and the
+Recents and Library swipes. The listening session goes on and counts as usual,
+credited to the song's row wherever it now is. Playlist scope is active or
+retired, not the owning playlist, so a song promoted out of Triage stays in an
+active Triage intent and is not skipped when reached again.
+
 Retired offers Move to Triage and Move to One True Playlist. Each moves the
 existing row to the bottom of the destination order without resetting counts.
 Move to Triage establishes explicit keep intent. Reset All Stats writes a
@@ -1768,9 +1779,11 @@ attribute normally.
 
 **Shuffle and Play of the current playlist (`PLAY-020`).** When the requested
 playlist and scope are already the intent's (not an album, artist or Recents
-intent), Shuffle and Play does not start a new intent. If the player is
-playing, nothing changes; otherwise it is Play, with Play's recovery and
-queue-end behaviour. This holds on every surface: the app's Shuffle and Play,
+intent), Shuffle and Play does not start a new intent. If shuffle is off, it
+is turned on: MusicKit shuffles the songs still to come and the current song
+goes on, and a queue that Play has to resubmit keeps the shuffle. Then, if the
+player is playing, nothing else changes; otherwise it is Play, with Play's
+recovery and queue-end behaviour. This holds on every surface: the app's Shuffle and Play,
 the main screen, CarPlay and Siri. To shuffle afresh, start another playlist
 or scope first. Selecting a track is unchanged (`SURFACE-003`).
 
@@ -1982,7 +1995,8 @@ Sync, manual add, promotion, retirement, restore and source changes never
 mutate the live MusicKit queue:
 
 - additions appear at the next playback start;
-- retiring the current track from Now Playing issues Next;
+- retiring the current track from Now Playing issues Next; promoting it does
+  not (`MUT-004`);
 - an entry whose member has left the intent's scope (retired from Active, or
   restored from Retired) is skipped with Next when it is observed becoming
   current. Its session is marked evaluated without a skip. An entry is
