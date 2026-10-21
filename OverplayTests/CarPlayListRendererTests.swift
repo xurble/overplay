@@ -198,4 +198,89 @@ struct CarPlayListRendererTests {
         #expect(item.isPlaying)
         #expect(item.playingIndicatorLocation == .leading)
     }
+
+    @Test("what is playing carries equaliser bars over its art, on rows, cards and tiles")
+    func playingArtCarriesBars() async throws {
+        var loaded: [CarPlayListPresentation.Row.Artwork] = []
+        let renderer = CarPlayListRenderer(loadArtwork: { artwork in
+            loaded.append(artwork)
+            return UIGraphicsImageRenderer(size: CGSize(width: 40, height: 40)).image { context in
+                UIColor.blue.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 40, height: 40))
+            }
+        }, record: { _, _ in })
+        defer { renderer.stop() }
+        let template = CPListTemplate(title: "Tracks", sections: [])
+        typealias Row = CarPlayListPresentation.Row
+        func state(playing: String?) -> CarPlayListPresentation {
+            CarPlayListPresentation(sections: [.init(id: "list", rows: [
+                Row(id: "card", title: "Card", isPlaying: playing == "card", artwork: .symbol("card"), style: .card),
+                Row(id: "row", title: "Row", isPlaying: playing == "row", artwork: .symbol("row")),
+                Row(id: "strip", title: "Strip", style: .strip([
+                    .init(id: "tile", title: "Tile", artwork: .symbol("tile"), isPlaying: playing == "tile"),
+                ])),
+            ])])
+        }
+        func settle(loads: Int) async {
+            let deadline = ContinuousClock.now + .seconds(2)
+            while loaded.count < loads, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        func barred(_ image: UIImage?) throws -> Bool {
+            try centreBrightness(of: #require(image)) > 0.8
+        }
+
+        renderer.update(state(playing: "row"), on: template, actions: [:])
+        await settle(loads: 3)
+        // The loader is asked for the art itself; the bars are drawn over it.
+        #expect(Set(loaded.map { "\($0)" }) == Set([Row.Artwork.symbol("card"), .symbol("row"), .symbol("tile")].map { "\($0)" }))
+        let item = try #require(renderer.items["row"])
+        #expect(try barred(item.image))
+
+        loaded.removeAll()
+        // Only the art leaving and gaining the bars reloads.
+        renderer.update(state(playing: "tile"), on: template, actions: [:])
+        await settle(loads: 2)
+        #expect(loaded.count == 2)
+        #expect(try !barred(item.image))
+        let strip = try #require(renderer.imageRows["strip"])
+        #expect(try barred(strip.elements.first?.image))
+
+        loaded.removeAll()
+        renderer.update(state(playing: "card"), on: template, actions: [:])
+        await settle(loads: 2)
+        let card = try #require(renderer.imageRows["card"])
+        #expect(try barred(card.elements.first?.image))
+        #expect(try !barred(renderer.imageRows["strip"]?.elements.first?.image))
+    }
+
+    @Test("bars with no art still show what is playing")
+    func barsWithoutArt() throws {
+        let image = CarPlayPlayingBadge.image(over: nil)
+        #expect(image.size == CPListItem.maximumImageSize)
+        #expect(try centreBrightness(of: image) > 0.8)
+    }
+
+    /// Mean brightness of the bottom-centre patch, where the tallest bars stand.
+    private func centreBrightness(of image: UIImage) throws -> Double {
+        let cgImage = try #require(image.cgImage)
+        let width = cgImage.width, height = cgImage.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let context = try #require(CGContext(
+            data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        // The second bar is full height: sample its centre column.
+        let side = Double(min(width, height)) * 0.4
+        let gap = side / 11
+        let x = Int(Double(width) / 2 - side / 2 + 3 * gap + gap)
+        var total = 0.0, count = 0.0
+        for y in (height / 2 - Int(side / 4))...(height / 2 + Int(side / 4)) {
+            let index = (y * width + x) * 4
+            total += (Double(pixels[index]) + Double(pixels[index + 1]) + Double(pixels[index + 2])) / (3 * 255)
+            count += 1
+        }
+        return total / count
+    }
 }

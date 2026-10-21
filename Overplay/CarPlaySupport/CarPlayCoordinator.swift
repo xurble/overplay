@@ -224,7 +224,8 @@ final class CarPlayCoordinator: NSObject {
         do {
             let summaries = try playlistSummaries()
             // The One True Playlist leads as a large artwork card, as on the phone.
-            // Cards have no playing indicator, so the subtitle says so instead.
+            // Cards have no CarPlay playing indicator: the art carries the bars
+            // and the subtitle says so.
             if let main = summaries.first(where: { $0.role == .oneTruePlaylist }) {
                 var mainRow = row(main)
                 mainRow.style = .card
@@ -237,13 +238,13 @@ final class CarPlayCoordinator: NSObject {
                 var triageRow = row(triage)
                 triageRow.detail = triage.triageDetail(sourceCount: triageSourceCount())
                 // The inbox icon, not artwork, coloured as on the phone dashboard.
-                triageRow.artwork = .symbol("tray.fill", tint: triageRow.isPlaying ? .systemGreen : .systemTeal)
+                triageRow.artwork = .symbol("tray.fill", tint: .systemTeal)
                 triageRows.append(triageRow)
             }
             if let retired = summaries.first(where: { $0.playbackScope == .retired }) {
                 var retiredRow = row(retired)
                 retiredRow.detail = nil
-                retiredRow.artwork = .symbol("archivebox.fill", tint: retiredRow.isPlaying ? .systemGreen : .systemGray)
+                retiredRow.artwork = .symbol("archivebox.fill", tint: .systemGray)
                 triageRows.append(retiredRow)
             }
             if !triageRows.isEmpty { sections.append(Section(id: "triage", rows: triageRows)) }
@@ -260,7 +261,8 @@ final class CarPlayCoordinator: NSObject {
                     return Row.Tile(
                         id: tileID, title: recent.title,
                         subtitle: isPlaying ? "Now Playing" : RecentCollectionPresentation.subtitle(for: recent),
-                        artwork: .track(url: recent.artworkURLTemplate, playlistID: recent.collection.reservedPlaylistID)
+                        artwork: .track(url: recent.artworkURLTemplate, playlistID: recent.collection.reservedPlaylistID),
+                        isPlaying: isPlaying
                     )
                 }
                 sections.append(Section(id: "recents", rows: [Row(

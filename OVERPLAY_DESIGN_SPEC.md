@@ -441,8 +441,11 @@ Artwork loading must not block playlist rendering or playback. Store actual
 128-pixel thumbnails for rows, the mini player and CarPlay, and 512-pixel variants
 for expanded artwork and recognition (longest edge, preserving aspect ratio).
 The expanded player shows available 128 artwork while 512 loads. Lists may use
-cached images and load missing artwork while scrolling. CarPlay track rows show
-artwork with the playing indicator over it, as Music does.
+cached images and load missing artwork while scrolling. In CarPlay, what is
+playing (a track row, a playlist row or card, a Recent Deep Dives tile) shows
+still equaliser bars over its art. CarPlay drew no indicator of its own for
+Overplay's playing rows in the car, and list images cannot animate. Rows still
+set CarPlay's leading playing indicator, in case it appears.
 
 Decoded images share a 24 MiB cost budget across playlists. Source downloads and
 image processing are bounded and coalesced. Artwork failures cool down for 60
