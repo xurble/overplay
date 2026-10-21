@@ -214,7 +214,7 @@ final class CarPlayCoordinator: NSObject {
         var actions: [String: @MainActor () async -> Void] = [:]
         func row(_ summary: PlaylistSummaryPresentation) -> Row {
             let id = summary.playbackScope.playbackOrderPlaylistID(for: summary.id.uuidString)
-            actions[id] = { [weak self] in self?.showPlaylist(summary) }
+            actions[id] = { [weak self] in await self?.showPlaylist(summary) }
             let playlist = modelContext.flatMap { try? PlaylistRepository.playlist(id: summary.id, in: $0) }
             let artwork = playlist.flatMap { PlaylistCollageService.snapshot(for: $0, scope: summary.playbackScope) }
             return Row(id: id, title: summary.title, detail: summary.playableTrackCountLabel,
@@ -255,7 +255,7 @@ final class CarPlayCoordinator: NSObject {
                 let tiles = recents.map { recent -> Row.Tile in
                     let recentID = recent.id
                     let tileID = "recent-tile-\(recent.groupKey)"
-                    actions[tileID] = { [weak self] in self?.showRecent(recentID) }
+                    actions[tileID] = { [weak self] in await self?.showRecent(recentID) }
                     let isPlaying = RecentCollectionPresentation.isPlaying(recent, controller: playbackController)
                     return Row.Tile(
                         id: tileID, title: recent.title,
@@ -317,7 +317,7 @@ final class CarPlayCoordinator: NSObject {
         let recents = (try? RecentCollectionRepository.recents(in: modelContext)) ?? []
         let rows = recents.map { recent -> Row in
             let recentID = recent.id
-            actions[recent.groupKey] = { [weak self] in self?.showRecent(recentID) }
+            actions[recent.groupKey] = { [weak self] in await self?.showRecent(recentID) }
             return Row(id: recent.groupKey, title: recent.title, detail: RecentCollectionPresentation.subtitle(for: recent),
                 isPlaying: RecentCollectionPresentation.isPlaying(recent, controller: playbackController), disclosure: true,
                 artwork: .track(url: recent.artworkURLTemplate, playlistID: recent.collection.reservedPlaylistID))
@@ -327,13 +327,28 @@ final class CarPlayCoordinator: NSObject {
             on: template, actions: actions)
     }
 
-    private func showRecent(_ id: UUID) {
-        guard runtime?.libraryRestoration.isReady == true, let interfaceController, let modelContext,
+    private func showRecent(_ id: UUID) async {
+        guard runtime?.libraryRestoration.isReady == true, let modelContext,
               let recent = try? RecentCollectionRepository.recent(id: id, in: modelContext) else {
             refreshLibraryLists()
             return
         }
-        interfaceController.pushTemplate(makeRecentTemplate(recent), animated: true, completion: nil)
+        let template = makeRecentTemplate(recent)
+        await pushList(template, renderer: recentRenderer) { [weak self] in self?.visibleRecentTemplate === template }
+    }
+
+    /// Pushes a track list once its header art is in (or after a short wait),
+    /// and holds header changes until the push has finished, so CarPlay never
+    /// lays the header out mid-animation. The tapped row shows CarPlay's
+    /// spinner meanwhile. A list replaced while waiting is not pushed.
+    private func pushList(_ template: CPListTemplate, renderer: CarPlayListRenderer,
+                          isCurrent: () -> Bool) async {
+        await renderer.headerArtwork(within: .milliseconds(500))
+        guard let interfaceController, isCurrent() else { return }
+        renderer.holdHeaderChanges()
+        interfaceController.pushTemplate(template, animated: true) { _, _ in
+            Task { @MainActor in renderer.releaseHeaderChanges() }
+        }
     }
 
     private func makeRecentTemplate(_ recent: RecentCollectionRecord) -> CPListTemplate {
@@ -459,15 +474,16 @@ final class CarPlayCoordinator: NSObject {
         return try CarPlayLibrarySnapshot.playlistSummaries(in: modelContext)
     }
 
-    private func showPlaylist(_ summary: PlaylistSummaryPresentation) {
-        guard runtime?.libraryRestoration.isReady == true, let interfaceController, let modelContext else { return }
+    private func showPlaylist(_ summary: PlaylistSummaryPresentation) async {
+        guard runtime?.libraryRestoration.isReady == true, let modelContext else { return }
 
         do {
             guard try PlaylistRepository.playlist(id: summary.id, in: modelContext) != nil else {
                 setRootTemplate(animated: true)
                 return
             }
-            interfaceController.pushTemplate(try makePlaylistTemplate(summary), animated: true, completion: nil)
+            let template = try makePlaylistTemplate(summary)
+            await pushList(template, renderer: playlistRenderer) { [weak self] in self?.visiblePlaylistTemplate === template }
         } catch {
             showError(title: "Playlist failed", message: UserFacingError.message(for: error))
         }

@@ -2285,6 +2285,12 @@ Show:
 - The triage bucket in a separate section, opening the same track
   list.
 - Tracks in newest-added or newest-retired display order, independent of shuffle.
+- Above a track list, a header with the list's art, title, track count and an
+  icon-only Shuffle and Play button. CarPlay lays out a header assigned while
+  a push animates at the animating width and keeps it, cutting the title to a
+  few letters. So a list is pushed once its header art is in, waiting at most
+  half a second while the tapped row shows CarPlay's spinner, and a header
+  change during the push is applied when the push ends.
 - Global Retired as its own root destination, playable directly from CarPlay.
 - Current track title, artist, album, and artwork where CarPlay templates
   support it.

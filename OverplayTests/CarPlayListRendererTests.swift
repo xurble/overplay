@@ -148,6 +148,44 @@ struct CarPlayListRendererTests {
         #expect(details.last == "header cleared")
     }
 
+    @Test("a list waits for its header art before a push, and a header arriving mid-push waits for the push to end")
+    func headerIsNotReplacedDuringAPush() async throws {
+        var details: [String] = []
+        var release: CheckedContinuation<Void, Never>?
+        let renderer = CarPlayListRenderer(loadArtwork: { _ in
+            await withCheckedContinuation { release = $0 }
+            return UIImage(systemName: "star")
+        }, record: { _, detail in details.append(detail) })
+        defer { renderer.stop() }
+        let template = CPListTemplate(title: "Overplay", sections: [])
+        let art = CarPlayListPresentation.Row.Artwork.track(url: "https://example.com/{w}x{h}.jpg", playlistID: "p", size: 512)
+        renderer.update(CarPlayListPresentation(
+            header: .init(title: "Overplay", subtitle: "2 tracks", artwork: art, shuffleActionID: "shuffle", canShuffle: true),
+            sections: [.init(id: "tracks", rows: [.init(id: "one", title: "One")])]
+        ), on: template, actions: [:])
+        let placeholder = try #require(template.listHeader)
+
+        // The art never arrives in time: the wait ends at its limit.
+        let started = ContinuousClock.now
+        await renderer.headerArtwork(within: .milliseconds(100))
+        #expect(ContinuousClock.now - started >= .milliseconds(100))
+
+        // The push starts; the art lands mid-push and is held until it ends.
+        renderer.holdHeaderChanges()
+        details.removeAll()
+        try #require(release).resume()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(template.listHeader === placeholder)
+        renderer.releaseHeaderChanges()
+        #expect(template.listHeader !== placeholder)
+        #expect(details == ["header"])
+
+        // Settled art ends the wait at once.
+        let again = ContinuousClock.now
+        await renderer.headerArtwork(within: .seconds(2))
+        #expect(ContinuousClock.now - again < .milliseconds(500))
+    }
+
     @Test("the playing indicator sits over the row art, as in Music")
     func playingIndicatorIsLeading() throws {
         let renderer = CarPlayListRenderer(record: { _, _ in })

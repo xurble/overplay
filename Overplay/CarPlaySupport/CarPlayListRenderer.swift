@@ -71,6 +71,13 @@ final class CarPlayListRenderer {
     private var requestedArtwork: [String: Row.Artwork] = [:]
     private var loadedArtwork: [String: Row.Artwork] = [:]
     private var artworkTask: Task<Void, Never>?
+    /// The header art whose load has finished, loaded or not.
+    private var settledHeaderArtwork: Row.Artwork?
+    /// CarPlay lays out a header assigned while a push animates at the
+    /// animating width, and keeps it: the title is cut to two letters. Header
+    /// changes wait while a push runs.
+    private var holdsHeader = false
+    private var headerPending = false
     private weak var template: CPListTemplate?
     private static let headerSlotID = "listHeader"
     private let loadArtwork: @MainActor (Row.Artwork) async -> UIImage?
@@ -96,6 +103,27 @@ final class CarPlayListRenderer {
     func retryMissingArtwork() {
         requestedArtwork = requestedArtwork.filter { loadedArtwork[$0.key] == $0.value }
         startArtworkIfNeeded()
+    }
+
+    /// Waits, at most `timeout`, for the header's art, so a list is pushed
+    /// with its final header rather than replacing it during the push.
+    func headerArtwork(within timeout: Duration) async {
+        let deadline = ContinuousClock.now + timeout
+        while let artwork = presentation.header?.artwork, settledHeaderArtwork != artwork, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+    }
+
+    /// Holds header changes from the start of a push until it has finished.
+    func holdHeaderChanges() {
+        holdsHeader = true
+    }
+
+    func releaseHeaderChanges() {
+        holdsHeader = false
+        guard headerPending, let template else { return }
+        headerPending = false
+        applyHeader(on: template)
     }
 
     func update(
@@ -164,7 +192,7 @@ final class CarPlayListRenderer {
             }
         let headerChanged = next.header != presentation.header
         presentation = next
-        if headerChanged { applyHeader(on: template) }
+        if headerChanged { applyHeaderUnlessHeld(on: template) }
         if structureChanged {
             template.updateSections(next.sections.map { section in
                 CPListSection(
@@ -253,6 +281,14 @@ final class CarPlayListRenderer {
 
     private static let placeholder = UIImage(systemName: "music.note") ?? UIImage()
 
+    private func applyHeaderUnlessHeld(on template: CPListTemplate) {
+        guard !holdsHeader else {
+            headerPending = true
+            return
+        }
+        applyHeader(on: template)
+    }
+
     /// Builds the list header afresh: CarPlay updates it on assignment.
     private func applyHeader(on template: CPListTemplate) {
         guard let header = presentation.header else {
@@ -311,10 +347,11 @@ final class CarPlayListRenderer {
                 let current = Self.headerSlots(self.presentation.header) + Self.artworkSlots(in: allRows)
                 guard current.first(where: { $0.id == slot.id })?.artwork == slot.artwork else { continue }
                 // Keep the previous image through loading and failures.
+                if slot.id == Self.headerSlotID { self.settledHeaderArtwork = slot.artwork }
                 if let image, slot.id == Self.headerSlotID {
                     self.images[slot.id] = image
                     self.loadedArtwork[slot.id] = slot.artwork
-                    if let template = self.template { self.applyHeader(on: template) }
+                    if let template = self.template { self.applyHeaderUnlessHeld(on: template) }
                 } else if let image {
                     self.items[slot.id]?.setImage(image)
                     self.elements[slot.id]?.image = image
