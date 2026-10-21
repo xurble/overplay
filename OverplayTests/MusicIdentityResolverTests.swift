@@ -172,4 +172,48 @@ struct MusicIdentityResolverTests {
         #expect(results[0].artworkURLTemplate == "https://example.com/library/{w}x{h}.jpg")
     }
 
+    /// `PLAY-017`: playback tracks survive a relaunch and a failed account
+    /// check; only a different account or storefront empties them.
+    @Test func playbackTracksSurviveRelaunchesAndAreClearedOnlyForAnotherAccount() async throws {
+        let directory = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let track = UUID()
+        var scope = MusicIdentityResolver.Scope(storefront: "gb", account: "a")
+        var scopeFails = false
+        func launch() -> (MusicIdentityResolver, DevicePlaybackCache) {
+            let cache = DevicePlaybackCache(directory: directory)
+            let resolver = MusicIdentityResolver(currentScope: {
+                if scopeFails { throw URLError(.notConnectedToInternet) }
+                return scope
+            }, fetch: { _, ids, _ in
+                Dictionary(uniqueKeysWithValues: ids.map { ($0, [song($0)]) })
+            }, playbackCache: cache)
+            return (resolver, cache)
+        }
+
+        var (resolver, cache) = launch()
+        _ = try await resolver.enrich([snapshot("1")])
+        cache.set(Data("song".utf8), for: track)
+
+        (resolver, cache) = launch()
+        _ = try await resolver.enrich([snapshot("1")])
+        #expect(cache.data(for: track) == Data("song".utf8))
+
+        (resolver, cache) = launch()
+        scopeFails = true
+        await #expect(throws: URLError.self) { try await resolver.enrich([snapshot("1")]) }
+        scopeFails = false
+        _ = try await resolver.enrich([snapshot("1")])
+        #expect(cache.data(for: track) == Data("song".utf8))
+
+        scope.account = "b"
+        _ = try await resolver.enrich([snapshot("1")])
+        #expect(cache.data(for: track) == nil)
+        cache.set(Data("song".utf8), for: track)
+
+        (resolver, cache) = launch()
+        scope.storefront = "us"
+        _ = try await resolver.enrich([snapshot("1")])
+        #expect(DevicePlaybackCache(directory: directory).data(for: track) == nil)
+    }
 }

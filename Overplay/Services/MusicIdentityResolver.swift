@@ -6,10 +6,17 @@ import Foundation
 /// performs these requests. A missing relationship is distinct from a failure.
 @MainActor
 final class MusicIdentityResolver {
-    static let shared = MusicIdentityResolver()
+    static let shared = MusicIdentityResolver(playbackCache: .shared)
 
     enum Lookup: String, Hashable { case library, catalog, equivalents, isrc }
-    struct Scope: Equatable { var storefront: String; var account: String }
+    struct Scope: Equatable {
+        var storefront: String
+        var account: String
+        /// Safe to store: `account` is already a hash of the user token.
+        var fingerprint: String {
+            SHA256.hash(data: Data("\(storefront)|\(account)".utf8)).map { String(format: "%02x", $0) }.joined()
+        }
+    }
     struct Resource: Decodable, Equatable, Sendable {
         var id: String
         var type: String
@@ -54,19 +61,24 @@ final class MusicIdentityResolver {
     private let currentScope: () async throws -> Scope
     private let fetch: Fetch
     private let now: () -> Date
+    /// The on-disk playback tracks, emptied when the account or storefront
+    /// changes. This in-memory resolver forgets its scope at every launch, so
+    /// the cache keeps its own.
+    private let playbackCache: DevicePlaybackCache?
 
     init(
         currentScope: @escaping () async throws -> Scope = MusicIdentityResolver.liveScope,
         fetch: @escaping Fetch = MusicIdentityResolver.liveFetch,
-        now: @escaping () -> Date = { .now }
+        now: @escaping () -> Date = { .now },
+        playbackCache: DevicePlaybackCache? = nil
     ) {
         self.currentScope = currentScope
         self.fetch = fetch
         self.now = now
+        self.playbackCache = playbackCache
     }
 
     func invalidate() {
-        if self === Self.shared { DevicePlaybackCache.shared.removeAll() }
         cache.removeAll()
         for task in inFlight.values { task.cancel() }
         inFlight.removeAll()
@@ -82,7 +94,11 @@ final class MusicIdentityResolver {
         let current: Scope
         do { current = try await currentScope() }
         catch { invalidate(); throw error }
-        if scope != current { invalidate(); scope = current }
+        if scope != current {
+            invalidate()
+            scope = current
+            playbackCache?.adopt(scope: current.fingerprint)
+        }
         let revision = generation
         let libraryIDs = snapshots.compactMap { $0.resolvedIdentity.libraryID }
         let library = try await lookup(.library, ids: libraryIDs, scope: current, revision: revision)

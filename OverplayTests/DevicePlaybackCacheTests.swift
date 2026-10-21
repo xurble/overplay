@@ -35,6 +35,12 @@ struct DevicePlaybackCacheTests {
         #expect(webBatches.count == 3)
     }
 
+    /// A weak signal fails a playback lookup in seconds, not URLRequest's minute.
+    @Test func playbackLookupsGiveUpQuickly() throws {
+        let request = DevicePlaybackCache.playbackRequest(try #require(URL(string: "https://api.music.apple.com/v1/me/library/songs")))
+        #expect(request.timeoutInterval == 15)
+    }
+
     /// `PLAY-017`: one unavailable song must not block the rest.
     @Test func incompleteBatchPublishesResolvedTracksAndReportsTheRest() async throws {
         let tracks = ["i.first", "i.second"].map { TrackRecord(libraryID: $0, title: $0, artistName: "Artist") }

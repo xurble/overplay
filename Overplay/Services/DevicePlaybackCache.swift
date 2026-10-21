@@ -18,6 +18,8 @@ nonisolated final class DevicePlaybackCache: Sendable {
     /// Keyed by track UUID, or by `catalog-<song ID>` for album and artist
     /// songs Overplay does not track (`PLAY-018`).
     private let resources = Mutex<[String: Data]>([:])
+    /// The account and storefront fingerprint the tracks were filled under.
+    private let scope = Mutex<String?>(nil)
     private let directory: URL?
 
     init(directory: URL? = nil) {
@@ -55,6 +57,21 @@ nonisolated final class DevicePlaybackCache: Sendable {
     func removeAll() {
         resources.withLock { $0.removeAll() }
         if let directory { try? FileManager.default.removeItem(at: directory) }
+    }
+
+    /// Empties the cache only when the Apple Music account or storefront it
+    /// was filled under changes. The fingerprint is kept beside the tracks, so
+    /// a relaunch, or a failed or offline account check, keeps them: a cold
+    /// launch in the car must not need the network (`PLAY-017`).
+    func adopt(scope fingerprint: String) {
+        let url = directory?.appendingPathComponent("scope")
+        let previous = scope.withLock { $0 } ?? url.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+        guard previous != fingerprint else { return }
+        if previous != nil { removeAll() }
+        scope.withLock { $0 = fingerprint }
+        guard let url else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? fingerprint.write(to: url, atomically: true, encoding: .utf8)
     }
 
     private func fileURL(for key: String) -> URL? {
@@ -200,6 +217,17 @@ nonisolated final class DevicePlaybackCache: Sendable {
         throw PreparationError(message: failures.count == 1 ? first : "\(failures.count) tracks could not be prepared. \(first)")
     }
 
+    /// Starting playback waits on these lookups. A weak signal must fail in
+    /// seconds, not the default minute, so the queue starts with what is
+    /// cached rather than leaving the car silent (`PLAY-017`).
+    static let playbackRequestTimeout: TimeInterval = 15
+
+    static func playbackRequest(_ url: URL) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = playbackRequestTimeout
+        return request
+    }
+
     /// Resolve a cold queue in bounded batches, rather than one network round
     /// trip per song. Correlate by resource ID, never response position.
     @MainActor static func loadLibrarySongs(
@@ -207,7 +235,7 @@ nonisolated final class DevicePlaybackCache: Sendable {
         nativeLookup: ([String]) async throws -> [Song] = nativeLibrarySongs,
         request: (URL) async throws -> Data = { url in
             try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, detail: "playback web library songs") {
-                try await MusicDataRequest(urlRequest: URLRequest(url: url)).response().data
+                try await MusicDataRequest(urlRequest: playbackRequest(url)).response().data
             }
         }
     ) async throws -> [String: Song] {
@@ -259,7 +287,7 @@ nonisolated final class DevicePlaybackCache: Sendable {
         nativeLookup: (String) async throws -> Song? = nativeLibrarySong,
         request: (URL) async throws -> Data = { url in
             try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, magnitude: 1, detail: "playback web library song") {
-                try await MusicDataRequest(urlRequest: URLRequest(url: url)).response().data
+                try await MusicDataRequest(urlRequest: playbackRequest(url)).response().data
             }
         }
     ) async throws -> Song {
