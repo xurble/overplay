@@ -12,6 +12,12 @@ final class LibrarySettingsV2 {
     var playthroughThresholdPercentage: Double = 90
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
+    /// A Mac's setup asked for a managed One True Playlist that only an
+    /// iPhone or iPad can make (`SETUP-002`); the first one to open makes it.
+    var pendingOneTruePlaylistRequestedAt: Date?
+    /// The playlist to copy into it; nil for an empty one.
+    var pendingOneTruePlaylistSourceID: String?
+    var pendingOneTruePlaylistSourceName: String?
 
     init(
         id: UUID = UUID(),

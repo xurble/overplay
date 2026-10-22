@@ -23,11 +23,18 @@ final class AppStartupViewModel {
         var repairTrackLocations: () -> Void = {}
         var sweepRetention: () -> Void = {}
         var authorizationIsReady: (() -> Bool)? = nil
+        /// Makes a One True Playlist a Mac asked for (`SETUP-002`).
+        var fulfilPendingOneTruePlaylist: () async -> Void = {}
     }
 
     private(set) var hasStartedAuthorizedServices = false
     private(set) var isPreparingLibrary = false
     private(set) var libraryPreparationError: String?
+    /// The store is empty and may start a new library: first-run setup shows
+    /// until the user finishes it, even once setup has created the library.
+    private(set) var isSettingUp = false
+    /// iCloud holds a library that has not arrived yet; each import retries.
+    private(set) var isRestoringFromCloud = false
     @ObservationIgnored private(set) var authorizedServicesTask: Task<Void, Never>?
 
     func shouldShowPermissionView(
@@ -114,7 +121,10 @@ final class AppStartupViewModel {
             }
         } prepareLibrary: {
             try await LibraryRebuildService.performIfNeeded(in: modelContext)
-            try await runtime.libraryRestoration.prepare(in: modelContext, cloudEnabled: AppPersistence.cloudEnabled)
+            try await runtime.libraryRestoration.prepare(
+                in: modelContext, cloudEnabled: AppPersistence.cloudEnabled,
+                checkCloudLibrary: CloudLibraryProbe.checkAppStore
+            )
             runtime.startLibraryMaintenance()
         } reconcileListenLedger: {
             do {
@@ -134,6 +144,8 @@ final class AppStartupViewModel {
             }
         } authorizationIsReady: {
             authorizationService.readiness.isReady
+        } fulfilPendingOneTruePlaylist: {
+            await runtime.fulfilPendingOneTruePlaylist(in: modelContext)
         }
     }
 
@@ -141,8 +153,15 @@ final class AppStartupViewModel {
         startAuthorizedServices(dependencies: dependencies)
     }
 
+    func finishSetup(dependencies: Dependencies) {
+        isSettingUp = false
+        startAuthorizedServices(dependencies: dependencies)
+    }
+
     private func startAuthorizedServices(dependencies: Dependencies) {
-        guard !hasStartedAuthorizedServices else { return }
+        // Setup owns the library until it finishes. A retry from CarPlay,
+        // Siri or an import must not open a library behind it.
+        guard !hasStartedAuthorizedServices, !isSettingUp else { return }
         hasStartedAuthorizedServices = true
         isPreparingLibrary = true
         libraryPreparationError = nil
@@ -163,8 +182,22 @@ final class AppStartupViewModel {
                 await dependencies.removeVideoTracks()
                 dependencies.migrateTriageBucket()
                 dependencies.installRemoteCommands()
+            } catch LibraryRestorationService.RestorationError.setupNeeded {
+                guard !Task.isCancelled else { return }
+                isRestoringFromCloud = false
+                isSettingUp = true
+                isPreparingLibrary = false
+                hasStartedAuthorizedServices = false
+                return
+            } catch LibraryRestorationService.RestorationError.restoringFromCloud {
+                guard !Task.isCancelled else { return }
+                isRestoringFromCloud = true
+                isPreparingLibrary = false
+                hasStartedAuthorizedServices = false
+                return
             } catch {
                 guard !Task.isCancelled else { return }
+                isRestoringFromCloud = false
                 libraryPreparationError = UserFacingError.message(for: error)
                 isPreparingLibrary = false
                 hasStartedAuthorizedServices = false
@@ -176,6 +209,7 @@ final class AppStartupViewModel {
             }
 
             guard !Task.isCancelled else { return }
+            isRestoringFromCloud = false
             isPreparingLibrary = false
             StartupProfiler.measure("Local playback display restore") {
                 dependencies.restoreLocalPlaybackDisplay()
@@ -196,6 +230,8 @@ final class AppStartupViewModel {
             StartupProfiler.measure("Track retention sweep") {
                 dependencies.sweepRetention()
             }
+
+            await dependencies.fulfilPendingOneTruePlaylist()
         }
     }
 }

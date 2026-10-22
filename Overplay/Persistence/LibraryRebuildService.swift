@@ -46,6 +46,8 @@ enum LibraryRebuildService {
     }
 
     static func performIfNeeded(in context: ModelContext) async throws {
+        // The first-run build starts empty, whatever this device rebuilt.
+        guard !AppPersistence.isFirstRunBuild else { return }
         guard FileManager.default.fileExists(atPath: configurationURL.path) else { return }
         let configuration = try JSONDecoder().decode(LibraryRebuildConfiguration.self, from: Data(contentsOf: configurationURL))
         try await rebuild(configuration, in: context) { link in

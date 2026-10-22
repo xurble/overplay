@@ -230,9 +230,12 @@ struct PlayerGlassArtBackground: View {
             let frame = Self.artFrame(for: size, fullHeight: fullHeight)
             let margin = (frame.height - max(fullHeight, size.height)) / 2
             ZStack(alignment: .topLeading) {
+                // A solid pane of the theme colour: what shows until the art
+                // arrives, as the art draws nothing until then.
                 tint
                 if let artwork {
-                    NowPlayingArtworkView(urlString: artwork.urlString, playlistID: artwork.playlistID, cornerRadius: 0)
+                    NowPlayingArtworkView(urlString: artwork.urlString, playlistID: artwork.playlistID, cornerRadius: 0,
+                                          showsPlaceholder: false)
                         .accessibilityHidden(true)
                         .allowsHitTesting(false)
                         .frame(width: frame.width, height: frame.height)

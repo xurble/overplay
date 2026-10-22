@@ -9,6 +9,8 @@ struct AppleMusicPlaylistSourceSyncTests {
     @MainActor
     private final class StubFetcher: MusicLibraryPlaylistFetching {
         var playlists: [Playlist] = []
+        /// Found by ID but not yet in the library list, like a new playlist.
+        var unlisted: [Playlist] = []
         private(set) var requestedPageLimits: [Int] = []
 
         func fetchAllPlaylists(pageLimit: Int) async throws -> [Playlist] {
@@ -17,7 +19,7 @@ struct AppleMusicPlaylistSourceSyncTests {
         }
 
         func fetchPlaylist(id playlistID: String) async throws -> Playlist? {
-            playlists.first { $0.id.rawValue == playlistID }
+            (playlists + unlisted).first { $0.id.rawValue == playlistID }
         }
     }
 
@@ -110,4 +112,30 @@ struct AppleMusicPlaylistSourceSyncTests {
         #expect(fetcher.requestedPageLimits.isEmpty)
     }
 
+
+    @Test("a new playlist the library list does not show yet is found by its ID")
+    func aNewPlaylistIsFoundBeforeTheLibraryListShowsIt() async throws {
+        let fetcher = StubFetcher()
+        fetcher.playlists = [try Self.makePlaylist(id: "p.favourites", name: "Favourites")]
+        let created = try Self.makePlaylist(id: "p.new", name: "Overplay")
+        fetcher.unlisted = [created]
+        let sync = AppleMusicPlaylistSourceSync(playlistFetcher: fetcher)
+
+        let link = try await sync.canonicalLink(for: created)
+
+        #expect(link.id == "p.new")
+        #expect(link.name == "Overplay")
+        #expect(fetcher.requestedPageLimits.isEmpty)
+    }
+
+    @Test("a created playlist found nowhere is not found")
+    func aCreatedPlaylistFoundNowhereIsNotFound() async throws {
+        let fetcher = StubFetcher()
+        fetcher.playlists = [try Self.makePlaylist(id: "p.favourites", name: "Favourites")]
+        let sync = AppleMusicPlaylistSourceSync(playlistFetcher: fetcher)
+
+        await #expect(throws: PlaylistSyncError.self) {
+            try await sync.canonicalLink(for: try Self.makePlaylist(id: "p.new", name: "Overplay"))
+        }
+    }
 }

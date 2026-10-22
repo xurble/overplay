@@ -90,8 +90,8 @@ struct PlaybackIntentStore {
     let defaults: UserDefaults
 
     init(
-        fileURL: URL = URL.applicationSupportDirectory.appendingPathComponent("Overplay/PlaybackIntent.json"),
-        defaults: UserDefaults = .standard
+        fileURL: URL = AppPersistence.playbackIntentURL,
+        defaults: UserDefaults = AppPersistence.libraryDefaults
     ) {
         self.fileURL = fileURL
         self.defaults = defaults

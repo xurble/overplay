@@ -25,7 +25,18 @@ struct MiniPlayerLozengeView: View {
         return radius - (radius * radius - depth * depth).squareRoot()
     }
 
+    /// How strongly the glass takes the playing track's theme colour.
+    private static let tintOpacity = 0.8
+
     var body: some View {
+        ThemedPlayerHost { artworkTheme, _ in
+            lozenge(theme: artworkTheme.isFallback ? nil : artworkTheme)
+        }
+    }
+
+    /// Plain glass until the track's colours are known, then glass tinted
+    /// with its theme colour and the text and controls in the theme's colours.
+    private func lozenge(theme: AlbumArtworkTheme?) -> some View {
         HStack(spacing: 12) {
             Button(action: onOpen) {
                 HStack(spacing: 12) {
@@ -40,10 +51,11 @@ struct MiniPlayerLozengeView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(playbackController.nowPlayingDisplayTrack?.title ?? "Nothing playing")
                             .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(theme?.trackTitle ?? .primary)
                             .lineLimit(1)
                         Text(playbackController.nowPlayingDisplayTrack?.artistName ?? "Choose a playlist to start playback")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(theme?.artistName ?? .secondary)
                             .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -53,7 +65,7 @@ struct MiniPlayerLozengeView: View {
             .buttonStyle(.plain)
             .accessibilityHint("Opens Now Playing")
 
-            PlaybackControlsView(settings: settings, controlSize: .compact)
+            PlaybackControlsView(settings: settings, controlSize: .compact, artworkTheme: theme)
         }
         .padding(.leading, 16)
         .padding(.trailing, 14)
@@ -69,7 +81,7 @@ struct MiniPlayerLozengeView: View {
         )
         // Not interactive: its press bulge would leave the player, which
         // grows from and shrinks into this frame, a size out of step.
-        .glassEffect(.regular, in: .capsule)
+        .glassEffect(.regular.tint(theme?.background.opacity(Self.tintOpacity)), in: .capsule)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("mini-player")
     }

@@ -9,11 +9,10 @@ struct AppRouter: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
-    @AppStorage("overplay.hasPresentedAuthorizedUI") private var hasPresentedAuthorizedUI = false
+    @AppStorage("overplay.hasPresentedAuthorizedUI", store: AppPersistence.libraryDefaults)
+    private var hasPresentedAuthorizedUI = false
 
     @Query(sort: \OverplaySettings.createdAt) private var settingsRecords: [OverplaySettings]
-    @State private var showingNewLibraryConfirmation = false
-    @State private var setupError: String?
     @State private var isPlayerExpanded = false
     /// The expanded player was hidden by a fold or a size change, so it comes
     /// back already open, as the screen activates.
@@ -29,6 +28,18 @@ struct AppRouter: View {
                 NavigationStack {
                     PermissionView()
                 }
+            } else if startupViewModel.isSettingUp {
+                SetupView {
+                    startupViewModel.finishSetup(dependencies: startupDependencies)
+                }
+            } else if startupViewModel.isRestoringFromCloud {
+                ContentUnavailableView {
+                    Label("Restoring your library", systemImage: "icloud.and.arrow.down")
+                } description: {
+                    Text("Your Overplay library is on its way from iCloud. This can take a few minutes on a new device.")
+                } actions: {
+                    ProgressView()
+                }
             } else if let error = startupViewModel.libraryPreparationError {
                 ContentUnavailableView {
                     Label("Waiting for your library", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
@@ -36,9 +47,6 @@ struct AppRouter: View {
                     Text(error)
                 } actions: {
                     Button("Retry") { startupViewModel.retryLibraryPreparation(dependencies: startupDependencies) }
-                    if runtime.libraryRestoration.canCreateLibrary {
-                        Button("Set up a new library") { showingNewLibraryConfirmation = true }
-                    }
                 }
             } else if startupViewModel.isPreparingLibrary {
                 ProgressView("Restoring your library")
@@ -59,19 +67,6 @@ struct AppRouter: View {
             if ProcessInfo.processInfo.arguments.contains("-OverplayExpandedPlayer") { isPlayerExpanded = true }
         }
         #endif
-        .confirmationDialog("Create a new Overplay library?", isPresented: $showingNewLibraryConfirmation) {
-            Button("Create new library") {
-                do {
-                    try runtime.libraryRestoration.createLibrary(in: modelContext)
-                    startupViewModel.retryLibraryPreparation(dependencies: startupDependencies)
-                } catch { setupError = UserFacingError.message(for: error) }
-            }
-        } message: {
-            Text("Only continue if you have never set up Overplay on another device. If you already have a library, wait for iCloud to restore it.")
-        }
-        .alert("Could not create library", isPresented: Binding(get: { setupError != nil }, set: { if !$0 { setupError = nil } })) {
-            Button("OK") { setupError = nil }
-        } message: { Text(setupError ?? "") }
         .environment(artworkPresentation)
         .overlay(alignment: .bottom) {
             // The layer, not the lozenge, ignores the keyboard: the overlay's
@@ -139,6 +134,7 @@ struct AppRouter: View {
             )
         }
         .onChange(of: runtime.libraryRestoration.importRevision) { _, _ in
+            // Setup creates its own library; a late import is met when it finishes.
             if authorizationService.readiness.isReady, !startupViewModel.hasStartedAuthorizedServices {
                 startupViewModel.retryLibraryPreparation(dependencies: startupDependencies)
             }
@@ -171,6 +167,7 @@ struct AppRouter: View {
         PlayerPlacement(horizontalSizeClass, verticalSizeClass) == .sheet
             && authorizationService.readiness.isReady && runtime.libraryRestoration.isReady && settings != nil
             && !startupViewModel.isPreparingLibrary && startupViewModel.libraryPreparationError == nil
+            && !startupViewModel.isSettingUp
     }
 
     /// The player animates its own opening out of the mini player.

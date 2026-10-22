@@ -18,7 +18,8 @@ struct OverplayApp: App {
     }
 
     private static func makeModelContainer() throws -> ModelContainer {
-        try StartupProfiler.measure("SwiftData model container") {
+        AppPersistence.resetFirstRunIfRequested()
+        return try StartupProfiler.measure("SwiftData model container") {
             #if targetEnvironment(simulator)
             if !isRunningTests {
                 let configuration = ProcessInfo.processInfo.arguments.contains(AppPersistence.uiTestingArgument)

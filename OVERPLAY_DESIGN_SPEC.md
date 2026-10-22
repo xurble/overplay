@@ -83,6 +83,8 @@ Music's global play count or skip count.
 | `LOC-001` | A retirement or restore survives another device's stale CloudKit write. After each import and at startup, a song's newest `evicted`/`restored` history event re-applies its decision when it is newer than the row's `locationChangedAt`; promotions are left to the next One True Playlist sync. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/TrackLocationRepairTests.swift` |
 | `PLAYLIST-006` | Pre-bucket triage data migrates onto the bucket at startup. The migration is idempotent and keyed on the stored legacy role value, not a local flag. | `Overplay/Persistence/TriageBucketMigrationService.swift`, `OverplayTests/TriageBucketTests.swift` |
 | `PLAYLIST-002` | Initial setup can create a managed playlist, copy an existing playlist into a managed playlist, or link an existing playlist as incoming-only. | `Overplay/ViewModels/PlaylistSelectionViewModel.swift`, `Overplay/Services/PlaylistSyncService.swift` |
+| `SETUP-001` | A new library starts in setup: swipeable cards introduce the features, then the One True Playlist card needs a choice (a new managed "Overplay" playlist, empty or copied from an existing playlist, which is unchanged) and the Triage card needs one (sources, with TikTok and Shazam playlists suggested, or Add Sources Later). Swiping cannot pass an undecided card. The library is created by the first choice or by finishing; finishing syncs the chosen sources. Choices are read back from the store, so a rebuilt setup screen never makes a second playlist; no CarPlay, Siri, import or readiness retry opens a library while setup shows; a library that arrives from iCloud ends setup and is restored, never replaced. | `Overplay/ViewModels/SetupViewModel.swift`, `Overplay/Views/Setup/`, `OverplayTests/SetupViewModelTests.swift` |
+| `SETUP-002` | On a Mac, which cannot create Apple Music playlists, setup's One True Playlist choice is saved in the synced settings as a request (empty, or a copy of a named playlist). The first iPhone or iPad to start up or import with the request makes the managed "Overplay" playlist, selects it and clears the request; a One True Playlist chosen meanwhile clears it instead. A failure keeps it for the next launch or import. Two iPhones opening at the same moment could both make one. | `Overplay/Services/PendingOneTruePlaylistService.swift`, `OverplayTests/PendingOneTruePlaylistServiceTests.swift` |
 | `SYNC-001` | Automatic sync starts no sooner than a minute after launch (and 10 seconds after authorization), runs every 30 minutes, skips fresh successful playlists, retries failed playlists, prioritizes the playing and selected playlists, and pauses while a playback failure is active. | `Overplay/Services/PeriodicPlaylistSyncService.swift`, `OverplayTests/PeriodicPlaylistSyncServiceTests.swift` |
 | `SYNC-002` | Sync is idempotent, collapses duplicate identities, preserves history, and leaves remotely missing tracks locally playable unless retired. Sync never mutates the live playback queue. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/PlaylistSyncReconciliationTests.swift` |
 | `MUT-001` | Successful promotion moves the existing item into OTP with its statistics and history; no source copy remains. Retired offers Move to Triage (explicit keep) and Move to One True Playlist. | `Overplay/Services/PlaylistMutationService.swift`, `OverplayTests/PlaylistMutationServiceTests.swift` |
@@ -2149,6 +2151,26 @@ Platform notes:
 - **Planned Mac:** use a compact window-friendly state view with clear system
   settings guidance.
 
+### First-run setup
+
+Purpose: introduce Overplay and set up a new library (`SETUP-001`).
+
+Show, as swipeable glass cards with page dots and a Continue button:
+
+- Welcome, One True Playlist, Triage, Retired, and CarPlay and Siri.
+- One True Playlist: Copy a Playlist (searchable picker) or Start Empty. Both
+  create a new managed Apple Music playlist named Overplay; a copied playlist
+  is left unchanged.
+- Fill Triage: library playlists to tick as sources, TikTok and Shazam
+  playlists first under Suggested, and Add Sources Later.
+- You're Set: Start Listening opens the app.
+- On a Mac, Copy a Playlist and Start Empty save the choice for the next
+  iPhone or iPad (`SETUP-002`), and the card reads Finish on iPhone.
+
+Continue is disabled, and swiping stops, on the One True Playlist and Triage
+cards until each has its choice. A new playlist is found by its ID, because
+Apple Music's library list can lag it.
+
 ### Playlist management screen
 
 Purpose: manage linked Apple Music playlists.
@@ -2261,10 +2283,16 @@ Platform notes:
 - iPhone should keep Now Playing immersive and touch-first.
 - Compact width (iPhone, a closed iPhone Duo, a narrow iPad window) shows a
   mini player: a glass bar over the bottom of the screen, its top edge a
-  progress line coloured as Now Playing's progress bar. Tapping it or
+  progress line coloured as Now Playing's progress bar. Once the playing
+  track's theme is known, the glass takes its background colour, with the
+  title, artist and controls in the theme's colours. Tapping it or
   swiping it up slides Now Playing up full screen. A downward swipe starting
   anywhere on it, controls and margins included, moves it with the finger and
   closes it past the threshold; a sideways drag (the volume pill) does not.
+  Once a drag is a swipe down, the controls ignore it until the finger
+  lifts, so a swipe that started on a button never presses it. Behind the
+  blurred art is a solid pane of the theme colour, which is all that shows
+  until the art arrives.
   A drag handle at the top, clear of the Dynamic Island, closes it on a tap.
   The system zoom transition was tried and dropped: its swipe down missed
   about half of first attempts and lost to the controls. Regular width shows
@@ -3070,10 +3098,20 @@ persisted rebuild UUID. Restoring preferences without the corresponding graph
 must not bypass the gate. An explicit database reset creates the new base
 configuration and records its local origin so it can reopen offline.
 
-A genuinely new installation may explicitly create a library only after a
-successful cloud import has left all V2 entities empty. This action explains
-that an existing library should be restored instead and rechecks emptiness
-immediately before saving. It is unavailable when a legacy store exists.
+A device with an empty store asks iCloud directly whether this account holds
+a library: one record, no fields, from the mirroring zone
+`com.apple.coredata.cloudkit.zone` (the zone alone proves nothing, because
+each device's mirroring creates it on launch). No records, or no zone, means a
+genuine first run: setup shows at once, before any import. Records mean a new
+device: Overplay shows "Restoring your library" and retries at each import,
+however long it takes, and never offers setup. With no answer (iCloud signed
+out or unavailable, or the request failed), a new library may be created only
+after a successful cloud import has left every V2 entity empty, listen events
+and Recents included, or at once with iCloud off. SwiftData offers no way to
+force an import. Such a store goes straight to first-run setup (`SETUP-001`). Setup's welcome card says that an existing library should be restored
+instead, and creating the library rechecks emptiness immediately before
+saving; a library that arrives from iCloud meanwhile is restored when setup
+finishes. Setup is unavailable when a legacy store exists.
 There is no automatic legacy graph migration, timeout reset, or fallback to
 an empty library on cloud failure. This does not provide distributed locking
 between two devices deliberately creating a new library at the same time.

@@ -5,6 +5,10 @@ import SwiftData
 #error("Overplay's developer database is only available in debug builds.")
 #endif
 
+#if OVERPLAY_FIRST_RUN && !DEBUG
+#error("Overplay's first-run database is only available in debug builds.")
+#endif
+
 /// All playback surfaces receive this container through AppRuntime.
 enum AppPersistence {
     enum ConfigurationError: Error {
@@ -35,8 +39,44 @@ enum AppPersistence {
         cloudKitDatabase: .none
     )
 
+    /// A first-run build (`OVERPLAY_FIRST_RUN`) keeps the everyday app
+    /// identifier, and with it CarPlay, but starts from an empty local store
+    /// of its own. Its device-local state is kept apart as well, so the
+    /// everyday build's restoration receipt and playback intent survive it.
+    static var isFirstRunBuild: Bool {
+        #if DEBUG && OVERPLAY_FIRST_RUN
+        true
+        #else
+        false
+        #endif
+    }
+
+    /// Device-local preferences that describe the store's library.
+    static var libraryDefaults: UserDefaults {
+        isFirstRunBuild ? UserDefaults(suiteName: "farm.poplar.Overplay.firstRun") ?? .standard : .standard
+    }
+
+    static var playbackIntentURL: URL {
+        URL.applicationSupportDirectory.appendingPathComponent(
+            isFirstRunBuild ? "Overplay/FirstRun/PlaybackIntent.json" : "Overplay/PlaybackIntent.json"
+        )
+    }
+
+    /// A first-run build launched with this argument starts from nothing:
+    /// its store, preferences and playback intent are removed first.
+    static let firstRunResetArgument = "-OverplayFirstRunReset"
+
+    static func resetFirstRunIfRequested() {
+        guard isFirstRunBuild, ProcessInfo.processInfo.arguments.contains(firstRunResetArgument) else { return }
+        for suffix in ["", "-shm", "-wal"] {
+            try? FileManager.default.removeItem(at: URL.applicationSupportDirectory.appendingPathComponent("OverplayFirstRun.store\(suffix)"))
+        }
+        try? FileManager.default.removeItem(at: playbackIntentURL)
+        UserDefaults.standard.removePersistentDomain(forName: "farm.poplar.Overplay.firstRun")
+    }
+
     static var cloudEnabled: Bool {
-        #if OVERPLAY_DEVELOPMENT || targetEnvironment(simulator)
+        #if OVERPLAY_DEVELOPMENT || OVERPLAY_FIRST_RUN || targetEnvironment(simulator)
         false
         #else
         true
@@ -70,7 +110,14 @@ enum AppPersistence {
             )
         }
 
-        #if DEBUG && OVERPLAY_DEVELOPMENT
+        #if DEBUG && OVERPLAY_FIRST_RUN
+        return ModelConfiguration(
+            "OverplayFirstRun",
+            schema: schema,
+            groupContainer: .none,
+            cloudKitDatabase: .none
+        )
+        #elseif DEBUG && OVERPLAY_DEVELOPMENT
         // Fail closed if local build settings accidentally reuse the everyday
         // app identifier. The separate sandbox also isolates UserDefaults,
         // playback restoration, onboarding history, and diagnostic files.

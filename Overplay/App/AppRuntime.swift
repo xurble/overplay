@@ -16,6 +16,8 @@ final class AppRuntime {
     let periodicPlaylistSyncService = PeriodicPlaylistSyncService()
 
     @ObservationIgnored private var modelContainer: ModelContainer?
+    /// The iCloud container the library is mirrored to; nil when it is not.
+    @ObservationIgnored private(set) var cloudKitContainerIdentifier: String?
     @ObservationIgnored private var cloudImportObserver: NSObjectProtocol?
 
     private static func makePlaybackController() -> PlaybackController {
@@ -35,6 +37,7 @@ final class AppRuntime {
 
     func configure(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
+        cloudKitContainerIdentifier = modelContainer.configurations.lazy.compactMap(\.cloudKitContainerIdentifier).first
         if let cloudImportObserver { NotificationCenter.default.removeObserver(cloudImportObserver) }
         let cloudStoreIDs = Set(modelContainer.configurations.compactMap { configuration -> String? in
             guard configuration.cloudKitContainerIdentifier != nil else { return nil }
@@ -65,6 +68,8 @@ final class AppRuntime {
                 }
                 self.repairTrackLocations(in: context)
                 ApplePlayCountSyncService.shared.reconcile(in: context, playbackController: self.playbackController)
+                // A Mac may have asked for the One True Playlist (`SETUP-002`).
+                await self.fulfilPendingOneTruePlaylist(in: context)
             }
         }
     }
@@ -79,6 +84,14 @@ final class AppRuntime {
         } catch {
             StartupProfiler.mark("Track location repair failed: \(error.localizedDescription)")
         }
+    }
+
+    /// Makes the One True Playlist a Mac asked for, on a device that can
+    /// (`SETUP-002`), and points playback at it.
+    func fulfilPendingOneTruePlaylist(in context: ModelContext) async {
+        guard let playlist = await PendingOneTruePlaylistService().fulfilIfNeeded(in: context) else { return }
+        playbackController.reconcilePlaylistSelection(context: context)
+        playbackController.reconcileStoredOrder(for: playlist, context: context)
     }
 
     func startLibraryMaintenance() {

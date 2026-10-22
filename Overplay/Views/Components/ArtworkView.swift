@@ -5,6 +5,8 @@ struct ArtworkView: View {
     var pixelSize: Int = 512
     var playlistID: String?
     var cornerRadius: CGFloat = 22
+    /// Off: nothing until the image arrives, for art over its own backdrop.
+    var showsPlaceholder = true
 
     @State private var image: CGImage?
     @State private var loadedCacheIdentity: String?
@@ -44,7 +46,9 @@ struct ArtworkView: View {
     }
 
     @ViewBuilder private var placeholder: some View {
-        if let placeholderColor {
+        if !showsPlaceholder {
+            Color.clear
+        } else if let placeholderColor {
             placeholderColor
         } else {
             gradientPlaceholder

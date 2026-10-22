@@ -168,6 +168,33 @@ the developer flag without `DEBUG` fails. A developer build also refuses to
 open its store without a `.dev` app identifier, and ordinary builds reject
 that reserved suffix instead of connecting the developer app to CloudKit.
 
+### First-run build
+
+To see first-run setup in the everyday app, with its CarPlay entitlement, build
+Debug with the `OVERPLAY_FIRST_RUN` flag:
+
+```sh
+xcodebuild build -scheme Overplay -configuration Debug \
+  -destination 'id=<device>' -allowProvisioningUpdates \
+  -derivedDataPath ~/Library/Developer/Xcode/DerivedData/Overplay-firstrun \
+  SWIFT_ACTIVE_COMPILATION_CONDITIONS='DEBUG OVERPLAY_FIRST_RUN'
+```
+
+It replaces the installed everyday build but opens an empty local store,
+`OverplayFirstRun`, with CloudKit off. The iCloud library store stays on the
+device untouched. Its restoration receipt, playback intent and resume point
+live apart from the everyday build's, and it ignores a legacy `default.store`.
+Install an ordinary build to return to the everyday library. To run setup
+again, launch with `-OverplayFirstRunReset`, which deletes only the first-run
+store, receipt and intent:
+
+```sh
+xcrun devicectl device process launch --device <device> --terminate-existing \
+  farm.poplar.Overplay -- -OverplayFirstRunReset
+```
+
+Each setup run creates a real "Overplay" playlist in Apple Music.
+
 ## Player sheet startup regression check
 
 Run from Xcode using **My Mac (Mac Catalyst)** with Apple Music authorized.

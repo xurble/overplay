@@ -31,8 +31,14 @@ struct CarPlayListPresentation: Equatable {
             case symbol(String, tint: UIColor? = nil)
             case track(url: String?, playlistID: String, size: Int = 128)
             case collage(PlaylistCollage, playlistID: String, scope: PlaylistPlaybackScope)
-            /// The art with the now-playing badge over it (`CarPlayPlayingBadge`).
-            indirect case playing(Artwork)
+            /// The art with the now-playing badge over it (`CarPlayPlayingBadge`),
+            /// for art CarPlay draws `displayed` points across.
+            indirect case playing(Artwork, displayed: CGSize)
+
+            /// The art without any badge.
+            var plain: Artwork {
+                if case .playing(let artwork, _) = self { artwork } else { self }
+            }
         }
         var id: String
         var title: String
@@ -70,6 +76,8 @@ final class CarPlayListRenderer {
     /// (the row ID for a card, the tile ID for a strip tile).
     private var elements: [String: CPListImageRowItemElement] = [:]
     private var images: [String: UIImage] = [:]
+    /// Each slot's last loaded art without the badge, to add or remove it at once.
+    private var plainImages: [String: (artwork: Row.Artwork, image: UIImage)] = [:]
     private var actions: [String: @MainActor () async -> Void] = [:]
     private var requestedArtwork: [String: Row.Artwork] = [:]
     private var loadedArtwork: [String: Row.Artwork] = [:]
@@ -147,6 +155,8 @@ final class CarPlayListRenderer {
         images = images.filter { slotIDs.contains($0.key) }
         requestedArtwork = requestedArtwork.filter { slotIDs.contains($0.key) }
         loadedArtwork = loadedArtwork.filter { slotIDs.contains($0.key) }
+        plainImages = plainImages.filter { slotIDs.contains($0.key) }
+        applyBadgeChanges(Self.artworkSlots(in: rows))
         var replacedItem = false
         for row in rows {
             if row.style != .standard {
@@ -207,6 +217,25 @@ final class CarPlayListRenderer {
             record(.carPlayListMutation, "sections rows=\(rows.count)")
         }
         startArtworkIfNeeded()
+    }
+
+    /// A playing change only adds or removes the badge: drawn at once over the
+    /// slot's loaded art, so a rebuilt card or strip carries the right image.
+    /// In the car a strip kept its badge when the plain art arrived a moment
+    /// after the rebuild (2026-10-22).
+    private func applyBadgeChanges(_ slots: [(id: String, artwork: Row.Artwork)]) {
+        for slot in slots where requestedArtwork[slot.id] != slot.artwork {
+            guard let plain = plainImages[slot.id], plain.artwork == slot.artwork.plain else { continue }
+            let image = if case .playing(_, let displayed) = slot.artwork {
+                CarPlayPlayingBadge.image(over: plain.image, displayed: displayed)
+            } else {
+                plain.image
+            }
+            requestedArtwork[slot.id] = slot.artwork
+            loadedArtwork[slot.id] = slot.artwork
+            images[slot.id] = image
+            items[slot.id]?.setImage(image)
+        }
     }
 
     /// Creates or refreshes a card or strip. Returns true when a new item
@@ -324,14 +353,23 @@ final class CarPlayListRenderer {
     /// or card, one per strip tile. Playing art carries the badge; a playing
     /// symbol row changes its symbol instead.
     private static func artworkSlots(in rows: some Sequence<Row>) -> [(id: String, artwork: Row.Artwork)] {
-        func slot(_ artwork: Row.Artwork, playing: Bool) -> Row.Artwork {
+        func slot(_ artwork: Row.Artwork, playing: Bool, displayed: CGSize) -> Row.Artwork {
             if case .symbol = artwork { return artwork }
-            return playing ? .playing(artwork) : artwork
+            return playing ? .playing(artwork, displayed: displayed) : artwork
         }
         return rows.flatMap { row -> [(id: String, artwork: Row.Artwork)] in
             switch row.style {
-            case .strip(let tiles): tiles.compactMap { tile in tile.artwork.map { (tile.id, slot($0, playing: tile.isPlaying)) } }
-            default: row.artwork.map { [(row.id, slot($0, playing: row.isPlaying))] } ?? []
+            case .strip(let tiles):
+                tiles.compactMap { tile in
+                    tile.artwork.map { (tile.id, slot($0, playing: tile.isPlaying,
+                                                      displayed: CPListImageRowItemRowElement.maximumImageSize)) }
+                }
+            case .card:
+                row.artwork.map { [(row.id, slot($0, playing: row.isPlaying,
+                                               displayed: CPListImageRowItemCardElement.maximumImageSize))] } ?? []
+            case .standard:
+                row.artwork.map { [(row.id, slot($0, playing: row.isPlaying,
+                                               displayed: CPListItem.maximumImageSize))] } ?? []
             }
         }
     }
@@ -349,15 +387,17 @@ final class CarPlayListRenderer {
                     return
                 }
                 self.requestedArtwork[slot.id] = slot.artwork
-                let image: UIImage? = if case .playing(let art) = slot.artwork {
-                    CarPlayPlayingBadge.image(over: await self.loadArtwork(art))
+                let plain = await self.loadArtwork(slot.artwork.plain)
+                let image: UIImage? = if case .playing(_, let displayed) = slot.artwork {
+                    CarPlayPlayingBadge.image(over: plain, displayed: displayed)
                 } else {
-                    await self.loadArtwork(slot.artwork)
+                    plain
                 }
                 guard !Task.isCancelled else { return }
                 let allRows = self.presentation.sections.flatMap(\.rows)
                 let current = Self.headerSlots(self.presentation.header) + Self.artworkSlots(in: allRows)
                 guard current.first(where: { $0.id == slot.id })?.artwork == slot.artwork else { continue }
+                if let plain { self.plainImages[slot.id] = (slot.artwork.plain, plain) }
                 // Keep the previous image through loading and failures.
                 if slot.id == Self.headerSlotID { self.settledHeaderArtwork = slot.artwork }
                 if let image, slot.id == Self.headerSlotID {
@@ -378,14 +418,15 @@ final class CarPlayListRenderer {
     private static func loadArtwork(_ artwork: Row.Artwork) async -> UIImage? {
         switch artwork {
         case .symbol(let name, let tint):
-            return CarPlayListSymbolImage.image(systemName: name, color: tint ?? .label)
+            return CarPlayListSymbolImage.image(systemName: name, color: tint ?? .label,
+                                                fraction: CarPlayListSymbolImage.rowSymbolFraction)
         case .track(let url, let playlistID, let size):
             let image = await ArtworkImagePipeline.shared.image(for: url, size: size, playlistID: playlistID, priority: .utility)
             return image.map { UIImage(cgImage: $0) }
         case .collage(let snapshot, let playlistID, let scope):
             let image = await PlaylistCollageService.shared.image(for: snapshot, playlistID: playlistID, scope: scope)
             return image.map { UIImage(cgImage: $0) }
-        case .playing(let artwork):
+        case .playing(let artwork, _):
             // The renderer draws the badge over whatever this loads.
             return await loadArtwork(artwork)
         }
@@ -399,20 +440,26 @@ final class CarPlayListRenderer {
 /// in case it does. Symbol rows show playing in the symbol instead, as on the
 /// phone dashboard.
 enum CarPlayPlayingBadge {
-    /// The circle's diameter as a fraction of the art's shorter side: a
-    /// little larger than on the phone, to read at a glance in the car.
+    /// The circle's diameter as a fraction of a list row's art: a little
+    /// larger than on the phone, to read at a glance in the car.
     static let diameter: CGFloat = 0.38
     /// Kept clear of the corner CarPlay may round off.
     static let inset: CGFloat = 0.04
 
-    static func circle(in size: CGSize) -> CGRect {
-        let side = min(size.width, size.height)
+    /// The circle in art of `size` that CarPlay draws `displayed` points
+    /// across: on larger art, such as a Deep Dive tile, it is as large on
+    /// screen as on a row's art, not larger.
+    static func circle(in size: CGSize, displayed: CGSize = CPListItem.maximumImageSize) -> CGRect {
+        let row = CPListItem.maximumImageSize
+        let shown = min(displayed.width, displayed.height)
+        let scale = shown > 0 ? min(1, min(row.width, row.height) / shown) : 1
+        let side = min(size.width, size.height) * scale
         let diameter = side * diameter, inset = side * inset
         return CGRect(x: size.width - inset - diameter, y: size.height - inset - diameter,
                       width: diameter, height: diameter)
     }
 
-    static func image(over art: UIImage?) -> UIImage {
+    static func image(over art: UIImage?, displayed: CGSize = CPListItem.maximumImageSize) -> UIImage {
         let size = art?.size ?? CPListItem.maximumImageSize
         let format = UIGraphicsImageRendererFormat()
         format.scale = art?.scale ?? CarPlayListSymbolImage.scale
@@ -425,7 +472,7 @@ enum CarPlayPlayingBadge {
                 UIColor.darkGray.setFill()
                 UIBezierPath(roundedRect: bounds, cornerRadius: min(size.width, size.height) * 0.15).fill()
             }
-            let circle = circle(in: size)
+            let circle = circle(in: size, displayed: displayed)
             UIColor.systemGreen.resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark)).setFill()
             UIBezierPath(ovalIn: circle).fill()
             guard let play = UIImage(systemName: "play.fill")?.withTintColor(.white, renderingMode: .alwaysOriginal),
@@ -447,10 +494,21 @@ enum CarPlayListSymbolImage {
     /// Car screens are at most 3x; a sharper bitmap only scales down.
     static let scale: CGFloat = 3
 
-    static func image(systemName: String, color: UIColor, size: CGSize = CPListItem.maximumImageSize) -> UIImage? {
+    /// How much of a list row's image slot a row symbol fills. CarPlay sizes
+    /// the slot for art, and a symbol filling it dwarfed the row's text; on
+    /// the phone a row icon is about the size of its title.
+    static let rowSymbolFraction: CGFloat = 0.55
+
+    /// `fraction` < 1 draws the symbol that much of `size`, centred in a clear
+    /// image of the whole `size`, so CarPlay does not scale it back up.
+    static func image(systemName: String, color: UIColor, size: CGSize = CPListItem.maximumImageSize,
+                      fraction: CGFloat = 1) -> UIImage? {
         guard let symbol = UIImage(systemName: systemName), symbol.size.width > 0, symbol.size.height > 0 else { return nil }
-        let fit = min(size.width / symbol.size.width, size.height / symbol.size.height)
-        let fitted = CGSize(width: symbol.size.width * fit, height: symbol.size.height * fit)
+        let fit = min(size.width / symbol.size.width, size.height / symbol.size.height) * fraction
+        let glyph = CGSize(width: symbol.size.width * fit, height: symbol.size.height * fit)
+        let fitted = fraction < 1 ? size : glyph
+        let frame = CGRect(x: (fitted.width - glyph.width) / 2, y: (fitted.height - glyph.height) / 2,
+                           width: glyph.width, height: glyph.height)
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
         format.opaque = false
@@ -463,7 +521,7 @@ enum CarPlayListSymbolImage {
             ])
             let tinted = symbol.withTintColor(color.resolvedColor(with: traits), renderingMode: .alwaysOriginal)
             let image = UIGraphicsImageRenderer(size: fitted, format: format).image { _ in
-                tinted.draw(in: CGRect(origin: .zero, size: fitted))
+                tinted.draw(in: frame)
             }
             asset.register(image, with: traits)
         }

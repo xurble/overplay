@@ -228,7 +228,11 @@ struct CarPlayListRendererTests {
             while loaded.count < loads, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
             try? await Task.sleep(for: .milliseconds(50))
         }
-        func badged(_ image: UIImage?) throws -> Bool { try hasPlayingBadge(try #require(image)) }
+        func badged(_ image: UIImage?, displayed: CGSize = CPListItem.maximumImageSize) throws -> Bool {
+            try hasPlayingBadge(try #require(image), displayed: displayed)
+        }
+        let tileSize = CPListImageRowItemRowElement.maximumImageSize
+        let cardSize = CPListImageRowItemCardElement.maximumImageSize
 
         renderer.update(state(playing: "row"), on: template, actions: [:])
         await settle(loads: 4)
@@ -237,27 +241,35 @@ struct CarPlayListRendererTests {
         let item = try #require(renderer.items["row"])
         #expect(try badged(item.image))
 
-        // Only the art losing and gaining the badge reloads.
+        // The badge moves at once, over the art already loaded: a rebuilt
+        // strip or card carries the right image, with nothing reloaded.
         loaded.removeAll()
         renderer.update(state(playing: "tile"), on: template, actions: [:])
-        await settle(loads: 2)
-        #expect(loaded.count == 2)
         #expect(try !badged(item.image))
         let strip = try #require(renderer.imageRows["strip"])
-        #expect(try badged(strip.elements.first?.image))
+        #expect(try badged(strip.elements.first?.image, displayed: tileSize))
 
-        loaded.removeAll()
         renderer.update(state(playing: "card"), on: template, actions: [:])
-        await settle(loads: 2)
         let card = try #require(renderer.imageRows["card"])
-        #expect(try badged(card.elements.first?.image))
-        #expect(try !badged(renderer.imageRows["strip"]?.elements.first?.image))
+        #expect(try badged(card.elements.first?.image, displayed: cardSize))
+        #expect(try !badged(renderer.imageRows["strip"]?.elements.first?.image, displayed: tileSize))
 
         // A symbol row shows playing in its symbol, chosen by the list.
-        loaded.removeAll()
         renderer.update(state(playing: "symbol"), on: template, actions: [:])
+        #expect(try !badged(renderer.imageRows["card"]?.elements.first?.image, displayed: cardSize))
         await settle(loads: 1)
-        #expect(loaded.map { "\($0)" } == ["\(art("card"))"])
+        #expect(loaded.isEmpty)
+    }
+
+    @Test("on larger art the badge is as large on screen as on a row's art")
+    func badgeKeepsItsScreenSize() {
+        let row = CPListItem.maximumImageSize
+        let art = CGSize(width: 300, height: 300)
+        let shown = CGSize(width: row.width * 3, height: row.height * 3)
+        let onRow = CarPlayPlayingBadge.circle(in: art).width / art.width * row.width
+        let onTile = CarPlayPlayingBadge.circle(in: art, displayed: shown).width / art.width * shown.width
+        #expect(abs(onRow - onTile) < 0.01)
+        #expect(CarPlayPlayingBadge.circle(in: art, displayed: .zero) == CarPlayPlayingBadge.circle(in: art))
     }
 
     @Test("a badge with no art still shows what is playing")
@@ -268,7 +280,7 @@ struct CarPlayListRendererTests {
     }
 
     /// A green circle at the bottom-trailing corner with white at its centre.
-    private func hasPlayingBadge(_ image: UIImage) throws -> Bool {
+    private func hasPlayingBadge(_ image: UIImage, displayed: CGSize = CPListItem.maximumImageSize) throws -> Bool {
         let cgImage = try #require(image.cgImage)
         let width = cgImage.width, height = cgImage.height
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
@@ -282,7 +294,7 @@ struct CarPlayListRendererTests {
             let index = (Int(point.y * image.scale) * width + Int(point.x * image.scale)) * 4
             return (Double(pixels[index]) / 255, Double(pixels[index + 1]) / 255, Double(pixels[index + 2]) / 255)
         }
-        let circle = CarPlayPlayingBadge.circle(in: image.size)
+        let circle = CarPlayPlayingBadge.circle(in: image.size, displayed: displayed)
         let edge = pixel(CGPoint(x: circle.midX - circle.width * 0.38, y: circle.midY))
         let centre = pixel(CGPoint(x: circle.midX, y: circle.midY))
         let isGreen = edge.1 > 0.6 && edge.0 < 0.4 && edge.2 < 0.5
