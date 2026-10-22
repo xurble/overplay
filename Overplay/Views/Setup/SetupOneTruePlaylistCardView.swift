@@ -14,12 +14,12 @@ struct SetupOneTruePlaylistCardView: View {
         SetupCardView {
             VStack(spacing: 20) {
                 Spacer(minLength: 0)
-                Image(systemName: viewModel.hasOneTruePlaylist ? "checkmark.circle.fill" : "star.circle.fill")
+                Image(systemName: symbol)
                     .font(.system(size: 72, weight: .semibold))
-                    .foregroundStyle(viewModel.hasOneTruePlaylist ? .green : .pink)
+                    .foregroundStyle(viewModel.hasChosenOneTruePlaylist ? .green : .pink)
                     .symbolRenderingMode(.hierarchical)
                     .contentTransition(.symbolEffect(.replace))
-                Text(viewModel.hasOneTruePlaylist ? "Overplay Is Ready" : "Your One True Playlist")
+                Text(title)
                     .font(.title.bold())
                     .multilineTextAlignment(.center)
                 Text(detail)
@@ -30,7 +30,7 @@ struct SetupOneTruePlaylistCardView: View {
                 Spacer(minLength: 0)
                 if viewModel.isCreatingOneTruePlaylist {
                     ProgressView("Creating Overplay")
-                } else if !viewModel.hasOneTruePlaylist {
+                } else if !viewModel.hasChosenOneTruePlaylist {
                     actions
                 }
             }
@@ -42,7 +42,21 @@ struct SetupOneTruePlaylistCardView: View {
         }
     }
 
+    private var symbol: String {
+        if viewModel.isOneTruePlaylistRequested { return "iphone.and.arrow.forward" }
+        return viewModel.hasOneTruePlaylist ? "checkmark.circle.fill" : "star.circle.fill"
+    }
+
+    private var title: String {
+        if viewModel.isOneTruePlaylistRequested { return "Finish on iPhone" }
+        return viewModel.hasOneTruePlaylist ? "Overplay Is Ready" : "Your One True Playlist"
+    }
+
     private var detail: String {
+        if viewModel.isOneTruePlaylistRequested {
+            let songs = viewModel.copiedFrom.map { "with the songs from \($0)" } ?? "empty"
+            return "A Mac can't create Apple Music playlists. The next time you open Overplay on your iPhone or iPad, it makes the Overplay playlist, \(songs)."
+        }
         if viewModel.hasOneTruePlaylist {
             if let source = viewModel.copiedFrom {
                 return "Overplay is a new Apple Music playlist with the songs from \(source). \(source) itself is unchanged."

@@ -32,6 +32,14 @@ struct AppRouter: View {
                 SetupView {
                     startupViewModel.finishSetup(dependencies: startupDependencies)
                 }
+            } else if startupViewModel.isRestoringFromCloud {
+                ContentUnavailableView {
+                    Label("Restoring your library", systemImage: "icloud.and.arrow.down")
+                } description: {
+                    Text("Your Overplay library is on its way from iCloud. This can take a few minutes on a new device.")
+                } actions: {
+                    ProgressView()
+                }
             } else if let error = startupViewModel.libraryPreparationError {
                 ContentUnavailableView {
                     Label("Waiting for your library", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
@@ -127,8 +135,7 @@ struct AppRouter: View {
         }
         .onChange(of: runtime.libraryRestoration.importRevision) { _, _ in
             // Setup creates its own library; a late import is met when it finishes.
-            if authorizationService.readiness.isReady, !startupViewModel.hasStartedAuthorizedServices,
-               !startupViewModel.isSettingUp {
+            if authorizationService.readiness.isReady, !startupViewModel.hasStartedAuthorizedServices {
                 startupViewModel.retryLibraryPreparation(dependencies: startupDependencies)
             }
         }

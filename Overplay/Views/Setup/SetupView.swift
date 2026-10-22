@@ -33,7 +33,22 @@ struct SetupView: View {
         .frame(maxWidth: 560)
         .frame(maxWidth: .infinity)
         .background(Color(.systemGroupedBackground))
-        .task { await viewModel.loadPlaylists(dependencies: dependencies) }
+        .task {
+            #if DEBUG
+            // The first-run build's store is local, so show what the iCloud
+            // check would have found for this account.
+            if AppPersistence.isFirstRunBuild, let identifier = CloudLibraryProbe.entitledContainerIdentifier {
+                let state = await CloudLibraryProbe.check(containerIdentifier: identifier)
+                StatusToast.shared.show("iCloud library check: \(state)")
+            }
+            #endif
+            viewModel.restoreProgress(context: modelContext)
+            await viewModel.loadPlaylists(dependencies: dependencies)
+        }
+        // Startup restores a library that arrived from iCloud meanwhile.
+        .onChange(of: viewModel.foundExistingLibrary) { _, found in
+            if found { onFinish() }
+        }
         .onChange(of: viewModel.message) { _, message in
             guard let message else { return }
             StatusToast.shared.show(message)

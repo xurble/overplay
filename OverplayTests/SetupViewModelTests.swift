@@ -147,4 +147,65 @@ struct SetupViewModelTests {
         #expect(model.isDecided(.triage))
         #expect(model.reachablePages == SetupPage.allCases)
     }
+
+    @Test("on a Mac the One True Playlist is asked of an iPhone, and that answers the card")
+    func macRequestsTheOneTruePlaylist() async throws {
+        var harness = try await harness()
+        harness.dependencies.canCreatePlaylists = { false }
+        let context = harness.container.mainContext
+        let model = SetupViewModel()
+        await model.createOneTruePlaylist(copying: AppleMusicPlaylist(id: "p.favourites", name: "Favourites"),
+                                          context: context, dependencies: harness.dependencies)
+
+        #expect(harness.created.isEmpty)
+        #expect(model.isOneTruePlaylistRequested && !model.hasOneTruePlaylist)
+        #expect(model.isDecided(.oneTruePlaylist))
+        let settings = try #require(try context.fetch(FetchDescriptor<OverplaySettings>()).first)
+        #expect(settings.pendingOneTruePlaylistRequestedAt != nil)
+        #expect(settings.pendingOneTruePlaylistSourceID == "p.favourites")
+        #expect(settings.selectedPlaylistID == nil)
+    }
+
+    @Test("a setup screen rebuilt mid-setup picks up its choices and never makes a second playlist")
+    func rebuiltScreenKeepsItsChoices() async throws {
+        let harness = try await harness()
+        let context = harness.container.mainContext
+        let first = SetupViewModel()
+        await first.createOneTruePlaylist(copying: nil, context: context, dependencies: harness.dependencies)
+        first.setTriageSource(AppleMusicPlaylist(id: "p.tiktok", name: "TikTok Songs"), isOn: true,
+                              context: context, dependencies: harness.dependencies)
+
+        let rebuilt = SetupViewModel()
+        rebuilt.restoreProgress(context: context)
+        #expect(rebuilt.oneTruePlaylistID == "p.overplay")
+        #expect(rebuilt.triageSourceIDs == ["p.tiktok"])
+        #expect(rebuilt.reachablePages == SetupPage.allCases)
+
+        // Even a screen that has not looked yet checks the store first.
+        let unaware = SetupViewModel()
+        await unaware.createOneTruePlaylist(copying: nil, context: context, dependencies: harness.dependencies)
+        #expect(harness.created.count == 1)
+        #expect(unaware.hasOneTruePlaylist)
+    }
+
+    @Test("a library that arrives from iCloud during setup ends setup instead of being replaced")
+    func arrivingLibraryEndsSetup() async throws {
+        let harness = try await harness()
+        let context = harness.container.mainContext
+        let arrived = OverplaySettings(selectedPlaylistID: "p.real", selectedPlaylistName: "Real")
+        context.insert(arrived)
+        try context.save()
+
+        let model = SetupViewModel()
+        await model.createOneTruePlaylist(copying: nil, context: context, dependencies: harness.dependencies)
+        #expect(model.foundExistingLibrary)
+        #expect(harness.created.isEmpty)
+        #expect(arrived.selectedPlaylistID == "p.real")
+
+        let triage = SetupViewModel()
+        triage.setTriageSource(AppleMusicPlaylist(id: "p.tiktok", name: "TikTok Songs"), isOn: true,
+                               context: context, dependencies: harness.dependencies)
+        #expect(triage.foundExistingLibrary)
+        #expect(try PlaylistRepository.playlist(musicPlaylistID: "p.tiktok", in: context) == nil)
+    }
 }

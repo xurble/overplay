@@ -157,4 +157,88 @@ struct LibraryRestorationTests {
         #expect(!container.mainContext.hasChanges)
         #expect(try LibraryRestorationService.isEmpty(in: container.mainContext))
     }
+
+    @Test("iCloud with no library goes to setup at once, before any import")
+    func emptyCloudGoesStraightToSetup() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let service = LibraryRestorationService(defaults: defaults())
+        var checks = 0
+        var waits = 0
+        await #expect(throws: LibraryRestorationService.RestorationError.setupNeeded) {
+            try await service.prepare(in: container.mainContext, cloudEnabled: true, hasLegacyStore: false,
+                                      locallyRebuiltID: nil, attempts: 3, wait: { waits += 1 },
+                                      checkCloudLibrary: { checks += 1; return .empty })
+        }
+        #expect(checks == 1 && waits == 0)
+        #expect(service.canCreateLibrary)
+    }
+
+    @Test("a library in iCloud is restored, however long it takes, and never offers setup")
+    func libraryInCloudNeverOffersSetup() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let service = LibraryRestorationService(defaults: defaults())
+        var checks = 0
+        var waits = 0
+        func prepare() async throws {
+            try await service.prepare(in: container.mainContext, cloudEnabled: true, hasLegacyStore: false,
+                                      locallyRebuiltID: nil, attempts: 3, wait: { waits += 1 },
+                                      checkCloudLibrary: { checks += 1; return .exists })
+        }
+        // Before any import: no 30-second wait, no Retry.
+        await #expect(throws: LibraryRestorationService.RestorationError.restoringFromCloud) { try await prepare() }
+        #expect(waits == 0)
+        // An import that delivered nothing yet still does not make it a first run.
+        service.cloudImportFinished(error: nil)
+        await #expect(throws: LibraryRestorationService.RestorationError.restoringFromCloud) { try await prepare() }
+        #expect(!service.canCreateLibrary)
+        #expect(checks == 1)
+        #expect(throws: LibraryRestorationService.RestorationError.existingLibrary) {
+            try service.createLibrary(in: container.mainContext, hasLegacyStore: false)
+        }
+        // The library arrives.
+        _ = try seed(container.mainContext)
+        try await prepare()
+        #expect(service.isReady)
+    }
+
+    @Test("an unanswered iCloud check is asked again and falls back to waiting for an import")
+    func unansweredCheckFallsBackToImports() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let service = LibraryRestorationService(defaults: defaults())
+        var checks = 0
+        func prepare() async throws {
+            try await service.prepare(in: container.mainContext, cloudEnabled: true, hasLegacyStore: false,
+                                      locallyRebuiltID: nil, attempts: 1,
+                                      checkCloudLibrary: { checks += 1; return .unknown })
+        }
+        await #expect(throws: LibraryRestorationService.RestorationError.waitingForCloud) { try await prepare() }
+        service.cloudImportFinished(error: nil)
+        await #expect(throws: LibraryRestorationService.RestorationError.setupNeeded) { try await prepare() }
+        #expect(checks == 2)
+    }
+
+    @Test("a library waiting for its One True Playlist from an iPhone is restored")
+    func libraryWithARequestedOneTruePlaylistIsRestored() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let settings = OverplaySettings()
+        settings.pendingOneTruePlaylistRequestedAt = .now
+        context.insert(settings)
+        context.insert(PlaylistRecord(musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+                                      name: "Triage", role: .triageBucket, writePolicy: .incomingOnly))
+        try context.save()
+        let service = LibraryRestorationService(defaults: defaults())
+        service.cloudImportFinished(error: nil)
+        try await service.prepare(in: context, cloudEnabled: true, hasLegacyStore: false, locallyRebuiltID: nil, attempts: 1)
+        #expect(service.isReady)
+    }
+
+    @Test("listen history and Recents alone make a store non-empty")
+    func listenHistoryAndRecentsAreNotEmpty() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        context.insert(ListenEvent(trackID: UUID(), kind: .playthrough, sessionID: "s", deviceID: "d", source: .playback))
+        try context.save()
+        #expect(try !LibraryRestorationService.isEmpty(in: context))
+    }
 }

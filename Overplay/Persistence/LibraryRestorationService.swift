@@ -11,8 +11,12 @@ final class LibraryRestorationService {
         case waitingForCloud, incompleteLibrary, cloud(String), existingLibrary
         /// Nothing to restore: the store is empty and may start a new library.
         case setupNeeded
+        /// iCloud holds a library that has not arrived yet: keep waiting.
+        case restoringFromCloud
         var errorDescription: String? {
             switch self {
+            case .restoringFromCloud:
+                "Your library is on its way from iCloud."
             case .setupNeeded:
                 "Overplay has no library yet."
             case .waitingForCloud:
@@ -32,6 +36,9 @@ final class LibraryRestorationService {
     private(set) var cloudError: String?
     private(set) var importRevision = 0
     private(set) var canCreateLibrary = false
+    /// What iCloud said about this account's library, asked once the store
+    /// is found empty.
+    private(set) var cloudLibrary = CloudLibraryState.unknown
     @ObservationIgnored private let defaults: UserDefaults
     private static let receiptKey = "overplay.v2.restoredSettingsID"
 
@@ -71,6 +78,8 @@ final class LibraryRestorationService {
             && context.fetchCount(FetchDescriptor<PlaylistItemRecord>()) == 0
             && context.fetchCount(FetchDescriptor<HistoryEvent>()) == 0
             && context.fetchCount(FetchDescriptor<ApplePlayCountRecord>()) == 0
+            && context.fetchCount(FetchDescriptor<ListenEvent>()) == 0
+            && context.fetchCount(FetchDescriptor<RecentCollectionRecord>()) == 0
     }
 
     func prepare(
@@ -79,9 +88,19 @@ final class LibraryRestorationService {
         hasLegacyStore: Bool = LibraryRestorationService.hasLegacyStore,
         locallyRebuiltID: UUID? = LibraryRestorationService.locallyRebuiltID,
         attempts: Int = 60,
-        wait: () async throws -> Void = { try await Task.sleep(for: .milliseconds(500)) }
+        wait: () async throws -> Void = { try await Task.sleep(for: .milliseconds(500)) },
+        checkCloudLibrary: () async -> CloudLibraryState = { .unknown }
     ) async throws {
         if isReady { return }
+        // An empty store on a mirrored device: ask iCloud whether a library
+        // exists, rather than inferring a first run from what has arrived.
+        if cloudEnabled, cloudLibrary == .unknown, !hasLegacyStore, cloudError == nil {
+            let read = ModelContext(context.container)
+            read.autosaveEnabled = false
+            if try Self.isEmpty(in: read) {
+                cloudLibrary = await checkCloudLibrary()
+            }
+        }
         for attempt in 0..<max(1, attempts) {
             try Task.checkCancellation()
             // A fresh context sees later cloud deliveries without retaining an
@@ -91,18 +110,24 @@ final class LibraryRestorationService {
             if let settings = try Self.restoredSettings(in: read) {
                 let acceptedLocally = defaults.string(forKey: Self.receiptKey) == settings.id.uuidString
                 let builtLocally = locallyRebuiltID != nil && settings.completedRebuildID == locallyRebuiltID
-                if acceptedLocally || builtLocally || (hasImported && cloudError == nil && settings.selectedPlaylistID != nil) || !cloudEnabled {
+                if acceptedLocally || builtLocally || (hasImported && cloudError == nil && (settings.selectedPlaylistID != nil || settings.pendingOneTruePlaylistRequestedAt != nil)) || !cloudEnabled {
                     accept(settings)
                     return
                 }
             }
-            canCreateLibrary = try !hasLegacyStore && (hasImported || !cloudEnabled)
+            // iCloud said it has nothing, or (unanswered) an import finished
+            // and delivered nothing. A library iCloud holds is never replaced.
+            let mayStart = !cloudEnabled || cloudLibrary == .empty || (cloudLibrary == .unknown && hasImported)
+            canCreateLibrary = try !hasLegacyStore && mayStart
                 && cloudError == nil && (try Self.isEmpty(in: read))
             if let cloudError { throw RestorationError.cloud(cloudError) }
             // Nothing will arrive to wait for: go straight to setup.
             if canCreateLibrary { throw RestorationError.setupNeeded }
+            // A library is coming: imports retry, however long it takes.
+            if cloudLibrary == .exists && !hasImported { throw RestorationError.restoringFromCloud }
             if attempt + 1 < attempts { try await wait() }
         }
+        if cloudLibrary == .exists { throw RestorationError.restoringFromCloud }
         throw hasImported ? RestorationError.incompleteLibrary : RestorationError.waitingForCloud
     }
 
@@ -137,6 +162,8 @@ final class LibraryRestorationService {
     /// Only the device which performed the explicit cutover has this file.
     /// A cloud receipt alone cannot prove that this device restored its graph.
     static var locallyRebuiltID: UUID? {
+        // The first-run build's empty store is never the rebuilt library.
+        guard !AppPersistence.isFirstRunBuild else { return nil }
         let urls = [LibraryRebuildService.configurationURL,
                     URL.documentsDirectory.appendingPathComponent("overplay-library-rebuild-v2.completed.json")]
         return urls.lazy.compactMap { url -> UUID? in

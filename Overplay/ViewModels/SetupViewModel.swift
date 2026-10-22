@@ -14,6 +14,8 @@ final class SetupViewModel {
         var createManagedOneTruePlaylist: (_ name: String, _ sourcePlaylistID: String?, _ context: ModelContext) async throws -> PlaylistRecord
         var reconcileSelection: (_ playlist: PlaylistRecord, _ context: ModelContext) -> Void
         var syncPlaylist: (_ playlist: PlaylistRecord, _ context: ModelContext) async throws -> Void
+        /// MusicKit cannot create playlists on a Mac.
+        var canCreatePlaylists: () -> Bool = { !ProcessInfo.processInfo.isMacCatalystApp }
 
         static func live(runtime: AppRuntime, playbackController: PlaybackController) -> Dependencies {
             Dependencies { context in
@@ -45,12 +47,19 @@ final class SetupViewModel {
     /// What the One True Playlist was copied from; nil when it started empty.
     private(set) var copiedFrom: String?
     private(set) var oneTruePlaylistID: String?
+    /// On a Mac: an iPhone or iPad will make the One True Playlist (`SETUP-002`).
+    private(set) var isOneTruePlaylistRequested = false
+    /// A library arrived from iCloud while setup was open: setup ends and
+    /// startup restores it.
+    private(set) var foundExistingLibrary = false
     private(set) var triageSourceIDs = Set<String>()
     /// The person chose to add Triage sources later.
     private(set) var skipsTriage = false
     var message: String?
 
     var hasOneTruePlaylist: Bool { oneTruePlaylistID != nil }
+    /// The One True Playlist card has its answer, made or asked for.
+    var hasChosenOneTruePlaylist: Bool { hasOneTruePlaylist || isOneTruePlaylistRequested }
     /// Triage has sources, or the person chose to add them later.
     var hasChosenTriage: Bool { skipsTriage || !triageSourceIDs.isEmpty }
 
@@ -60,7 +69,7 @@ final class SetupViewModel {
     /// Triage cards each need a choice.
     func isDecided(_ page: SetupPage) -> Bool {
         switch page {
-        case .oneTruePlaylist: hasOneTruePlaylist
+        case .oneTruePlaylist: hasChosenOneTruePlaylist
         case .triage: hasChosenTriage
         default: true
         }
@@ -95,6 +104,21 @@ final class SetupViewModel {
         return suggestedSourceNames.contains { name.contains($0) }
     }
 
+    /// Picks up what an earlier setup screen already chose, from the store,
+    /// so a screen rebuilt mid-setup never makes a second playlist.
+    func restoreProgress(context: ModelContext) {
+        guard let settings = try? context.fetch(FetchDescriptor<OverplaySettings>()).first else { return }
+        if let selected = settings.selectedPlaylistID {
+            oneTruePlaylistID = selected
+        } else if settings.pendingOneTruePlaylistRequestedAt != nil {
+            isOneTruePlaylistRequested = true
+            copiedFrom = settings.pendingOneTruePlaylistSourceName
+        }
+        if let sources = try? PlaylistRepository.triageSources(in: context) {
+            triageSourceIDs = Set(sources.map(\.musicPlaylistID))
+        }
+    }
+
     func loadPlaylists(dependencies: Dependencies) async {
         guard playlists.isEmpty, !isLoading else { return }
         isLoading = true
@@ -113,11 +137,20 @@ final class SetupViewModel {
         context: ModelContext,
         dependencies: Dependencies
     ) async {
-        guard !hasOneTruePlaylist, !isCreatingOneTruePlaylist else { return }
+        guard !hasChosenOneTruePlaylist, !isCreatingOneTruePlaylist else { return }
         isCreatingOneTruePlaylist = true
         defer { isCreatingOneTruePlaylist = false }
         do {
             try dependencies.createLibrary(context)
+            // Never replace a One True Playlist the store already has.
+            restoreProgress(context: context)
+            guard !hasChosenOneTruePlaylist else { return }
+            guard dependencies.canCreatePlaylists() else {
+                try PendingOneTruePlaylistService.request(copying: source, in: context)
+                isOneTruePlaylistRequested = true
+                copiedFrom = source?.name
+                return
+            }
             let playlist = try await dependencies.createManagedOneTruePlaylist(Self.oneTruePlaylistName, source?.id, context)
             try SettingsRepository.selectPlaylist(
                 AppleMusicPlaylist(id: playlist.musicPlaylistID, name: playlist.name, trackCount: source?.trackCount ?? 0),
@@ -127,6 +160,8 @@ final class SetupViewModel {
             dependencies.reconcileSelection(playlist, context)
             oneTruePlaylistID = playlist.musicPlaylistID
             copiedFrom = source?.name
+        } catch LibraryRestorationService.RestorationError.existingLibrary {
+            foundExistingLibrary = true
         } catch {
             message = UserFacingError.message(for: error)
         }
@@ -143,6 +178,8 @@ final class SetupViewModel {
                 try PlaylistRepository.removeTriageSource(record, in: context)
                 triageSourceIDs.remove(playlist.id)
             }
+        } catch LibraryRestorationService.RestorationError.existingLibrary {
+            foundExistingLibrary = true
         } catch {
             message = UserFacingError.message(for: error)
         }
