@@ -4,7 +4,7 @@ import SwiftData
 enum DatabaseResetService {
     @MainActor
     @discardableResult
-    static func nukeDatabase(in context: ModelContext, defaults: UserDefaults = .standard) throws -> OverplaySettings {
+    static func nukeDatabase(in context: ModelContext, defaults: UserDefaults = AppPersistence.libraryDefaults) throws -> OverplaySettings {
         try deleteAllRecords(in: context)
         try context.save()
 

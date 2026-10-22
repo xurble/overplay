@@ -9,7 +9,8 @@ struct AppRouter: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
-    @AppStorage("overplay.hasPresentedAuthorizedUI") private var hasPresentedAuthorizedUI = false
+    @AppStorage("overplay.hasPresentedAuthorizedUI", store: AppPersistence.libraryDefaults)
+    private var hasPresentedAuthorizedUI = false
 
     @Query(sort: \OverplaySettings.createdAt) private var settingsRecords: [OverplaySettings]
     @State private var showingNewLibraryConfirmation = false

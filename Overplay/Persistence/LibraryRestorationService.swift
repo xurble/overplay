@@ -31,7 +31,7 @@ final class LibraryRestorationService {
     @ObservationIgnored private let defaults: UserDefaults
     private static let receiptKey = "overplay.v2.restoredSettingsID"
 
-    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+    init(defaults: UserDefaults = AppPersistence.libraryDefaults) { self.defaults = defaults }
 
     func cloudImportFinished(error: String?) {
         cloudError = error
@@ -113,7 +113,7 @@ final class LibraryRestorationService {
         accept(settings)
     }
 
-    static func recordLocalConfiguration(_ settings: OverplaySettings, defaults: UserDefaults = .standard) {
+    static func recordLocalConfiguration(_ settings: OverplaySettings, defaults: UserDefaults = AppPersistence.libraryDefaults) {
         defaults.set(settings.id.uuidString, forKey: receiptKey)
     }
 
@@ -123,8 +123,9 @@ final class LibraryRestorationService {
         isReady = true
     }
 
+    /// A first-run build's own store is never the legacy library's successor.
     static var hasLegacyStore: Bool {
-        FileManager.default.fileExists(atPath: URL.applicationSupportDirectory.appendingPathComponent("default.store").path)
+        !AppPersistence.isFirstRunBuild && FileManager.default.fileExists(atPath: URL.applicationSupportDirectory.appendingPathComponent("default.store").path)
     }
 
     /// Only the device which performed the explicit cutover has this file.
