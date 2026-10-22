@@ -36,16 +36,23 @@ struct SetupTriageCardView: View {
     private var playlistList: some View {
         List {
             if !viewModel.suggestedSources.isEmpty {
-                Section("Suggested") {
+                Section {
                     ForEach(viewModel.suggestedSources) { row(for: $0) }
+                } header: {
+                    Label("Suggested", systemImage: "sparkles")
                 }
             }
-            Section(viewModel.suggestedSources.isEmpty ? "" : "Your Playlists") {
-                ForEach(viewModel.otherSources) { row(for: $0) }
+            if !viewModel.otherSources.isEmpty {
+                Section {
+                    ForEach(viewModel.otherSources) { row(for: $0) }
+                } header: {
+                    if !viewModel.suggestedSources.isEmpty { Text("Your Playlists") }
+                }
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .tint(.teal)
         .overlay {
             if viewModel.isLoading {
                 ProgressView("Loading playlists")
@@ -59,20 +66,21 @@ struct SetupTriageCardView: View {
     private func row(for playlist: AppleMusicPlaylist) -> some View {
         let isOn = viewModel.triageSourceIDs.contains(playlist.id)
         return Button {
-            viewModel.setTriageSource(playlist, isOn: !isOn, context: modelContext, dependencies: dependencies)
-        } label: {
-            HStack {
-                SetupPlaylistRowView(playlist: playlist)
-                Spacer()
-                Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
-                    .font(.title2)
-                    .foregroundStyle(isOn ? .teal : .secondary)
-                    .contentTransition(.symbolEffect(.replace))
+            withAnimation(.smooth(duration: 0.2)) {
+                viewModel.setTriageSource(playlist, isOn: !isOn, context: modelContext, dependencies: dependencies)
             }
-            .contentShape(.rect)
+        } label: {
+            SetupPlaylistRowView(playlist: playlist, details: viewModel.playlistDetails[playlist.id], isSelected: isOn)
+                .contentShape(.rect)
         }
-        .tint(.primary)
-        .listRowBackground(Color.clear)
+        .buttonStyle(.plain)
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 4, leading: 10, bottom: 4, trailing: 12))
+        .listRowBackground(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(isOn ? Color.teal.opacity(0.16) : .clear)
+                .padding(.horizontal, 2)
+        )
         .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 }

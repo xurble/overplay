@@ -36,7 +36,7 @@ struct SetupOneTruePlaylistCardView: View {
             }
         }
         .sheet(isPresented: $isChoosingSource) {
-            SetupPlaylistPickerView(playlists: viewModel.playlists, isLoading: viewModel.isLoading) { source in
+            SetupPlaylistPickerView(playlists: viewModel.playlists, details: viewModel.playlistDetails, isLoading: viewModel.isLoading) { source in
                 Task { await viewModel.createOneTruePlaylist(copying: source, context: modelContext, dependencies: dependencies) }
             }
         }

@@ -14,6 +14,10 @@ final class SetupViewModel {
         var createManagedOneTruePlaylist: (_ name: String, _ sourcePlaylistID: String?, _ context: ModelContext) async throws -> PlaylistRecord
         var reconcileSelection: (_ playlist: PlaylistRecord, _ context: ModelContext) -> Void
         var syncPlaylist: (_ playlist: PlaylistRecord, _ context: ModelContext) async throws -> Void
+        /// Each library playlist's artwork and curator, by web library ID.
+        var fetchPlaylistDetails: () async throws -> [String: LibraryBrowser.Item] = {
+            Dictionary(try await LibraryBrowser.items(.playlists).map { ($0.libraryID, $0) }) { first, _ in first }
+        }
         /// MusicKit cannot create playlists on a Mac.
         var canCreatePlaylists: () -> Bool = { !ProcessInfo.processInfo.isMacCatalystApp }
 
@@ -42,6 +46,8 @@ final class SetupViewModel {
     static let suggestedSourceNames = ["tiktok", "shazam"]
 
     var playlists: [AppleMusicPlaylist] = []
+    /// Artwork and curator for the rows, when they have arrived.
+    var playlistDetails: [String: LibraryBrowser.Item] = [:]
     var isLoading = false
     var isCreatingOneTruePlaylist = false
     /// What the One True Playlist was copied from; nil when it started empty.
@@ -127,7 +133,11 @@ final class SetupViewModel {
             playlists = try await dependencies.fetchLibraryPlaylists()
         } catch {
             message = UserFacingError.message(for: error)
+            return
         }
+        isLoading = false
+        // Decoration: the rows work without it.
+        playlistDetails = (try? await dependencies.fetchPlaylistDetails()) ?? [:]
     }
 
     /// Creates a managed "Overplay" playlist in Apple Music, empty or with a

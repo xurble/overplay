@@ -3,6 +3,7 @@ import SwiftUI
 /// Chooses the Apple Music playlist whose songs start the One True Playlist.
 struct SetupPlaylistPickerView: View {
     let playlists: [AppleMusicPlaylist]
+    var details: [String: LibraryBrowser.Item] = [:]
     let isLoading: Bool
     let onChoose: (AppleMusicPlaylist) -> Void
 
@@ -11,15 +12,23 @@ struct SetupPlaylistPickerView: View {
 
     var body: some View {
         NavigationStack {
-            List(filtered) { playlist in
-                Button {
-                    dismiss()
-                    onChoose(playlist)
-                } label: {
-                    SetupPlaylistRowView(playlist: playlist)
+            List {
+                Section {
+                    ForEach(filtered) { playlist in
+                        Button {
+                            dismiss()
+                            onChoose(playlist)
+                        } label: {
+                            SetupPlaylistRowView(playlist: playlist, details: details[playlist.id])
+                                .contentShape(.rect)
+                        }
+                        .tint(.primary)
+                    }
+                } footer: {
+                    Text("Overplay copies its songs into a new playlist. The one you choose is left as it is.")
                 }
-                .tint(.primary)
             }
+            .listStyle(.insetGrouped)
             .overlay {
                 if isLoading {
                     ProgressView("Loading playlists")
@@ -44,19 +53,61 @@ struct SetupPlaylistPickerView: View {
     }
 }
 
-/// A library playlist's name and song count.
+/// A library playlist in setup: its artwork, name, and curator or song
+/// count, with a checkmark where it can be chosen.
 struct SetupPlaylistRowView: View {
     let playlist: AppleMusicPlaylist
+    var details: LibraryBrowser.Item?
+    /// Nil where the row is not a toggle.
+    var isSelected: Bool?
+
+    private static let artworkSide: CGFloat = 52
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(playlist.name)
-            if let count = playlist.trackCount {
-                Text(count == 1 ? "1 song" : "\(count) songs")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        HStack(spacing: 14) {
+            artwork
+            VStack(alignment: .leading, spacing: 3) {
+                Text(playlist.name)
+                    .font(.headline)
+                    .lineLimit(1)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 8)
+            if let isSelected {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title2)
+                    .foregroundStyle(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
+                    .contentTransition(.symbolEffect(.replace))
             }
         }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder private var artwork: some View {
+        if let artwork = details?.artwork {
+            LibraryArtworkView(artwork: artwork, side: Self.artworkSide, cornerRadius: 10)
+        } else {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.quaternary)
+                .frame(width: Self.artworkSide, height: Self.artworkSide)
+                .overlay {
+                    Image(systemName: "music.note.list")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+        }
+    }
+
+    private var subtitle: String? {
+        var parts: [String] = []
+        if let curator = details?.subtitle, !curator.isEmpty { parts.append(curator) }
+        if let count = playlist.trackCount { parts.append(count == 1 ? "1 song" : "\(count) songs") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }
 
