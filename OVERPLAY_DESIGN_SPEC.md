@@ -83,6 +83,7 @@ Music's global play count or skip count.
 | `LOC-001` | A retirement or restore survives another device's stale CloudKit write. After each import and at startup, a song's newest `evicted`/`restored` history event re-applies its decision when it is newer than the row's `locationChangedAt`; promotions are left to the next One True Playlist sync. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/TrackLocationRepairTests.swift` |
 | `PLAYLIST-006` | Pre-bucket triage data migrates onto the bucket at startup. The migration is idempotent and keyed on the stored legacy role value, not a local flag. | `Overplay/Persistence/TriageBucketMigrationService.swift`, `OverplayTests/TriageBucketTests.swift` |
 | `PLAYLIST-002` | Initial setup can create a managed playlist, copy an existing playlist into a managed playlist, or link an existing playlist as incoming-only. | `Overplay/ViewModels/PlaylistSelectionViewModel.swift`, `Overplay/Services/PlaylistSyncService.swift` |
+| `SETUP-001` | A new library starts in setup: swipeable cards introduce the features, then the One True Playlist card needs a choice (a new managed "Overplay" playlist, empty or copied from an existing playlist, which is unchanged) and the Triage card needs one (sources, with TikTok and Shazam playlists suggested, or Add Sources Later). Swiping cannot pass an undecided card. The library is created by the first choice or by finishing; finishing syncs the chosen sources. | `Overplay/ViewModels/SetupViewModel.swift`, `Overplay/Views/Setup/`, `OverplayTests/SetupViewModelTests.swift` |
 | `SYNC-001` | Automatic sync starts no sooner than a minute after launch (and 10 seconds after authorization), runs every 30 minutes, skips fresh successful playlists, retries failed playlists, prioritizes the playing and selected playlists, and pauses while a playback failure is active. | `Overplay/Services/PeriodicPlaylistSyncService.swift`, `OverplayTests/PeriodicPlaylistSyncServiceTests.swift` |
 | `SYNC-002` | Sync is idempotent, collapses duplicate identities, preserves history, and leaves remotely missing tracks locally playable unless retired. Sync never mutates the live playback queue. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/PlaylistSyncReconciliationTests.swift` |
 | `MUT-001` | Successful promotion moves the existing item into OTP with its statistics and history; no source copy remains. Retired offers Move to Triage (explicit keep) and Move to One True Playlist. | `Overplay/Services/PlaylistMutationService.swift`, `OverplayTests/PlaylistMutationServiceTests.swift` |
@@ -2149,6 +2150,24 @@ Platform notes:
 - **Planned Mac:** use a compact window-friendly state view with clear system
   settings guidance.
 
+### First-run setup
+
+Purpose: introduce Overplay and set up a new library (`SETUP-001`).
+
+Show, as swipeable glass cards with page dots and a Continue button:
+
+- Welcome, One True Playlist, Triage, Retired, and CarPlay and Siri.
+- One True Playlist: Copy a Playlist (searchable picker) or Start Empty. Both
+  create a new managed Apple Music playlist named Overplay; a copied playlist
+  is left unchanged.
+- Fill Triage: library playlists to tick as sources, TikTok and Shazam
+  playlists first under Suggested, and Add Sources Later.
+- You're Set: Start Listening opens the app.
+
+Continue is disabled, and swiping stops, on the One True Playlist and Triage
+cards until each has its choice. A new playlist is found by its ID, because
+Apple Music's library list can lag it.
+
 ### Playlist management screen
 
 Purpose: manage linked Apple Music playlists.
@@ -3070,10 +3089,13 @@ persisted rebuild UUID. Restoring preferences without the corresponding graph
 must not bypass the gate. An explicit database reset creates the new base
 configuration and records its local origin so it can reopen offline.
 
-A genuinely new installation may explicitly create a library only after a
-successful cloud import has left all V2 entities empty. This action explains
-that an existing library should be restored instead and rechecks emptiness
-immediately before saving. It is unavailable when a legacy store exists.
+A genuinely new installation may create a library only after a successful
+cloud import has left all V2 entities empty (or at once with iCloud off). Such
+a store goes straight to first-run setup (`SETUP-001`) without the 30-second
+wait. Setup's welcome card says that an existing library should be restored
+instead, and creating the library rechecks emptiness immediately before
+saving; a library that arrives from iCloud meanwhile is restored when setup
+finishes. Setup is unavailable when a legacy store exists.
 There is no automatic legacy graph migration, timeout reset, or fallback to
 an empty library on cloud failure. This does not provide distributed locking
 between two devices deliberately creating a new library at the same time.

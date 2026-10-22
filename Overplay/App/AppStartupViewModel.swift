@@ -28,6 +28,9 @@ final class AppStartupViewModel {
     private(set) var hasStartedAuthorizedServices = false
     private(set) var isPreparingLibrary = false
     private(set) var libraryPreparationError: String?
+    /// The store is empty and may start a new library: first-run setup shows
+    /// until the user finishes it, even once setup has created the library.
+    private(set) var isSettingUp = false
     @ObservationIgnored private(set) var authorizedServicesTask: Task<Void, Never>?
 
     func shouldShowPermissionView(
@@ -141,6 +144,11 @@ final class AppStartupViewModel {
         startAuthorizedServices(dependencies: dependencies)
     }
 
+    func finishSetup(dependencies: Dependencies) {
+        isSettingUp = false
+        startAuthorizedServices(dependencies: dependencies)
+    }
+
     private func startAuthorizedServices(dependencies: Dependencies) {
         guard !hasStartedAuthorizedServices else { return }
         hasStartedAuthorizedServices = true
@@ -163,6 +171,12 @@ final class AppStartupViewModel {
                 await dependencies.removeVideoTracks()
                 dependencies.migrateTriageBucket()
                 dependencies.installRemoteCommands()
+            } catch LibraryRestorationService.RestorationError.setupNeeded {
+                guard !Task.isCancelled else { return }
+                isSettingUp = true
+                isPreparingLibrary = false
+                hasStartedAuthorizedServices = false
+                return
             } catch {
                 guard !Task.isCancelled else { return }
                 libraryPreparationError = UserFacingError.message(for: error)

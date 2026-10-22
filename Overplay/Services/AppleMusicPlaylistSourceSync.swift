@@ -43,6 +43,12 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
     }
 
     func canonicalLink(for created: Playlist) async throws -> RemotePlaylistLink {
+        // On iPhone and iPad a new playlist's MusicKit ID is its web library
+        // ID, which a native lookup confirms at once. The library list can lag
+        // a new playlist, so it is only the fallback.
+        if let native = try await playlistFetcher.fetchPlaylist(id: created.id.rawValue), native.id == created.id {
+            return RemotePlaylistLink(id: created.id.rawValue, name: created.name, source: .appleMusic)
+        }
         let links = try await playlistFetcher.fetchLibraryLinks()
         if let exact = links.first(where: { $0.id == created.id.rawValue }) { return exact }
         // A canonical resource resolved through the native endpoint is the

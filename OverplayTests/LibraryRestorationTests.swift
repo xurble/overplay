@@ -133,4 +133,28 @@ struct LibraryRestorationTests {
         #expect(try container.mainContext.fetchCount(FetchDescriptor<PlaylistRecord>()) == 1)
         #expect(throws: (any Error).self) { try service.createLibrary(in: container.mainContext, hasLegacyStore: false) }
     }
+
+    @Test("an empty store that may start a library goes to setup without waiting")
+    func emptyStoreGoesToSetupWithoutWaiting() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        var waits = 0
+        func prepare(_ service: LibraryRestorationService, cloudEnabled: Bool) async throws {
+            try await service.prepare(in: container.mainContext, cloudEnabled: cloudEnabled, hasLegacyStore: false,
+                                      locallyRebuiltID: nil, attempts: 3) { waits += 1 }
+        }
+
+        let local = LibraryRestorationService(defaults: defaults())
+        await #expect(throws: LibraryRestorationService.RestorationError.setupNeeded) { try await prepare(local, cloudEnabled: false) }
+        #expect(waits == 0)
+
+        // With iCloud, an empty store proves nothing until an import finishes.
+        let cloud = LibraryRestorationService(defaults: defaults())
+        await #expect(throws: LibraryRestorationService.RestorationError.waitingForCloud) { try await prepare(cloud, cloudEnabled: true) }
+        #expect(waits == 2)
+        cloud.cloudImportFinished(error: nil)
+        await #expect(throws: LibraryRestorationService.RestorationError.setupNeeded) { try await prepare(cloud, cloudEnabled: true) }
+        #expect(waits == 2)
+        #expect(!container.mainContext.hasChanges)
+        #expect(try LibraryRestorationService.isEmpty(in: container.mainContext))
+    }
 }

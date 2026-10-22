@@ -62,6 +62,19 @@ enum AppPersistence {
         )
     }
 
+    /// A first-run build launched with this argument starts from nothing:
+    /// its store, preferences and playback intent are removed first.
+    static let firstRunResetArgument = "-OverplayFirstRunReset"
+
+    static func resetFirstRunIfRequested() {
+        guard isFirstRunBuild, ProcessInfo.processInfo.arguments.contains(firstRunResetArgument) else { return }
+        for suffix in ["", "-shm", "-wal"] {
+            try? FileManager.default.removeItem(at: URL.applicationSupportDirectory.appendingPathComponent("OverplayFirstRun.store\(suffix)"))
+        }
+        try? FileManager.default.removeItem(at: playbackIntentURL)
+        UserDefaults.standard.removePersistentDomain(forName: "farm.poplar.Overplay.firstRun")
+    }
+
     static var cloudEnabled: Bool {
         #if OVERPLAY_DEVELOPMENT || OVERPLAY_FIRST_RUN || targetEnvironment(simulator)
         false

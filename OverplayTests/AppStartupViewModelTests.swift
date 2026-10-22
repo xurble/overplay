@@ -185,4 +185,39 @@ struct AppStartupViewModelTests {
         #expect(!model.isPreparingLibrary)
     }
 
+
+    @Test("an empty store goes straight to setup, which stays until finished")
+    func emptyStoreShowsSetup() async {
+        let model = AppStartupViewModel()
+        var events: [String] = []
+        var needsSetup = true
+        let dependencies = AppStartupViewModel.Dependencies {
+            events.append("settings")
+        } migrateTriageBucket: {
+        } refreshAuthorization: {
+        } installRemoteCommands: {
+        } mergeDuplicateTrackIdentities: {
+        } restoreLocalPlaybackDisplay: {
+        } startPlaybackMonitoring: {
+            events.append("monitor")
+        } startPeriodicPlaylistSync: {
+        } stopPeriodicPlaylistSync: {
+        } compactHistory: {
+        } prepareLibrary: {
+            if needsSetup { throw LibraryRestorationService.RestorationError.setupNeeded }
+        }
+        await model.bootstrap(isReady: true, dependencies: dependencies)
+        await model.authorizedServicesTask?.value
+        #expect(model.isSettingUp)
+        #expect(model.libraryPreparationError == nil)
+        #expect(!model.isPreparingLibrary)
+        #expect(events.isEmpty)
+
+        // Setup created the library: finishing it runs the usual startup.
+        needsSetup = false
+        model.finishSetup(dependencies: dependencies)
+        #expect(!model.isSettingUp)
+        await model.authorizedServicesTask?.value
+        #expect(events == ["settings", "monitor"])
+    }
 }

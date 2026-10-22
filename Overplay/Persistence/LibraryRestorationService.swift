@@ -7,10 +7,14 @@ import SwiftData
 @MainActor
 @Observable
 final class LibraryRestorationService {
-    enum RestorationError: LocalizedError {
+    enum RestorationError: LocalizedError, Equatable {
         case waitingForCloud, incompleteLibrary, cloud(String), existingLibrary
+        /// Nothing to restore: the store is empty and may start a new library.
+        case setupNeeded
         var errorDescription: String? {
             switch self {
+            case .setupNeeded:
+                "Overplay has no library yet."
             case .waitingForCloud:
                 "Your library has not arrived from iCloud yet. Check iCloud access and keep Overplay open on the device with your library, then retry."
             case .incompleteLibrary:
@@ -95,6 +99,8 @@ final class LibraryRestorationService {
             canCreateLibrary = try !hasLegacyStore && (hasImported || !cloudEnabled)
                 && cloudError == nil && (try Self.isEmpty(in: read))
             if let cloudError { throw RestorationError.cloud(cloudError) }
+            // Nothing will arrive to wait for: go straight to setup.
+            if canCreateLibrary { throw RestorationError.setupNeeded }
             if attempt + 1 < attempts { try await wait() }
         }
         throw hasImported ? RestorationError.incompleteLibrary : RestorationError.waitingForCloud

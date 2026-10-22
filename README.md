@@ -185,8 +185,15 @@ It replaces the installed everyday build but opens an empty local store,
 device untouched. Its restoration receipt, playback intent and resume point
 live apart from the everyday build's, and it ignores a legacy `default.store`.
 Install an ordinary build to return to the everyday library. To run setup
-again, remove the `OverplayFirstRun.store` files from the app's Application
-Support folder.
+again, launch with `-OverplayFirstRunReset`, which deletes only the first-run
+store, receipt and intent:
+
+```sh
+xcrun devicectl device process launch --device <device> --terminate-existing \
+  farm.poplar.Overplay -- -OverplayFirstRunReset
+```
+
+Each setup run creates a real "Overplay" playlist in Apple Music.
 
 ## Player sheet startup regression check
 
