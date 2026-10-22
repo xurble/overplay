@@ -118,10 +118,10 @@ enum SetupPage: Int, CaseIterable, Identifiable {
         switch self {
         case .welcome:
             SetupFeature(symbol: "music.note.list", tint: .pink, title: "Welcome to Overplay",
-                text: "Overplay keeps your favourite music fresh. Listen as you always do: it notices what you play through and what you skip.")
+                text: "Overplay helps you keep your favourite music fresh. You decide what stays: promote the songs you love and retire the ones you're done with, with a tap.")
         case .oneTruePlaylistIntro:
             SetupFeature(symbol: "star.circle.fill", tint: .pink, title: "One True Playlist",
-                text: "Your main playlist, the one you play most. Every song keeps its plays and skips, so you can see what has earned its place.")
+                text: "Your main playlist, the one you play most. Overplay counts every play and skip, so you can see which songs have earned their place.")
         case .triageIntro:
             SetupFeature(symbol: "tray.fill", tint: .teal, title: "Triage",
                 text: "New music lands here from playlists you choose. Promote the songs you love to your One True Playlist and retire the rest.")
