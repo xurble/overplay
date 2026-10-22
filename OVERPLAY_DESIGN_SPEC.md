@@ -2283,10 +2283,16 @@ Platform notes:
 - iPhone should keep Now Playing immersive and touch-first.
 - Compact width (iPhone, a closed iPhone Duo, a narrow iPad window) shows a
   mini player: a glass bar over the bottom of the screen, its top edge a
-  progress line coloured as Now Playing's progress bar. Tapping it or
+  progress line coloured as Now Playing's progress bar. Once the playing
+  track's theme is known, the glass takes its background colour, with the
+  title, artist and controls in the theme's colours. Tapping it or
   swiping it up slides Now Playing up full screen. A downward swipe starting
   anywhere on it, controls and margins included, moves it with the finger and
   closes it past the threshold; a sideways drag (the volume pill) does not.
+  Once a drag is a swipe down, the controls ignore it until the finger
+  lifts, so a swipe that started on a button never presses it. Behind the
+  blurred art is a solid pane of the theme colour, which is all that shows
+  until the art arrives.
   A drag handle at the top, clear of the Dynamic Island, closes it on a tap.
   The system zoom transition was tried and dropped: its swipe down missed
   about half of first attempts and lost to the controls. Regular width shows

@@ -84,6 +84,10 @@ struct FullScreenPlayerView: View {
             isLandscape: screenSize.width > screenSize.height,
             artworkTop: $artworkTop
         )
+        // The card moves with the finger, so a drag that started on a button
+        // ends on it and pressed it. Once the drag is a swipe down, the
+        // controls stop taking it; the swipe is the card's, below.
+        .allowsHitTesting(dragIsDismissal != true)
         .overlay {
             // Centred across the whole screen.
             GeometryReader { proxy in
@@ -94,7 +98,9 @@ struct FullScreenPlayerView: View {
                     )
             }
         }
-        // The margins take the swipe as well as the controls.
+        // The margins take the swipe as well as the controls, and keep
+        // taking it while the controls are switched off.
+        .background { Color.clear.contentShape(.rect) }
         .contentShape(.rect)
         .simultaneousGesture(dismissDrag)
         // Measured inside the full-screen layout: outside it, the size
