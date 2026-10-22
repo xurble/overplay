@@ -31,7 +31,7 @@ struct CarPlayListPresentation: Equatable {
             case symbol(String, tint: UIColor? = nil)
             case track(url: String?, playlistID: String, size: Int = 128)
             case collage(PlaylistCollage, playlistID: String, scope: PlaylistPlaybackScope)
-            /// The art with still equaliser bars over it (`CarPlayPlayingBadge`).
+            /// The art with the now-playing badge over it (`CarPlayPlayingBadge`).
             indirect case playing(Artwork)
         }
         var id: String
@@ -321,9 +321,13 @@ final class CarPlayListRenderer {
     }
 
     /// Every artwork the list shows, in display order: one per standard row
-    /// or card, one per strip tile. What is playing carries the bars.
+    /// or card, one per strip tile. Playing art carries the badge; a playing
+    /// symbol row changes its symbol instead.
     private static func artworkSlots(in rows: some Sequence<Row>) -> [(id: String, artwork: Row.Artwork)] {
-        func slot(_ artwork: Row.Artwork, playing: Bool) -> Row.Artwork { playing ? .playing(artwork) : artwork }
+        func slot(_ artwork: Row.Artwork, playing: Bool) -> Row.Artwork {
+            if case .symbol = artwork { return artwork }
+            return playing ? .playing(artwork) : artwork
+        }
         return rows.flatMap { row -> [(id: String, artwork: Row.Artwork)] in
             switch row.style {
             case .strip(let tiles): tiles.compactMap { tile in tile.artwork.map { (tile.id, slot($0, playing: tile.isPlaying)) } }
@@ -382,47 +386,55 @@ final class CarPlayListRenderer {
             let image = await PlaylistCollageService.shared.image(for: snapshot, playlistID: playlistID, scope: scope)
             return image.map { UIImage(cgImage: $0) }
         case .playing(let artwork):
-            // The renderer draws the bars over whatever this loads.
+            // The renderer draws the badge over whatever this loads.
             return await loadArtwork(artwork)
         }
     }
 }
 
-/// Still equaliser bars over the art of what is playing. In the car, CarPlay
-/// drew no indicator of its own for `isPlaying` rows (2026-10-21), perhaps
-/// because Overplay's audio comes from Apple's music service rather than the
-/// app. Rows keep `isPlaying` in case it does. List images cannot animate, so
-/// these bars are still.
+/// The iPhone's now-playing badge, a white play triangle in a green circle at
+/// the art's bottom-trailing corner. In the car, CarPlay drew no indicator of
+/// its own for `isPlaying` rows (2026-10-21), perhaps because Overplay's audio
+/// comes from Apple's music service rather than the app; rows keep `isPlaying`
+/// in case it does. Symbol rows show playing in the symbol instead, as on the
+/// phone dashboard.
 enum CarPlayPlayingBadge {
-    /// Bar heights as fractions of the tallest, left to right.
-    static let barHeights: [CGFloat] = [0.5, 1, 0.65, 0.85]
+    /// The circle's diameter as a fraction of the art's shorter side: a
+    /// little larger than on the phone, to read at a glance in the car.
+    static let diameter: CGFloat = 0.38
+    /// Kept clear of the corner CarPlay may round off.
+    static let inset: CGFloat = 0.04
+
+    static func circle(in size: CGSize) -> CGRect {
+        let side = min(size.width, size.height)
+        let diameter = side * diameter, inset = side * inset
+        return CGRect(x: size.width - inset - diameter, y: size.height - inset - diameter,
+                      width: diameter, height: diameter)
+    }
 
     static func image(over art: UIImage?) -> UIImage {
         let size = art?.size ?? CPListItem.maximumImageSize
         let format = UIGraphicsImageRendererFormat()
         format.scale = art?.scale ?? CarPlayListSymbolImage.scale
         format.opaque = false
-        return UIGraphicsImageRenderer(size: size, format: format).image { context in
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
             let bounds = CGRect(origin: .zero, size: size)
             if let art {
                 art.draw(in: bounds)
-                UIColor.black.withAlphaComponent(0.45).setFill()
-                context.fill(bounds)
             } else {
                 UIColor.darkGray.setFill()
                 UIBezierPath(roundedRect: bounds, cornerRadius: min(size.width, size.height) * 0.15).fill()
             }
-            // Four bars across the middle 40%, bottoms level, as Music draws them.
-            let side = min(size.width, size.height) * 0.4
-            let gap = side / CGFloat(barHeights.count * 3 - 1)
-            let width = gap * 2
-            let origin = CGPoint(x: bounds.midX - side / 2, y: bounds.midY + side / 2)
-            UIColor.white.setFill()
-            for (index, height) in barHeights.enumerated() {
-                let bar = CGRect(x: origin.x + CGFloat(index) * (width + gap), y: origin.y - side * height,
-                                 width: width, height: side * height)
-                UIBezierPath(roundedRect: bar, cornerRadius: width / 2).fill()
-            }
+            let circle = circle(in: size)
+            UIColor.systemGreen.resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark)).setFill()
+            UIBezierPath(ovalIn: circle).fill()
+            guard let play = UIImage(systemName: "play.fill")?.withTintColor(.white, renderingMode: .alwaysOriginal),
+                  play.size.width > 0, play.size.height > 0 else { return }
+            let fit = circle.width * 0.48 / max(play.size.width, play.size.height)
+            let glyph = CGSize(width: play.size.width * fit, height: play.size.height * fit)
+            // Nudged right: a triangle centred by its box looks left of centre.
+            play.draw(in: CGRect(x: circle.midX - glyph.width / 2 + circle.width * 0.04,
+                                 y: circle.midY - glyph.height / 2, width: glyph.width, height: glyph.height))
         }
     }
 }

@@ -442,10 +442,12 @@ Artwork loading must not block playlist rendering or playback. Store actual
 for expanded artwork and recognition (longest edge, preserving aspect ratio).
 The expanded player shows available 128 artwork while 512 loads. Lists may use
 cached images and load missing artwork while scrolling. In CarPlay, what is
-playing (a track row, a playlist row or card, a Recent Deep Dives tile) shows
-still equaliser bars over its art. CarPlay drew no indicator of its own for
-Overplay's playing rows in the car, and list images cannot animate. Rows still
-set CarPlay's leading playing indicator, in case it appears.
+playing shows the phone's marker: a white play triangle in a green circle at
+the bottom-trailing corner of a track row's, playlist card's or Recent Deep
+Dives tile's art, a green Triage inbox, and a green play symbol for Retired.
+CarPlay drew no indicator of its own for Overplay's playing rows in the car,
+and list images cannot animate. Rows still set CarPlay's leading playing
+indicator, in case it appears.
 
 Decoded images share a 24 MiB cost budget across playlists. Source downloads and
 image processing are bounded and coalesced. Artwork failures cool down for 60

@@ -224,8 +224,8 @@ final class CarPlayCoordinator: NSObject {
         do {
             let summaries = try playlistSummaries()
             // The One True Playlist leads as a large artwork card, as on the phone.
-            // Cards have no CarPlay playing indicator: the art carries the bars
-            // and the subtitle says so.
+            // Cards have no CarPlay playing indicator: the art carries the
+            // phone's now-playing badge and the subtitle says so.
             if let main = summaries.first(where: { $0.role == .oneTruePlaylist }) {
                 var mainRow = row(main)
                 mainRow.style = .card
@@ -237,14 +237,17 @@ final class CarPlayCoordinator: NSObject {
             if let triage = summaries.first(where: { $0.role == .triageBucket && $0.playbackScope == .active }) {
                 var triageRow = row(triage)
                 triageRow.detail = triage.triageDetail(sourceCount: triageSourceCount())
-                // The inbox icon, not artwork, coloured as on the phone dashboard.
-                triageRow.artwork = .symbol("tray.fill", tint: .systemTeal)
+                // The inbox icon, not artwork, coloured as on the phone dashboard:
+                // green while Triage plays.
+                triageRow.artwork = .symbol("tray.fill", tint: triageRow.isPlaying ? .systemGreen : .systemTeal)
                 triageRows.append(triageRow)
             }
             if let retired = summaries.first(where: { $0.playbackScope == .retired }) {
                 var retiredRow = row(retired)
                 retiredRow.detail = nil
-                retiredRow.artwork = .symbol("archivebox.fill", tint: .systemGray)
+                // As on the phone dashboard: a green play symbol while Retired plays.
+                retiredRow.artwork = retiredRow.isPlaying
+                    ? .symbol("play.fill", tint: .systemGreen) : .symbol("archivebox.fill", tint: .systemGray)
                 triageRows.append(retiredRow)
             }
             if !triageRows.isEmpty { sections.append(Section(id: "triage", rows: triageRows)) }

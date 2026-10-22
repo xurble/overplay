@@ -199,8 +199,8 @@ struct CarPlayListRendererTests {
         #expect(item.playingIndicatorLocation == .leading)
     }
 
-    @Test("what is playing carries equaliser bars over its art, on rows, cards and tiles")
-    func playingArtCarriesBars() async throws {
+    @Test("playing art carries the phone's green play badge, on rows, cards and tiles; symbols do not")
+    func playingArtCarriesTheBadge() async throws {
         var loaded: [CarPlayListPresentation.Row.Artwork] = []
         let renderer = CarPlayListRenderer(loadArtwork: { artwork in
             loaded.append(artwork)
@@ -212,12 +212,14 @@ struct CarPlayListRendererTests {
         defer { renderer.stop() }
         let template = CPListTemplate(title: "Tracks", sections: [])
         typealias Row = CarPlayListPresentation.Row
+        func art(_ name: String) -> Row.Artwork { .track(url: name, playlistID: "p") }
         func state(playing: String?) -> CarPlayListPresentation {
             CarPlayListPresentation(sections: [.init(id: "list", rows: [
-                Row(id: "card", title: "Card", isPlaying: playing == "card", artwork: .symbol("card"), style: .card),
-                Row(id: "row", title: "Row", isPlaying: playing == "row", artwork: .symbol("row")),
+                Row(id: "card", title: "Card", isPlaying: playing == "card", artwork: art("card"), style: .card),
+                Row(id: "row", title: "Row", isPlaying: playing == "row", artwork: art("row")),
+                Row(id: "symbol", title: "Triage", isPlaying: playing == "symbol", artwork: .symbol("tray.fill")),
                 Row(id: "strip", title: "Strip", style: .strip([
-                    .init(id: "tile", title: "Tile", artwork: .symbol("tile"), isPlaying: playing == "tile"),
+                    .init(id: "tile", title: "Tile", artwork: art("tile"), isPlaying: playing == "tile"),
                 ])),
             ])])
         }
@@ -226,43 +228,47 @@ struct CarPlayListRendererTests {
             while loaded.count < loads, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
             try? await Task.sleep(for: .milliseconds(50))
         }
-        func barred(_ image: UIImage?) throws -> Bool {
-            try centreBrightness(of: #require(image)) > 0.8
-        }
+        func badged(_ image: UIImage?) throws -> Bool { try hasPlayingBadge(try #require(image)) }
 
         renderer.update(state(playing: "row"), on: template, actions: [:])
-        await settle(loads: 3)
-        // The loader is asked for the art itself; the bars are drawn over it.
-        #expect(Set(loaded.map { "\($0)" }) == Set([Row.Artwork.symbol("card"), .symbol("row"), .symbol("tile")].map { "\($0)" }))
+        await settle(loads: 4)
+        // The loader is asked for the art itself; the badge is drawn over it.
+        #expect(loaded.map { "\($0)" }.sorted() == [art("card"), art("row"), .symbol("tray.fill"), art("tile")].map { "\($0)" }.sorted())
         let item = try #require(renderer.items["row"])
-        #expect(try barred(item.image))
+        #expect(try badged(item.image))
 
+        // Only the art losing and gaining the badge reloads.
         loaded.removeAll()
-        // Only the art leaving and gaining the bars reloads.
         renderer.update(state(playing: "tile"), on: template, actions: [:])
         await settle(loads: 2)
         #expect(loaded.count == 2)
-        #expect(try !barred(item.image))
+        #expect(try !badged(item.image))
         let strip = try #require(renderer.imageRows["strip"])
-        #expect(try barred(strip.elements.first?.image))
+        #expect(try badged(strip.elements.first?.image))
 
         loaded.removeAll()
         renderer.update(state(playing: "card"), on: template, actions: [:])
         await settle(loads: 2)
         let card = try #require(renderer.imageRows["card"])
-        #expect(try barred(card.elements.first?.image))
-        #expect(try !barred(renderer.imageRows["strip"]?.elements.first?.image))
+        #expect(try badged(card.elements.first?.image))
+        #expect(try !badged(renderer.imageRows["strip"]?.elements.first?.image))
+
+        // A symbol row shows playing in its symbol, chosen by the list.
+        loaded.removeAll()
+        renderer.update(state(playing: "symbol"), on: template, actions: [:])
+        await settle(loads: 1)
+        #expect(loaded.map { "\($0)" } == ["\(art("card"))"])
     }
 
-    @Test("bars with no art still show what is playing")
-    func barsWithoutArt() throws {
+    @Test("a badge with no art still shows what is playing")
+    func badgeWithoutArt() throws {
         let image = CarPlayPlayingBadge.image(over: nil)
         #expect(image.size == CPListItem.maximumImageSize)
-        #expect(try centreBrightness(of: image) > 0.8)
+        #expect(try hasPlayingBadge(image))
     }
 
-    /// Mean brightness of the bottom-centre patch, where the tallest bars stand.
-    private func centreBrightness(of image: UIImage) throws -> Double {
+    /// A green circle at the bottom-trailing corner with white at its centre.
+    private func hasPlayingBadge(_ image: UIImage) throws -> Bool {
         let cgImage = try #require(image.cgImage)
         let width = cgImage.width, height = cgImage.height
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
@@ -271,16 +277,16 @@ struct CarPlayListRendererTests {
             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ))
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-        // The second bar is full height: sample its centre column.
-        let side = Double(min(width, height)) * 0.4
-        let gap = side / 11
-        let x = Int(Double(width) / 2 - side / 2 + 3 * gap + gap)
-        var total = 0.0, count = 0.0
-        for y in (height / 2 - Int(side / 4))...(height / 2 + Int(side / 4)) {
-            let index = (y * width + x) * 4
-            total += (Double(pixels[index]) + Double(pixels[index + 1]) + Double(pixels[index + 2])) / (3 * 255)
-            count += 1
+        func pixel(_ point: CGPoint) -> (Double, Double, Double) {
+            // Memory rows run top-down, as UIKit's coordinates do.
+            let index = (Int(point.y * image.scale) * width + Int(point.x * image.scale)) * 4
+            return (Double(pixels[index]) / 255, Double(pixels[index + 1]) / 255, Double(pixels[index + 2]) / 255)
         }
-        return total / count
+        let circle = CarPlayPlayingBadge.circle(in: image.size)
+        let edge = pixel(CGPoint(x: circle.midX - circle.width * 0.38, y: circle.midY))
+        let centre = pixel(CGPoint(x: circle.midX, y: circle.midY))
+        let isGreen = edge.1 > 0.6 && edge.0 < 0.4 && edge.2 < 0.5
+        let isWhite = min(centre.0, centre.1, centre.2) > 0.85
+        return isGreen && isWhite
     }
 }
