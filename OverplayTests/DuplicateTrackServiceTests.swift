@@ -97,6 +97,13 @@ struct DuplicateTrackServiceTests {
         #expect(key("One More Time (Remix)", "Daft Punk") != key("One More Time", "Daft Punk"))
         #expect(key("Song", "Artist") != key("Song", "Someone Else"))
         #expect(key("", "Artist") == nil)
+        #expect(key("Get Lucky feat. Pharrell Williams", "Daft Punk") == key("Get Lucky", "Daft Punk"))
+        #expect(key("Señorita [with Camila Cabello]", "Shawn Mendes") == key("Señorita", "Shawn Mendes"))
+        // Featuring markers are whole words, and a bare "with" is part of the title.
+        #expect(key("Left Behind", "Artist") != key("Left Alone", "Artist"))
+        #expect(key("Left Behind", "Artist") == "name:left behind|artist")
+        #expect(key("Stay With Me", "Sam Smith") != key("Stay", "Sam Smith"))
+        #expect(key("Lift Me Up (Feather Mix)", "Artist") != key("Lift Me Up", "Artist"))
     }
 
     /// Duplicates Overplay already knows are found with no Apple Music call;

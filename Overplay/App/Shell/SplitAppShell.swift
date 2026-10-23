@@ -163,10 +163,7 @@ struct SplitAppShell: View {
         }
         .onChange(of: storedSelection, initial: true) { _, newValue in
             Self.logger.info("Sidebar selection: \(newValue, privacy: .public)")
-            // One sidebar screen at a time: a new choice replaces the last.
-            let destination = selectedDestination
-            detailPath = destination == .dashboard ? NavigationPath() : NavigationPath([destination])
-            shellPlace?.destination = destination
+            showSelectedDestination()
         }
         .onAppear {
             guard let placeOnOpen else { return }
@@ -317,11 +314,25 @@ struct SplitAppShell: View {
         AppShellDestination(storageValue: storedSelection) ?? .dashboard
     }
 
+    /// One sidebar screen at a time: a new choice replaces the last.
+    private func showSelectedDestination() {
+        let destination = selectedDestination
+        detailPath = destination == .dashboard ? NavigationPath() : NavigationPath([destination])
+        shellPlace?.destination = destination
+    }
+
     private var selection: Binding<AppShellDestination?> {
         Binding {
             selectedDestination
         } set: { newSelection in
-            storedSelection = (newSelection ?? .dashboard).storageValue
+            let storageValue = (newSelection ?? .dashboard).storageValue
+            // Choosing the screen already selected still leaves anything
+            // pushed on it, such as a playlist opened from the dashboard.
+            if storageValue == storedSelection {
+                showSelectedDestination()
+            } else {
+                storedSelection = storageValue
+            }
             // The sidebar was slid over the list to choose; close it.
             if sidebarOverlaysList { narrowSidebarShown = false }
         }

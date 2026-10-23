@@ -28,8 +28,18 @@ enum OneTruePlaylistPrompt: Equatable, Identifiable {
             let contents = sourceName.map { "with the songs from \($0)" } ?? "empty to start"
             return "Your Mac asked for a new Apple Music playlist called Overplay, \(contents). A Mac can’t create playlists, so this device will."
         case .missing(let name):
-            return "“\(name)” isn’t in your Apple Music library any more. Overplay can make it again with the songs in your One True Playlist."
+            return "Overplay can’t find “\(name)” in your Apple Music library. If you deleted it, Overplay can make it again with the songs in your One True Playlist. If it’s still there, choose Not Now."
         }
+    }
+
+    /// What "Make It Again" reports, including songs this device could not
+    /// add, as Settings' rebuild does.
+    static func remadeMessage(_ result: OneTruePlaylistRebuildService.Result) -> String {
+        var message = "Made “\(result.name)” again in Apple Music with \(result.addedCount) songs."
+        if result.skippedCount > 0 {
+            message += " \(result.skippedCount) songs couldn’t be added from this device; they stay in Overplay."
+        }
+        return message
     }
 
     var actionTitle: String {
@@ -43,11 +53,14 @@ enum OneTruePlaylistPrompt: Equatable, Identifiable {
 @MainActor
 struct OneTruePlaylistPresenceService {
     var canCreatePlaylists: () -> Bool = { !ProcessInfo.processInfo.isMacCatalystApp }
-    /// Whether the library has this playlist; nil when it cannot tell, which
-    /// never prompts.
+    /// Whether iCloud's copy of the library has this playlist; nil when it
+    /// cannot tell, which never prompts. The sync that could not find it read
+    /// this device's library, which can lag iCloud (a playlist made on
+    /// another device, or a library still catching up), so this asks the web
+    /// library instead of asking the device again.
     var playlistExists: (_ musicPlaylistID: String) async -> Bool? = { id in
         do {
-            return try await CachingMusicLibraryPlaylistFetcher.shared.fetchPlaylist(id: id) != nil
+            return try await AppleMusicLibraryPlaylistResources.exists(playlistID: id)
         } catch {
             return nil
         }

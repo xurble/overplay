@@ -117,9 +117,8 @@ final class AppRuntime {
             }
         case .missing:
             do {
-                let result = try await OneTruePlaylistRebuildService().rebuild(in: context)
-                playbackController.reconcilePlaylistSelection(context: context)
-                StatusToast.shared.show("Made “\(result.name)” again in Apple Music with \(result.addedCount) songs.")
+                let result = try await playbackController.rebuildOneTruePlaylist(context: context)
+                StatusToast.shared.show(OneTruePlaylistPrompt.remadeMessage(result))
             } catch {
                 StatusToast.shared.show(UserFacingError.message(for: error))
             }

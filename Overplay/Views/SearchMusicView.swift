@@ -1,11 +1,12 @@
 import SwiftData
 import SwiftUI
 
-/// Apple Music search: the field at the top, clear of the mini player, and
-/// the songs below. On iPhone the field is the whole top bar, with X to leave
-/// search; elsewhere it is the system search field in the toolbar. Swiping a song right sends it to the One True Playlist
-/// and left to Triage, as in a collection's song list; More, beside Triage,
-/// plays it on its own or adds it to another Apple Music playlist.
+/// Apple Music search: Overplay's own field at the top, clear of the mini
+/// player, and the songs below. On iPhone the field is the whole top bar, with
+/// X to leave search; on iPad and the Mac it has no X. Tapping a song plays
+/// it. Swiping a song right sends it to the One True Playlist and left to the
+/// Inbox, as in a collection's song list; More, beside the Inbox, plays it on
+/// its own or adds it to another Apple Music playlist.
 struct SearchMusicView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss

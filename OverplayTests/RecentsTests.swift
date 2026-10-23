@@ -181,6 +181,20 @@ struct RecentsTests {
                                                             context: fixture.context).isTracked)
     }
 
+    @Test func aLibrarySongMergedIntoAnotherTrackStillShowsAsTracked() throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        fixture.tracks[0].confirmedAliases.append(.library("i.absorbed"))
+        try fixture.context.save()
+
+        let songs = RecentCollectionPresentation.songs(
+            [PlaybackCollectionSong(catalogID: "i.absorbed", title: "Absorbed", artistName: "Artist")],
+            rowID: UUID(), in: fixture.context
+        )
+
+        #expect(songs.first?.summary.isTracked == true)
+        #expect(songs.first?.summary.trackID == fixture.tracks[0].id)
+    }
+
     @Test func unreachableUnplayedSongsChangeNothing() async throws {
         let (fixture, catalog) = try await playingAlbum()
         defer { fixture.cleanUp() }

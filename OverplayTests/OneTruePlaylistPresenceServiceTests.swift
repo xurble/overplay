@@ -48,6 +48,25 @@ struct OneTruePlaylistPresenceServiceTests {
         #expect(await service(exists: false).prompt(in: container.mainContext, checksPresence: false) == nil)
     }
 
+    @Test("presence asks iCloud's web library for the playlist, not this device's library")
+    func presenceAsksTheWebLibrary() async throws {
+        var requested: [URL] = []
+        let found = try await AppleMusicLibraryPlaylistResources.exists(playlistID: "p.overplay") { url in
+            requested.append(url)
+            return Data(#"{"data":[{"id":"p.overplay"}]}"#.utf8)
+        }
+        #expect(found)
+        #expect(requested.map(\.absoluteString) == ["https://api.music.apple.com/v1/me/library/playlists/p.overplay"])
+        let empty = try await AppleMusicLibraryPlaylistResources.exists(playlistID: "p.overplay") { _ in
+            Data(#"{"data":[]}"#.utf8)
+        }
+        #expect(!empty)
+        // Any other failure is unknown, which the service treats as no prompt.
+        await #expect(throws: URLError.self) {
+            try await AppleMusicLibraryPlaylistResources.exists(playlistID: "p.overplay") { _ in throw URLError(.notConnectedToInternet) }
+        }
+    }
+
     @Test("with nothing made or asked for, nothing is asked")
     func nothing() async throws {
         let container = try library(selected: false, requested: false)

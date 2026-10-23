@@ -44,8 +44,11 @@ enum RecentCollectionPresentation {
         let tracked = TrackRecordRepository.tracksByCatalogID(allTracks)
         let scope = MusicResourceReference.currentLibraryScope
         var byLibraryID: [String: TrackRecord] = [:]
-        for record in allTracks where record.libraryScope == scope {
-            if let libraryID = record.libraryID, byLibraryID[libraryID] == nil { byLibraryID[libraryID] = record }
+        for record in allTracks {
+            // A merged track keeps the library IDs it absorbed as aliases.
+            let aliases = record.confirmedAliases.filter { $0.domain == .librarySong && $0.scope == scope }.map(\.value)
+            let own = record.libraryScope == scope ? [record.libraryID].compactMap { $0 } : []
+            for libraryID in own + aliases where byLibraryID[libraryID] == nil { byLibraryID[libraryID] = record }
         }
         var itemsByTrackID: [UUID: PlaylistItemRecord] = [:]
         for item in (try? PlaylistItemRepository.allItems(in: context)) ?? [] where !item.isDeleted {

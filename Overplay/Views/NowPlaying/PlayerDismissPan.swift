@@ -15,11 +15,21 @@ struct PlayerDismissPan: UIGestureRecognizerRepresentable {
     var onCancelled: () -> Void
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        /// The gestures tracking the same touch as this swipe, such as the
+        /// press on the button it started on. UIKit asks about each of them.
+        private let competing = NSHashTable<UIGestureRecognizer>.weakObjects()
+
+        func gestureRecognizer(_ recognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            competing.removeAllObjects()
+            return true
+        }
+
         /// Alongside the controls' own gestures: SwiftUI gives a child's
         /// (the button's) precedence, which kept this from ever beginning.
         func gestureRecognizer(_ recognizer: UIGestureRecognizer,
                                shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-            true
+            competing.add(other)
+            return true
         }
 
         func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
@@ -27,6 +37,23 @@ struct PlayerDismissPan: UIGestureRecognizerRepresentable {
             let velocity = pan.velocity(in: nil)
             let direction = velocity == .zero ? pan.translation(in: nil) : velocity
             return direction.y > abs(direction.x)
+        }
+
+        /// The press already under way on a button is cancelled the moment
+        /// the swipe begins, so lifting the finger does not press it: turning
+        /// a recogniser off and on cancels what it was tracking. Only the
+        /// gestures sharing this touch are touched.
+        func cancelCompetingGestures(than pan: UIGestureRecognizer) {
+            for recognizer in competing.allObjects where recognizer !== pan && recognizer.isEnabled {
+                switch recognizer.state {
+                case .possible, .began, .changed:
+                    recognizer.isEnabled = false
+                    recognizer.isEnabled = true
+                default:
+                    break
+                }
+            }
+            competing.removeAllObjects()
         }
     }
 
@@ -45,7 +72,7 @@ struct PlayerDismissPan: UIGestureRecognizerRepresentable {
         let size = CGSize(width: translation.x, height: translation.y)
         switch pan.state {
         case .began:
-            Self.cancelOtherGestures(than: pan)
+            context.coordinator.cancelCompetingGestures(than: pan)
         case .changed:
             onChanged(size)
         case .ended:
@@ -56,27 +83,6 @@ struct PlayerDismissPan: UIGestureRecognizerRepresentable {
             onCancelled()
         default:
             break
-        }
-    }
-
-    /// The press already under way on a button is cancelled the moment the
-    /// swipe begins, so lifting the finger does not press it: turning a
-    /// recogniser off and on cancels what it was tracking.
-    private static func cancelOtherGestures(than pan: UIPanGestureRecognizer) {
-        // The player's own views: the touch began on one of them.
-        guard let root = pan.view else { return }
-        var views: [UIView] = [root]
-        while let view = views.popLast() {
-            for recognizer in view.gestureRecognizers ?? [] where recognizer !== pan && recognizer.isEnabled {
-                switch recognizer.state {
-                case .possible, .began, .changed:
-                    recognizer.isEnabled = false
-                    recognizer.isEnabled = true
-                default:
-                    break
-                }
-            }
-            views.append(contentsOf: view.subviews)
         }
     }
 }

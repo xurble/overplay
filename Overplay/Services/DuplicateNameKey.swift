@@ -18,14 +18,21 @@ enum DuplicateNameKey {
         pattern: #"\s*(?:[\(\[]\s*|\s-\s+)(?:\d{4}\s+)?(?:remaster(?:ed)?|digital(?:ly)? remaster(?:ed)?|single version|album version|lp version|original version|mono|stereo|deluxe(?: edition| version)?|bonus track|explicit|clean|remaster(?:ed)? version)(?:\s+\d{4})?(?:\s*[\)\]])?"#,
         options: [.caseInsensitive]
     )
-    private static let featuring = try! NSRegularExpression(
-        pattern: #"\s*[\(\[]?\s*(?:feat\.?|ft\.?|featuring|with)\s+[^\)\]]*[\)\]]?"#,
+    /// "(feat. X)", "[with X]": whole words only, so "Left Behind" keeps its
+    /// "ft". "with" counts only in brackets, so "Stay With Me" is untouched.
+    private static let bracketedFeaturing = try! NSRegularExpression(
+        pattern: #"\s*[\(\[]\s*(?:feat|ft|featuring|with)\b\.?\s+[^\)\]]*[\)\]]"#,
+        options: [.caseInsensitive]
+    )
+    /// "Song feat. X" to the end of the title.
+    private static let trailingFeaturing = try! NSRegularExpression(
+        pattern: #"\s+(?:feat|ft|featuring)\b\.?\s+.*$"#,
         options: [.caseInsensitive]
     )
 
     static func normalizedTitle(_ title: String) -> String {
         var value = title
-        for pattern in [featuring, neutralLabel] {
+        for pattern in [bracketedFeaturing, trailingFeaturing, neutralLabel] {
             value = pattern.stringByReplacingMatches(in: value, range: NSRange(value.startIndex..., in: value), withTemplate: "")
         }
         return simplified(value)
