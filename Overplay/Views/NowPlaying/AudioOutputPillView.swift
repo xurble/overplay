@@ -24,7 +24,10 @@ struct AudioOutputPillView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var routePicker = AudioRoutePickerControl()
     @State private var width: CGFloat = 0
-    @State private var dragStartVolume: Float?
+    /// The volume when a drag began; reset by SwiftUI when the drag ends or
+    /// is cancelled, so a cancelled drag cannot stop the pill following
+    /// the volume buttons.
+    @GestureState private var dragStartVolume: Float?
     @State private var isVolumeControlAttached = false
 
     var body: some View {
@@ -87,6 +90,10 @@ struct AudioOutputPillView: View {
         // (music playing, the phone in a pocket) nobody sees it.
         .task(id: isExpanded && scenePhase == .active) {
             guard isExpanded, scenePhase == .active else { return }
+            // The session's volume is stale (its session is never active):
+            // while this reads the real one, the session's must not land on it.
+            monitor.followsVolumeElsewhere = true
+            defer { monitor.followsVolumeElsewhere = false }
             while !Task.isCancelled {
                 if dragStartVolume == nil, let volume = volumeControl.currentVolume, abs(volume - monitor.volume) > 0.001 {
                     monitor.showVolume(volume)
@@ -98,16 +105,16 @@ struct AudioOutputPillView: View {
 
     private var volumeDrag: some Gesture {
         DragGesture(minimumDistance: 4)
+            .updating($dragStartVolume) { _, start, _ in
+                if start == nil { start = monitor.volume }
+            }
             .onChanged { value in
-                let start = dragStartVolume ?? monitor.volume
-                dragStartVolume = start
                 setVolume(AudioOutputPresentation.volume(
-                    from: start,
+                    from: dragStartVolume ?? monitor.volume,
                     dragged: value.translation.width,
                     across: width
                 ))
             }
-            .onEnded { _ in dragStartVolume = nil }
     }
 
     private func setVolumeControlAttached(_ attached: Bool) {

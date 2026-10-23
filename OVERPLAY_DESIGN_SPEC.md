@@ -2301,7 +2301,9 @@ Platform notes:
   anywhere on it, controls and margins included, moves it with the finger and
   closes it past the threshold; a sideways drag (the volume pill) does not.
   Once a drag is a swipe down, the controls ignore it until the finger
-  lifts, so a swipe that started on a button never presses it. Behind the
+  lifts, so a swipe that started on a button never presses it. A swipe the
+  system interrupts (Control Center, a call) puts the player back open with
+  its controls on. Behind the
   blurred art is a solid pane of the theme colour, which is all that shows
   until the art arrives.
   A drag handle at the top, clear of the Dynamic Island, closes it on a tap.
@@ -2429,8 +2431,10 @@ Platform notes:
 
 Purpose: configure behaviour.
 
-Two tabs, General and Troubleshooting: a segmented control pinned at the top
-on iPhone and iPad, the window's tabs on a Mac.
+Two tabs, General and Troubleshooting, with the same rows in the same order
+everywhere: a segmented control pinned at the top on iPhone and iPad (stacked
+buttons at accessibility text sizes), the window's tabs on a Mac. The Mac has
+no playlist rebuild (`PLAYLIST-009` is iPhone and iPad only).
 
 General:
 

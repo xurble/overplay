@@ -136,7 +136,7 @@ struct SettingsView: View {
     @ViewBuilder private var generalSections: some View {
         Section {
             LabeledContent {
-                Text(oneTruePlaylistName)
+                Text(oneTruePlaylistStatus.title)
             } label: {
                 Label("One True Playlist", systemImage: "arrow.up.circle")
             }
@@ -158,7 +158,7 @@ struct SettingsView: View {
         } header: {
             Text("Playlists")
         } footer: {
-            Text("Overplay made this playlist and keeps it up to date: songs join it when you promote them and leave it when you retire them. Play it anywhere Apple Music plays.")
+            Text(oneTruePlaylistStatus.note)
                 .font(.caption)
         }
 
@@ -343,10 +343,7 @@ struct SettingsView: View {
         }
     }
 
-    private var oneTruePlaylistName: String {
-        if let name = settings.selectedPlaylistName { return name }
-        return settings.pendingOneTruePlaylistRequestedAt != nil ? "Waiting for your iPhone" : "Not made yet"
-    }
+    private var oneTruePlaylistStatus: OneTruePlaylistStatus { .make(settings) }
 
     /// The One True Playlist in the Music app's library.
     private var appleMusicURL: URL? {
@@ -573,15 +570,33 @@ extension SettingsView {
             MacSettingsLabel("One True Playlist:")
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 10) {
-                    Text(oneTruePlaylistName)
+                    Text(oneTruePlaylistStatus.title)
                     if let url = appleMusicURL {
                         Link("Open in Apple Music", destination: url)
                             .buttonStyle(.bordered)
                     }
                 }
-                MacSettingsNote(settings.pendingOneTruePlaylistRequestedAt != nil && settings.selectedPlaylistID == nil
-                    ? "A Mac can’t create Apple Music playlists. Your iPhone or iPad makes it the next time Overplay opens there."
-                    : "Overplay made this playlist and keeps it up to date: songs join it when you promote them and leave it when you retire them.")
+                MacSettingsNote(oneTruePlaylistStatus.note)
+            }
+        }
+        GridRow {
+            MacSettingsLabel("Inbox sources:")
+            VStack(alignment: .leading, spacing: 6) {
+                NavigationLink("Inbox Sources…") {
+                    macPushed(TriageSourcesView())
+                }
+                .buttonStyle(.bordered)
+                MacSettingsNote("Playlists whose new songs arrive in the Inbox for you to promote or retire.")
+            }
+        }
+        GridRow {
+            MacSettingsLabel("Library:")
+            VStack(alignment: .leading, spacing: 6) {
+                NavigationLink("Find Duplicates…") {
+                    macPushed(DuplicateTracksView())
+                }
+                .buttonStyle(.bordered)
+                MacSettingsNote("Songs that appear more than once, such as a single and its album version, for you to merge.")
             }
         }
         GridRow {
@@ -627,29 +642,6 @@ extension SettingsView {
     }
 
     @ViewBuilder private var macTroubleshootingRows: some View {
-        GridRow {
-            MacSettingsLabel("Duplicates:")
-            NavigationLink("Find Duplicates…") {
-                macPushed(DuplicateTracksView())
-            }
-            .buttonStyle(.bordered)
-        }
-        GridRow {
-            MacSettingsLabel("Stats:")
-            VStack(alignment: .leading, spacing: 6) {
-                Button("Reset All Local Stats…", role: .destructive) { showResetConfirmation = true }
-                    .buttonStyle(.bordered)
-                MacSettingsNote("Resets both displayed play counts, skips, and retired state without changing Apple Music’s own counts or playlists.")
-            }
-        }
-        GridRow {
-            MacSettingsLabel("Database:")
-            VStack(alignment: .leading, spacing: 6) {
-                Button("Nuke Database…", role: .destructive) { showNukeConfirmation = true }
-                    .buttonStyle(.bordered)
-                MacSettingsNote("Deletes all Overplay records locally and syncs those deletions through iCloud.")
-            }
-        }
         GridRow {
             MacSettingsLabel("Apple Music calls:")
             VStack(alignment: .leading, spacing: 10) {
@@ -697,6 +689,26 @@ extension SettingsView {
                     }
                 MacSettingsNote("Diagnostic only, this device. Use it to check CarPlay on a new iOS release; normally Apple Music publishes Now Playing itself.")
             }
+        }
+        GridRow {
+            MacSettingsLabel("Stats:")
+            VStack(alignment: .leading, spacing: 6) {
+                Button("Reset All Local Stats…", role: .destructive) { showResetConfirmation = true }
+                    .buttonStyle(.bordered)
+                MacSettingsNote("Resets both displayed play counts, skips, and retired state without changing Apple Music’s own counts or playlists.")
+            }
+        }
+        GridRow {
+            MacSettingsLabel("Database:")
+            VStack(alignment: .leading, spacing: 6) {
+                Button("Nuke Database…", role: .destructive) { showNukeConfirmation = true }
+                    .buttonStyle(.bordered)
+                MacSettingsNote("Deletes all Overplay records locally and syncs those deletions through iCloud.")
+            }
+        }
+        GridRow {
+            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+            MacSettingsNote("Both ask first, and neither can be undone. Your Apple Music playlists are never deleted.")
         }
     }
 }

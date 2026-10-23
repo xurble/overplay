@@ -27,6 +27,9 @@ struct FullScreenPlayerView: View {
     /// Set once a drag has moved: down closes, sideways (the volume pill)
     /// is left alone.
     @State private var dragIsDismissal: Bool?
+    /// True for a drag's lifetime, and reset by SwiftUI when the system
+    /// cancels it (Control Center, a call), which never calls onEnded.
+    @GestureState private var isDragging = false
 
     static let coordinateSpace = "full-screen-player"
     /// The spacing under and above the volume pill, shared with an unfolded
@@ -103,6 +106,12 @@ struct FullScreenPlayerView: View {
         .background { Color.clear.contentShape(.rect) }
         .contentShape(.rect)
         .simultaneousGesture(dismissDrag)
+        // A cancelled swipe: put the card back and the controls on.
+        .onChange(of: isDragging) { _, dragging in
+            guard !dragging, dragIsDismissal != nil else { return }
+            dragIsDismissal = nil
+            withAnimation(.spring(duration: 0.33)) { closeProgress = 0 }
+        }
         // Measured inside the full-screen layout: outside it, the size
         // leaves out the status bar and home indicator.
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
@@ -138,6 +147,7 @@ struct FullScreenPlayerView: View {
 
     private var dismissDrag: some Gesture {
         DragGesture(minimumDistance: 10, coordinateSpace: .global)
+            .updating($isDragging) { _, dragging, _ in dragging = true }
             .onChanged { value in
                 if dragIsDismissal == nil {
                     dragIsDismissal = value.translation.height > abs(value.translation.width)

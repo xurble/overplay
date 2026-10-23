@@ -210,6 +210,8 @@ struct PlayerGlassArtBackground: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     private let motion = PlayerGlassMotion.shared
+    /// This background's share of the shared motion source.
+    @State private var usesMotion = false
     static let oversize: CGFloat = 1.25
     private static let blur: CGFloat = 8
     private static let parallax: CGFloat = 0.22
@@ -221,6 +223,16 @@ struct PlayerGlassArtBackground: View {
     @State private var fullHeight: CGFloat = 0
 
     private var tilt: CGSize { reduceMotion ? .zero : motion.tilt }
+
+    private var drawsMovingArt: Bool {
+        background == .art && !reduceTransparency && !reduceMotion
+    }
+
+    private func setUsesMotion(_ uses: Bool) {
+        guard uses != usesMotion else { return }
+        usesMotion = uses
+        if uses { motion.start() } else { motion.stop() }
+    }
 
     /// The art square for a player of this size.
     static func artFrame(for size: CGSize, fullHeight: CGFloat) -> CGRect {
@@ -265,11 +277,11 @@ struct PlayerGlassArtBackground: View {
             fullHeight = max(fullHeight, size.height)
             backdrop?.artFrame = Self.artFrame(for: size, fullHeight: fullHeight)
         }
-        // Reduce Motion: the art stays still as the phone tilts.
-        .onChange(of: reduceMotion, initial: true) { _, reduce in
-            if reduce { motion.stop() } else { motion.start() }
-        }
-        .onDisappear { if !reduceMotion { motion.stop() } }
+        // Only while there is art to move: not under Reduce Motion, nor when
+        // the background is the theme colour alone.
+        .onAppear { setUsesMotion(drawsMovingArt) }
+        .onChange(of: drawsMovingArt) { _, moves in setUsesMotion(moves) }
+        .onDisappear { setUsesMotion(false) }
     }
 }
 

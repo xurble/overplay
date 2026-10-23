@@ -36,7 +36,7 @@ struct DashboardView: View {
                     } label: {
                         PlaylistHomeRowView(
                             title: "Make Your One True Playlist",
-                            detail: settings.pendingOneTruePlaylistRequestedAt != nil
+                            detail: OneTruePlaylistStatus.make(settings).waitsForAnotherDevice
                                 ? "Your iPhone or iPad makes it the next time Overplay opens there."
                                 : "Overplay creates it in Apple Music, empty or as a copy of a playlist.",
                             systemImage: "arrow.up.circle",

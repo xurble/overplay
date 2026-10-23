@@ -12,6 +12,9 @@ final class AudioOutputMonitor {
 
     private(set) var ports: [AudioOutputPort]
     private(set) var volume: Float
+    /// Set while the pill reads the system volume view, which follows the
+    /// volume buttons; the session's own reading is stale then and is ignored.
+    @ObservationIgnored var followsVolumeElsewhere = false
 
     @ObservationIgnored private let isLive: Bool
     @ObservationIgnored private var users = 0
@@ -45,7 +48,10 @@ final class AudioOutputMonitor {
         // Volume changes arrive on an arbitrary thread.
         volumeObservation = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { @Sendable [weak self] _, change in
             guard let volume = change.newValue else { return }
-            Task { @MainActor in self?.volume = volume }
+            Task { @MainActor in
+                guard let self, !self.followsVolumeElsewhere else { return }
+                self.volume = volume
+            }
         }
     }
 
@@ -73,7 +79,7 @@ final class AudioOutputMonitor {
                 return (session.currentRoute.outputs.map { ($0.portType.rawValue, $0.portName) }, session.outputVolume)
             }.value
             ports = outputs.map { AudioOutputPort(type: AVAudioSession.Port(rawValue: $0.0), name: $0.1) }
-            self.volume = volume
+            if !followsVolumeElsewhere { self.volume = volume }
         }
     }
 }
