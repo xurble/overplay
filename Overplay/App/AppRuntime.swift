@@ -88,46 +88,19 @@ final class AppRuntime {
 
     /// Asked before the One True Playlist's Apple Music playlist is made
     /// (`SETUP-002`, `SETUP-003`); the app presents it as an alert.
-    private(set) var oneTruePlaylistPrompt: OneTruePlaylistPrompt?
-    /// "Not Now" holds until the next launch.
-    @ObservationIgnored private var declinedOneTruePlaylistPrompt = false
-    @ObservationIgnored private var isMakingOneTruePlaylist = false
+    let oneTruePlaylistPrompts = OneTruePlaylistPromptController()
+    var oneTruePlaylistPrompt: OneTruePlaylistPrompt? { oneTruePlaylistPrompts.prompt }
 
-    /// `checksPresence`: a sync could not find the playlist, so look it up.
     func checkOneTruePlaylist(in context: ModelContext, checksPresence: Bool = false) async {
-        guard !declinedOneTruePlaylistPrompt, !isMakingOneTruePlaylist, !PendingOneTruePlaylistService.isFulfilling,
-              oneTruePlaylistPrompt == nil else { return }
-        oneTruePlaylistPrompt = await OneTruePlaylistPresenceService().prompt(in: context, checksPresence: checksPresence)
+        await oneTruePlaylistPrompts.check(in: context, checksPresence: checksPresence)
     }
 
     func declineOneTruePlaylistPrompt() {
-        oneTruePlaylistPrompt = nil
-        declinedOneTruePlaylistPrompt = true
+        oneTruePlaylistPrompts.decline()
     }
 
-    /// The user agreed: make the playlist the prompt described.
     func makeOneTruePlaylist(for prompt: OneTruePlaylistPrompt, in context: ModelContext) async {
-        oneTruePlaylistPrompt = nil
-        isMakingOneTruePlaylist = true
-        defer { isMakingOneTruePlaylist = false }
-        switch prompt {
-        case .requestedByMac:
-            await fulfilPendingOneTruePlaylist(in: context)
-            if (try? context.fetch(FetchDescriptor<OverplaySettings>()).first?.selectedPlaylistID) == nil {
-                StatusToast.shared.show("Overplay couldn’t make the playlist. It will ask again next time it starts.")
-            }
-        case .missing(_, let playlistID):
-            guard await OneTruePlaylistPresenceService().isStillMissing(playlistID, in: context) else {
-                StatusToast.shared.show("Your Overplay playlist is in Apple Music, so nothing was made.")
-                return
-            }
-            do {
-                let result = try await playbackController.rebuildOneTruePlaylist(context: context)
-                StatusToast.shared.show(OneTruePlaylistPrompt.remadeMessage(result))
-            } catch {
-                StatusToast.shared.show(UserFacingError.message(for: error))
-            }
-        }
+        await oneTruePlaylistPrompts.make(prompt, in: context)
     }
 
     /// Makes the One True Playlist a Mac asked for, on a device that can

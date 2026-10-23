@@ -35,11 +35,8 @@ enum OneTruePlaylistPrompt: Equatable, Identifiable {
     /// What "Make It Again" reports, including songs this device could not
     /// add, as Settings' rebuild does.
     static func remadeMessage(_ result: OneTruePlaylistRebuildService.Result) -> String {
-        var message = "Made “\(result.name)” again in Apple Music with \(result.addedCount) songs."
-        if result.skippedCount > 0 {
-            message += " \(result.skippedCount) songs couldn’t be added from this device; they stay in Overplay."
-        }
-        return message
+        ["Made “\(result.name)” again in Apple Music with \(result.addedCount) songs.", result.skippedNote]
+            .compactMap { $0 }.joined(separator: " ")
     }
 
     var actionTitle: String {
@@ -85,10 +82,10 @@ struct OneTruePlaylistPresenceService {
     /// Whether a "missing" answer still holds when the user says yes: the
     /// alert may have waited while another device made the playlist again
     /// (the One True Playlist now has another ID) or the library caught up.
-    /// Anything but a confirmed absence makes nothing.
-    func isStillMissing(_ playlistID: String, in context: ModelContext) async -> Bool {
+    /// Nil when Apple Music could not be asked; only true makes anything.
+    func isStillMissing(_ playlistID: String, in context: ModelContext) async -> Bool? {
         guard let playlist = try? PlaylistRepository.oneTruePlaylist(in: context),
               playlist.musicPlaylistID == playlistID else { return false }
-        return await playlistExists(playlistID) == false
+        return await playlistExists(playlistID).map { !$0 }
     }
 }

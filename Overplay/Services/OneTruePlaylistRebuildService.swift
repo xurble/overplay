@@ -18,6 +18,11 @@ struct OneTruePlaylistRebuildService {
         var addedCount: Int
         /// Active songs with no playable Apple Music item on this device.
         var skippedCount: Int
+
+        /// Said wherever a rebuild reports, so the wording cannot drift.
+        var skippedNote: String? {
+            skippedCount > 0 ? "\(skippedCount) songs couldn’t be added from this device; they stay in Overplay." : nil
+        }
     }
 
     enum RebuildError: LocalizedError {

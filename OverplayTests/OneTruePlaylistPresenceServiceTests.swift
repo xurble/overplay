@@ -71,13 +71,13 @@ struct OneTruePlaylistPresenceServiceTests {
     func staleMissingPromptMakesNothing() async throws {
         let container = try library(selected: true, requested: false)
         let context = container.mainContext
-        #expect(await service(exists: false).isStillMissing("p.overplay", in: context))
+        #expect(await service(exists: false).isStillMissing("p.overplay", in: context) == true)
         // The library caught up, or the answer is unknown.
-        #expect(await !service(exists: true).isStillMissing("p.overplay", in: context))
-        #expect(await !service(exists: nil).isStillMissing("p.overplay", in: context))
+        #expect(await service(exists: true).isStillMissing("p.overplay", in: context) == false)
+        #expect(await service(exists: nil).isStillMissing("p.overplay", in: context) == nil)
         // Another device made it again: the One True Playlist has a new ID.
         try #require(try PlaylistRepository.oneTruePlaylist(in: context)).musicPlaylistID = "p.remade"
-        #expect(await !service(exists: false).isStillMissing("p.overplay", in: context))
+        #expect(await service(exists: false).isStillMissing("p.overplay", in: context) == false)
     }
 
     @Test("Make It Again reports songs this device could not add")

@@ -112,11 +112,8 @@ final class SettingsViewModel {
     }
 
     static func rebuildMessage(_ result: OneTruePlaylistRebuildService.Result) -> String {
-        var message = "Rebuilt “\(result.name)” in Apple Music with \(result.addedCount) songs. Delete the older “\(result.name)” playlist in the Music app."
-        if result.skippedCount > 0 {
-            message += " \(result.skippedCount) songs couldn’t be added from this device; they stay in Overplay."
-        }
-        return message
+        ["Rebuilt “\(result.name)” in Apple Music with \(result.addedCount) songs. Delete the older “\(result.name)” playlist in the Music app.",
+         result.skippedNote].compactMap { $0 }.joined(separator: " ")
     }
 
     func runMusicKitDiagnostics(
