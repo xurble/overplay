@@ -91,6 +91,56 @@ struct OneTruePlaylistPromptControllerTests {
         #expect(controller.prompt == .requestedByMac(sourceName: nil))
     }
 
+    @Test("no prompt while Make It Again is rebuilding, so a second yes cannot make a second playlist")
+    func noPromptWhileRebuilding() async throws {
+        let container = try library()
+        let recorder = Recorder()
+        var presence = OneTruePlaylistPresenceService()
+        presence.canCreatePlaylists = { true }
+        presence.playlistExists = { _ in false }
+        var controller: OneTruePlaylistPromptController!
+        var promptDuringRebuild: OneTruePlaylistPrompt?
+        controller = OneTruePlaylistPromptController(dependencies: .init(
+            presence: presence,
+            isFulfilling: { false },
+            fulfilPending: { _ in },
+            rebuild: { context in
+                // A sync of the old ID fails mid-rebuild and checks again.
+                await controller.check(in: context, checksPresence: true)
+                promptDuringRebuild = controller.prompt
+                recorder.rebuilds += 1
+                return .init(name: "Overplay", addedCount: 3, skippedCount: 0)
+            },
+            show: { recorder.messages.append($0) }
+        ))
+
+        await controller.make(missing, in: container.mainContext)
+
+        #expect(recorder.rebuilds == 1)
+        #expect(promptDuringRebuild == nil)
+    }
+
+    @Test("a Mac's request that fails to be made is not asked about again this launch")
+    func failedRequestHoldsUntilRelaunch() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let settings = OverplaySettings()
+        settings.pendingOneTruePlaylistRequestedAt = .now
+        container.mainContext.insert(settings)
+        try container.mainContext.save()
+        let recorder = Recorder()
+        let controller = controller(recorder)
+
+        await controller.check(in: container.mainContext)
+        let prompt = try #require(controller.prompt)
+        await controller.make(prompt, in: container.mainContext)
+        #expect(recorder.fulfils == 1)
+        #expect(recorder.messages.last == "Overplay couldn’t make the playlist. It will ask again next time it starts.")
+
+        // An iCloud import checks again.
+        await controller.check(in: container.mainContext)
+        #expect(controller.prompt == nil)
+    }
+
     @Test("Not Now during a lookup holds: the finished lookup asks nothing")
     func declineDuringLookupHolds() async throws {
         let container = try library()

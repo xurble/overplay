@@ -17,7 +17,8 @@ final class OneTruePlaylistPromptController {
     }
 
     private(set) var prompt: OneTruePlaylistPrompt?
-    /// "Not Now" holds until the next launch.
+    /// "Not Now", or a Mac's request this device failed to make, holds
+    /// until the next launch.
     @ObservationIgnored private var declined = false
     @ObservationIgnored private var isMaking = false
     private let dependencies: Dependencies
@@ -53,6 +54,8 @@ final class OneTruePlaylistPromptController {
         case .requestedByMac:
             await dependencies.fulfilPending(context)
             if (try? context.fetch(FetchDescriptor<OverplaySettings>()).first?.selectedPlaylistID) == nil {
+                // As the message says: not again at every iCloud import.
+                declined = true
                 dependencies.show("Overplay couldn’t make the playlist. It will ask again next time it starts.")
             }
         case .missing(_, let playlistID):
