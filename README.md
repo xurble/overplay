@@ -7,7 +7,7 @@ keeps a main playlist fresh. Its priorities, in order, decide every trade-off (s
 1. **A stable, fast, reliable music player.**
 2. **CarPlay and Siri first:** playlist management with the phone in a pocket.
    Siri support is planned for v1, not yet built.
-3. **Reliable playlist management:** a One True Playlist, a single Triage
+3. **Reliable playlist management:** a One True Playlist, a single Inbox
    bucket and Retired, with each logical track in exactly one of them.
 4. **Statistics:** play and skip counts that inform curation, kept additive and
    best-effort.
@@ -18,16 +18,16 @@ Music playlists. A native Mac target is planned.
 ## How It Works
 
 The **One True Playlist** is the main playlist Overplay manages. Everything
-awaiting review lives in one **Triage** bucket, fed by any number of
+awaiting review lives in one **Inbox**, fed by any number of
 contributing Apple Music playlists such as Shazam saves, TikTok discoveries or
-a friend's playlist. You triage in one place rather than playlist by playlist.
-Promotion moves a track from Triage into the One True Playlist, keeping its
+a friend's playlist. You review in one place rather than playlist by playlist.
+Promotion moves a track from the Inbox into the One True Playlist, keeping its
 history.
 
 Retiring is always an explicit user action. Overplay records it locally and,
 where Apple Music allows, also removes the track from the linked playlist; if
 that fails, the local retirement still keeps the track out of Active playback.
-A retired track can be moved back to Triage or into the One True Playlist.
+A retired track can be moved back to the Inbox or into the One True Playlist.
 
 Playlists are shown and queued newest-added first (Retired: newest-retired
 first). MusicKit owns shuffle and repeat once the queue is loaded.

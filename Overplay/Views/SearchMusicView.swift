@@ -1,11 +1,12 @@
 import SwiftData
 import SwiftUI
 
-/// Apple Music search: the field at the top, clear of the mini player, and
-/// the songs below. On iPhone the field is the whole top bar, with X to leave
-/// search; elsewhere it is the system search field in the toolbar. Swiping a song right sends it to the One True Playlist
-/// and left to Triage, as in a collection's song list; More, beside Triage,
-/// plays it on its own or adds it to another Apple Music playlist.
+/// Apple Music search: Overplay's own field at the top, clear of the mini
+/// player, and the songs below. On iPhone the field is the whole top bar, with
+/// X to leave search; on iPad and the Mac it has no X. Tapping a song plays
+/// it. Swiping a song right sends it to the One True Playlist and left to the
+/// Inbox, as in a collection's song list; More, beside the Inbox, plays it on
+/// its own or adds it to another Apple Music playlist.
 struct SearchMusicView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -46,29 +47,30 @@ struct SearchMusicView: View {
             }
     }
 
-    /// iPhone: a single bar replaces the navigation bar, so search never
-    /// moves between layers. iPad and Mac keep the toolbar search field.
+    /// One bar of its own at the top, so search never moves between layers
+    /// and never needs dismissing twice (the system search field did both).
+    /// iPhone: it replaces the navigation bar, with X to leave search. iPad
+    /// and Mac: search is a sidebar destination, so there is nothing to leave.
     @ViewBuilder
     private func searchField(_ content: some View) -> some View {
         if PlayerPlacement(horizontalSizeClass, verticalSizeClass) == .sheet {
             content
                 .toolbar(.hidden, for: .navigationBar)
                 .safeAreaBar(edge: .top) {
-                    SearchBarView(text: $viewModel.searchText, isFocused: $isSearchFocused) {
-                        Task { await viewModel.searchService.search(viewModel.searchText) }
-                    } close: {
+                    SearchBarView(text: $viewModel.searchText, isFocused: $isSearchFocused, submit: submitSearch) {
                         dismiss()
                     }
                 }
         } else {
             content
-                .searchable(text: $viewModel.searchText, placement: .navigationBarDrawer(displayMode: .always),
-                            prompt: "Songs in Apple Music")
-                .searchFocused($isSearchFocused)
-                .onSubmit(of: .search) {
-                    Task { await viewModel.searchService.search(viewModel.searchText) }
+                .safeAreaBar(edge: .top) {
+                    SearchBarView(text: $viewModel.searchText, isFocused: $isSearchFocused, submit: submitSearch, close: nil)
                 }
         }
+    }
+
+    private func submitSearch() {
+        Task { await viewModel.searchService.search(viewModel.searchText) }
     }
 
     private var resultsList: some View {
@@ -85,13 +87,21 @@ struct SearchMusicView: View {
 
             ForEach(results) { result in
                 if let song = songs[result.id] {
-                    PlaylistTrackRowView(
-                        summary: song.summary,
-                        playlistID: Self.collection(for: result).reservedPlaylistID,
-                        isCurrent: RecentCollectionPresentation.isCurrent(
-                            song, groupKey: Self.collection(for: result).groupKey, controller: playbackController
+                    // A tap plays the song, as Play Now does.
+                    Button {
+                        Task { await play(result) }
+                    } label: {
+                        PlaylistTrackRowView(
+                            summary: song.summary,
+                            playlistID: Self.collection(for: result).reservedPlaylistID,
+                            isCurrent: RecentCollectionPresentation.isCurrent(
+                                song, groupKey: Self.collection(for: result).groupKey, controller: playbackController
+                            )
                         )
-                    )
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Plays this song")
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
                     .swipeActions(edge: .leading) {
                         if song.canMoveToOneTruePlaylist {
@@ -100,6 +110,7 @@ struct SearchMusicView: View {
                             } label: {
                                 Label("Overplay", systemImage: "arrow.up.circle")
                             }
+                            .accessibilityLabel("Add to One True Playlist")
                             .tint(.pink)
                         }
                     }
@@ -108,8 +119,9 @@ struct SearchMusicView: View {
                             Button {
                                 Task { await move(result, toOneTruePlaylist: false) }
                             } label: {
-                                Label("Triage", systemImage: "tray.fill")
+                                Label("Inbox", systemImage: "tray.fill")
                             }
+                            .accessibilityLabel("Add to the Inbox")
                             .tint(.green)
                         }
                         Button {
@@ -126,7 +138,7 @@ struct SearchMusicView: View {
                             }
                         }
                         if song.canMoveToTriage {
-                            Button("Add to Triage", systemImage: "tray.fill") {
+                            Button("Add to the Inbox", systemImage: "tray.fill") {
                                 Task { await move(result, toOneTruePlaylist: false) }
                             }
                         }
@@ -186,7 +198,8 @@ private struct SearchBarView: View {
     @Binding var text: String
     var isFocused: FocusState<Bool>.Binding
     var submit: () -> Void
-    var close: () -> Void
+    /// Nil where search is a place of its own (a sidebar destination).
+    var close: (() -> Void)?
 
     var body: some View {
         GlassEffectContainer {
@@ -214,16 +227,18 @@ private struct SearchBarView: View {
                 .frame(height: 44)
                 .glassEffect(.regular.interactive(), in: Capsule())
 
-                Button(action: close) {
-                    Image(systemName: "xmark")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 44, height: 44)
-                        .contentShape(Circle())
+                if let close {
+                    Button(action: close) {
+                        Image(systemName: "xmark")
+                            .font(.body.weight(.semibold))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: Circle())
+                    .accessibilityLabel("Close Search")
+                    .accessibilityIdentifier("search-close")
                 }
-                .buttonStyle(.plain)
-                .glassEffect(.regular.interactive(), in: Circle())
-                .accessibilityLabel("Close Search")
-                .accessibilityIdentifier("search-close")
             }
         }
         .padding(.horizontal, 16)

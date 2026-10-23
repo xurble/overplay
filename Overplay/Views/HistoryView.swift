@@ -173,7 +173,7 @@ private struct HistoryEventRowView: View {
             Spacer()
 
             if canRestore {
-                Button("Move to Triage", action: restore)
+                Button("Move to the Inbox", action: restore)
                     .buttonStyle(.bordered)
             }
         }

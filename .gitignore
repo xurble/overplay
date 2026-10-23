@@ -64,3 +64,6 @@ fastlane/test_output
 
 # Local reverse-engineering and research material (not part of the app)
 research/
+
+# Local brag material (not part of the app)
+brag-output/

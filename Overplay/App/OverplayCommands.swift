@@ -53,7 +53,7 @@ struct OverplayCommands: Commands {
         CommandMenu("Go") {
             go("Dashboard", .dashboard, key: "1")
             go("Overplay", shell?.oneTruePlaylist, key: "2")
-            go("Triage", shell?.triage, key: "3")
+            go("Inbox", shell?.triage, key: "3")
             go("Retired", .retired, key: "4")
             Divider()
             go("Search", .search, key: "f")

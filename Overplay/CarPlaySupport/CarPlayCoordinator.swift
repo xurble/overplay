@@ -857,7 +857,7 @@ final class CarPlayCoordinator: NSObject {
                 case .retire: makeEvictButton()
                 case .restore: makeRestoreButton()
                 case .addToTriage: makeAddButton(systemImage: "tray.and.arrow.down", toOneTruePlaylist: false)
-                case .addToOneTruePlaylist: makeAddButton(systemImage: "plus.circle", toOneTruePlaylist: true)
+                case .addToOneTruePlaylist: makeAddButton(systemImage: "arrow.up.circle", toOneTruePlaylist: true)
                 }
             }
         }
@@ -999,7 +999,7 @@ final class CarPlayCoordinator: NSObject {
                 completion()
             }
         }
-        let template = CPListTemplate(title: track.title, sections: [CPListSection(items: [album, artist])])
+        let template = CPListTemplate(title: "Dive Deeper", sections: [CPListSection(items: [album, artist])])
         interfaceController.pushTemplate(template, animated: true, completion: nil)
     }
 

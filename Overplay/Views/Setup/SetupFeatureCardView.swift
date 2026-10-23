@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftUI
 
 struct SetupFeature {
@@ -11,6 +12,9 @@ struct SetupFeature {
 struct SetupFeatureCardView: View {
     let feature: SetupFeature
     var footnote: String? = nil
+    /// Shows Siri's own tip for "Play Overplay" under the text.
+    var showsSiriTip = false
+    @State private var showsSiriTipCard = true
 
     var body: some View {
         SetupCardView {
@@ -20,8 +24,10 @@ struct SetupFeatureCardView: View {
                     .font(.system(size: 72, weight: .semibold))
                     .foregroundStyle(feature.tint)
                     .symbolRenderingMode(.hierarchical)
+                    .accessibilityHidden(true)
                 Text(feature.title)
                     .font(.title.bold())
+                    .accessibilityAddTraits(.isHeader)
                     .multilineTextAlignment(.center)
                 Text(feature.text)
                     .font(.title3)
@@ -29,6 +35,11 @@ struct SetupFeatureCardView: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
+                #if !targetEnvironment(macCatalyst)
+                if showsSiriTip {
+                    SiriTipView(intent: PlayOneTruePlaylistIntent(), isVisible: $showsSiriTipCard)
+                }
+                #endif
                 if let footnote {
                     Text(footnote)
                         .font(.footnote)
@@ -54,7 +65,7 @@ struct SetupCardView<Content: View>: View {
 
 #Preview {
     SetupFeatureCardView(
-        feature: SetupFeature(symbol: "tray.fill", tint: .teal, title: "Triage",
+        feature: SetupFeature(symbol: "tray.fill", tint: .teal, title: "The Inbox",
             text: "New music lands here from playlists you choose."),
         footnote: "Already use Overplay on another device?"
     )

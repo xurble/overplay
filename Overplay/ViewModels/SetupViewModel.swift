@@ -112,11 +112,13 @@ final class SetupViewModel {
 
     /// Picks up what an earlier setup screen already chose, from the store,
     /// so a screen rebuilt mid-setup never makes a second playlist.
-    func restoreProgress(context: ModelContext) {
+    /// A Mac's request answers the card only on a device that cannot make the
+    /// playlist; one that can makes it (`SETUP-002`).
+    func restoreProgress(context: ModelContext, dependencies: Dependencies) {
         guard let settings = try? context.fetch(FetchDescriptor<OverplaySettings>()).first else { return }
         if let selected = settings.selectedPlaylistID {
             oneTruePlaylistID = selected
-        } else if settings.pendingOneTruePlaylistRequestedAt != nil {
+        } else if settings.pendingOneTruePlaylistRequestedAt != nil, !dependencies.canCreatePlaylists() {
             isOneTruePlaylistRequested = true
             copiedFrom = settings.pendingOneTruePlaylistSourceName
         }
@@ -153,7 +155,7 @@ final class SetupViewModel {
         do {
             try dependencies.createLibrary(context)
             // Never replace a One True Playlist the store already has.
-            restoreProgress(context: context)
+            restoreProgress(context: context, dependencies: dependencies)
             guard !hasChosenOneTruePlaylist else { return }
             guard dependencies.canCreatePlaylists() else {
                 try PendingOneTruePlaylistService.request(copying: source, in: context)

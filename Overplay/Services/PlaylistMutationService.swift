@@ -14,11 +14,11 @@ enum PlaylistMutationError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .oneTruePlaylistMissing:
-            "Choose a One True Playlist before Overplaying tracks."
+            "Overplay hasn’t made your One True Playlist yet."
         case .sourcePlaylistMissing:
             "The source playlist is no longer linked."
         case .sourcePlaylistNotTriage:
-            "Only tracks in the triage bucket can be Overplayed."
+            "Only tracks in the Inbox can be Overplayed."
         case .trackMissing:
             "The track is no longer available locally."
         case .musicItemMissing:

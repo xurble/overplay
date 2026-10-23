@@ -12,8 +12,12 @@ struct PendingOneTruePlaylistService {
         try await PlaylistSyncService().createManagedOneTruePlaylist(named: name, copyingTracksFrom: sourcePlaylistID, in: context)
     }
 
-    /// One request at a time on this device: imports and startup both ask.
-    private static var isFulfilling = false
+    /// One request at a time on this device: imports, startup, the alert and
+    /// the dashboard's card all ask. A later caller waits for the one in
+    /// flight and gets its playlist, so it never reports a failure or makes a
+    /// second playlist while the first is still being made.
+    private static var inFlight: Task<PersistentIdentifier?, Never>?
+    static var isFulfilling: Bool { inFlight != nil }
 
     /// Asks a Mac to leave the One True Playlist for an iPhone or iPad.
     static func request(copying source: AppleMusicPlaylist?, in context: ModelContext) throws {
@@ -30,7 +34,8 @@ struct PendingOneTruePlaylistService {
     /// next launch or import). A One True Playlist chosen meanwhile, on any
     /// device, answers the request.
     func fulfilIfNeeded(in context: ModelContext) async -> PlaylistRecord? {
-        guard canCreatePlaylists(), !Self.isFulfilling,
+        if let inFlight = Self.inFlight { return await inFlight.value.flatMap { context.model(for: $0) as? PlaylistRecord } }
+        guard canCreatePlaylists(),
               let settings = try? context.fetch(FetchDescriptor<OverplaySettings>()).first,
               settings.pendingOneTruePlaylistRequestedAt != nil else { return nil }
         guard settings.selectedPlaylistID == nil else {
@@ -38,8 +43,13 @@ struct PendingOneTruePlaylistService {
             try? context.save()
             return nil
         }
-        Self.isFulfilling = true
-        defer { Self.isFulfilling = false }
+        let task = Task { await make(for: settings, in: context)?.persistentModelID }
+        Self.inFlight = task
+        defer { Self.inFlight = nil }
+        return await task.value.flatMap { context.model(for: $0) as? PlaylistRecord }
+    }
+
+    private func make(for settings: OverplaySettings, in context: ModelContext) async -> PlaylistRecord? {
         do {
             let sourceID = settings.pendingOneTruePlaylistSourceID
             let playlist = try await createManagedOneTruePlaylist(SetupViewModel.oneTruePlaylistName, sourceID, context)

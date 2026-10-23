@@ -37,7 +37,12 @@ final class LibraryCache {
         if !hasContent(category) {
             await refresh(category)
         } else if Date.now.timeIntervalSince(refreshedAt[category] ?? .distantPast) > Self.staleAfter {
-            Task { await refresh(category) }
+            // The saved copy shows now. A screen restored at launch waits out
+            // the quiet minute before refreshing it (`LOAD-001`).
+            Task {
+                try? await Task.sleep(until: BackgroundMusicKitWorkPolicy.launchQuietEnds)
+                await refresh(category)
+            }
         }
     }
 

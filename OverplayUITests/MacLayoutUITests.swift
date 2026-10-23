@@ -34,7 +34,8 @@ final class MacLayoutUITests: XCTestCase {
 
         let row = element("detail-dashboard").buttons.matching(NSPredicate(format: "label BEGINSWITH 'Overplay'")).firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 30), "The dashboard should list Overplay")
-        tap(row)
+        // The track count under the art: the art's centre is its Play button.
+        row.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.97)).tap()
         XCTAssertTrue(app.buttons["Shuffle and Play"].waitForExistence(timeout: 10), "The Overplay playlist should open")
         XCTAssertTrue(app.buttons["Hide Now Playing"].waitForExistence(timeout: 5), "A pushed playlist should keep the toggle")
 
@@ -50,7 +51,7 @@ final class MacLayoutUITests: XCTestCase {
         let settings = app.navigationBars.buttons["Settings"].firstMatch
         XCTAssertTrue(settings.waitForExistence(timeout: 30), "The dashboard should have Settings")
         tap(settings)
-        let duplicates = app.buttons["Find Duplicates"]
+        let duplicates = app.buttons["settings-find-duplicates"]
         XCTAssertTrue(duplicates.waitForExistence(timeout: 10), "Settings should open")
         XCTAssertTrue(app.buttons["Hide Now Playing"].exists, "Settings should keep the toggle")
         tap(duplicates)

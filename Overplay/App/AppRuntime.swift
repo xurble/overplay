@@ -69,7 +69,7 @@ final class AppRuntime {
                 self.repairTrackLocations(in: context)
                 ApplePlayCountSyncService.shared.reconcile(in: context, playbackController: self.playbackController)
                 // A Mac may have asked for the One True Playlist (`SETUP-002`).
-                await self.fulfilPendingOneTruePlaylist(in: context)
+                await self.checkOneTruePlaylist(in: context)
             }
         }
     }
@@ -84,6 +84,23 @@ final class AppRuntime {
         } catch {
             StartupProfiler.mark("Track location repair failed: \(error.localizedDescription)")
         }
+    }
+
+    /// Asked before the One True Playlist's Apple Music playlist is made
+    /// (`SETUP-002`, `SETUP-003`); the app presents it as an alert.
+    let oneTruePlaylistPrompts = OneTruePlaylistPromptController()
+    var oneTruePlaylistPrompt: OneTruePlaylistPrompt? { oneTruePlaylistPrompts.prompt }
+
+    func checkOneTruePlaylist(in context: ModelContext, checksPresence: Bool = false) async {
+        await oneTruePlaylistPrompts.check(in: context, checksPresence: checksPresence)
+    }
+
+    func declineOneTruePlaylistPrompt() {
+        oneTruePlaylistPrompts.decline()
+    }
+
+    func makeOneTruePlaylist(for prompt: OneTruePlaylistPrompt, in context: ModelContext) async {
+        await oneTruePlaylistPrompts.make(prompt, in: context)
     }
 
     /// Makes the One True Playlist a Mac asked for, on a device that can

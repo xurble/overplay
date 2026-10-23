@@ -40,16 +40,18 @@ struct NowPlayingTrackTextView: View {
                 .minimumScaleFactor(0.78)
 
             if offersCollectionMenu {
-                PlayCollectionMenuView { artistAndAlbum }
+                PlayCollectionMenuView { isEnabled in artistAndAlbum(showsMenuChevron: isEnabled) }
             } else {
-                artistAndAlbum
+                artistAndAlbum(showsMenuChevron: false)
             }
         }
     }
 
-    private var artistAndAlbum: some View {
+    /// A small chevron after the artist says the line opens a menu, as
+    /// iOS marks its other menus, without making it a button.
+    private func artistAndAlbum(showsMenuChevron: Bool) -> some View {
         VStack(spacing: 8) {
-            Text(presentation.artistName)
+            artistText(showsMenuChevron: showsMenuChevron)
                 .font(artistFont)
                 .playerLegibleForeground(artworkTheme?.artistNameRGB, fallback: artworkTheme?.artistName ?? .secondary)
                 .multilineTextAlignment(.center)
@@ -60,6 +62,15 @@ struct NowPlayingTrackTextView: View {
                 albumTitleText(albumTitle)
             }
         }
+    }
+
+    private func artistText(showsMenuChevron: Bool) -> Text {
+        guard showsMenuChevron else { return Text(presentation.artistName) }
+        let chevron = Text(Image(systemName: "chevron.down"))
+            .font(.footnote.weight(.semibold))
+        // VoiceOver hears the name; the menu itself says it is a button.
+        return Text("\(presentation.artistName) \(chevron)")
+            .accessibilityLabel(presentation.artistName)
     }
 
     @ViewBuilder
@@ -88,14 +99,17 @@ struct PlayCollectionMenuView<MenuLabel: View>: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackController.self) private var playbackController
 
-    @ViewBuilder var label: () -> MenuLabel
+    /// Given whether the menu can open, so the label can say so.
+    @ViewBuilder var label: (_ isEnabled: Bool) -> MenuLabel
 
     var body: some View {
         Menu {
-            Button("Play Album", systemImage: "square.stack") { play(.album) }
-            Button("Play Artist", systemImage: "music.mic") { play(.artist) }
+            Section("Dive Deeper") {
+                Button("Play Album", systemImage: "square.stack") { play(.album) }
+                Button("Play Artist", systemImage: "music.mic") { play(.artist) }
+            }
         } label: {
-            label()
+            label(playbackController.canPlayCurrentCollection)
         }
         .disabled(!playbackController.canPlayCurrentCollection)
         .accessibilityHint("Plays this song's album or artist")
@@ -145,6 +159,8 @@ struct NowPlayingProgressView: View {
                     .playerLegibleForeground(foregroundRGB, fallback: foreground ?? .secondary)
             }
             .font(.caption.monospacedDigit())
+            // The bar reads out the same times.
+            .accessibilityHidden(true)
         }
     }
 }
@@ -211,7 +227,7 @@ struct NowPlayingProgressBar: View {
         .frame(height: lineHeight ?? 12)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Playback progress")
-        .accessibilityValue("\(Int(displayedProgress(at: Date()) * 100)) percent")
+        .accessibilityValue(accessibilityProgressValue)
         .onAppear {
             sampleCurrentProgress()
         }
@@ -224,6 +240,17 @@ struct NowPlayingProgressBar: View {
         .onChange(of: isPlaying) {
             sampleCurrentProgress()
         }
+    }
+
+    /// Elapsed and total time, as VoiceOver reads a duration; a percentage
+    /// when the length is unknown.
+    private var accessibilityProgressValue: String {
+        let progress = displayedProgress(at: Date())
+        guard let durationSeconds, durationSeconds > 0 else { return "\(Int(progress * 100)) percent" }
+        let style = Duration.UnitsFormatStyle(allowedUnits: [.hours, .minutes, .seconds], width: .wide)
+        let elapsed = Duration.seconds(Int(progress * durationSeconds)).formatted(style)
+        let total = Duration.seconds(Int(durationSeconds)).formatted(style)
+        return "\(elapsed) of \(total)"
     }
 
     private var shouldInterpolateProgress: Bool {
@@ -372,27 +399,31 @@ struct TrackActionControlsView: View {
                 Button {
                     Task { await playbackController.addCurrentToTriage(context: modelContext) }
                 } label: {
-                    Label("Triage", systemImage: "tray.and.arrow.down.fill")
+                    Label("Inbox", systemImage: "tray.and.arrow.down.fill")
                         .frame(maxWidth: .infinity)
                 }
-                .accessibilityLabel("Add to Triage")
+                .accessibilityLabel("Add to the Inbox")
+                .accessibilityInputLabels(["Inbox", "Add to the Inbox"])
                 .fullScreenPlayerControlStyle(palette: controlPalette, prominence: .secondary, fallbackStyle: .bordered)
                 Button {
                     Task { await playbackController.addCurrentToOneTruePlaylist(context: modelContext) }
                 } label: {
-                    Label("Overplay", systemImage: "plus.circle")
+                    Label("Overplay", systemImage: "arrow.up.circle")
                         .frame(maxWidth: .infinity)
                 }
                 .accessibilityLabel("Add to One True Playlist")
+                .accessibilityInputLabels(["Overplay", "Add to One True Playlist"])
                 .disabled(!playbackController.canAddCurrentToOneTruePlaylist(context: modelContext))
                 .fullScreenPlayerControlStyle(palette: controlPalette, prominence: .secondary, fallbackStyle: .bordered)
             } else if isCurrentTrackRetired {
                 Button {
                     Task { playbackController.restoreCurrent(context: modelContext) }
                 } label: {
-                    Label("Triage", systemImage: "tray.fill")
+                    Label("Inbox", systemImage: "tray.fill")
                         .frame(maxWidth: .infinity)
                 }
+                .accessibilityLabel("Move to the Inbox")
+                .accessibilityInputLabels(["Inbox", "Move to the Inbox"])
                 .disabled(playbackController.currentMember == nil)
                 .fullScreenPlayerControlStyle(
                     palette: controlPalette,
@@ -405,6 +436,8 @@ struct TrackActionControlsView: View {
                     Label("Overplay", systemImage: "arrow.up.circle")
                         .frame(maxWidth: .infinity)
                 }
+                .accessibilityLabel("Promote to One True Playlist")
+                .accessibilityInputLabels(["Overplay", "Promote"])
                 .disabled(playbackController.currentMember == nil)
                 .fullScreenPlayerControlStyle(
                     palette: controlPalette, prominence: .secondary, fallbackStyle: .bordered
@@ -417,6 +450,8 @@ struct TrackActionControlsView: View {
                         Label("Overplay", systemImage: "arrow.up.circle")
                             .frame(maxWidth: .infinity)
                     }
+                    .accessibilityLabel("Promote to One True Playlist")
+                    .accessibilityInputLabels(["Overplay", "Promote"])
                     .disabled(playbackController.currentMember == nil)
                     .fullScreenPlayerControlStyle(
                         palette: controlPalette,

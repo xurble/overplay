@@ -23,8 +23,9 @@ final class AppStartupViewModel {
         var repairTrackLocations: () -> Void = {}
         var sweepRetention: () -> Void = {}
         var authorizationIsReady: (() -> Bool)? = nil
-        /// Makes a One True Playlist a Mac asked for (`SETUP-002`).
-        var fulfilPendingOneTruePlaylist: () async -> Void = {}
+        /// Asks to make the One True Playlist's Apple Music playlist when a
+        /// Mac asked for it or it is missing (`SETUP-002`, `SETUP-003`).
+        var checkOneTruePlaylist: () async -> Void = {}
     }
 
     private(set) var hasStartedAuthorizedServices = false
@@ -80,8 +81,13 @@ final class AppStartupViewModel {
         Dependencies {
             // Restoration supplies settings; startup must never synthesize them.
         } migrateTriageBucket: {
-            // Generation 2 has no legacy ownership or role migration. The
-            // rebuild creates its bucket with the rest of the graph atomically.
+            // Generation 2 has no legacy ownership or role migration. Only
+            // the bucket's old name: "Triage" is the Inbox now.
+            do {
+                try PlaylistRepository.renameLegacyTriageBucket(in: modelContext)
+            } catch {
+                StartupProfiler.mark("Inbox rename failed: \(UserFacingError.message(for: error))")
+            }
         } refreshAuthorization: {
             await authorizationService.refresh()
         } installRemoteCommands: {
@@ -144,8 +150,8 @@ final class AppStartupViewModel {
             }
         } authorizationIsReady: {
             authorizationService.readiness.isReady
-        } fulfilPendingOneTruePlaylist: {
-            await runtime.fulfilPendingOneTruePlaylist(in: modelContext)
+        } checkOneTruePlaylist: {
+            await runtime.checkOneTruePlaylist(in: modelContext)
         }
     }
 
@@ -231,7 +237,7 @@ final class AppStartupViewModel {
                 dependencies.sweepRetention()
             }
 
-            await dependencies.fulfilPendingOneTruePlaylist()
+            await dependencies.checkOneTruePlaylist()
         }
     }
 }

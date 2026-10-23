@@ -1,10 +1,11 @@
 import Foundation
+@preconcurrency import MusicKit
 import SwiftData
 
 @MainActor
 enum DuplicateTrackService {
     enum Destination: String, CaseIterable, Identifiable {
-        case otp = "One True Playlist", triage = "Triage", retired = "Retired"
+        case otp = "One True Playlist", triage = "Inbox", retired = "Retired"
         var id: String { rawValue }
     }
     struct Candidate: Identifiable, Equatable {
@@ -24,10 +25,17 @@ enum DuplicateTrackService {
         var plays: Int
         var applePlays: Int? = nil
         var skips: Int
-        var keys: Set<String> {
+        /// What says two songs are the same recording.
+        var identityKeys: Set<String> {
             var values = Set(([catalogID, libraryID].compactMap { $0 } + aliases).map { "id:" + $0 })
             if let isrc, !isrc.isEmpty { values.insert("isrc:" + isrc) }
             values.formUnion(equivalents.map { "id:" + $0 })
+            return values
+        }
+        /// Identity, and a near-identical title and artist.
+        var keys: Set<String> {
+            var values = identityKeys
+            if let name = DuplicateNameKey.make(title: title, artist: artist) { values.insert(name) }
             return values
         }
         // Counts can increase during review; merge reads live values. Location
@@ -40,7 +48,11 @@ enum DuplicateTrackService {
         }
     }
     struct Group: Identifiable {
+        enum Reason { case sameRecording, sameNameAndArtist }
         var candidates: [Candidate]
+        /// Same recording when the songs' IDs or ISRCs alone join them;
+        /// otherwise only their names do, and they may be different recordings.
+        var reason: Reason = .sameRecording
         var id: UUID { candidates[0].id }
     }
     struct Result {
@@ -80,24 +92,83 @@ enum DuplicateTrackService {
     /// Index keys rather than compare every pair in a large library. A connected
     /// group is a suggestion only; the user selects the actual recordings.
     static func groups(_ candidates: [Candidate]) -> [Group] {
-        var groups: [Set<UUID>] = []
-        var groupByKey: [String: Int] = [:]
-        for candidate in candidates {
-            let existing = Set(candidate.keys.compactMap { groupByKey[$0] })
-            let index = existing.min() ?? groups.count
-            if index == groups.count { groups.append([]) }
-            groups[index].insert(candidate.id)
-            for other in existing where other != index {
-                groups[index].formUnion(groups[other]); groups[other].removeAll()
-                for key in Array(groupByKey.keys) where groupByKey[key] == other { groupByKey[key] = index }
-            }
-            for key in candidate.keys { groupByKey[key] = index }
+        let byKeys = components(candidates, keys: \.keys)
+        let byIdentity = components(candidates, keys: \.identityKeys)
+        return byKeys.groups.filter { $0.count > 1 }.map { indices in
+            // One identity component covering the whole group: same recording.
+            let sameRecording = Set(indices.map { byIdentity.root[$0] }).count == 1
+            return Group(candidates: indices.map { candidates[$0] }, reason: sameRecording ? .sameRecording : .sameNameAndArtist)
         }
-        return groups.filter { $0.count > 1 }.map { ids in Group(candidates: candidates.filter { ids.contains($0.id) }) }
     }
 
-    static func scan(in context: ModelContext, resolver: MusicIdentityResolver = .shared) async throws -> [Group] {
-        let tracks = try TrackRecordRepository.allTracks(in: context)
+    /// Connected candidates by shared key, in one pass (union-find): a large
+    /// library groups in a blink rather than re-scanning every key on a join.
+    private static func components(
+        _ candidates: [Candidate], keys: (Candidate) -> Set<String>
+    ) -> (groups: [[Int]], root: [Int]) {
+        var parent = Array(candidates.indices)
+        func find(_ index: Int) -> Int {
+            var index = index
+            while parent[index] != index { parent[index] = parent[parent[index]]; index = parent[index] }
+            return index
+        }
+        var owner: [String: Int] = [:]
+        for index in candidates.indices {
+            for key in keys(candidates[index]) {
+                if let other = owner[key] {
+                    let a = find(index), b = find(other)
+                    if a != b { parent[max(a, b)] = min(a, b) }
+                } else {
+                    owner[key] = index
+                }
+            }
+        }
+        let roots = candidates.indices.map(find)
+        var members: [Int: [Int]] = [:]
+        var order: [Int] = []
+        for index in candidates.indices {
+            if members[roots[index]] == nil { order.append(roots[index]) }
+            members[roots[index], default: []].append(index)
+        }
+        return (order.map { members[$0]! }, roots)
+    }
+
+    static func isUnanswered(_ error: Error) -> Bool {
+        if case MusicIdentityResolver.ResolutionError.incompleteResponse = error { return true }
+        if let request = error as? MusicDataRequest.Error { return isUnansweredStatus(request.status) }
+        return false
+    }
+
+    /// A request Apple Music refused for what it asked about (400 Bad Request,
+    /// 404, 422), not for who asked or when (401, 403, 429) or a server fault.
+    static func isUnansweredStatus(_ status: Int) -> Bool {
+        (400..<500).contains(status) && ![401, 403, 429].contains(status)
+    }
+
+    struct ScanResult {
+        var groups: [Group]
+        /// Songs sent to Apple Music: only those matched by name alone.
+        var checkedCount: Int
+        /// Songs Apple Music could not answer for, matched on what Overplay
+        /// already knew about them.
+        var uncheckedCount: Int
+    }
+
+    /// At once, from what Overplay already knows: shared IDs and ISRCs, and
+    /// near-identical titles and artists. No Apple Music call.
+    static func localScan(in context: ModelContext) throws -> [Group] {
+        groups(try candidates(in: context))
+    }
+
+    /// Asks Apple Music only about songs grouped by name alone, which may be
+    /// the same recording or not; songs already joined by ID or ISRC, and
+    /// songs with no near match, are never sent.
+    static func confirmNameMatches(
+        _ local: [Group], in context: ModelContext, resolver: MusicIdentityResolver = .shared
+    ) async throws -> ScanResult {
+        let ids = Set(local.filter { $0.reason == .sameNameAndArtist }.flatMap { $0.candidates.map(\.id) })
+        let tracks = try TrackRecordRepository.allTracks(in: context).filter { ids.contains($0.id) }
+        guard !tracks.isEmpty else { return ScanResult(groups: local, checkedCount: 0, uncheckedCount: 0) }
         let snapshots = tracks.map { track in
             var snapshot = TrackSnapshot(id: track.catalogID ?? track.libraryID ?? track.id.uuidString,
                 catalogID: track.catalogID, libraryID: track.libraryID, playlistEntryID: nil, playlistID: nil,
@@ -106,9 +177,9 @@ enum DuplicateTrackService {
             snapshot.isrc = track.isrc
             return snapshot
         }
-        let enriched = try await resolver.enrich(snapshots)
+        let (enriched, checked) = try await enrichSkippingUnanswered(snapshots, resolver: resolver)
         try Task.checkCancellation()
-        for (index, track) in tracks.enumerated() where !track.isDeleted {
+        for (index, track) in tracks.enumerated() where !track.isDeleted && checked[index] {
             let snapshot = enriched[index]
             // Do not replace a newer sync's identity while the scan was awaiting.
             if track.catalogID == snapshots[index].catalogID, track.libraryID == snapshots[index].libraryID {
@@ -116,7 +187,33 @@ enum DuplicateTrackService {
             }
         }
         try context.save()
-        return groups(try candidates(in: context))
+        return ScanResult(groups: groups(try candidates(in: context)), checkedCount: tracks.count,
+                          uncheckedCount: checked.count { !$0 })
+    }
+
+    static func scan(in context: ModelContext, resolver: MusicIdentityResolver = .shared) async throws -> ScanResult {
+        try await confirmNameMatches(try localScan(in: context), in: context, resolver: resolver)
+    }
+
+    /// Apple Music may not answer for some songs (one removed from the
+    /// library, or an ID it rejects as malformed), and one such song fails the
+    /// whole request. Imports stop there; a scan only suggests, so it halves
+    /// the request until it finds the song and goes on without it. Answers
+    /// already fetched are cached, so only the failing part is asked again.
+    /// Access, rate-limit, server and network failures still end the scan.
+    static func enrichSkippingUnanswered(
+        _ snapshots: [TrackSnapshot], resolver: MusicIdentityResolver
+    ) async throws -> (snapshots: [TrackSnapshot], checked: [Bool]) {
+        guard !snapshots.isEmpty else { return ([], []) }
+        do {
+            return (try await resolver.enrich(snapshots), Array(repeating: true, count: snapshots.count))
+        } catch where isUnanswered(error) {
+            guard snapshots.count > 1 else { return (snapshots, [false]) }
+            let middle = snapshots.count / 2
+            let first = try await enrichSkippingUnanswered(Array(snapshots[..<middle]), resolver: resolver)
+            let second = try await enrichSkippingUnanswered(Array(snapshots[middle...]), resolver: resolver)
+            return (first.snapshots + second.snapshots, first.checked + second.checked)
+        }
     }
 
     static func validate(_ selected: [Candidate], destination: Destination?, in context: ModelContext) throws -> Destination {

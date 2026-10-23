@@ -159,6 +159,8 @@ struct PlaybackControlButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: iconSize, weight: iconWeight))
+            // Fixed-size symbols: touch and hold shows them large.
+            .accessibilityShowsLargeContentViewer()
             .playerLegibleForeground(
                 palette?.foregroundRGB,
                 fallback: foregroundStyle,

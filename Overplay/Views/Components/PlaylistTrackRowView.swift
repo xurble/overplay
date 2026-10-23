@@ -17,11 +17,8 @@ struct PlaylistTrackRowView: View {
                 .frame(width: 72, height: 72)
 
                 if isCurrent {
-                    Image(systemName: "play.fill")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.white)
-                        .padding(4)
-                        .background(.green, in: Circle())
+                    NowPlayingBadgeView()
+                        .padding(3)
                 }
             }
 
@@ -61,6 +58,8 @@ struct PlaylistTrackRowView: View {
             }
         }
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(summary.isPlayable ? "" : "Unavailable")
     }
 }
 

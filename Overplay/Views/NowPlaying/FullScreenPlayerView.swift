@@ -24,9 +24,6 @@ struct FullScreenPlayerView: View {
     /// grows the player out of the mini player, the close in reverse.
     @State private var closeProgress: CGFloat
     @State private var hasOpened: Bool
-    /// Set once a drag has moved: down closes, sideways (the volume pill)
-    /// is left alone.
-    @State private var dragIsDismissal: Bool?
 
     static let coordinateSpace = "full-screen-player"
     /// The spacing under and above the volume pill, shared with an unfolded
@@ -84,10 +81,6 @@ struct FullScreenPlayerView: View {
             isLandscape: screenSize.width > screenSize.height,
             artworkTop: $artworkTop
         )
-        // The card moves with the finger, so a drag that started on a button
-        // ends on it and pressed it. Once the drag is a swipe down, the
-        // controls stop taking it; the swipe is the card's, below.
-        .allowsHitTesting(dragIsDismissal != true)
         .overlay {
             // Centred across the whole screen.
             GeometryReader { proxy in
@@ -98,11 +91,9 @@ struct FullScreenPlayerView: View {
                     )
             }
         }
-        // The margins take the swipe as well as the controls, and keep
-        // taking it while the controls are switched off.
-        .background { Color.clear.contentShape(.rect) }
+        // The margins take the swipe as well as the controls.
         .contentShape(.rect)
-        .simultaneousGesture(dismissDrag)
+        .gesture(dismissPan)
         // Measured inside the full-screen layout: outside it, the size
         // leaves out the status bar and home indicator.
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
@@ -136,26 +127,22 @@ struct FullScreenPlayerView: View {
         ))
     }
 
-    private var dismissDrag: some Gesture {
-        DragGesture(minimumDistance: 10, coordinateSpace: .global)
-            .onChanged { value in
-                if dragIsDismissal == nil {
-                    dragIsDismissal = value.translation.height > abs(value.translation.width)
-                }
-                guard dragIsDismissal == true else { return }
-                // The drag drives the shrink: the card's top follows the
-                // finger and reaches the mini player as it becomes it.
-                closeProgress = min(max(value.translation.height, 0) / max(miniPlayerTop, 1), 1)
+    /// The card follows the finger down and, past the threshold, closes;
+    /// otherwise, or if the system takes the touch, it springs back open.
+    private var dismissPan: PlayerDismissPan {
+        PlayerDismissPan { translation in
+            // The drag drives the shrink: the card's top follows the finger
+            // and reaches the mini player as it becomes it.
+            closeProgress = min(max(translation.height, 0) / max(miniPlayerTop, 1), 1)
+        } onEnded: { translation, predictedEnd in
+            if Self.closesPlayer(translation: translation, predictedEnd: predictedEnd) {
+                close()
+            } else {
+                withAnimation(.spring(duration: 0.33)) { closeProgress = 0 }
             }
-            .onEnded { value in
-                defer { dragIsDismissal = nil }
-                guard dragIsDismissal == true else { return }
-                if Self.closesPlayer(translation: value.translation, predictedEnd: value.predictedEndTranslation) {
-                    close()
-                } else {
-                    withAnimation(.spring(duration: 0.33)) { closeProgress = 0 }
-                }
-            }
+        } onCancelled: {
+            withAnimation(.spring(duration: 0.33)) { closeProgress = 0 }
+        }
     }
 
     /// Slides the rest of the way down from wherever the drag left it, then
@@ -259,7 +246,19 @@ private struct PlayerCardTransform: ViewModifier, Animatable {
     /// before it reaches the mini player.
     private static let fadeStart: CGFloat = 0.7
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func body(content: Content) -> some View {
+        if reduceMotion {
+            // No zoom: the player fades, and a swipe down fades it with the finger.
+            content.opacity(1 - min(max(closeProgress, 0), 1))
+        } else {
+            moving(content)
+        }
+    }
+
+    @ViewBuilder
+    private func moving(_ content: Content) -> some View {
         let width = max(screenSize.width, 1)
         let height = max(screenSize.height, 1)
         let start = CGRect(x: 0, y: 0, width: width, height: height)

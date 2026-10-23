@@ -21,9 +21,15 @@ struct AudioOutputPillView: View {
     var monitor: AudioOutputMonitor = .shared
 
     private let volumeControl = SystemVolumeControl.shared
+    @Environment(\.scenePhase) private var scenePhase
     @State private var routePicker = AudioRoutePickerControl()
     @State private var width: CGFloat = 0
+    /// The volume when a drag began.
     @State private var dragStartVolume: Float?
+    /// True for a drag's lifetime and reset by SwiftUI when the system
+    /// cancels it, which never calls onEnded: a cancelled drag must not leave
+    /// a start behind, or the pill stops following the volume buttons.
+    @GestureState private var isDragging = false
     @State private var isVolumeControlAttached = false
 
     var body: some View {
@@ -82,10 +88,29 @@ struct AudioOutputPillView: View {
         .onChange(of: isExpanded) { _, isExpanded in
             setVolumeControlAttached(isExpanded)
         }
+        .onChange(of: isDragging) { _, dragging in
+            if !dragging { dragStartVolume = nil }
+        }
+        // The volume buttons, while the pill is on screen: in the background
+        // (music playing, the phone in a pocket) nobody sees it.
+        .task(id: isExpanded && scenePhase == .active) {
+            guard isExpanded, scenePhase == .active else { return }
+            // The session's volume is stale (its session is never active):
+            // while this reads the real one, the session's must not land on it.
+            monitor.beginReadingVolumeView()
+            defer { monitor.endReadingVolumeView() }
+            while !Task.isCancelled {
+                if dragStartVolume == nil, let volume = volumeControl.currentVolume, abs(volume - monitor.volume) > 0.001 {
+                    monitor.showVolume(volume)
+                }
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+        }
     }
 
     private var volumeDrag: some Gesture {
         DragGesture(minimumDistance: 4)
+            .updating($isDragging) { _, dragging, _ in dragging = true }
             .onChanged { value in
                 let start = dragStartVolume ?? monitor.volume
                 dragStartVolume = start

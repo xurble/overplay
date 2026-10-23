@@ -18,6 +18,11 @@ struct OneTruePlaylistRebuildService {
         var addedCount: Int
         /// Active songs with no playable Apple Music item on this device.
         var skippedCount: Int
+
+        /// Said wherever a rebuild reports, so the wording cannot drift.
+        var skippedNote: String? {
+            skippedCount > 0 ? "\(skippedCount) songs couldn’t be added from this device; they stay in Overplay." : nil
+        }
     }
 
     enum RebuildError: LocalizedError {
@@ -29,7 +34,7 @@ struct OneTruePlaylistRebuildService {
 
         var errorDescription: String? {
             switch self {
-            case .noOneTruePlaylist: "Choose a One True Playlist before rebuilding it."
+            case .noOneTruePlaylist: "Overplay hasn’t made your One True Playlist yet, so there is nothing to rebuild."
             case .notOnThisDevice: "Rebuild the Apple Music playlist from your iPhone or iPad."
             case .nothingToAdd: "None of the playlist's active songs could be prepared for Apple Music, so nothing was changed."
             case .linkFailed(let name, let songCount): "Created a new “\(name)” in Apple Music with \(songCount) songs, but couldn't confirm it, so Overplay still uses your current playlist. Delete the new one (\(songCount) songs) in the Music app and try again."

@@ -24,7 +24,7 @@ requirements. Approaches that were tried and withdrawn are recorded in
 
 Overplay is an Apple Music companion app for iPhone, iPad, and CarPlay.
 It keeps a user's main music playlist fresh while using other playlists as
-intake and triage sources.
+intake and Inbox sources.
 
 ### Product priorities
 
@@ -41,7 +41,7 @@ trades one against another, the higher priority wins.
    phone screen is, in practice, unavailable. Minimal Siri is built
    (**Siri**, `SIRI-001`); fuller voice management comes later (`TODO.md`:
    Fuller Siri).
-3. **Reliable playlist management.** One True Playlist, Triage and Retired
+3. **Reliable playlist management.** One True Playlist, the Inbox and Retired
    stay correct, and deduplication keeps each logical track in exactly one of
    them (`PLAYLIST-007`).
 4. **Statistics.** Play, skip and Apple play counts inform curation. They
@@ -55,11 +55,11 @@ control moves to a CarPlay list template.
 
 The core playlist is the user's **One True Playlist**. Overplay plays it,
 tracks the user's own skip and playthrough behaviour, and exposes manual
-retirement. Everything awaiting review lives in a single **triage bucket**,
+retirement. Everything awaiting review lives in a single **Inbox**,
 fed by any number of contributing Apple Music playlists. Those contributors
 can represent sources such as TikTok saves, Shazam discoveries, a friend's
 playlist, or any other Apple Music playlist the user wants to review before
-promoting songs into the One True Playlist. The user triages in one place
+promoting songs into the One True Playlist. The user reviews in one place
 rather than playlist by playlist.
 
 Overplay maintains its own history and state. It does not rely on Apple
@@ -71,27 +71,28 @@ Music's global play count or skip count.
 | --- | --- | --- |
 | `PLAT-001` | The app supports iPhone and iPad on iOS/iPadOS 26+, with CarPlay supplied by the iPhone app, and the Mac on macOS 26+ through a Mac Catalyst build of the same app, which cannot write Apple Music playlists. A native Mac target is planned, not implemented. | `Overplay.xcodeproj/project.pbxproj`, `Overplay/App/Shell/PlatformShell.swift`, `Overplay/App/Shell/SplitLayoutPolicy.swift` |
 | `AUTH-001` | Normal use requires Apple Music authorization, catalogue playback capability, and Sync Library. The simulator supplies a ready state for development. | `Overplay/Services/MusicAuthorizationService.swift`, `Overplay/App/StartupAuthorizationGate.swift` |
-| `PLAYLIST-001` | Exactly one active One True Playlist is selected. Selecting another demotes the previous main playlist to a triage source. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/NewModelRepositoryTests.swift` |
-| `PLAYLIST-003` | There is at most one triage bucket. It owns every triage item, is ensured during startup, and has a reserved `musicPlaylistID` rather than an Apple Music playlist, so it is never fetched or synced directly. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/TriageBucketTests.swift` |
-| `PLAYLIST-004` | Sources contribute attachments, not duplicate rows. A deliberate source link/re-link revives older retirements into Triage; ordinary sync never revives them. Active OTP takes precedence over source intake. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
-| `PLAYLIST-005` | Last-source unlink deletes untouched, non-explicit active Triage rows and unowned retired 0/0 rows. Active explicit keep or prior listening (even reset) survives. Nonzero counts and necessary OTP suppression always survive. | `Overplay/Persistence/TrackRetentionPolicy.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
-| `PLAYLIST-007` | One item per track app-wide. OTP, Triage and global Retired are three top-level collections; every retired item belongs to the bucket. | `Overplay/Persistence/PlaylistItemRepository.swift`, `Overplay/Services/TrackLocationService.swift` |
+| `PLAYLIST-001` | Exactly one active One True Playlist is selected. Making a new one demotes the previous main playlist to an Inbox source. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/NewModelRepositoryTests.swift` |
+| `PLAYLIST-003` | There is at most one Inbox. It owns every Inbox item, is ensured during startup, and has a reserved `musicPlaylistID` rather than an Apple Music playlist, so it is never fetched or synced directly. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/TriageBucketTests.swift` |
+| `PLAYLIST-004` | Sources contribute attachments, not duplicate rows. A deliberate source link/re-link revives older retirements into the Inbox; ordinary sync never revives them. Active OTP takes precedence over source intake. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
+| `PLAYLIST-005` | Last-source unlink deletes untouched, non-explicit active Inbox rows and unowned retired 0/0 rows. Active explicit keep or prior listening (even reset) survives. Nonzero counts and necessary OTP suppression always survive. | `Overplay/Persistence/TrackRetentionPolicy.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
+| `PLAYLIST-007` | One item per track app-wide. OTP, the Inbox and global Retired are three top-level collections; every retired item belongs to the bucket. | `Overplay/Persistence/PlaylistItemRepository.swift`, `Overplay/Services/TrackLocationService.swift` |
 | `PLAYLIST-008` | Every retire or duplicate merge out of a managed One True Playlist removes the song from the Apple Music playlist, retried after each sync. A rewrite runs only when the device's copy matches iCloud's; removed or absent songs release suppression and get the retention rule. Promotion does not add a song iCloud already holds. | `Overplay/Services/OneTruePlaylistRemoteMembership.swift`, `OverplayTests/OneTruePlaylistRemoteMembershipTests.swift` |
 | `PLAYLIST-009` | From iPhone or iPad, the user can rebuild the One True Playlist's Apple Music playlist: Overplay creates a new playlist of the active songs in Overplay's order and relinks the same One True Playlist to it, keeping counts, retirements and history. Nothing is deleted from Apple Music. | `Overplay/Services/OneTruePlaylistRebuildService.swift`, `OverplayTests/OneTruePlaylistRebuildTests.swift` |
 | `PLAYLIST-010` | Ordinary sync skips a song no lookup can identify: the rest syncs; the skipped row is untouched; absence-dependent steps are skipped; the playlist keeps an error and retries. More than a fifth unidentifiable, or any in a copy, still stops the fetch. | `Overplay/Services/AppleMusicPlaylistSourceSync.swift`, `OverplayTests/MusicLibraryIdentityImportTests.swift` |
 | `PLAYLIST-011` | The retention rule is re-applied by a sweep at startup and after each background sync cycle, to retired rows and deferred deletions only, with every deletion recorded in history. | `Overplay/Persistence/TrackRetentionPolicy.swift`, `OverplayTests/SyncCleanupTests.swift` |
 | `LOC-001` | A retirement or restore survives another device's stale CloudKit write. After each import and at startup, a song's newest `evicted`/`restored` history event re-applies its decision when it is newer than the row's `locationChangedAt`; promotions are left to the next One True Playlist sync. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/TrackLocationRepairTests.swift` |
-| `PLAYLIST-006` | Pre-bucket triage data migrates onto the bucket at startup. The migration is idempotent and keyed on the stored legacy role value, not a local flag. | `Overplay/Persistence/TriageBucketMigrationService.swift`, `OverplayTests/TriageBucketTests.swift` |
-| `PLAYLIST-002` | Initial setup can create a managed playlist, copy an existing playlist into a managed playlist, or link an existing playlist as incoming-only. | `Overplay/ViewModels/PlaylistSelectionViewModel.swift`, `Overplay/Services/PlaylistSyncService.swift` |
-| `SETUP-001` | A new library starts in setup: swipeable cards introduce the features, then the One True Playlist card needs a choice (a new managed "Overplay" playlist, empty or copied from an existing playlist, which is unchanged) and the Triage card needs one (sources, with TikTok and Shazam playlists suggested, or Add Sources Later). Swiping cannot pass an undecided card. The library is created by the first choice or by finishing; finishing syncs the chosen sources. Choices are read back from the store, so a rebuilt setup screen never makes a second playlist; no CarPlay, Siri, import or readiness retry opens a library while setup shows; a library that arrives from iCloud ends setup and is restored, never replaced. | `Overplay/ViewModels/SetupViewModel.swift`, `Overplay/Views/Setup/`, `OverplayTests/SetupViewModelTests.swift` |
-| `SETUP-002` | On a Mac, which cannot create Apple Music playlists, setup's One True Playlist choice is saved in the synced settings as a request (empty, or a copy of a named playlist). The first iPhone or iPad to start up or import with the request makes the managed "Overplay" playlist, selects it and clears the request; a One True Playlist chosen meanwhile clears it instead. A failure keeps it for the next launch or import. Two iPhones opening at the same moment could both make one. | `Overplay/Services/PendingOneTruePlaylistService.swift`, `OverplayTests/PendingOneTruePlaylistServiceTests.swift` |
+| `PLAYLIST-006` | Pre-bucket Inbox data migrates onto the bucket at startup. The migration is idempotent and keyed on the stored legacy role value, not a local flag. | `Overplay/Persistence/TriageBucketMigrationService.swift`, `OverplayTests/TriageBucketTests.swift` |
+| `PLAYLIST-002` | The One True Playlist is always one Overplay created, empty or as a copy of an existing playlist, because MusicKit lets an app edit only playlists it created. It is made in setup (`SETUP-001`), or from the dashboard when a library has none; an existing playlist cannot be chosen or swapped in. Changed 2026-10-23: choosing an existing playlist, linking one as incoming-only, Make Main and Sync All were removed with the playlist selection screen. | `Overplay/Views/OneTruePlaylistCreationView.swift`, `Overplay/Services/PlaylistSyncService.swift` |
+| `SETUP-001` | A new library starts in setup: swipeable cards introduce the features, then the One True Playlist card needs a choice (a new managed "Overplay" playlist, empty or copied from an existing playlist, which is unchanged) and the Inbox card needs one (sources, with TikTok and Shazam playlists suggested, or Add Sources Later). Swiping cannot pass an undecided card. The library is created by the first choice or by finishing; finishing syncs the chosen sources. Choices are read back from the store, so a rebuilt setup screen never makes a second playlist; no CarPlay, Siri, import or readiness retry opens a library while setup shows; a library that arrives from iCloud ends setup and is restored, never replaced. | `Overplay/ViewModels/SetupViewModel.swift`, `Overplay/Views/Setup/`, `OverplayTests/SetupViewModelTests.swift` |
+| `SETUP-002` | On a Mac, which cannot create Apple Music playlists, setup's One True Playlist choice is saved in the synced settings as a request (empty, or a copy of a named playlist). The first iPhone or iPad to start up or import with the request asks first ("Make Your Overplay Playlist?"), then makes the managed "Overplay" playlist, selects it and clears the request; Not Now asks again at the next launch. Opening Make Your One True Playlist on the dashboard makes it at once. A One True Playlist made meanwhile clears the request; a failure keeps it. Two iPhones opening at the same moment could both make one. | `Overplay/Services/PendingOneTruePlaylistService.swift`, `Overplay/Services/OneTruePlaylistPresenceService.swift`, `OverplayTests/PendingOneTruePlaylistServiceTests.swift` |
+| `SETUP-003` | When the One True Playlist's Apple Music playlist is no longer in the library (deleted in the Music app), an iPhone or iPad asks ("Overplay Playlist Missing") when a sync cannot find it, confirmed by one lookup of iCloud's web library (this device's library can lag iCloud, so asking it again proves nothing), before making it again with the active songs through the shared rebuild (`PLAYLIST-009`). Nothing is made without the user's yes; an unanswered lookup never asks. At the yes it looks once more: if the One True Playlist now has another ID (another device made it again) or Apple Music has it, nothing is made, and if Apple Music cannot be asked, nothing is made and the alert can come back. Two devices answering yes before either hears of the other through iCloud can each make one, as in `SETUP-002`. A "Not Now" holds until the next launch, even for a lookup already running. Making a playlist a Mac asked for (`SETUP-002`) runs once at a time: the alert and the dashboard's card share the one in flight, and no alert asks while it runs. | `Overplay/Services/OneTruePlaylistPromptController.swift`, `Overplay/Services/OneTruePlaylistPresenceService.swift`, `OverplayTests/OneTruePlaylistPromptControllerTests.swift`, `OverplayTests/OneTruePlaylistPresenceServiceTests.swift` |
 | `SYNC-001` | Automatic sync starts no sooner than a minute after launch (and 10 seconds after authorization), runs every 30 minutes, skips fresh successful playlists, retries failed playlists, prioritizes the playing and selected playlists, and pauses while a playback failure is active. | `Overplay/Services/PeriodicPlaylistSyncService.swift`, `OverplayTests/PeriodicPlaylistSyncServiceTests.swift` |
 | `SYNC-002` | Sync is idempotent, collapses duplicate identities, preserves history, and leaves remotely missing tracks locally playable unless retired. Sync never mutates the live playback queue. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/PlaylistSyncReconciliationTests.swift` |
-| `MUT-001` | Successful promotion moves the existing item into OTP with its statistics and history; no source copy remains. Retired offers Move to Triage (explicit keep) and Move to One True Playlist. | `Overplay/Services/PlaylistMutationService.swift`, `OverplayTests/PlaylistMutationServiceTests.swift` |
-| `MUT-002` | Search adds a song to the One True Playlist or Triage through the shared song action (`PLAY-018`), or to another Apple Music library playlist through a MusicKit add; the One True Playlist is never offered as an "other" playlist. | `Overplay/ViewModels/SearchMusicViewModel.swift`, `OverplayTests/SearchMusicViewModelTests.swift` |
+| `MUT-001` | Successful promotion moves the existing item into OTP with its statistics and history; no source copy remains. Retired offers Move to the Inbox (explicit keep) and Move to One True Playlist. | `Overplay/Services/PlaylistMutationService.swift`, `OverplayTests/PlaylistMutationServiceTests.swift` |
+| `MUT-002` | Search adds a song to the One True Playlist or the Inbox through the shared song action (`PLAY-018`), or to another Apple Music library playlist through a MusicKit add; the One True Playlist is never offered as an "other" playlist. | `Overplay/ViewModels/SearchMusicViewModel.swift`, `OverplayTests/SearchMusicViewModelTests.swift` |
 | `MUT-003` | Undo reverses this device's latest promote or retire, from any surface, within 10 minutes and while nothing has moved the song since. The song goes back where it was; Apple Music follows as for an ordinary promotion or retirement. One level; playback is untouched. | `Overplay/Services/PlaybackController.swift`, `OverplayTests/VoiceActionTests.swift` |
 | `MUT-004` | Promoting the current song keeps it playing, from any intent (playlist, album, artist or Recents) and any surface; its listen counts as usual. Adds and moves from Now Playing, Recents and the Library never skip. Retire is the only curation that skips. | `Overplay/Services/PlaybackController.swift`, `OverplayTests/VoiceActionTests.swift` |
-| `RETIRE-001` | Retirement is authoritative locally and globally equivalent from OTP/Triage. Managed OTP retirement attempts remote removal from rows and Now Playing; incoming-only OTP and Triage retirement stay local. Stale OTP membership cannot revive or silently re-promote the row. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/TrackLocationService.swift` |
+| `RETIRE-001` | Retirement is authoritative locally and globally equivalent from OTP or the Inbox. Managed OTP retirement attempts remote removal from rows and Now Playing; incoming-only OTP and Inbox retirement stay local. Stale OTP membership cannot revive or silently re-promote the row. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/TrackLocationService.swift` |
 | `PLAY-004` | MusicKit owns shuffle and repeat. Overplay writes what a surface asked for, displays what the player reports, and never reorders or rebuilds the queue to emulate them. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-005` | Starting playback hands MusicKit the complete display order for the selected scope in one queue, omitting only tracks that cannot be prepared. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-010` | Starting playback records a device-local playback intent (playlist, scope, ordered members with identifiers and metadata) before the queue is submitted. Only a new submission replaces it and only a database reset clears it; no observation, error or timeout can. | `Overplay/Playback/PlaybackIntent.swift` |
@@ -104,18 +105,18 @@ Music's global play count or skip count.
 | `PLAY-017` | Native `Track` objects needed for playback are cached on disk per device; cold launches do not need to re-resolve the whole playlist, a cached track is reused only while it is the song its record names (its library or catalog ID), a library ID that no longer exists in the account library falls back to the record's catalog ID, and unresolvable songs are omitted rather than failing playback, with each omission recorded in the activity log. The cache is emptied only when the Apple Music account or storefront it was filled under changes, never on a relaunch or a failed or offline account check, and a playback lookup gives up after 15 seconds. | `Overplay/Services/DevicePlaybackCache.swift` |
 | `COUNT-001` | Counting observes playback and never commands, delays or vetoes it. Skips require witnessed listening; playthroughs are position-based; suspended spans never produce skips. | `Overplay/Playback/ListeningSessionTracker.swift`, `Overplay/UseCases/PlaybackSessionEvaluationService.swift` |
 | `COUNT-002` | Counted outcomes are immutable ledger events with idempotent session IDs. Displayed counts are derived from the ledger, including absorbed track identities; merges and resets never edit counts. Apple's calculated play count, when higher, is recorded as a floor event that plays never fall below. | `Overplay/Services/ListenLedger.swift`, `Overplay/Models/ListenEvent.swift` |
-| `LOAD-001` | Overplay adds no avoidable Apple Music load during playback: no automatic sync, play-count, artwork or Library work in the first minute after launch, no steady-state queue enumeration, bulk Apple play-count refresh at most every 15 minutes and never while playing, library discovery scans at most every 6 hours, and no background MusicKit work while a playback failure is active. | `Overplay/Services/ApplePlayCountSyncService.swift`, `Overplay/Services/PeriodicPlaylistSyncService.swift` |
+| `LOAD-001` | Overplay adds no avoidable Apple Music load during playback: no automatic sync, play-count, artwork or Library work in the first minute after launch (a Library screen restored at launch shows its saved copy and refreshes after the minute; one with no saved copy loads at once, as if opened), no steady-state queue enumeration, bulk Apple play-count refresh at most every 15 minutes and never while playing, library discovery scans at most every 6 hours, and no background MusicKit work while a playback failure is active. | `Overplay/Services/ApplePlayCountSyncService.swift`, `Overplay/Services/PeriodicPlaylistSyncService.swift` |
 | `CAR-002` | Presented menus retain row and artwork identity. Only changed visible values are published; section replacement requires structural change. Presentation reads never mutate playback or persistence. | `Overplay/CarPlaySupport/CarPlayListRenderer.swift` |
-| `PLAY-018` | Now Playing in the app and CarPlay plays the current song's album from track 1, or its artist's Essentials playlist, else its Top Songs with versions collapsed, through one shared start. Tracked songs are counted and curated as usual; untracked songs offer Add to Triage and Add to One True Playlist. A failed lookup changes nothing. | `Overplay/Playback/PlaybackCollection.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/PlaybackCollectionTests.swift` |
+| `PLAY-018` | Now Playing in the app and CarPlay plays the current song's album from track 1, or its artist's Essentials playlist, else its Top Songs with versions collapsed, through one shared start. Tracked songs are counted and curated as usual; untracked songs offer Add to the Inbox and Add to One True Playlist. A failed lookup changes nothing. | `Overplay/Playback/PlaybackCollection.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/PlaybackCollectionTests.swift` |
 | `PLAY-019` | Recents keeps the 10 most recently played albums and artists, synced through iCloud, one per album or artist, newest first. The main screen shows them as one scrolling row of artwork and CarPlay as a Recents menu; each opens its saved songs with Shuffle and Play, played through the shared selection action and from this device's saved tracks. | `Overplay/Persistence/RecentCollectionRepository.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/RecentsTests.swift` |
 | `PLAY-020` | Shuffle and Play of the playlist and scope already in the intent does not restart it: shuffle is turned on if it is off, then playing carries on, otherwise it is Play. Every surface, Siri included. | `Overplay/Services/PlaybackController.swift`, `OverplayTests/VoiceActionTests.swift` |
 | `LIB-001` | The Library section browses the user's Apple Music library (Playlists, Albums, Artists, Songs) from the web library, so Overplay's tracks match and show their counts on every device. A collection plays through the shared collection start with this device's own library copies; Songs plays a 100-song window; nothing from Library is added to Recent Deep Dives. Lists are cached per device, never synced. | `Overplay/Services/LibraryBrowser.swift`, `Overplay/Services/LibraryCache.swift`, `Overplay/Views/Library/` |
 | `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing; Play Album and Play Artist add one action list above it (`PLAY-018`), and Recents adds one level under the root (`PLAY-019`). | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
-| `SIRI-001` | Siri, Shortcuts, Spotlight and the Action button offer Play One True Playlist, Play Triage, Promote, Retire and Undo, each a thin adapter over the shared action the app and CarPlay use. They run in the background with the phone locked, speak the result of Promote, Retire and Undo, and speak only failures for Play. | `Overplay/Intents/OverplayIntents.swift`, `Overplay/Intents/VoiceActions.swift`, `OverplayTests/VoiceActionTests.swift` |
+| `SIRI-001` | Siri, Shortcuts, Spotlight and the Action button offer Play One True Playlist, Play the Inbox, Promote, Retire and Undo, each a thin adapter over the shared action the app and CarPlay use. They run in the background with the phone locked, speak the result of Promote, Retire and Undo, and speak only failures for Play. | `Overplay/Intents/OverplayIntents.swift`, `Overplay/Intents/VoiceActions.swift`, `OverplayTests/VoiceActionTests.swift` |
 | `SIRI-002` | An intent that launches Overplay with no window starts the same startup as CarPlay and waits up to 8 seconds for the library; if it is not ready, the intent says so and changes nothing. | `Overplay/App/AppRuntime.swift` |
 | `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
 | `HISTORY-001` | History is filterable and paged. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. History is never the source of counts. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
-| `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, playlist selection, MusicKit diagnostics (including whether the One True Playlist is still editable), and the diagnostic Now Playing mirror. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
+| `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, the One True Playlist shown with a link to Apple Music, Inbox Sources, display options, Siri phrases, MusicKit diagnostics (including whether the One True Playlist is still editable), and the diagnostic Now Playing mirror. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
 | `SURFACE-001` | Every playback action exposed by SwiftUI or CarPlay runs through the shared playback controller with identical semantics. System transport controls act on the player directly and their effects are processed through the same observation path. A surface may expose fewer actions but never a different version of one. | Confirmed product requirement (2026-08-31, revised 2026-10-04); `Overplay/Services/PlaybackController.swift`, `Overplay/CarPlaySupport/CarPlayCoordinator.swift` |
 | `SURFACE-002` | Every observed player change is published as one snapshot to every Overplay surface within one observation cycle; system surfaces read the same player. Current track, playlist context, play state, position, outgoing-session evaluation and active-playlist projection must not diverge. | Confirmed product requirement (2026-08-31, revised 2026-10-04); `Overplay/Services/PlaybackController.swift` |
 | `SURFACE-003` | Equivalent iOS/iPadOS and CarPlay actions use one controller decision, including in-intent jump versus new intent, resume versus restart, and failure handling. | Confirmed product requirement (2026-09-25); `Overplay/Services/PlaybackController.swift` |
@@ -167,7 +168,7 @@ integration differences.
 
 ### iPhone
 
-iPhone is the focused playback and quick-triage experience.
+iPhone is the focused playback and quick-review experience.
 
 - Use compact navigation with a dashboard-first flow.
 - Keep Now Playing as the strongest visual surface.
@@ -181,8 +182,14 @@ iPad is the review and management experience as well as a playback device.
 
 - Regular width uses `NavigationSplitView`; compact width falls back to the
   stacked dashboard flow.
-- The sidebar provides Dashboard, One True Playlist, Triage, Retired,
-  Search, History, and Settings.
+- The sidebar has Dashboard and Search (plus History and Settings on iPad),
+  then **Overplaying**: the One True Playlist, the Inbox, Retired and Deep
+  Dives (every Recent Deep Dive, `PLAY-019`); then **Library**: Playlists,
+  Albums, Artists and Songs from Apple Music (`LIB-001`), as on the phone's
+  dashboard.
+- The dashboard is the main column's root; a sidebar choice is pushed on it,
+  replacing the previous sidebar screen, so Back returns to the dashboard as
+  when the dashboard opened that screen, whether or not the sidebar shows.
 - Sidebar selection is scene-local. Regular width matches an open iPhone
   Duo: the list and Now Playing each take half the window, side by side when
   it is wider than tall and Now Playing above the list when it is taller. The
@@ -206,11 +213,12 @@ that it needs an iPhone or iPad.
 
 The Mac build has its own menus and windows:
 
-- **Go** opens Dashboard, Overplay, Triage, Retired, Search (⌘F) and History,
+- **Go** opens Dashboard, Overplay, the Inbox, Retired, Search (⌘F) and History,
   with shortcuts; **Controls** has Play/Pause, Next and Previous, which step
   aside while a text field is focused; **View** shows or hides the sidebar and
   Now Playing. Document and New Window items are removed.
-- Search, History and Settings are not in the Mac sidebar.
+- Search is in the Mac sidebar, under Dashboard; History and Settings are
+  not (Go menu and the Settings window).
 - Settings opens in its own window, with General and Troubleshooting tabs,
   sized to its controls; only Close is enabled.
 - While Now Playing is hidden, a mini player sits in the title bar, with the
@@ -266,18 +274,18 @@ Overplay tracks multiple Apple Music playlists:
   Overplay links the source playlist as incoming only and does not attempt
   outbound Apple Music mutations for that playlist.
 
-- **Triage bucket**: the single place where everything awaiting review lives.
+- **Inbox**: the single place where everything awaiting review lives.
   Overplay tracks skips and playthroughs against bucket items. Tracks can be
   manually promoted to the One True Playlist or manually retired from bucket
   playback. The bucket has no Apple Music playlist of its own and carries a
   reserved identifier instead, so it is never fetched or synced directly.
 
-- **Triage sources**: contributing Apple Music playlists that feed the bucket.
+- **Inbox sources**: contributing Apple Music playlists that feed the bucket.
   Each keeps its own sync bookkeeping, but owns no items and is never played.
   A track contributed by several sources is a single globally owned row.
 
 - **Retired**: the third top-level browsing/playback collection, shared by OTP
-  and Triage. Stored as bucket ownership plus `evictedAt`, never as another
+  and the Inbox. Stored as bucket ownership plus `evictedAt`, never as another
   Apple Music playlist. Listening here counts normally without restoring items.
 
 Each linked playlist stores:
@@ -291,28 +299,29 @@ Each linked playlist stores:
 - Whether the playlist is active.
 
 Exactly one active playlist has the `oneTruePlaylist` role, and at most one has
-the `triageBucket` role. Selecting another main playlist demotes the previous
-one to a triage source. The current UI can add and remove contributing
-playlists from the triage sources screen; it does not rename linked playlists
+the `triageBucket` role. Making a new main playlist demotes the previous one
+to an Inbox source (`PLAYLIST-002`: Overplay only ever makes it). The current
+UI can add and remove contributing
+playlists from the Inbox sources screen; it does not rename linked playlists
 or delete their Apple Music source playlists.
 
 Source attachments record every playlist that contributed a song until that
 source is explicitly unlinked. Remote song removal does not detach it. Multiple
 sources protect a row until the last is removed. Source-free is a normal state.
 
-After last-source removal, active Triage retains explicit manual/restore intent
+After last-source removal, the active Inbox retains explicit manual/restore intent
 or any recorded play/skip history, even if counters were reset. Untouched active
 rows without explicit intent are deleted. Retired source-free rows with current
 0 plays and 0 skips are deleted, regardless of manual intent or prior resets.
 This also runs immediately on retirement and ordinary counter reset. A sweep
 re-applies it at startup and after every background sync cycle, for retired rows
 and deferred deletions that missed their trigger (`PLAYLIST-011`); each deletion
-is recorded in history. It never deletes active Triage rows. Nonzero
+is recorded in history. It never deletes active Inbox rows. Nonzero
 counts and necessary stale-OTP suppression protect rows. Active OTP is never
-deleted by Triage cleanup. Deleted songs may return on later intake; independent
+deleted by the Inbox cleanup. Deleted songs may return on later intake; independent
 history remains but offers no broken Restore action.
 
-Deliberate source link/re-link revives older retirements into Triage without
+Deliberate source link/re-link revives older retirements into the Inbox without
 resetting counts. Normal sync, including the Sync button, does not. The durable
 link timestamp survives failed initial imports; newer retirement wins on retry.
 Unlink/re-link invalidates older in-flight imports.
@@ -324,8 +333,8 @@ global retired-item tombstone is kept.
 Pre-bucket installs stored the role raw value `triage`. Because roles are
 stored as strings, retiring that role is a data change rather than a schema
 change, so a one-shot migration runs at startup before any view reads a role.
-It re-parents legacy triage items onto the bucket, merging counts where the
-same track appeared in more than one triage playlist, and is idempotent and
+It re-parents legacy Inbox items onto the bucket, merging counts where the
+same track appeared in more than one Inbox playlist, and is idempotent and
 derived from the stored value so re-running it cannot double-count. Merged
 rows take the most recent eviction decision.
 
@@ -342,7 +351,7 @@ exception to new rows. There is no versioned-schema migration framework.
 ### Track state
 
 Overplay stores one item per song app-wide. Statistics travel with that row
-between OTP, Triage and Retired. Contributing playlists are attachments,
+between OTP, the Inbox and Retired. Contributing playlists are attachments,
 independent of current location and explicit keep intent.
 
 For every tracked playlist item, store:
@@ -446,7 +455,7 @@ The expanded player shows available 128 artwork while 512 loads. Lists may use
 cached images and load missing artwork while scrolling. In CarPlay, what is
 playing shows the phone's marker: a white play triangle in a green circle at
 the bottom-trailing corner of a track row's, playlist card's or Recent Deep
-Dives tile's art, a green Triage inbox, and a green play symbol for Retired.
+Dives tile's art, a green inbox for the Inbox, and a green play symbol for Retired.
 CarPlay drew no indicator of its own for Overplay's playing rows in the car,
 and list images cannot animate. Rows still set CarPlay's leading playing
 indicator, in case it appears.
@@ -512,12 +521,12 @@ When Overplay retires a track locally:
 Local retirement is authoritative. Every retirement of a song in a managed One
 True Playlist also removes it from the Apple Music playlist, whichever surface
 started it: a playlist row, Now Playing or CarPlay (`PLAYLIST-008`). Retiring
-from Triage or from an incoming-only playlist is local-only. A failed, deferred
+from the Inbox or from an incoming-only playlist is local-only. A failed, deferred
 or unsupported remote deletion never rolls back the local retirement.
 
 Overplay keeps the managed One True Playlist in Apple Music free of every song
 it holds outside that playlist, meaning every row carrying the playlist's
-stale-OTP suppression: retired songs, and duplicates merged into Triage.
+stale-OTP suppression: retired songs, and duplicates merged into the Inbox.
 MusicKit can only remove a song by rewriting the whole playlist from the
 device's copy, and a device whose library lags iCloud would resurrect songs
 deleted elsewhere or drop songs added elsewhere. So:
@@ -644,8 +653,9 @@ sync or a recorded error is retried. Catch-up cycles prioritize the currently
 playing playlist, then the selected One True Playlist, then the remaining
 playlists in stored order, with pacing between playlist operations.
 
-The user can manually sync one playlist or all linked playlists. Selecting or
-creating a linked playlist starts a background refresh. Successful search adds
+The user can manually sync one playlist, from its page or from the Inbox
+Sources; there is no Sync All. Linking an Inbox source or making the One True
+Playlist starts a background refresh. Successful search adds
 and promotions write their local result immediately; search then syncs the
 destination playlist when possible.
 
@@ -821,7 +831,7 @@ pass for 7 days.
 ### Source cleanup (`HELPER-011`)
 
 An option in Settings → Mac Helper, off by default. It keeps retired songs out
-of the Apple Music playlists that feed Triage, such as TikTok Songs, and puts
+of the Apple Music playlists that feed the Inbox, such as TikTok Songs, and puts
 them back if they leave Retired. It works independently of the One True
 Playlist writer. It is offered only after a helper has reported in.
 
@@ -829,10 +839,10 @@ While it is on:
 
 - A source should not hold a retired song. The helper removes every occurrence
   of a retired song from each watched source the song is attached to. This
-  applies however the song was retired, from Triage or from the One True
+  applies however the song was retired, from the Inbox or from the One True
   Playlist.
 - When a song the helper removed stops being retired, whether it was moved to
-  Triage or to the One True Playlist, the helper adds it back at the end of each
+  the Inbox or to the One True Playlist, the helper adds it back at the end of each
   source it removed it from. Its original position is not kept.
 - iPhone and iPad publish the source cleanup part of `DesiredState` after any
   retirement, restore, promotion or source change, debounced like the One
@@ -859,7 +869,7 @@ The helper:
 
 Overplay's own data does not change. Source attachments survive remote
 removal, so a removed song keeps its sources. Retired songs stay retired and
-playable from Retired. Retiring from Triage stays a local decision in
+playable from Retired. Retiring from the Inbox stays a local decision in
 Overplay; only Apple Music's copy of the source changes.
 
 Turning the option off puts back every song the helper removed, and unlinking
@@ -868,7 +878,7 @@ Turning the One True Playlist writer off does not affect sources.
 
 A deliberate source re-link (`PLAYLIST-004`) sees only songs still in the
 source, so it does not revive songs the helper removed. To revive them, the
-user moves them to Triage.
+user moves them to the Inbox.
 
 ### Library facts (`HELPER-006`)
 
@@ -885,12 +895,12 @@ and date added, plus:
 The facts are refreshed after library changes, debounced by 5 minutes.
 
 In this version Overplay uses the facts for display and diagnostics only.
-Settings → Mac Helper lists One True Playlist and Triage songs that are
+Settings → Mac Helper lists One True Playlist and Inbox songs that are
 uploaded or unhealthy. Facts never gate, delay or change playback. They are
 never written into track identity: the fill-and-heal rules in **Track
 identity** apply only to MusicKit evidence.
 
-### Fast Triage intake (`HELPER-007`)
+### Fast Inbox intake (`HELPER-007`)
 
 - The helper watches the Music library folder. After 30 seconds without a
   change, it compares each watched source playlist's entries with what it last
@@ -982,9 +992,9 @@ To check before building:
 
 ## Promotion and Manual Add
 
-### Promotion from the triage bucket
+### Promotion from the Inbox
 
-Tracks in the triage bucket can be manually promoted to the One True Playlist.
+Tracks in the Inbox can be manually promoted to the One True Playlist.
 Contributing playlists are not promotion sources — they own no items.
 Promotion should:
 
@@ -1003,22 +1013,22 @@ pretend the promotion succeeded.
 
 Search adds through the same shared song action as a collection's song list
 (`PLAY-018`): an untracked song goes to the One True Playlist (an Apple Music
-add first) or to Triage (local, explicit keep); a Triage song is promoted and a
+add first) or to the Inbox (local, explicit keep); an Inbox song is promoted and a
 retired song restored. Add to Playlist adds the song to any other Apple Music
 library playlist with a MusicKit add and records nothing in Overplay; a
-contributing playlist brings it into Triage at its next sync. Failures show a
+contributing playlist brings it into the Inbox at its next sync. Failures show a
 clear message.
 
-The shared local manual-add boundary also supports Triage without a remote
+The shared local manual-add boundary also supports the Inbox without a remote
 write. It establishes explicit keep intent, reuses/revives the global item,
-and never demotes an active OTP item. Search's swipes use it. Moving from Retired to Triage uses the same explicit keep semantics.
+and never demotes an active OTP item. Search's swipes use it. Moving from Retired to the Inbox uses the same explicit keep semantics.
 
 OTP sync can promote an active bucket item, logging `promoted` with source
 `sync`. It cannot revive retired rows or override stale-OTP suppression. An OTP
 retirement, including failed or incoming-only remote removal, keeps suppression
 until a complete successful OTP snapshot proves absence, or explicit promotion
 supersedes it. Missing MusicKit track relationships or promised next pages are
-errors, not complete empty snapshots. Reviving into Triage does not clear that protection.
+errors, not complete empty snapshots. Reviving into the Inbox does not clear that protection.
 
 ## Play Album and Play Artist
 
@@ -1026,7 +1036,9 @@ Specified and implemented 2026-10-08 (`PLAY-018`, #83). The device evidence at
 the end of this section is still open.
 
 While a song is playing, the user can switch to the album it comes from, or to
-the artist's best-known songs, from Now Playing in the app or in CarPlay.
+the artist's best-known songs, from Now Playing in the app or in CarPlay. Both
+surfaces title the choice "Dive Deeper": the app's menu has it as a heading,
+and CarPlay's action list as its title.
 
 ### Actions (`PLAY-018`)
 
@@ -1083,17 +1095,17 @@ playlist intent (`SURFACE-003`).
 
 A song is **tracked** when its catalog song ID is a track's catalog ID or
 confirmed catalog alias (**Track identity**) and that track has an item in the
-One True Playlist, Triage or Retired. This is decided when the intent starts.
+One True Playlist, the Inbox or Retired. This is decided when the intent starts.
 Titles never decide it.
 
 - **Tracked songs** count plays and skips under the normal rules (`COUNT-001`,
   `COUNT-002`), credited to the playlist that owns the item. Suspended-playback
   reconciliation does not run for album or artist intents. Now Playing offers
   the curation actions the song's location
-  normally offers: Retire for an active song, Promote for a Triage song, and
-  Move to Triage or Move to One True Playlist for a retired song. Retiring the
+  normally offers: Retire for an active song, Promote for an Inbox song, and
+  Move to the Inbox or Move to One True Playlist for a retired song. Retiring the
   current song issues Next (`PLAY-015`).
-- **Untracked songs** are not counted. Now Playing offers **Add to Triage** and
+- **Untracked songs** are not counted. Now Playing offers **Add to the Inbox** and
   **Add to One True Playlist**:
   - Before anything is saved, Overplay asks Apple Music what the song's ID
     is: a catalog song, or a library song in the account's web library. It is
@@ -1103,7 +1115,7 @@ Titles never decide it.
     not saved, and the add explains why. If Apple Music cannot be asked (for
     example, offline), nothing is saved and the error is shown. The same
     applies to swipes in Recent Deep Dives and Library song lists.
-  - Add to Triage uses the shared manual-add boundary (**Search and manual
+  - Add to the Inbox uses the shared manual-add boundary (**Search and manual
     add**): no remote write, explicit keep intent.
   - Add to One True Playlist adds the song to the linked Apple Music playlist,
     then inserts the local item, as Search does. It is offered only when the
@@ -1120,7 +1132,7 @@ Titles never decide it.
 
 - **iPhone and iPad:** Now Playing offers Play Album and Play Artist in a menu
   on its artist and album lines, and shows the album or artist context above
-  the title. Add to Triage and Add to One True Playlist take the place of the
+  the title. Add to the Inbox and Add to One True Playlist take the place of the
   curation buttons.
 - **CarPlay:** Now Playing enables the template's album/artist button while
   the actions are available. It pushes a list titled with the song, with two
@@ -1129,7 +1141,7 @@ Titles never decide it.
   and a shared playback failure its own alert. This action list is an
   exception to the three-level navigation of `CAR-001`; Recents is the other
   (`PLAY-019`). Add to
-  Triage and Add to One True Playlist are Now Playing custom buttons in the
+  the Inbox and Add to One True Playlist are Now Playing custom buttons in the
   slots Promote and Retire use (hardware check in `TODO.md`, CarPlay hardware
   pass).
 - **Siri:** "play this album" and "play this artist" belong with Fuller Siri
@@ -1203,15 +1215,15 @@ CloudKit schema.
 ### Surfaces
 
 - **iPhone and iPad:** a section headed "Recent Deep Dives" under the One
-  True Playlist, Triage and Retired (hidden, heading included, when empty):
+  True Playlist, the Inbox and Retired (hidden, heading included, when empty):
   one horizontally scrolling row of artwork tiles (album covers square, artist
   images round) with the title and "Album" or "Artist", and a marker on the one
   playing. A tile opens the entry's song list: Shuffle and Play at the top,
   then the songs, with counts and retired state for songs Overplay tracks.
-  Swiping a song right sends it to the One True Playlist and left to Triage,
+  Swiping a song right sends it to the One True Playlist and left to the Inbox,
   through one shared controller action: an untracked song is added as Now
-  Playing's Add to One True Playlist and Add to Triage do (`PLAY-018`), a
-  Triage or retired song is promoted, and a retired song moves to Triage. A
+  Playing's Add to One True Playlist and Add to the Inbox do (`PLAY-018`), a
+  the Inbox or retired song is promoted, and a retired song moves to the Inbox. A
   direction that would not move the song (right on a One True Playlist song,
   left on an active one) is not offered. Playback goes on.
 - **CarPlay:** a "Recent Deep Dives" strip of artwork tiles under the
@@ -1248,9 +1260,9 @@ keeps playing (`MUT-004`), and Undo reverses either in the same words.
     copy still has it (`PLAYLIST-008`). On a Mac, where the removal never
     ran, iCloud usually still has it; otherwise the promotion fails there as
     any Mac promotion does.
-  - **Retired from Triage:** back to active Triage. Explicit keep is
+  - **Retired from the Inbox:** back to the active Inbox. Explicit keep is
     unchanged, and a deletion deferred while the song played is cancelled.
-  - **Promoted from Triage:** back to active Triage. The song is suppressed
+  - **Promoted from the Inbox:** back to the active Inbox. The song is suppressed
     for the One True Playlist and removed from its Apple Music playlist as a
     retirement would be (`PLAYLIST-008`), so sync does not promote it again.
   - **Promoted from Retired:** retired again from the One True Playlist, as an
@@ -1274,7 +1286,7 @@ Recents by voice come with Fuller Siri.
 | Action | Phrases | Shared action |
 | --- | --- | --- |
 | Play the One True Playlist | "Play Overplay", "Shuffle Overplay", "Play my One True Playlist in Overplay" | Shuffle and Play (`PLAY-020`) |
-| Play Triage | "Play Overplay Triage", "Play Triage on Overplay", "Play Triage in Overplay", "Shuffle Overplay Triage" | Shuffle and Play of the bucket's active scope |
+| Play the Inbox | "Play Overplay Inbox", "Play the Inbox on Overplay", "Play the Inbox in Overplay", "Shuffle Overplay Inbox" | Shuffle and Play of the bucket's active scope |
 | Promote the current song | "Promote this in Overplay", "Overplay promote this", "Promote this song in Overplay" | Promote current, as CarPlay's button |
 | Retire the current song | "Retire this in Overplay", "Overplay retire this", "Retire this song in Overplay" | Retire current, as CarPlay's button |
 | Undo | "Undo that in Overplay", "Overplay undo that", "Undo in Overplay" | Undo (`MUT-003`) |
@@ -1323,7 +1335,7 @@ in CarPlay.
   match.
 - **Song lists:** a playlist, album or artist opens the same song list as a
   Recent Deep Dive, with Shuffle and Play at the top and the same swipes.
-  Untracked songs offer Add to Triage and Add to One True Playlist and are not
+  Untracked songs offer Add to the Inbox and Add to One True Playlist and are not
   counted (`PLAY-018`).
 - **Playback:** through the shared collection start, as a deep dive, but never
   added to Recent Deep Dives. The queue uses this device's own library copies
@@ -1339,7 +1351,7 @@ in CarPlay.
 Overplay records per-track playthrough and skip counts. Counting is a layer on
 top of playback (`COUNT-001`): it observes what the player did and records
 outcomes afterwards. It never issues player commands, never delays or vetoes
-one, and a counting failure never changes what is playing. Promotion from triage
+one, and a counting failure never changes what is playing. Promotion from the Inbox
 and retirement from any playlist are manual user actions. Skip counts are
 displayed as history only; they do not imply an automatic status.
 
@@ -1608,17 +1620,17 @@ leaves the live queue alone. If that track's entry is reached later in the same
 intent, the controller issues Next when the entry is observed (`PLAY-015`).
 
 Promoting the current track (app, CarPlay or Siri) moves it and keeps it
-playing (`MUT-004`): a promotion means "I like this one". This holds for a
-Triage or retired song in any intent, including an album, artist or Recents
-entry, as do Add to Triage, Add to One True Playlist, Move to Triage and the
+playing (`MUT-004`): a promotion means "I like this one". This holds for an
+Inbox or retired song in any intent, including an album, artist or Recents
+entry, as do Add to the Inbox, Add to One True Playlist, Move to the Inbox and the
 Recents and Library swipes. The listening session goes on and counts as usual,
 credited to the song's row wherever it now is. Playlist scope is active or
-retired, not the owning playlist, so a song promoted out of Triage stays in an
-active Triage intent and is not skipped when reached again.
+retired, not the owning playlist, so a song promoted out of the Inbox stays in an
+active Inbox intent and is not skipped when reached again.
 
-Retired offers Move to Triage and Move to One True Playlist. Each moves the
+Retired offers Move to the Inbox and Move to One True Playlist. Each moves the
 existing row to the bottom of the destination order without resetting counts.
-Move to Triage establishes explicit keep intent. Reset All Stats writes a
+Move to the Inbox establishes explicit keep intent. Reset All Stats writes a
 `statsReset` ledger event and keeps its existing retirement reset behaviour.
 Resetting one track's skips writes a `skipReset` event.
 
@@ -2121,8 +2133,8 @@ hardware covers Now Playing ownership, transport and the custom buttons.
 
 Screens are adaptive rather than separate products. Compact width uses stacked
 navigation from the dashboard. Regular width uses a `NavigationSplitView`
-sidebar for Dashboard, Search, History, Settings, linked playlists, and
-playlist detail, laid out as on an open iPhone Duo on iPad and in columns on a
+sidebar for Dashboard, Search, History, Settings, the Overplaying playlists,
+Deep Dives, the Library categories, and playlist detail, laid out as on an open iPhone Duo on iPad and in columns on a
 Mac (see iPad and Mac). Native Mac presentation is planned.
 
 Switching between the two (folding or unfolding an iPhone Duo, resizing a
@@ -2157,32 +2169,35 @@ Purpose: introduce Overplay and set up a new library (`SETUP-001`).
 
 Show, as swipeable glass cards with page dots and a Continue button:
 
-- Welcome, One True Playlist, Triage, Retired, and CarPlay and Siri.
+- Welcome, One True Playlist, the Inbox, Retired, and CarPlay and Siri.
 - One True Playlist: Copy a Playlist (searchable picker) or Start Empty. Both
   create a new managed Apple Music playlist named Overplay; a copied playlist
   is left unchanged.
-- Fill Triage: library playlists to tick as sources, TikTok and Shazam
+- Fill the Inbox: library playlists to tick as sources, TikTok and Shazam
   playlists first under Suggested, and Add Sources Later.
 - You're Set: Start Listening opens the app.
 - On a Mac, Copy a Playlist and Start Empty save the choice for the next
   iPhone or iPad (`SETUP-002`), and the card reads Finish on iPhone.
 
-Continue is disabled, and swiping stops, on the One True Playlist and Triage
+Continue is disabled, and swiping stops, on the One True Playlist and the Inbox
 cards until each has its choice. A new playlist is found by its ID, because
 Apple Music's library list can lag it.
 
-### Playlist management screen
+### Inbox Sources screen
 
-Purpose: manage linked Apple Music playlists.
+Purpose: manage the playlists that feed the Inbox. Opened from Settings and from
+the Inbox's page.
 
 Required capabilities:
 
-- Choose the One True Playlist.
-- Add and remove the triage bucket's contributing playlists.
+- Add and remove the Inbox's contributing playlists.
 - Search/filter Apple Music library playlists.
-- Show playlist artwork, role, track count, and sync status.
-- Manually sync one playlist or all playlists. Bulk sync skips the bucket,
-  which has no remote playlist to fetch.
+- Show track count and sync status.
+- Manually sync one linked playlist.
+
+The One True Playlist is not chosen here or anywhere else (`PLAYLIST-002`).
+When a library has none, the dashboard offers **Make Your One True Playlist**,
+which opens setup's One True Playlist card.
 
 Platform notes:
 
@@ -2192,27 +2207,27 @@ Platform notes:
 
 ### Dashboard
 
-Purpose: provide three entry points, One True Playlist, Triage and Retired,
+Purpose: provide three entry points, One True Playlist, the Inbox and Retired,
 followed by Recent Deep Dives and the Library.
 
 Show:
 
 - One True Playlist artwork card, or a link to configure it when absent.
-- Triage bucket row, including on a fresh install and after its last
+- Inbox row, including on a fresh install and after its last
   contributing playlist is removed.
 - Global Retired row, including when empty.
 - Recent Deep Dives, when there are any (`PLAY-019`).
 - Library: Playlists, Albums, Artists and Songs (`LIB-001`).
 - For each row: representative artwork, role/current-playback icon, total
   tracked count, source, last-sync status, and write policy.
-- Link to the triage sources screen, labelled with the contributing count.
+- Link to the Inbox sources screen, labelled with the contributing count.
 - Settings action.
 
 Platform notes:
 
 - iPhone uses the compact stacked dashboard.
 - iPad uses the same dashboard content within its split-view detail.
-- Rich summary counts, triage queues, and direct play/sync/search/history
+- Rich summary counts, Inbox queues, and direct play/sync/search/history
   actions remain roadmap work.
 - **Planned Mac:** favor dense, sortable, scan-friendly summaries.
 
@@ -2222,19 +2237,19 @@ Purpose: inspect any linked playlist.
 
 Show:
 
-- Separate top-level OTP, Triage and Retired destinations, with no per-playlist
+- Separate top-level OTP, the Inbox and Retired destinations, with no per-playlist
   Active/Retired picker.
 - Active tracks in display order: newest-added first, independent of shuffle.
 - Retired tracks ordered by most recent retirement and
   playable as a playlist context from iOS.
 - Skip and playthrough counts.
 - Retirement state.
-- Promote action for triage bucket tracks.
+- Promote action for Inbox tracks.
 - Manual retire/remove action for active tracks.
-- Move to Triage and Move to One True Playlist for retired tracks.
+- Move to the Inbox and Move to One True Playlist for retired tracks.
 - Search/add action scoped to that playlist.
 - Row swipes: swiping left retires an active track, or moves a retired track
-  to Triage; swiping right promotes a Triage or retired track to the One True
+  to the Inbox; swiping right promotes an Inbox or retired track to the One True
   Playlist. One True Playlist rows have no right swipe.
 
 Playlist-row taps follow the shared **Action routing and playlist-selection
@@ -2259,13 +2274,17 @@ Show:
 - Playthrough count versus skip count.
 - Playback controls.
 - Manual retire action for active tracks.
-- Move to Triage and Move to One True Playlist for retired tracks.
-- Promote action when playing from the triage bucket.
+- Move to the Inbox and Move to One True Playlist for retired tracks.
+- Promote action when playing from the Inbox.
 - Audio output: a pill below the playback controls naming the current output
   (iPhone Speaker, AirPods, an AirPlay device), filled to the system volume. Dragging across it sets the
   volume; tapping it opens the system route picker, where AirPlay devices are
   chosen. Output and volume belong to the system: the pill only shows and
   opens them, and does not configure the audio session or touch playback.
+  While the pill is on screen and Overplay is in the foreground, it reads the
+  level from the hidden system volume view five times a second, so it follows
+  the volume buttons: the app's own audio session is never active, so it is
+  never told. In the background it does not check.
 
 Now Playing displays the player-reported track (`PLAY-011`). When the
 current entry is unattributed, the curation actions are disabled rather than
@@ -2289,8 +2308,11 @@ Platform notes:
   swiping it up slides Now Playing up full screen. A downward swipe starting
   anywhere on it, controls and margins included, moves it with the finger and
   closes it past the threshold; a sideways drag (the volume pill) does not.
-  Once a drag is a swipe down, the controls ignore it until the finger
-  lifts, so a swipe that started on a button never presses it. Behind the
+  The swipe is a UIKit pan that begins only for a drag more down than
+  across and, once it does, cancels the touch for the control under it, as a
+  scroll view does, so a swipe that started on a button never presses it. A
+  swipe the system interrupts (Control Center, a call) puts the player back
+  open. Behind the
   blurred art is a solid pane of the theme colour, which is all that shows
   until the art arrives.
   A drag handle at the top, clear of the Dynamic Island, closes it on a tap.
@@ -2315,7 +2337,7 @@ Show:
 - A row for the One True Playlist, opening its track list. There is no
   one-tap entry point above it: two similar-looking rows is one too many for
   a driver to disambiguate.
-- The triage bucket in a separate section, opening the same track
+- The Inbox in a separate section, opening the same track
   list.
 - Tracks in newest-added or newest-retired display order, independent of shuffle.
 - Above a track list, a header with the list's art, title, track count and an
@@ -2330,8 +2352,8 @@ Show:
 - Play, pause, next and previous, provided by the system Now Playing template
   and acting on the player directly (`PLAY-016`).
 - Direct Retire button in Now Playing for active tracks.
-- Direct Move to Triage button in Now Playing for retired tracks.
-- Direct Promote button when the current track belongs to the triage bucket.
+- Direct Move to the Inbox button in Now Playing for retired tracks.
+- Direct Promote button when the current track belongs to the Inbox.
 - An Up Next button that returns to the root menu.
 
 Track selection follows the shared **Action routing and playlist-selection
@@ -2353,7 +2375,7 @@ Platform notes:
 ### Search
 
 Purpose: search Apple Music, then send songs to the One True Playlist or
-Triage, play one, or add it to another playlist.
+the Inbox, play one, or add it to another playlist.
 
 Show:
 
@@ -2361,11 +2383,13 @@ Show:
   search runs when it is submitted. No destination picker. On iPhone the
   field is the whole top bar, in place of the navigation bar, with X beside it
   to go back; it never moves to a separate search layer. iPad and Mac show the
-  system search field in the toolbar.
+  same bar of their own at the top, without X, since Search is a sidebar
+  destination there; the system search field needed dismissing twice.
 - Up to 20 Apple Music catalogue songs below, drawn as playlist track rows,
   with counts and retired state for songs Overplay tracks. Library-only
-  songs, albums and artists are not searched.
-- Swipe right: Overplay (One True Playlist). Swipe left: Triage, and beside it
+  songs, albums and artists are not searched. Tapping a song plays it, as
+  **Play Now** does.
+- Swipe right: Overplay (One True Playlist). Swipe left: the Inbox, and beside it
   More. Each swipe is offered only when it would move the song, as in a
   collection's song list. A context menu offers the same actions.
 - More: **Play Now** plays just that song outside any playlist (a `searchSong`
@@ -2376,10 +2400,10 @@ Show:
 Platform notes:
 
 - iPhone reaches Search from the dashboard's top-right button and the menu on
-  a playlist screen. iPad has a sidebar entry, and the Mac has Go → Search
-  (⌘F).
+  a playlist screen. iPad and the Mac have a sidebar entry, and the Mac also
+  has Go → Search (⌘F).
 - The Mac has no MusicKit playlist writes, so adding to the One True Playlist
-  or another playlist fails there; Triage and Play Now work.
+  or another playlist fails there; the Inbox and Play Now work.
 
 **Planned (`TODO.md`, Rework search):** search as you type with suggestions;
 library and catalogue results, including albums and artists; a clearer mark
@@ -2417,21 +2441,40 @@ Platform notes:
 
 Purpose: configure behaviour.
 
-Settings:
+Two tabs, General and Troubleshooting, with the same rows in the same order
+everywhere: a segmented control pinned at the top on iPhone and iPad (stacked
+buttons at accessibility text sizes), the window's tabs on a Mac. The Mac has
+no playlist rebuild (`PLAYLIST-009` is iPhone and iPad only) and no Siri &
+Shortcuts section.
 
-- Selected One True Playlist and link-management navigation.
-- Skip threshold percentage.
-- Minimum listening time before skip can count.
-- Playthrough threshold percentage.
-- Reset all Overplay skip counts, playthrough counts, retirement state, and
-  legacy state without changing Apple Music playlist contents.
-- Nuke all Overplay SwiftData records locally and save those deletions for
-  iCloud propagation, then recreate default settings and clear local playback
-  state. Apple Music playlists are not deleted.
+General:
+
+- **Playlists:** the One True Playlist, shown, never chosen: Overplay makes
+  it at the first chance (`SETUP-001`) and keeps it up to date, with **Open
+  in Apple Music**. While a Mac waits for an iPhone to make it (`SETUP-002`),
+  it says so. **Inbox Sources** opens the
+  contributing-playlist list.
+- **Library:** Find Duplicates.
+- **Display**, per device: **Appearance** Automatic (default), Light or Dark,
+  for the whole app (CarPlay follows the car); **Player Background** Album Art
+  (default) or Theme Colour, the colour alone behind the full player.
+- **Siri & Shortcuts:** the five phrases (`SIRI-001`) and Apple's Shortcuts
+  link. Nothing needs installing; iOS registers them with the app.
+- **Counting Plays and Skips:** skip threshold percentage, minimum listening
+  time before a skip can count, and playthrough threshold percentage.
+
+Troubleshooting, in this order:
+
+- Rebuild the One True Playlist's Apple Music playlist (`PLAYLIST-009`).
+- Apple Music call activity.
 - Run MusicKit authorization, playlist-access, and playback-readiness
-  diagnostics.
-- Diagnostic, device-local: **Mirror Now Playing from Overplay** (default off,
-  `PLAY-016`).
+  diagnostics. Diagnostic, device-local: **Mirror Now Playing from Overplay**
+  (default off, `PLAY-016`).
+- **Start Over**, last: reset all Overplay skip counts, playthrough counts,
+  retirement state, and legacy state without changing Apple Music playlist
+  contents; and nuke all Overplay SwiftData records locally and save those
+  deletions for iCloud propagation, then recreate default settings and clear
+  local playback state. Apple Music playlists are not deleted.
 
 There is no separate reset-local-playback-state control. On the Mac,
 Settings opens in its own window from the standard Settings command, with
@@ -2509,7 +2552,7 @@ Now Playing publication. It depends on MusicKit only through the small
 ### PlaylistMutationService
 
 - Add tracks to managed linked Apple Music playlists.
-- Promote tracks from the triage bucket to a managed One True Playlist and
+- Promote tracks from the Inbox to a managed One True Playlist and
   move the same global item on success without retaining a source copy.
 - Return explicit success/failure results.
 
@@ -2674,7 +2717,7 @@ longer exists.
 - Authorized user without Apple Music playback capability.
 - No library playlists.
 - One True Playlist deleted or renamed in Apple Music.
-- Contributing triage playlist deleted or renamed in Apple Music.
+- Contributing Inbox playlist deleted or renamed in Apple Music.
 - Playlist contains unavailable, cloud-only, or local-only tracks.
 - Same song appears in multiple playlists.
 - Same song appears more than once in one playlist.
@@ -2687,7 +2730,7 @@ longer exists.
 - Remote playlist mutation fails after local retirement.
 - Retired tracks are restored while another surface is showing the same
   playlist.
-- OTP, Triage and Retired destinations are switched repeatedly while playback is active.
+- OTP, the Inbox and Retired destinations are switched repeatedly while playback is active.
 - A Retired playlist is started on iOS while CarPlay is connected.
 - iCloud data arrives while a device is actively playing.
 - The same iCloud account uses Overplay on iPhone and iPad at the same time.
@@ -2791,7 +2834,7 @@ The following are not requirements of the current product:
   empty CarPlay screen. If CarPlay goes blank with a prepared queue, turn on
   Settings → Mirror Now Playing from Overplay and record whether CarPlay
   recovers, then start a song from a CarPlay list or relaunch Overplay.
-- **Manual adds saved with a Mac's local ID.** Two Triage songs added before
+- **Manual adds saved with a Mac's local ID.** Two Inbox songs added before
   2026-10-18 were saved with a Mac's local persistent ID as their catalog ID,
   so no device can play them. Adds now confirm the ID with Apple Music
   (`PLAY-018`, **Tracked and untracked songs**). Existing rows are not
@@ -2831,7 +2874,7 @@ and transport commands belong to the `ApplicationMusicPlayer` host
 (`PLAY-016`).
 
 Navigation is three levels and nothing more (`CAR-001`): the root lists the
-One True Playlist, Triage and Retired, a collection lists its
+One True Playlist, the Inbox and Retired, a collection lists its
 tracks, and a track opens Now Playing. Two exceptions: Recents adds one level
 (root, Recents, an album or artist, Now Playing; `PLAY-019`), and Play Album
 and Play Artist open an action list over Now Playing (`PLAY-018`). There are no shuffle rows and no
@@ -2840,7 +2883,7 @@ similar entries apart.
 
 CarPlay supports:
 
-- Browse the One True Playlist, Triage and global Retired.
+- Browse the One True Playlist, the Inbox and global Retired.
 - Browse playlist tracks with playthrough and skip totals in row detail.
 - Select a track to play it through the shared selection action: a jump inside
   the live intent when the collection is already playing, otherwise a new
@@ -2853,7 +2896,7 @@ CarPlay supports:
 - Retire the current track.
 - Promote the current bucket track, whether or not it is retired — deciding to
   keep a track you had set aside is the point of hearing it again.
-- Move the current retired track to Triage with explicit keep intent.
+- Move the current retired track to the Inbox with explicit keep intent.
 - Return to the root menu from Now Playing.
 
 CarPlay does not provide a separate skip-history browser. Now Playing metadata
@@ -2865,6 +2908,26 @@ more, without Try Again, if the player becomes stuck.
 CarPlay UI logic should remain isolated from the iPhone/iPad SwiftUI shell.
 The iPad shell does not depend on CarPlay-specific types or entitlements; the
 same isolation is required for the planned Mac target.
+
+## Accessibility
+
+Every surface supports VoiceOver, Voice Control, Dynamic Type and the display
+settings, through system controls where possible:
+
+- Buttons whose visible label is short ("Overplay", "Inbox") are announced by
+  what they do ("Promote to One True Playlist"), and still answer to the
+  visible word in Voice Control. Swipe actions are named the same way.
+- State shown by colour or a badge (now playing, unavailable) is also said in
+  words. Decorative symbols are hidden; screen and card titles are headings.
+- The progress bar reads elapsed and total time; settings sliders carry their
+  name and explanation.
+- Reduce Motion: the full player fades instead of growing from the mini
+  player, and the art does not move with the phone's tilt.
+- Reduce Transparency: the full player shows the theme colour, not the art.
+- The mini player's text stops at the largest standard size, as its bar has a
+  fixed height; it and the transport buttons offer the Large Content Viewer.
+- CarPlay's own templates provide its accessibility; its art badges cannot be
+  described.
 
 ## Development Guidelines
 
@@ -2894,9 +2957,10 @@ The product is healthy when a user can:
 1. Install and run Overplay on iPhone and iPad, and on the Mac as a Mac
    Catalyst build.
 2. Connect Apple Music on any of them.
-3. Choose a One True Playlist.
-4. Add contributing playlists to the triage bucket.
-5. Sync all linked playlists.
+3. Have Overplay make their One True Playlist in Apple Music, at the first
+   chance, and keep it up to date.
+4. Add contributing playlists to the Inbox.
+5. Sync a linked playlist, automatically or by hand.
 6. Play any linked playlist in Overplay.
 7. Track skips and playthroughs for all linked playlists.
 8. Surface skip/playthrough history while leaving retirement to explicit user actions.
@@ -2943,10 +3007,18 @@ request failures are not stored as proof of absence. Tokens are not persisted or
 logged. MusicKit authorization and live catalog responses need device validation.
 
 Settings > Find Duplicates scans local recordings and shows apparent duplicate
-groups, song and album details, counts and collection membership. Technical
+groups, song and album details, counts and collection membership. It groups at
+once from what Overplay already stores: shared catalog or library IDs, aliases,
+equivalents and ISRCs ("Same recording"), and near-identical titles and primary
+artists ("Same name and artist"), ignoring case, accents, punctuation,
+featured artists and labels that do not change the recording (Remastered,
+Single Version, Mono…) but never Live, Remix, Acoustic or Edit. Only songs
+joined by name alone are then sent to Apple Music, to find which are the same
+recording; nothing else is. A song Apple Music cannot answer for, or rejects,
+is skipped and counted, without failing the scan. Technical
 identifiers are used internally and are not displayed in the review screen. Users
 select the recordings to merge and confirm. Mixed collections require choosing One True
-Playlist, Triage, or Retired; a shared collection is retained. Canceling performs
+Playlist, the Inbox, or Retired; a shared collection is retained. Canceling performs
 no merge. ISRC/equivalence can include different versions, so suggestions require
 human review.
 
@@ -2981,11 +3053,11 @@ Long-press offers Settings and Regenerate; Settings saves layout and border choi
 
 Covers are grouped by artwork URL. Active Overplay/One True Playlist artwork
 ranks by summed Overplay playthrough counts across songs sharing a cover.
-Triage and other playlists rank by newest addition/movement time; Retired always
+The Inbox and other playlists rank by newest addition/movement time; Retired always
 ranks by newest retirement time. Equal ranks are randomized during generation.
 Grids select the highest-ranked 9 or 64 distinct covers, repeat only to fill
 empty cells, and shuffle the cell order. Pile draws from lowest to highest rank,
-placing the most-played OTP cover or newest Triage/Retired cover on top, over a
+placing the most-played OTP cover or newest the Inbox/Retired cover on top, over a
 repeating lower-ranked background that fills the canvas and extends past its edges.
 This artwork ranking does not change track-list or unshuffled playback order.
 Foreground covers have random side lengths of 30–60% of the canvas, rotations of
@@ -3000,15 +3072,15 @@ view afterward, on changed settings, or on manual regeneration. Cache eviction
 re-renders the saved arrangement. Unavailable artwork does not become a permanent
 completed cache entry. Empty playlists show a placeholder and can generate as soon
 as artwork arrives. Retired views use only retired tracks, with a separate saved
-arrangement and PNG cache from active Triage. Layout, borders, regeneration, and
-daily refresh are independent for active Triage and Retired. Each defaults to Pile
+arrangement and PNG cache from active the Inbox. Layout, borders, regeneration, and
+daily refresh are independent for active the Inbox and Retired. Each defaults to Pile
 with no border; changing either template does not regenerate the other collage.
 
 
 ## Datastore generation 2: configuration-preserving rebuild
 
 Decision (September 2026): replace the pre-release store, preserving only the
-active One True Playlist and triage source links, their names, order, and write
+active One True Playlist and Inbox source links, their names, order, and write
 permissions. Reimport songs from Apple Music. Discard old tracks, ownership,
 retirements, counters, history, collage snapshots and playback restoration.
 The cutover must not write to Apple Music. Retain the old store and a verified
@@ -3026,7 +3098,7 @@ Schema:
 
 - LibrarySettingsV2: Overplay settings and the completed rebuild receipt.
 - LibraryPlaylistV2: Overplay UUID, Apple Music playlist reference, display name,
-  role, write permission, link intent and sync bookkeeping. The synthetic Triage
+  role, write permission, link intent and sync bookkeeping. The synthetic the Inbox
   bucket has no Apple Music resource. Only configured sources survive cutover.
 - LibraryTrackV2: Overplay UUID; independently typed catalog and library resource
   references; confirmed aliases carrying their domain and library scope; recording
@@ -3073,7 +3145,7 @@ CarPlay hardware behavior must be reported separately from local test evidence.
 ### Generation 2: first launch on another device
 
 A new local V2 store is not evidence of a new user. Startup must not create
-settings, a triage bucket, or replacement memberships while iCloud restoration
+settings, an Inbox, or replacement memberships while iCloud restoration
 is pending. The shared runtime owns a restoration gate used by library
 browsing, curation, sync, ledger writes, background reconciliation and artwork
 maintenance. Playback is not gated: the device-local playback intent can be
@@ -3081,7 +3153,7 @@ restored, shown and played before restoration completes (`PLAY-010`).
 
 On an unrecognised local store, require a successful import event for that
 store and a usable configuration: exactly one settings record, its selected
-Overplay playlist, a triage bucket, and valid track/playlist references for
+Overplay playlist, an Inbox, and valid track/playlist references for
 all memberships currently delivered. Do not repair incomplete references or
 choose arbitrarily between competing settings records. A cloud rebuild receipt
 alone does not establish device readiness. CloudKit delivers records

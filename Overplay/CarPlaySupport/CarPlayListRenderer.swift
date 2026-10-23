@@ -473,15 +473,34 @@ enum CarPlayPlayingBadge {
                 UIBezierPath(roundedRect: bounds, cornerRadius: min(size.width, size.height) * 0.15).fill()
             }
             let circle = circle(in: size, displayed: displayed)
+            let path = UIBezierPath(ovalIn: circle)
             UIColor.systemGreen.resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark)).setFill()
-            UIBezierPath(ovalIn: circle).fill()
-            guard let play = UIImage(systemName: "play.fill")?.withTintColor(.white, renderingMode: .alwaysOriginal),
-                  play.size.width > 0, play.size.height > 0 else { return }
-            let fit = circle.width * 0.48 / max(play.size.width, play.size.height)
-            let glyph = CGSize(width: play.size.width * fit, height: play.size.height * fit)
-            // Nudged right: a triangle centred by its box looks left of centre.
-            play.draw(in: CGRect(x: circle.midX - glyph.width / 2 + circle.width * 0.04,
-                                 y: circle.midY - glyph.height / 2, width: glyph.width, height: glyph.height))
+            path.fill()
+            // The phone's badge is Liquid Glass; a bitmap can only suggest it:
+            // a sheen across the top half and a fine light rim.
+            if let context = UIGraphicsGetCurrentContext(),
+               let sheen = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                      colors: [UIColor.white.withAlphaComponent(0.38).cgColor,
+                                               UIColor.white.withAlphaComponent(0).cgColor] as CFArray,
+                                      locations: [0, 1]) {
+                context.saveGState()
+                path.addClip()
+                context.drawLinearGradient(sheen, start: CGPoint(x: circle.midX, y: circle.minY),
+                                           end: CGPoint(x: circle.midX, y: circle.midY), options: [])
+                context.restoreGState()
+            }
+            UIColor.white.withAlphaComponent(0.45).setStroke()
+            let rim = UIBezierPath(ovalIn: circle.insetBy(dx: circle.width * 0.025, dy: circle.width * 0.025))
+            rim.lineWidth = circle.width * 0.05
+            rim.stroke()
+            let weight = UIImage.SymbolConfiguration(weight: .heavy)
+            guard let arrow = UIImage(systemName: "arrow.right", withConfiguration: weight)?
+                    .withTintColor(.white, renderingMode: .alwaysOriginal),
+                  arrow.size.width > 0, arrow.size.height > 0 else { return }
+            let fit = circle.width * 0.5 / max(arrow.size.width, arrow.size.height)
+            let glyph = CGSize(width: arrow.size.width * fit, height: arrow.size.height * fit)
+            arrow.draw(in: CGRect(x: circle.midX - glyph.width / 2, y: circle.midY - glyph.height / 2,
+                                  width: glyph.width, height: glyph.height))
         }
     }
 }

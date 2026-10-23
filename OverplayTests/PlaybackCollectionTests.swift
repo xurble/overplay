@@ -194,7 +194,7 @@ struct PlaybackCollectionTests {
 
         await fixture.controller.addCurrentToTriage(context: fixture.context)
 
-        #expect(fixture.controller.statusMessage == "Added to Triage.")
+        #expect(fixture.controller.statusMessage == "Added to the Inbox.")
         let trackID = try #require(fixture.controller.currentMember?.trackID)
         let item = try #require(try PlaylistItemRepository.item(trackID: trackID, in: fixture.context))
         #expect(item.playlistID == (try PlaylistRepository.triageBucket(in: fixture.context)).id)
@@ -247,7 +247,7 @@ struct PlaybackCollectionTests {
         await fixture.controller.moveCollectionSong(Self.song("alb-1", "Album Song 1"), toOneTruePlaylist: false,
                                                     context: fixture.context)
 
-        #expect(fixture.controller.statusMessage == "Added to Triage.")
+        #expect(fixture.controller.statusMessage == "Added to the Inbox.")
         let track = try #require(try TrackRecordRepository.tracksByCatalogID(in: fixture.context)["alb-1"])
         let item = try #require(try PlaylistItemRepository.item(trackID: track.id, in: fixture.context))
         #expect(item.playlistID == (try PlaylistRepository.triageBucket(in: fixture.context)).id)
@@ -285,7 +285,7 @@ struct PlaybackCollectionTests {
         await fixture.controller.moveCollectionSong(Self.song("cat-0", "Song 0"), toOneTruePlaylist: false,
                                                     context: fixture.context)
 
-        #expect(fixture.controller.statusMessage == "Moved Song 0 to Triage.")
+        #expect(fixture.controller.statusMessage == "Moved Song 0 to the Inbox.")
         let restored = try #require(try PlaylistItemRepository.item(trackID: item.trackID, in: fixture.context))
         #expect(restored.evictedAt == nil)
         #expect(restored.playlistID == (try PlaylistRepository.triageBucket(in: fixture.context)).id)
@@ -302,7 +302,7 @@ struct PlaybackCollectionTests {
         await fixture.controller.moveCollectionSong(song, toOneTruePlaylist: true, context: fixture.context)
         #expect(fixture.controller.statusMessage == "Song 0 is already in the One True Playlist.")
         await fixture.controller.moveCollectionSong(song, toOneTruePlaylist: false, context: fixture.context)
-        #expect(fixture.controller.statusMessage == "Only a retired or untracked song can go to Triage.")
+        #expect(fixture.controller.statusMessage == "Only a retired or untracked song can go to the Inbox.")
 
         #expect(remoteAdds == 0)
         #expect(try fixture.item(0).playlistID == fixture.playlist.id)
@@ -385,7 +385,7 @@ struct PlaybackCollectionTests {
 
         await fixture.controller.addCurrentToTriage(context: fixture.context)
 
-        #expect(fixture.controller.statusMessage == "Added to Triage.")
+        #expect(fixture.controller.statusMessage == "Added to the Inbox.")
         let trackID = try #require(fixture.controller.currentMember?.trackID)
         let track = try #require(try TrackRecordRepository.track(id: trackID, in: fixture.context))
         #expect(track.libraryID == "alb-1" && track.catalogID == nil)

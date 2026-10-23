@@ -48,15 +48,15 @@ struct PlaylistSummaryPresentationTests {
         #expect(oneTrue.writePolicyTitle == "Managed")
 
         #expect(triageBucket.roleTitle == "Find the next big thing")
-        #expect(triageBucket.shortRoleTitle == "Triage")
-        #expect(triageBucket.iconIntent.systemImage == "play.fill")
+        #expect(triageBucket.shortRoleTitle == "Inbox")
+        #expect(triageBucket.iconIntent.systemImage == "arrow.right.circle.fill")
         #expect(triageBucket.displayPriority == 1)
         #expect(triageBucket.writePolicyTitle == "Incoming only")
         #expect(triageBucket.sourceTitle == "Apple Music")
 
         // Contributing playlists sort below the bucket they feed and read as
         // sources, so the sources screen never looks like another playlist.
-        #expect(triageSource.roleTitle == "Triage Source")
+        #expect(triageSource.roleTitle == "Inbox Source")
         #expect(triageSource.shortRoleTitle == "Source")
         #expect(triageSource.iconIntent.systemImage == "music.note.list")
         #expect(triageSource.displayPriority == 2)

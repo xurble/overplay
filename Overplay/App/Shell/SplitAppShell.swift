@@ -102,11 +102,12 @@ struct SplitAppShell: View {
                     Label("Dashboard", systemImage: "rectangle.grid.2x2")
                         .tag(AppShellDestination.dashboard)
                         .accessibilityIdentifier("sidebar-dashboard")
-                    // A Mac reaches these from its menus (`OverplayCommands`).
+                    Label("Search", systemImage: "magnifyingglass")
+                        .tag(AppShellDestination.search)
+                        .accessibilityIdentifier("sidebar-search")
+                    // A Mac reaches these from its menus (`OverplayCommands`)
+                    // and its Settings window.
                     if !SplitLayoutPolicy.keepsColumns {
-                        Label("Search", systemImage: "magnifyingglass")
-                            .tag(AppShellDestination.search)
-                            .accessibilityIdentifier("sidebar-search")
                         Label("History", systemImage: "clock.arrow.circlepath")
                             .tag(AppShellDestination.history)
                             .accessibilityIdentifier("sidebar-history")
@@ -116,16 +117,32 @@ struct SplitAppShell: View {
                     }
                 }
 
-                Section("Playlists") {
+                Section("Overplaying") {
                     ForEach(activePlaylists) { playlist in
                         Label(playlist.name, systemImage: playlistIcon(for: playlist))
+                            .accessibilityValue(playbackController.isPlaying(playlist.playbackContext()) ? "Now playing" : "")
                             .tag(AppShellDestination.playlist(playlist.id))
                             .accessibilityIdentifier("sidebar-playlist-\(playlist.name)")
                     }
 
                     Label("Retired", systemImage: retiredIcon)
+                        .accessibilityValue(isRetiredPlaying ? "Now playing" : "")
                         .tag(AppShellDestination.retired)
                         .accessibilityIdentifier("sidebar-retired")
+
+                    Label("Deep Dives", systemImage: "square.stack.3d.up")
+                        .tag(AppShellDestination.deepDives)
+                        .accessibilityIdentifier("sidebar-deep-dives")
+                }
+
+                // The Apple Music library by category, as on the phone's
+                // dashboard (`LIB-001`).
+                Section("Library") {
+                    ForEach(LibraryBrowser.Category.allCases) { category in
+                        Label(category.rawValue, systemImage: category.systemImage)
+                            .tag(AppShellDestination.library(category))
+                            .accessibilityIdentifier("sidebar-library-\(category.rawValue)")
+                    }
                 }
             }
             .miniPlayerScrollContentInset()
@@ -134,17 +151,19 @@ struct SplitAppShell: View {
             // The Mac window has no title bar to fill; its sidebar shows none.
             .navigationTitle(SplitLayoutPolicy.keepsColumns ? "" : "Overplay")
         } detail: {
+            // The dashboard is always the root; a sidebar choice is pushed
+            // on it, so Back leads home as when the dashboard opened it, with
+            // the sidebar shown or hidden.
             NavigationStack(path: $detailPath) {
-                detailView
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier("detail-\(selectedDestination.storageValue)")
-                    .nowPlayingColumnToggle()
+                destinationView(.dashboard)
+                    .navigationDestination(for: AppShellDestination.self) { destination in
+                        destinationView(destination)
+                    }
             }
         }
-        .onChange(of: storedSelection) { _, newValue in
+        .onChange(of: storedSelection, initial: true) { _, newValue in
             Self.logger.info("Sidebar selection: \(newValue, privacy: .public)")
-            detailPath = NavigationPath()
-            shellPlace?.destination = selectedDestination
+            showSelectedDestination()
         }
         .onAppear {
             guard let placeOnOpen else { return }
@@ -153,6 +172,10 @@ struct SplitAppShell: View {
         }
         .onChange(of: detailPath.count) { _, count in
             Self.logger.info("Detail navigation depth: \(count, privacy: .public)")
+            // Back to the root: the sidebar shows the dashboard again.
+            if count == 0, selectedDestination != .dashboard {
+                storedSelection = AppShellDestination.dashboard.storageValue
+            }
         }
         .modifier(SplitStyle(sidebarOverlaysList: sidebarOverlaysList))
         // On the split view, not the detail stack: pushed screens take their
@@ -161,10 +184,13 @@ struct SplitAppShell: View {
         .focusedSceneValue(\.shellCommands, shellCommands)
     }
 
-    private var detailView: some View {
-        AppShellDestinationView(destination: selectedDestination, settings: settings) { resolvedID in
+    private func destinationView(_ destination: AppShellDestination) -> some View {
+        AppShellDestinationView(destination: destination, settings: settings) { resolvedID in
             storedSelection = AppShellDestination.playlist(resolvedID).storageValue
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("detail-\(destination.storageValue)")
+        .nowPlayingColumnToggle()
     }
 
     private var isNarrow: Bool { SplitLayoutPolicy.isNarrow(totalWidth) }
@@ -261,14 +287,17 @@ struct SplitAppShell: View {
             }
     }
 
+    private var isRetiredPlaying: Bool {
+        playbackController.isPlaying(activePlaylists.first(where: \.isTriageBucket)?.playbackContext(.retired))
+    }
+
     private var retiredIcon: String {
-        let bucket = activePlaylists.first(where: \.isTriageBucket)
-        return playbackController.isPlaying(bucket?.playbackContext(.retired)) ? "play.fill" : "archivebox.fill"
+        isRetiredPlaying ? "arrow.right.circle.fill" : "archivebox.fill"
     }
 
     private func playlistIcon(for playlist: PlaylistRecord) -> String {
         if playbackController.isPlaying(playlist.playbackContext()) {
-            return "play.fill"
+            return "arrow.right.circle.fill"
         }
 
         switch playlist.role {
@@ -285,12 +314,25 @@ struct SplitAppShell: View {
         AppShellDestination(storageValue: storedSelection) ?? .dashboard
     }
 
+    /// One sidebar screen at a time: a new choice replaces the last.
+    private func showSelectedDestination() {
+        let destination = selectedDestination
+        detailPath = destination == .dashboard ? NavigationPath() : NavigationPath([destination])
+        shellPlace?.destination = destination
+    }
+
     private var selection: Binding<AppShellDestination?> {
         Binding {
             selectedDestination
         } set: { newSelection in
-            detailPath = NavigationPath()
-            storedSelection = (newSelection ?? .dashboard).storageValue
+            let storageValue = (newSelection ?? .dashboard).storageValue
+            // Choosing the screen already selected still leaves anything
+            // pushed on it, such as a playlist opened from the dashboard.
+            if storageValue == storedSelection {
+                showSelectedDestination()
+            } else {
+                storedSelection = storageValue
+            }
             // The sidebar was slid over the list to choose; close it.
             if sidebarOverlaysList { narrowSidebarShown = false }
         }

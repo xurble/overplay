@@ -6,6 +6,10 @@ enum AppShellDestination: Hashable {
     case retired
     /// A Recent Deep Dive, by its record ID.
     case recent(UUID)
+    /// All Recent Deep Dives.
+    case deepDives
+    /// A category of the Apple Music library (`LIB-001`).
+    case library(LibraryBrowser.Category)
     case search
     case history
     case settings
@@ -15,6 +19,11 @@ enum AppShellDestination: Hashable {
             let uuidString = String(storageValue.dropFirst("playlist:".count))
             guard let id = UUID(uuidString: uuidString) else { return nil }
             self = .playlist(id)
+            return
+        }
+        if storageValue.hasPrefix("library:") {
+            guard let category = LibraryBrowser.Category(rawValue: String(storageValue.dropFirst("library:".count))) else { return nil }
+            self = .library(category)
             return
         }
         if storageValue.hasPrefix("recent:") {
@@ -32,6 +41,8 @@ enum AppShellDestination: Hashable {
             self = .retired
         case Self.history.storageValue:
             self = .history
+        case Self.deepDives.storageValue:
+            self = .deepDives
         case Self.settings.storageValue:
             self = .settings
         default:
@@ -51,6 +62,10 @@ enum AppShellDestination: Hashable {
             "retired"
         case let .recent(id):
             "recent:\(id.uuidString)"
+        case .deepDives:
+            "deep-dives"
+        case let .library(category):
+            "library:\(category.rawValue)"
         case .history:
             "history"
         case .settings:

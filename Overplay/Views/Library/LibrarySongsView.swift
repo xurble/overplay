@@ -29,6 +29,7 @@ struct LibrarySongsView: View {
             Image(systemName: "music.note")
                 .font(.system(size: 120))
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.quaternary, in: .rect(cornerRadius: 16))
         } onPlay: { song in

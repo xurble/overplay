@@ -42,6 +42,14 @@ struct AppShellDestinationView: View {
             } else {
                 ContentUnavailableView("Deep Dive Unavailable", systemImage: "square.stack")
             }
+        case .deepDives:
+            DeepDivesView()
+        case let .library(category):
+            if category == .songs {
+                LibrarySongsView()
+            } else {
+                LibraryCategoryView(category: category)
+            }
         case .search:
             SearchMusicView()
         case .history:

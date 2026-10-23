@@ -28,7 +28,7 @@ The root template has no navigation-bar actions. It shows:
   subtitle reads "Now Playing" while it plays. There is no one-tap entry point
   above it: two similar-looking entries is one too many to disambiguate while
   driving.
-- A headerless section with the Triage row ("X tracks from Y playlists") under
+- A headerless section with the Inbox row ("X tracks from Y playlists") under
   an inbox icon, and a compact Retired row with an archive icon, matching the
   phone dashboard.
 - Recent Deep Dives, when there are any: a strip of artwork tiles. A tile opens
@@ -86,7 +86,7 @@ The shared Now Playing template installs the system shuffle and repeat
 buttons, which reflect and set MusicKit's own modes (`PLAY-004`). Repeat is an
 intentional repeat-all/off toggle on both iPhone and CarPlay. These are followed by
 the track actions chosen by `CarPlayNowPlayingActionPolicy`: Retire for an
-active track, Restore for a retired one, and Promote for any triage track —
+active track, Restore for a retired one, and Promote for any Inbox track —
 retired or not, because deciding to keep a track you had set aside is the
 point of hearing it again. Its Up Next button returns to the root menu.
 

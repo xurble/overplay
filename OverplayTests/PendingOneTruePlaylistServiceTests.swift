@@ -4,7 +4,8 @@ import Testing
 @testable import Overplay
 
 @MainActor
-@Suite("One True Playlist a Mac asked for")
+// Serialized: the in-flight request is shared by the whole app.
+@Suite("One True Playlist a Mac asked for", .serialized)
 struct PendingOneTruePlaylistServiceTests {
     private func library(pendingSource: AppleMusicPlaylist?) throws -> ModelContainer {
         let container = try OverplayTestSupport.makeModelContainer()
@@ -50,6 +51,29 @@ struct PendingOneTruePlaylistServiceTests {
 
         #expect(await service.fulfilIfNeeded(in: container.mainContext) == nil)
         #expect(sources.count == 1)
+    }
+
+    @Test("a second caller while the first is making it waits and gets the same playlist")
+    func concurrentCallersShareOneCreation() async throws {
+        let container = try library(pendingSource: nil)
+        var made = 0
+        var service = PendingOneTruePlaylistService()
+        service.canCreatePlaylists = { true }
+        service.createManagedOneTruePlaylist = { name, _, context in
+            made += 1
+            try await Task.sleep(for: .milliseconds(50))
+            let record = PlaylistRecord(musicPlaylistID: "p.overplay", name: name, role: .oneTruePlaylist, writePolicy: .managed)
+            context.insert(record)
+            try context.save()
+            return record
+        }
+        let context = container.mainContext
+        let first = Task { await service.fulfilIfNeeded(in: context)?.musicPlaylistID }
+        let second = Task { await service.fulfilIfNeeded(in: context)?.musicPlaylistID }
+        let (a, b) = (await first.value, await second.value)
+        #expect(made == 1)
+        #expect(a == "p.overplay")
+        #expect(b == "p.overplay")
     }
 
     @Test("a Mac leaves the request for an iPhone")

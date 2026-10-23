@@ -16,7 +16,7 @@ struct PlaylistCollageThumbnailView: View {
                 Image(decorative: image, scale: 1).resizable().scaledToFit()
             } else {
                 Rectangle().fill(.quaternary)
-                    .overlay { Image(systemName: "music.note.list").foregroundStyle(.secondary) }
+                    .overlay { Image(systemName: "music.note.list").foregroundStyle(.secondary).accessibilityHidden(true) }
             }
         }
         .aspectRatio(1, contentMode: .fit)

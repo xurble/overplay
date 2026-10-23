@@ -44,7 +44,7 @@ enum CurationOutcome: Equatable, Sendable {
     var message: String {
         switch self {
         case .moved(let title, .oneTruePlaylist): "Moved \(title) to your One True Playlist."
-        case .moved(let title, .triage): "Moved \(title) to Triage."
+        case .moved(let title, .triage): "Moved \(title) to the Inbox."
         case .moved(let title, .retired): "Retired \(title)."
         case .unavailable(let message), .failed(let message): message
         }
@@ -1760,11 +1760,11 @@ final class PlaybackController {
                 statusMessage = "Moved \(song.title) to the One True Playlist."
             } else {
                 guard item.evictedAt != nil else {
-                    statusMessage = "Only a retired or untracked song can go to Triage."
+                    statusMessage = "Only a retired or untracked song can go to the Inbox."
                     return
                 }
                 try restoreTrack(item, playlist: playlist, context: context)
-                statusMessage = "Moved \(song.title) to Triage."
+                statusMessage = "Moved \(song.title) to the Inbox."
             }
         } catch {
             statusMessage = UserFacingError.message(for: error)
@@ -1808,7 +1808,7 @@ final class PlaybackController {
             if session?.play.localTrackID == memberID { markSessionEvaluatedWithoutSkip() }
             if intent?.member(localTrackID: memberID) != nil { rekeyIntent([memberID: item.trackID.uuidString]) }
             reconcileTrackMembership(context: context)
-            statusMessage = toOneTruePlaylist ? "Added to the One True Playlist." : "Added to Triage."
+            statusMessage = toOneTruePlaylist ? "Added to the One True Playlist." : "Added to the Inbox."
         } catch {
             activityLog.record(.diagnosticNote, detail: "manual add refused: \(song.title) id=\(song.id)", error: error)
             if toOneTruePlaylist {
@@ -2072,7 +2072,7 @@ final class PlaybackController {
         adopt(context)
         guard let item = displayedPlaylistItem(context: context),
               let playlist = try? PlaylistRepository.playlist(id: item.playlistID, in: context) else {
-            statusMessage = "Choose a linked triage track to promote."
+            statusMessage = "Choose a song in the Inbox to promote."
             return .unavailable(nothingToCurateMessage)
         }
         let title = Self.title(of: item, in: context)
@@ -2235,7 +2235,7 @@ final class PlaybackController {
             statusMessage = UserFacingError.message(for: error)
             return false
         }
-        statusMessage = "Moved to Triage."
+        statusMessage = "Moved to the Inbox."
         return true
     }
 

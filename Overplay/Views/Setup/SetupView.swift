@@ -42,7 +42,7 @@ struct SetupView: View {
                 StatusToast.shared.show("iCloud library check: \(state)")
             }
             #endif
-            viewModel.restoreProgress(context: modelContext)
+            viewModel.restoreProgress(context: modelContext, dependencies: dependencies)
             await viewModel.loadPlaylists(dependencies: dependencies)
         }
         // Startup restores a library that arrived from iCloud meanwhile.
@@ -68,7 +68,8 @@ struct SetupView: View {
             }
         default:
             if let feature = page.feature {
-                SetupFeatureCardView(feature: feature, footnote: page == .welcome ? welcomeFootnote : nil)
+                SetupFeatureCardView(feature: feature, footnote: page == .welcome ? welcomeFootnote : nil,
+                                     showsSiriTip: page == .carPlay)
             }
         }
     }
@@ -120,10 +121,10 @@ enum SetupPage: Int, CaseIterable, Identifiable {
             SetupFeature(symbol: "music.note.list", tint: .pink, title: "Welcome to Overplay",
                 text: "Overplay helps you keep your favourite music fresh. You decide what stays: promote the songs you love and retire the ones you're done with, with a tap.")
         case .oneTruePlaylistIntro:
-            SetupFeature(symbol: "star.circle.fill", tint: .pink, title: "One True Playlist",
+            SetupFeature(symbol: "arrow.up.circle.fill", tint: .pink, title: "One True Playlist",
                 text: "Your main playlist, the one you play most. Overplay counts every play and skip, so you can see which songs have earned their place.")
         case .triageIntro:
-            SetupFeature(symbol: "tray.fill", tint: .teal, title: "Triage",
+            SetupFeature(symbol: "tray.fill", tint: .teal, title: "The Inbox",
                 text: "New music lands here from playlists you choose. Promote the songs you love to your One True Playlist and retire the rest.")
         case .retired:
             SetupFeature(symbol: "archivebox.fill", tint: .gray, title: "Retired",
@@ -133,7 +134,7 @@ enum SetupPage: Int, CaseIterable, Identifiable {
                 text: "Promote, retire and undo from CarPlay's Now Playing, or ask Siri to \u{201C}Play Overplay\u{201D}. Your playlists stay tidy with your phone in your pocket.")
         case .done:
             SetupFeature(symbol: "checkmark.circle.fill", tint: .green, title: "You're Set",
-                text: "Play your One True Playlist or Triage from the main screen or CarPlay. Linked playlists can be changed at any time in Settings.")
+                text: "Play your One True Playlist or the Inbox from the main screen or CarPlay. Inbox sources can be changed at any time in Settings.")
         case .oneTruePlaylist, .triage:
             nil
         }

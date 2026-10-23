@@ -80,6 +80,7 @@ struct SetupPlaylistRowView: View {
             Spacer(minLength: 8)
             if let isSelected {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .accessibilityHidden(true)
                     .font(.title2)
                     .foregroundStyle(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
                     .contentTransition(.symbolEffect(.replace))
@@ -99,6 +100,7 @@ struct SetupPlaylistRowView: View {
                     Image(systemName: "music.note.list")
                         .font(.title3)
                         .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                 }
         }
     }

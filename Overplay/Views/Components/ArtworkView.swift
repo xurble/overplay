@@ -64,6 +64,7 @@ struct ArtworkView: View {
             )
             Image(systemName: "music.note")
                 .font(.system(size: 44, weight: .semibold))
+                .accessibilityHidden(true)
                 .foregroundStyle(.white.opacity(0.82))
         }
     }

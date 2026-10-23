@@ -79,6 +79,7 @@ struct CollectionSongListView<Artwork: View>: View {
                             } label: {
                                 Label("Overplay", systemImage: "arrow.up.circle")
                             }
+                            .accessibilityLabel("Add to One True Playlist")
                             .tint(.pink)
                         }
                     }
@@ -87,8 +88,9 @@ struct CollectionSongListView<Artwork: View>: View {
                             Button {
                                 Task { await onMove(song, false) }
                             } label: {
-                                Label("Triage", systemImage: "tray.fill")
+                                Label("Inbox", systemImage: "tray.fill")
                             }
+                            .accessibilityLabel("Add to the Inbox")
                             .tint(.green)
                         }
                     }

@@ -19,7 +19,7 @@ struct PlaylistPresentationBuilderTests {
 
         let summaries = builder(playlists: [inactive, triageB, bucket, triageA, oneTrue]).activePlaylistSummaries()
 
-        #expect(summaries.map(\.title) == ["Main", "Triage"])
+        #expect(summaries.map(\.title) == ["Main", "Inbox"])
         #expect(summaries.map(\.musicPlaylistID) == ["one", PlaylistRecord.triageBucketMusicPlaylistID])
     }
 

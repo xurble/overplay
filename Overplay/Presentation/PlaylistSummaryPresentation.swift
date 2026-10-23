@@ -19,7 +19,7 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
             case .retired:
                 "archivebox.fill"
             case .currentPlayback:
-                "play.fill"
+                "arrow.right.circle.fill"
             }
         }
     }
@@ -50,7 +50,7 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
         case .triageBucket:
             "Find the next big thing"
         case .triageSource:
-            "Triage Source"
+            "Inbox Source"
         }
     }
 
@@ -59,7 +59,7 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
         case .oneTruePlaylist:
             "Main"
         case .triageBucket:
-            "Triage"
+            "Inbox"
         case .triageSource:
             "Source"
         }

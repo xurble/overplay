@@ -71,6 +71,32 @@ enum AppleMusicLibraryPlaylistResources {
         return response.data.first?.attributes?.canEdit
     }
 
+    /// Whether iCloud's copy of the library has this playlist, independent of
+    /// how far this device's library has synced. Apple Music answers 404 for
+    /// a playlist that is not there.
+    static func exists(
+        playlistID: String,
+        request: (URL) async throws -> Data = { url in
+            try await MusicKitActivityLog.shared.measure(.libraryPlaylistLookup, detail: "web library playlist presence") {
+                try await MusicDataRequest(urlRequest: URLRequest(url: url)).response().data
+            }
+        }
+    ) async throws -> Bool {
+        struct Response: Decodable {
+            struct Resource: Decodable { var id: String }
+            var data: [Resource]
+        }
+        var components = URLComponents(string: "https://api.music.apple.com")!
+        components.path = "/v1/me/library/playlists/\(playlistID)"
+        guard !playlistID.isEmpty, let url = components.url else { throw PlaylistSyncError.incompletePlaylist }
+        do {
+            let response = try JSONDecoder().decode(Response.self, from: await request(url))
+            return !response.data.isEmpty
+        } catch let error as MusicDataRequest.Error where error.status == 404 {
+            return false
+        }
+    }
+
     /// One occurrence in iCloud's copy of a library playlist. The response
     /// type establishes the domain; other types have no song reference.
     struct Entry: Decodable, Equatable {
