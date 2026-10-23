@@ -408,7 +408,7 @@ struct TrackActionControlsView: View {
                 Button {
                     Task { await playbackController.addCurrentToOneTruePlaylist(context: modelContext) }
                 } label: {
-                    Label("Overplay", systemImage: "plus.circle")
+                    Label("Overplay", systemImage: "arrow.up.circle")
                         .frame(maxWidth: .infinity)
                 }
                 .accessibilityLabel("Add to One True Playlist")
