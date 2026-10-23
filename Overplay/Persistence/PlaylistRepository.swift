@@ -141,6 +141,21 @@ enum PlaylistRepository {
 
     /// Looks the bucket up without creating it, for read-only callers that
     /// must not write to the store just to render an empty state.
+    /// The bucket was named "Triage" until 2026-10-23; it is the Inbox now.
+    /// The name syncs, so the first device to start renames it everywhere.
+    /// True when it saved a change.
+    @discardableResult
+    static func renameLegacyTriageBucket(in context: ModelContext) throws -> Bool {
+        let legacy = try triageBuckets(in: context).filter { $0.name == "Triage" }
+        guard !legacy.isEmpty else { return false }
+        for bucket in legacy {
+            bucket.name = PlaylistRecord.triageBucketName
+            bucket.updatedAt = .now
+        }
+        try context.save()
+        return true
+    }
+
     static func existingTriageBucket(in context: ModelContext) throws -> PlaylistRecord? {
         let buckets = try triageBuckets(in: context)
         return buckets.first(where: \.isActive) ?? buckets.first

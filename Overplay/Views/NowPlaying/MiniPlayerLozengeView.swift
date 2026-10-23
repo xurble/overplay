@@ -64,6 +64,10 @@ struct MiniPlayerLozengeView: View {
             }
             .buttonStyle(.plain)
             .accessibilityHint("Opens Now Playing")
+            // The text stops growing here; touch and hold shows it large.
+            .accessibilityShowsLargeContentViewer {
+                Text(playbackController.nowPlayingDisplayTrack.map { "\($0.title) — \($0.artistName)" } ?? "Nothing playing")
+            }
 
             PlaybackControlsView(settings: settings, controlSize: .compact, artworkTheme: theme)
         }

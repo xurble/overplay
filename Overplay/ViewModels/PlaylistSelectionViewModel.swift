@@ -65,7 +65,7 @@ final class PlaylistSelectionViewModel {
         do {
             try PlaylistRepository.addTriageSource(playlist, in: context)
             try context.save()
-            message = "\(playlist.name) now feeds the triage bucket."
+            message = "\(playlist.name) now feeds the Inbox."
         } catch {
             message = UserFacingError.message(for: error)
         }
@@ -81,7 +81,7 @@ final class PlaylistSelectionViewModel {
             } else {
                 try PlaylistRepository.removeTriageSource(playlist, in: context)
             }
-            message = "\(playlist.name) no longer feeds the triage bucket."
+            message = "\(playlist.name) no longer feeds the Inbox."
         } catch {
             message = UserFacingError.message(for: error)
         }

@@ -65,7 +65,7 @@ struct PlaylistSelectionViewModelTests {
 
         let stored = try #require(try PlaylistRepository.playlist(musicPlaylistID: "triage", in: context))
         #expect(stored.role == .triageSource)
-        #expect(viewModel.message == "Inbox now feeds the triage bucket.")
+        #expect(viewModel.message == "Inbox now feeds the Inbox.")
         let bucket = try #require(try PlaylistRepository.existingTriageBucket(in: context))
         #expect(bucket.musicPlaylistID == PlaylistRecord.triageBucketMusicPlaylistID)
     }

@@ -49,7 +49,7 @@ enum TrackLocationService {
         if logEvent { EventRepository.logHistory(
             playlistID: bucket.id, trackID: item.trackID, eventType: .restored,
             source: source, skipCountAtEvent: item.skipCount,
-            message: "Moved to Triage", in: context
+            message: "Moved to the Inbox", in: context
         ) }
     }
 

@@ -18,7 +18,7 @@ enum PlaylistMutationError: LocalizedError {
         case .sourcePlaylistMissing:
             "The source playlist is no longer linked."
         case .sourcePlaylistNotTriage:
-            "Only tracks in the triage bucket can be Overplayed."
+            "Only tracks in the Inbox can be Overplayed."
         case .trackMissing:
             "The track is no longer available locally."
         case .musicItemMissing:

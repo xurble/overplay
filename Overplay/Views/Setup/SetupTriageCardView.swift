@@ -17,10 +17,10 @@ struct SetupTriageCardView: View {
                     .font(.system(size: 44, weight: .semibold))
                     .foregroundStyle(.teal)
                     .accessibilityHidden(true)
-                Text("Fill Triage")
+                Text("Fill the Inbox")
                     .font(.title.bold())
                     .accessibilityAddTraits(.isHeader)
-                Text("Choose playlists that feed Triage. Their new songs arrive here for you to review.")
+                Text("Choose playlists that feed the Inbox. Their new songs arrive there for you to review.")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -60,7 +60,7 @@ struct SetupTriageCardView: View {
                 ProgressView("Loading playlists")
             } else if viewModel.playlists.isEmpty {
                 ContentUnavailableView("No Playlists", systemImage: "music.note.list",
-                    description: Text("Add Triage sources later from Linked Playlists."))
+                    description: Text("Add Inbox sources later in Settings."))
             }
         }
     }

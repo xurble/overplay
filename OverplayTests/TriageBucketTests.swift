@@ -7,6 +7,23 @@ import Testing
 @Suite("Triage bucket")
 struct TriageBucketTests {
 
+    @Test("a bucket still named Triage is renamed the Inbox once, and nothing else is touched")
+    func legacyBucketIsRenamedInbox() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let bucket = PlaylistRecord(musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+                                    name: "Triage", role: .triageBucket, writePolicy: .incomingOnly)
+        let source = PlaylistRecord(musicPlaylistID: "p.source", name: "Triage", role: .triageSource)
+        context.insert(bucket)
+        context.insert(source)
+        try context.save()
+
+        #expect(try PlaylistRepository.renameLegacyTriageBucket(in: context))
+        #expect(bucket.name == "Inbox")
+        #expect(source.name == "Triage")
+        #expect(try !PlaylistRepository.renameLegacyTriageBucket(in: context))
+    }
+
     // MARK: - Sync fan-in
 
     @Test("two contributing playlists sharing a track produce one bucket row")

@@ -48,8 +48,8 @@ nonisolated struct PlayOneTruePlaylistIntent: AudioPlaybackIntent {
 }
 
 nonisolated struct PlayTriageIntent: AudioPlaybackIntent {
-    static let title: LocalizedStringResource = "Play Triage"
-    static let description = IntentDescription("Shuffles Triage, or carries on with it if it is already playing.")
+    static let title: LocalizedStringResource = "Play the Inbox"
+    static let description = IntentDescription("Shuffles the Inbox, or carries on with it if it is already playing.")
     static let supportedModes: IntentModes = .background
     static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
@@ -62,7 +62,7 @@ nonisolated struct PlayTriageIntent: AudioPlaybackIntent {
 
 nonisolated struct PromoteCurrentTrackIntent: AppIntent {
     static let title: LocalizedStringResource = "Promote This Song"
-    static let description = IntentDescription("Moves the song that is playing from Triage to your One True Playlist.")
+    static let description = IntentDescription("Moves the song that is playing from the Inbox to your One True Playlist.")
     static let supportedModes: IntentModes = .background
     static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
 
@@ -105,11 +105,11 @@ nonisolated struct OverplayShortcuts: AppShortcutsProvider {
             "Play my One True Playlist in \(.applicationName)",
         ], shortTitle: "Play One True Playlist", systemImageName: "play.fill")
         AppShortcut(intent: PlayTriageIntent(), phrases: [
-            "Play \(.applicationName) Triage",
-            "Play Triage on \(.applicationName)",
-            "Play Triage in \(.applicationName)",
-            "Shuffle \(.applicationName) Triage",
-        ], shortTitle: "Play Triage", systemImageName: "tray.full")
+            "Play \(.applicationName) Inbox",
+            "Play the Inbox on \(.applicationName)",
+            "Play the Inbox in \(.applicationName)",
+            "Shuffle \(.applicationName) Inbox",
+        ], shortTitle: "Play the Inbox", systemImageName: "tray.full")
         AppShortcut(intent: PromoteCurrentTrackIntent(), phrases: [
             "Promote this in \(.applicationName)",
             "\(.applicationName) promote this",

@@ -399,11 +399,11 @@ struct TrackActionControlsView: View {
                 Button {
                     Task { await playbackController.addCurrentToTriage(context: modelContext) }
                 } label: {
-                    Label("Triage", systemImage: "tray.and.arrow.down.fill")
+                    Label("Inbox", systemImage: "tray.and.arrow.down.fill")
                         .frame(maxWidth: .infinity)
                 }
-                .accessibilityLabel("Add to Triage")
-                .accessibilityInputLabels(["Triage", "Add to Triage"])
+                .accessibilityLabel("Add to the Inbox")
+                .accessibilityInputLabels(["Inbox", "Add to the Inbox"])
                 .fullScreenPlayerControlStyle(palette: controlPalette, prominence: .secondary, fallbackStyle: .bordered)
                 Button {
                     Task { await playbackController.addCurrentToOneTruePlaylist(context: modelContext) }
@@ -419,11 +419,11 @@ struct TrackActionControlsView: View {
                 Button {
                     Task { playbackController.restoreCurrent(context: modelContext) }
                 } label: {
-                    Label("Triage", systemImage: "tray.fill")
+                    Label("Inbox", systemImage: "tray.fill")
                         .frame(maxWidth: .infinity)
                 }
-                .accessibilityLabel("Move to Triage")
-                .accessibilityInputLabels(["Triage", "Move to Triage"])
+                .accessibilityLabel("Move to the Inbox")
+                .accessibilityInputLabels(["Inbox", "Move to the Inbox"])
                 .disabled(playbackController.currentMember == nil)
                 .fullScreenPlayerControlStyle(
                     palette: controlPalette,

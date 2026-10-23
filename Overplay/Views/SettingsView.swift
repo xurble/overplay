@@ -29,6 +29,7 @@ struct SettingsView: View {
     @State private var showNukeConfirmation = false
     @State private var showRebuildConfirmation = false
     @State private var tab = Pane.general
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage(AppearancePreference.storageKey) private var appearance = AppearancePreference.automatic
     @AppStorage(PlayerBackgroundPreference.storageKey) private var playerBackground = PlayerBackgroundPreference.art
     @State private var viewModel = SettingsViewModel()
@@ -97,14 +98,39 @@ struct SettingsView: View {
     // MARK: - iPhone and iPad tabs
 
     /// General settings first; the tools for when something is wrong apart.
-    private var tabPicker: some View {
-        Picker("Settings", selection: $tab) {
-            Text("General").tag(Pane.general)
-            Text("Troubleshooting").tag(Pane.troubleshooting)
+    /// A segmented control keeps its text small; at accessibility sizes the
+    /// tabs are stacked buttons that grow with the text.
+    @ViewBuilder private var tabPicker: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(spacing: 8) {
+                    tabButton(.general)
+                    tabButton(.troubleshooting)
+                }
+            } else {
+                Picker("Settings", selection: $tab) {
+                    Text("General").tag(Pane.general)
+                    Text("Troubleshooting").tag(Pane.troubleshooting)
+                }
+                .pickerStyle(.segmented)
+            }
         }
-        .pickerStyle(.segmented)
         .padding(.horizontal)
         .padding(.bottom, 8)
+    }
+
+    @ViewBuilder private func tabButton(_ pane: Pane) -> some View {
+        let isSelected = tab == pane
+        Button {
+            tab = pane
+        } label: {
+            Text(pane.title)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.glass)
+        .tint(isSelected ? .accentColor : nil)
+        .fontWeight(isSelected ? .semibold : .regular)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
     @ViewBuilder private var generalSections: some View {
@@ -124,8 +150,8 @@ struct SettingsView: View {
                     .nowPlayingColumnToggle()
             } label: {
                 SettingsActionLabel(
-                    title: "Triage Sources",
-                    subtitle: "Playlists whose new songs arrive in Triage for you to promote or retire.",
+                    title: "Inbox Sources",
+                    subtitle: "Playlists whose new songs arrive in the Inbox for you to promote or retire.",
                     systemImage: "tray.full"
                 )
             }
@@ -171,6 +197,8 @@ struct SettingsView: View {
         Section {
             SettingsSliderRow(
                 title: "Skip threshold: \(Int(settings.skipThresholdPercentage))%",
+                label: "Skip threshold",
+                unit: "%",
                 subtitle: "An early skip counts only if playback stops before this percentage of the track.",
                 value: $settings.skipThresholdPercentage,
                 range: 1...99,
@@ -179,6 +207,8 @@ struct SettingsView: View {
 
             SettingsSliderRow(
                 title: "Minimum listening time: \(Int(settings.minimumSkipListeningSeconds)) seconds",
+                label: "Minimum listening time",
+                unit: " seconds",
                 subtitle: "Playback must reach this duration before an early skip can be counted.",
                 value: $settings.minimumSkipListeningSeconds,
                 range: 0...60,
@@ -187,6 +217,8 @@ struct SettingsView: View {
 
             SettingsSliderRow(
                 title: "Playthrough threshold: \(Int(settings.playthroughThresholdPercentage))%",
+                label: "Playthrough threshold",
+                unit: "%",
                 subtitle: "Listening past this percentage counts as a full playthrough instead of a skip.",
                 value: $settings.playthroughThresholdPercentage,
                 range: 1...100,
@@ -391,6 +423,9 @@ private struct SettingsLabeledStepper: View {
 
 private struct SettingsSliderRow: View {
     var title: String
+    /// The title without its value, for VoiceOver, which reads the value.
+    var label: String
+    var unit: String
     var subtitle: String
     @Binding var value: Double
     var range: ClosedRange<Double>
@@ -406,7 +441,8 @@ private struct SettingsSliderRow: View {
             .accessibilityHidden(true)
 
             Slider(value: $value, in: range, step: step)
-                .accessibilityLabel(title)
+                .accessibilityLabel(label)
+                .accessibilityValue("\(Int(value))\(unit)")
                 .accessibilityHint(subtitle)
         }
     }

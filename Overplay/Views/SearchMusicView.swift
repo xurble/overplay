@@ -117,9 +117,9 @@ struct SearchMusicView: View {
                             Button {
                                 Task { await move(result, toOneTruePlaylist: false) }
                             } label: {
-                                Label("Triage", systemImage: "tray.fill")
+                                Label("Inbox", systemImage: "tray.fill")
                             }
-                            .accessibilityLabel("Add to Triage")
+                            .accessibilityLabel("Add to the Inbox")
                             .tint(.green)
                         }
                         Button {
@@ -136,7 +136,7 @@ struct SearchMusicView: View {
                             }
                         }
                         if song.canMoveToTriage {
-                            Button("Add to Triage", systemImage: "tray.fill") {
+                            Button("Add to the Inbox", systemImage: "tray.fill") {
                                 Task { await move(result, toOneTruePlaylist: false) }
                             }
                         }

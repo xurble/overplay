@@ -20,9 +20,9 @@ Reorder it when product goals change or new evidence changes the risk.
 - **CarPlay:** in daily use, but the rewrite's CarPlay hardware checks were
   never run, and the shuffle button still flickers (#28).
 - **Siri:** minimal Siri is built (2026-10-19, spec **Siri**): play the One
-  True Playlist or Triage, promote, retire and undo. Not yet checked by voice
+  True Playlist or the Inbox, promote, retire and undo. Not yet checked by voice
   on a device.
-- **Playlist management:** One True Playlist, Triage and Retired, global track
+- **Playlist management:** One True Playlist, the Inbox and Retired, global track
   ownership, sync and rebuild are done (#34, #36, #39–#41, #64–#75). MusicKit
   can edit only playlists Overplay created, and the Mac cannot write
   playlists at all.
@@ -182,7 +182,7 @@ Library and playlist checks:
   Playlist: one One True Playlist row.
 - Two devices on one account: playback stays independent, shared counts
   converge without duplicate rows, and both show the same Recent Deep Dives.
-- Untracked songs from Play Album, Play Artist and Library offer Add to Triage
+- Untracked songs from Play Album, Play Artist and Library offer Add to the Inbox
   and Add to One True Playlist and are not counted. Check Add to One True
   Playlist on iPhone or iPad; the Mac cannot write playlists.
 
@@ -224,7 +224,7 @@ spec's Known Defects. The open questions and what to collect next time are in
 
 Product priority 2. **Built 2026-10-19** (spec **Siri**, `SIRI-001`,
 `SIRI-002`; **Undo Promote or Retire**, `MUT-003`; `PLAY-020`): Play One True
-Playlist ("Play Overplay"), Play Triage, Promote, Retire and Undo, each a thin
+Playlist ("Play Overplay"), Play the Inbox, Promote, Retire and Undo, each a thin
 adapter over the shared action, with tests at the shared entry points. The
 iOS 27 audio schemas need iOS 27 and wait for Fuller Siri.
 
@@ -246,20 +246,20 @@ What it does today (`SearchMusicView`, `SearchMusicViewModel`,
 `SearchService`):
 
 - iPhone reaches it only from the menu on a playlist screen (One True
-  Playlist, Triage or Retired), not from the dashboard. iPad has a sidebar
+  Playlist, the Inbox or Retired), not from the dashboard. iPad has a sidebar
   entry, and the Mac has Go → Search (⌘F).
 - It searches the Apple Music catalogue only, for songs only, returns 20
   results, and runs only when the search is submitted.
 - A result cannot be played or previewed, and shows no sign of whether the
-  song is already in the One True Playlist, Triage or Retired.
-- Its only action is adding to a playlist through a MusicKit write. Triage is
+  song is already in the One True Playlist, the Inbox or Retired.
+- Its only action is adding to a playlist through a MusicKit write. The Inbox is
   never a destination, adding fails on the Mac and on playlists Overplay did
   not create, and a destination picker sits at the top of every search.
 
 Done on 2026-10-19: the field is the whole top bar on iPhone, with X to go
 back, and no destination picker; the dashboard has a Search button top right;
-results are track rows that swipe right to Overplay and left to Triage through
-the shared song action, with More beside Triage for Play Now (one song,
+results are track rows that swipe right to Overplay and left to the Inbox through
+the shared song action, with More beside the Inbox for Play Now (one song,
 outside any playlist) and Add to Playlist… (any library playlist but the One
 True Playlist). The shared song action, Play Now and Add to Playlist have
 tests; the old destination code is gone. Still to do: items 2, 3, a clearer
@@ -275,12 +275,12 @@ Direction:
    results, so library-only songs are found too, and include albums and
    artists. Albums and artists open the existing Library and deep-dive views
    rather than new ones.
-4. Show each song's place in Overplay: One True Playlist, Triage, Retired or
+4. Show each song's place in Overplay: One True Playlist, the Inbox, Retired or
    untracked.
-5. Make **Add to Triage** the primary action for an untracked song, and
+5. Make **Add to the Inbox** the primary action for an untracked song, and
    **Add to One True Playlist** the secondary one. Use the same shared actions
    as untracked songs in Play Album, Play Artist and Library (`PLAY-018`),
-   which go through the shared manual Triage intake boundary and need no
+   which go through the shared manual Inbox intake boundary and need no
    playlist write. Drop the destination picker.
 6. Playing a result goes through the shared collection start, never a separate
    playback path.
@@ -333,7 +333,7 @@ Build the menu bar helper in **Mac Helper — Planned** (`HELPER-001`–`HELPER-
 2. Read-only first: the target, the CloudKit zone, `HelperStatus`, library
    facts, playlist snapshots, backups and stamp history, and the Settings →
    Mac Helper screen.
-3. Fast Triage intake.
+3. Fast Inbox intake.
 4. The One True Playlist writer, starting in plan-only mode.
 5. Source cleanup (default off), after the writer has run cleanly for a while.
 
@@ -349,12 +349,12 @@ Verification:
 - On the owner's Mac and iPhone: a retirement on iPhone leaves Apple Music's
   playlist after the Mac wakes; a promotion appears; a stale device cannot add
   a retired song back; nothing changes in playback. With source cleanup on, a
-  retired TikTok song leaves TikTok Songs, and moving it to Triage puts it back.
+  retired TikTok song leaves TikTok Songs, and moving it to the Inbox puts it back.
 
 ### Expand the Dashboard Summary
 
 - Add recently promoted counts.
-- Surface useful triage queues such as unreviewed or high-skip items.
+- Surface useful Inbox queues such as unreviewed or high-skip items.
 - Add direct play, sync, search and history actions where they shorten an
   existing workflow.
 
@@ -388,7 +388,7 @@ Do not undertake this refactor without profiling evidence.
 
 ### Open Enhancements
 
-- #42: album-version replacement for Triage tracks.
+- #42: album-version replacement for Inbox tracks.
 - #56: a playback Live Activity with Promote and Archive actions.
 - #73: save a playlist's collage to Photos.
 
@@ -407,12 +407,12 @@ persistence and cross-surface invariants above.
 
 ### Discovery and Intake
 
-The shared manual Triage intake boundary already tracks explicit keep intent
+The shared manual Inbox intake boundary already tracks explicit keep intent
 independently of contributing playlists. Future intake UI must use it; do not
 invent a fake playlist or bypass the global ownership/retention rules.
 
 - Read the user's synced Shazam discoveries from `SHLibrary` and feed them
-  directly into the triage bucket, retaining Apple Music ID, ISRC, artwork, and
+  directly into the Inbox, retaining Apple Music ID, ISRC, artwork, and
   discovery date where available. Consider in-app Shazam recognition only if it
   adds value beyond the system Music Recognition control.
 - Build a discovery inbox from MusicKit personal recommendations, recently
@@ -456,7 +456,7 @@ templates and Siri.
   effect on current-entry transitions, elapsed-time accounting, queue-end
   behavior, and cross-surface state.
 - Consider a rapid audition mode using queue-entry `startTime` and `endTime`
-  windows for triage. It needs distinct statistics semantics because a planned
+  windows for the Inbox. It needs distinct statistics semantics because a planned
   short window is neither a normal skip nor a full playthrough.
 - If the minimum OS rises to iOS 26.4 or later, consider setting
   `queue.affectsListeningHistory` to false for clearly labeled audition or

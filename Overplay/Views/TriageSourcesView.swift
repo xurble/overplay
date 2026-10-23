@@ -22,7 +22,7 @@ struct TriageSourcesView: View {
                     ContentUnavailableView(
                         "No Contributing Playlists",
                         systemImage: "tray",
-                        description: Text("Add an Apple Music playlist below to feed the triage bucket.")
+                        description: Text("Add an Apple Music playlist below to feed the Inbox.")
                     )
                 }
 
@@ -50,7 +50,7 @@ struct TriageSourcesView: View {
             StatusToast.shared.show(message)
             viewModel.message = nil
         }
-        .navigationTitle("Triage Sources")
+        .navigationTitle("Inbox Sources")
         .searchable(text: $viewModel.searchText, prompt: "Filter playlists")
         .searchFocused($isSearchFocused)
         .focusedSceneValue(\.isEditingText, isSearchFocused)
@@ -111,7 +111,7 @@ struct TriageSourcesView: View {
                     .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderedProminent)
-            .accessibilityLabel("Add \(playlist.name) to triage")
+            .accessibilityLabel("Add \(playlist.name) to the Inbox")
         }
         .padding(.vertical, 4)
     }

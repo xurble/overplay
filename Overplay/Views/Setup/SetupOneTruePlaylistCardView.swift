@@ -63,7 +63,7 @@ struct SetupOneTruePlaylistCardView: View {
             if let source = viewModel.copiedFrom {
                 return "Overplay is a new Apple Music playlist with the songs from \(source). \(source) itself is unchanged."
             }
-            return "Overplay is a new, empty Apple Music playlist. Promote songs to it from Triage, or add them from Search."
+            return "Overplay is a new, empty Apple Music playlist. Promote songs to it from the Inbox, or add them from Search."
         }
         return "Overplay makes a new Apple Music playlist called Overplay, and updates it as you promote and retire songs. Copy the songs from a playlist you already have, or start empty."
     }

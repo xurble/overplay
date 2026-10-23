@@ -80,8 +80,13 @@ final class AppStartupViewModel {
         Dependencies {
             // Restoration supplies settings; startup must never synthesize them.
         } migrateTriageBucket: {
-            // Generation 2 has no legacy ownership or role migration. The
-            // rebuild creates its bucket with the rest of the graph atomically.
+            // Generation 2 has no legacy ownership or role migration. Only
+            // the bucket's old name: "Triage" is the Inbox now.
+            do {
+                try PlaylistRepository.renameLegacyTriageBucket(in: modelContext)
+            } catch {
+                StartupProfiler.mark("Inbox rename failed: \(UserFacingError.message(for: error))")
+            }
         } refreshAuthorization: {
             await authorizationService.refresh()
         } installRemoteCommands: {

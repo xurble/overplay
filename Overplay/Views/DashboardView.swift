@@ -182,7 +182,6 @@ struct DashboardView: View {
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
-        .accessibilityValue(isPlaying(summary) ? "Now playing" : "")
     }
 
     /// The One True Playlist is what is audible now.

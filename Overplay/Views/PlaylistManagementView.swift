@@ -133,7 +133,7 @@ private struct PlaylistManagementContentView: View {
                                 Button {
                                     Task { await restore(row) }
                                 } label: {
-                                    Label("Move to Triage", systemImage: "tray.fill")
+                                    Label("Move to the Inbox", systemImage: "tray.fill")
                                 }
                                 .tint(.green)
                                 .disabled(viewModel.restoringItemIDs.contains(row.id))

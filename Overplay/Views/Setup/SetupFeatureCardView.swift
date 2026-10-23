@@ -14,6 +14,7 @@ struct SetupFeatureCardView: View {
     var footnote: String? = nil
     /// Shows Siri's own tip for "Play Overplay" under the text.
     var showsSiriTip = false
+    @State private var showsSiriTipCard = true
 
     var body: some View {
         SetupCardView {
@@ -36,7 +37,7 @@ struct SetupFeatureCardView: View {
                 Spacer(minLength: 0)
                 #if !targetEnvironment(macCatalyst)
                 if showsSiriTip {
-                    SiriTipView(intent: PlayOneTruePlaylistIntent())
+                    SiriTipView(intent: PlayOneTruePlaylistIntent(), isVisible: $showsSiriTipCard)
                 }
                 #endif
                 if let footnote {
@@ -64,7 +65,7 @@ struct SetupCardView<Content: View>: View {
 
 #Preview {
     SetupFeatureCardView(
-        feature: SetupFeature(symbol: "tray.fill", tint: .teal, title: "Triage",
+        feature: SetupFeature(symbol: "tray.fill", tint: .teal, title: "The Inbox",
             text: "New music lands here from playlists you choose."),
         footnote: "Already use Overplay on another device?"
     )

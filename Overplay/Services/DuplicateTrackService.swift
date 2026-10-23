@@ -4,7 +4,7 @@ import SwiftData
 @MainActor
 enum DuplicateTrackService {
     enum Destination: String, CaseIterable, Identifiable {
-        case otp = "One True Playlist", triage = "Triage", retired = "Retired"
+        case otp = "One True Playlist", triage = "Inbox", retired = "Retired"
         var id: String { rawValue }
     }
     struct Candidate: Identifiable, Equatable {

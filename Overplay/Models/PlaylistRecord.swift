@@ -8,7 +8,7 @@ final class LibraryPlaylistV2 {
     /// order state on this string, so it needs a stable value that can never
     /// collide with a real Apple Music playlist identifier.
     nonisolated static let triageBucketMusicPlaylistID = "overplay.triage-bucket"
-    nonisolated static let triageBucketName = "Triage"
+    nonisolated static let triageBucketName = "Inbox"
 
     var id: UUID = UUID()
     var musicPlaylistID: String = ""
