@@ -3006,7 +3006,15 @@ request failures are not stored as proof of absence. Tokens are not persisted or
 logged. MusicKit authorization and live catalog responses need device validation.
 
 Settings > Find Duplicates scans local recordings and shows apparent duplicate
-groups, song and album details, counts and collection membership. Technical
+groups, song and album details, counts and collection membership. It groups at
+once from what Overplay already stores: shared catalog or library IDs, aliases,
+equivalents and ISRCs ("Same recording"), and near-identical titles and primary
+artists ("Same name and artist"), ignoring case, accents, punctuation,
+featured artists and labels that do not change the recording (Remastered,
+Single Version, Mono…) but never Live, Remix, Acoustic or Edit. Only songs
+joined by name alone are then sent to Apple Music, to find which are the same
+recording; nothing else is. A song Apple Music cannot answer for, or rejects,
+is skipped and counted, without failing the scan. Technical
 identifiers are used internally and are not displayed in the review screen. Users
 select the recordings to merge and confirm. Mixed collections require choosing One True
 Playlist, the Inbox, or Retired; a shared collection is retained. Canceling performs

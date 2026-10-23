@@ -68,7 +68,8 @@ struct DuplicateTrackServiceTests {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         _ = try fixture(context)
-        let gone = TrackRecord(libraryID: "i.gone", title: "Gone", artistName: "Artist")
+        // The same name as the pair, so it is one Apple Music is asked about.
+        let gone = TrackRecord(libraryID: "i.gone", title: "Song", artistName: "Artist")
         context.insert(gone)
         context.insert(PlaylistItemRecord(playlistID: try PlaylistRepository.triageBucket(in: context).id, trackID: gone.id,
                                           sourceMusicPlaylistIDs: ["source-gone"]))
@@ -84,6 +85,49 @@ struct DuplicateTrackServiceTests {
         #expect(result.groups.count == 1)
         #expect(result.uncheckedCount == 1)
         #expect(gone.hasDocumentedIdentity == false)
+    }
+
+    @Test func namesMatchAcrossNeutralLabelsButNotAcrossDifferentRecordings() {
+        let key = { DuplicateNameKey.make(title: $0, artist: $1) }
+        #expect(key("Bohemian Rhapsody - Remastered 2011", "Queen") == key("Bohemian Rhapsody", "Queen"))
+        #expect(key("Get Lucky (feat. Pharrell Williams)", "Daft Punk") == key("Get Lucky", "Daft Punk & Pharrell Williams"))
+        #expect(key("Café del Mar (Single Version)", "Energy 52") == key("cafe del mar", "Energy 52"))
+        #expect(key("Hey Jude", "The Beatles") == key("Hey Jude", "Beatles"))
+        #expect(key("Hey Jude (Live)", "The Beatles") != key("Hey Jude", "The Beatles"))
+        #expect(key("One More Time (Remix)", "Daft Punk") != key("One More Time", "Daft Punk"))
+        #expect(key("Song", "Artist") != key("Song", "Someone Else"))
+        #expect(key("", "Artist") == nil)
+    }
+
+    /// Duplicates Overplay already knows are found with no Apple Music call;
+    /// only songs joined by name alone are sent.
+    @Test func onlyNameMatchesAreSentToAppleMusic() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        _ = try fixture(context)
+        var asked: [String] = []
+        let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "a") }, fetch: { kind, ids, _ in
+            asked += ids
+            return Dictionary(uniqueKeysWithValues: ids.map { ($0, kind == .catalog ? [.init(id: $0, type: "songs")] : []) })
+        })
+
+        let known = try await DuplicateTrackService.scan(in: context, resolver: resolver)
+        #expect(known.groups.count == 1 && known.checkedCount == 0)
+        #expect(asked.isEmpty)
+
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let remaster = TrackRecord(catalogID: "3", title: "Other - Remastered 2011", artistName: "Band")
+        let original = TrackRecord(catalogID: "4", title: "Other", artistName: "Band")
+        for track in [remaster, original] {
+            context.insert(track)
+            context.insert(PlaylistItemRecord(playlistID: bucket.id, trackID: track.id, sourceMusicPlaylistIDs: ["source"]))
+        }
+        try context.save()
+        let result = try await DuplicateTrackService.scan(in: context, resolver: resolver)
+        #expect(result.groups.count == 2)
+        #expect(result.checkedCount == 2)
+        #expect(!asked.contains("1") && !asked.contains("2"))
+        #expect(asked.contains("3") && asked.contains("4"))
     }
 
     @Test func rejectedRequestsAreSkippedButAccessAndBusyFailuresStop() {
@@ -105,8 +149,13 @@ struct DuplicateTrackServiceTests {
         #expect(DuplicateTrackService.groups(candidates).count == 1)
         #expect(try TrackRecordRepository.allTracks(in: container.mainContext).count == 2)
         #expect(try PlaylistItemRepository.allItems(in: container.mainContext).count == 2)
+        #expect(DuplicateTrackService.groups(candidates).first?.reason == .sameRecording)
+        // Different recordings with the same name and artist are still offered,
+        // for review, but not as the same recording.
         var distinct = candidates
         distinct[0].isrc = "OTHER"
+        #expect(DuplicateTrackService.groups(distinct).first?.reason == .sameNameAndArtist)
+        distinct[0].title = "Another Song"
         #expect(DuplicateTrackService.groups(distinct).isEmpty)
     }
 

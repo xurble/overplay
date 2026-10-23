@@ -42,7 +42,9 @@ struct DuplicateTracksView: View {
                         mergeRequest = DuplicateMergeRequest(candidates: group.candidates, selectedIDs: selected)
                     }
                     .disabled(busy || group.candidates.filter { selected.contains($0.id) }.count < 2)
-                } header: { Text("Possible duplicates") }
+                } header: {
+                    Text(group.reason == .sameRecording ? "Same recording" : "Same name and artist: check before merging")
+                }
             }
         }
         .navigationTitle("Find Duplicates")
@@ -55,11 +57,26 @@ struct DuplicateTracksView: View {
         .onDisappear { scanTask?.cancel() }
     }
 
+    /// What Overplay knows first, at once; then Apple Music, only for the
+    /// songs that match by name alone.
     private func scan() async {
         busy = true
         defer { busy = false }
         do {
-            let result = try await DuplicateTrackService.scan(in: context)
+            groups = try DuplicateTrackService.localScan(in: context)
+        } catch {
+            message = UserFacingError.message(for: error)
+            return
+        }
+        selected.removeAll()
+        let nameOnly = groups.filter { $0.reason == .sameNameAndArtist }.reduce(0) { $0 + $1.candidates.count }
+        guard nameOnly > 0 else {
+            message = groups.isEmpty ? "No apparent duplicates found." : "Review each group and select the tracks that are the same recording."
+            return
+        }
+        message = "Checking \(nameOnly == 1 ? "1 song" : "\(nameOnly) songs") that match by name with Apple Music…"
+        do {
+            let result = try await DuplicateTrackService.confirmNameMatches(groups, in: context)
             groups = result.groups
             selected.removeAll()
             message = groups.isEmpty ? "No apparent duplicates found." : "Review each group and select the tracks that are the same recording."
@@ -67,12 +84,10 @@ struct DuplicateTracksView: View {
                 let songs = result.uncheckedCount == 1 ? "1 song" : "\(result.uncheckedCount) songs"
                 message = (message ?? "") + " Apple Music couldn’t check \(songs), so they were matched on what Overplay already knew."
             }
-        } catch is CancellationError { }
-        catch {
-            // Existing persisted evidence remains useful while offline.
-            groups = (try? DuplicateTrackService.groups(DuplicateTrackService.candidates(in: context))) ?? []
-            selected.removeAll()
-            message = "Showing local matches. Apple Music lookup failed: \(UserFacingError.message(for: error))"
+        } catch is CancellationError {
+        } catch {
+            // The local groups stand; only the name matches went unconfirmed.
+            message = "Showing what Overplay knows. Apple Music couldn’t check the name matches: \(UserFacingError.message(for: error))"
         }
     }
 
