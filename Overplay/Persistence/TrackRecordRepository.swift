@@ -70,8 +70,12 @@ enum TrackRecordRepository {
     /// Tracks by catalog song ID and confirmed catalog alias, for matching a
     /// whole album or artist in one pass. Titles never match (`PLAY-018`).
     static func tracksByCatalogID(in context: ModelContext) throws -> [String: TrackRecord] {
+        tracksByCatalogID(try allTracks(in: context))
+    }
+
+    static func tracksByCatalogID(_ tracks: [TrackRecord]) -> [String: TrackRecord] {
         var records: [String: TrackRecord] = [:]
-        for record in try allTracks(in: context) {
+        for record in tracks {
             let aliases = record.confirmedAliases.filter { $0.domain == .catalogSong }.map(\.value)
             for id in [record.catalogID].compactMap({ $0 }) + aliases where records[id] == nil {
                 records[id] = record

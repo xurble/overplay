@@ -38,13 +38,25 @@ enum RecentCollectionPresentation {
 
     /// Any collection's songs as track rows, as for a Recents entry.
     static func songs(_ songs: [PlaybackCollectionSong], rowID: UUID, in context: ModelContext) -> [Song] {
-        let tracked = (try? TrackRecordRepository.tracksByCatalogID(in: context)) ?? [:]
+        // Three fetches in all, then lookups: a library's Songs list is
+        // thousands of rows, and a fetch per row hung the Mac.
+        let allTracks = (try? TrackRecordRepository.allTracks(in: context)) ?? []
+        let tracked = TrackRecordRepository.tracksByCatalogID(allTracks)
+        let scope = MusicResourceReference.currentLibraryScope
+        var byLibraryID: [String: TrackRecord] = [:]
+        for record in allTracks where record.libraryScope == scope {
+            if let libraryID = record.libraryID, byLibraryID[libraryID] == nil { byLibraryID[libraryID] = record }
+        }
+        var itemsByTrackID: [UUID: PlaylistItemRecord] = [:]
+        for item in (try? PlaylistItemRepository.allItems(in: context)) ?? [] where !item.isDeleted {
+            if itemsByTrackID[item.trackID] == nil { itemsByTrackID[item.trackID] = item }
+        }
         let roles = Dictionary(((try? context.fetch(FetchDescriptor<PlaylistRecord>())) ?? []).map { ($0.id, $0.role) },
                                uniquingKeysWith: { first, _ in first })
         return songs.map { song in
             // A library song is keyed by its library ID.
-            let record = tracked[song.catalogID] ?? (try? TrackRecordRepository.track(musicItemID: song.catalogID, in: context))
-            let item = record.flatMap { try? PlaylistItemRepository.item(trackID: $0.id, in: context) }
+            let record = tracked[song.catalogID] ?? byLibraryID[song.catalogID]
+            let item = record.flatMap { itemsByTrackID[$0.id] }
             return Song(catalogID: song.catalogID, summary: TrackSummaryPresentation(
                 // Rows are identified by catalog song ID (`Song.id`), not this.
                 id: item?.id ?? rowID,
