@@ -84,7 +84,8 @@ Music's global play count or skip count.
 | `PLAYLIST-006` | Pre-bucket Inbox data migrates onto the bucket at startup. The migration is idempotent and keyed on the stored legacy role value, not a local flag. | `Overplay/Persistence/TriageBucketMigrationService.swift`, `OverplayTests/TriageBucketTests.swift` |
 | `PLAYLIST-002` | The One True Playlist is always one Overplay created, empty or as a copy of an existing playlist, because MusicKit lets an app edit only playlists it created. It is made in setup (`SETUP-001`), or from the dashboard when a library has none; an existing playlist cannot be chosen or swapped in. Changed 2026-10-23: choosing an existing playlist, linking one as incoming-only, Make Main and Sync All were removed with the playlist selection screen. | `Overplay/Views/OneTruePlaylistCreationView.swift`, `Overplay/Services/PlaylistSyncService.swift` |
 | `SETUP-001` | A new library starts in setup: swipeable cards introduce the features, then the One True Playlist card needs a choice (a new managed "Overplay" playlist, empty or copied from an existing playlist, which is unchanged) and the Inbox card needs one (sources, with TikTok and Shazam playlists suggested, or Add Sources Later). Swiping cannot pass an undecided card. The library is created by the first choice or by finishing; finishing syncs the chosen sources. Choices are read back from the store, so a rebuilt setup screen never makes a second playlist; no CarPlay, Siri, import or readiness retry opens a library while setup shows; a library that arrives from iCloud ends setup and is restored, never replaced. | `Overplay/ViewModels/SetupViewModel.swift`, `Overplay/Views/Setup/`, `OverplayTests/SetupViewModelTests.swift` |
-| `SETUP-002` | On a Mac, which cannot create Apple Music playlists, setup's One True Playlist choice is saved in the synced settings as a request (empty, or a copy of a named playlist). The first iPhone or iPad to start up or import with the request makes the managed "Overplay" playlist, selects it and clears the request; a One True Playlist chosen meanwhile clears it instead. A failure keeps it for the next launch or import. Two iPhones opening at the same moment could both make one. | `Overplay/Services/PendingOneTruePlaylistService.swift`, `OverplayTests/PendingOneTruePlaylistServiceTests.swift` |
+| `SETUP-002` | On a Mac, which cannot create Apple Music playlists, setup's One True Playlist choice is saved in the synced settings as a request (empty, or a copy of a named playlist). The first iPhone or iPad to start up or import with the request asks first ("Make Your Overplay Playlist?"), then makes the managed "Overplay" playlist, selects it and clears the request; Not Now asks again at the next launch. Opening Make Your One True Playlist on the dashboard makes it at once. A One True Playlist made meanwhile clears the request; a failure keeps it. Two iPhones opening at the same moment could both make one. | `Overplay/Services/PendingOneTruePlaylistService.swift`, `Overplay/Services/OneTruePlaylistPresenceService.swift`, `OverplayTests/PendingOneTruePlaylistServiceTests.swift` |
+| `SETUP-003` | When the One True Playlist's Apple Music playlist is no longer in the library (deleted in the Music app), an iPhone or iPad asks ("Overplay Playlist Missing") when a sync cannot find it, confirmed by one lookup, before making it again with the active songs, as the rebuild does (`PLAYLIST-009`). Nothing is made without the user's yes; an unanswered lookup never asks. | `Overplay/Services/OneTruePlaylistPresenceService.swift`, `OverplayTests/OneTruePlaylistPresenceServiceTests.swift` |
 | `SYNC-001` | Automatic sync starts no sooner than a minute after launch (and 10 seconds after authorization), runs every 30 minutes, skips fresh successful playlists, retries failed playlists, prioritizes the playing and selected playlists, and pauses while a playback failure is active. | `Overplay/Services/PeriodicPlaylistSyncService.swift`, `OverplayTests/PeriodicPlaylistSyncServiceTests.swift` |
 | `SYNC-002` | Sync is idempotent, collapses duplicate identities, preserves history, and leaves remotely missing tracks locally playable unless retired. Sync never mutates the live playback queue. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/PlaylistSyncReconciliationTests.swift` |
 | `MUT-001` | Successful promotion moves the existing item into OTP with its statistics and history; no source copy remains. Retired offers Move to the Inbox (explicit keep) and Move to One True Playlist. | `Overplay/Services/PlaylistMutationService.swift`, `OverplayTests/PlaylistMutationServiceTests.swift` |
@@ -2434,13 +2435,15 @@ Purpose: configure behaviour.
 Two tabs, General and Troubleshooting, with the same rows in the same order
 everywhere: a segmented control pinned at the top on iPhone and iPad (stacked
 buttons at accessibility text sizes), the window's tabs on a Mac. The Mac has
-no playlist rebuild (`PLAYLIST-009` is iPhone and iPad only).
+no playlist rebuild (`PLAYLIST-009` is iPhone and iPad only) and no Siri &
+Shortcuts section.
 
 General:
 
-- **Playlists:** the One True Playlist, shown, not chosen: Overplay made it
-  (`SETUP-001`), with **Open in Apple Music**. While a Mac waits for an
-  iPhone to make it (`SETUP-002`), it says so. **Inbox Sources** opens the
+- **Playlists:** the One True Playlist, shown, never chosen: Overplay makes
+  it at the first chance (`SETUP-001`) and keeps it up to date, with **Open
+  in Apple Music**. While a Mac waits for an iPhone to make it (`SETUP-002`),
+  it says so. **Inbox Sources** opens the
   contributing-playlist list.
 - **Library:** Find Duplicates.
 - **Display**, per device: **Appearance** Automatic (default), Light or Dark,
@@ -2448,24 +2451,21 @@ General:
   (default) or Theme Colour, the colour alone behind the full player.
 - **Siri & Shortcuts:** the five phrases (`SIRI-001`) and Apple's Shortcuts
   link. Nothing needs installing; iOS registers them with the app.
-- **Counting Plays and Skips:**
-- Skip threshold percentage.
-- Minimum listening time before skip can count.
-- Playthrough threshold percentage.
-- Reset all Overplay skip counts, playthrough counts, retirement state, and
-  legacy state without changing Apple Music playlist contents.
-- Nuke all Overplay SwiftData records locally and save those deletions for
-  iCloud propagation, then recreate default settings and clear local playback
-  state. Apple Music playlists are not deleted.
+- **Counting Plays and Skips:** skip threshold percentage, minimum listening
+  time before a skip can count, and playthrough threshold percentage.
 
-Troubleshooting, in this order: rebuild the One True Playlist's Apple Music
-playlist (`PLAYLIST-009`), Apple Music call activity, diagnostics, and Start
-Over (reset stats, nuke database) last:
+Troubleshooting, in this order:
 
+- Rebuild the One True Playlist's Apple Music playlist (`PLAYLIST-009`).
+- Apple Music call activity.
 - Run MusicKit authorization, playlist-access, and playback-readiness
-  diagnostics.
-- Diagnostic, device-local: **Mirror Now Playing from Overplay** (default off,
-  `PLAY-016`).
+  diagnostics. Diagnostic, device-local: **Mirror Now Playing from Overplay**
+  (default off, `PLAY-016`).
+- **Start Over**, last: reset all Overplay skip counts, playthrough counts,
+  retirement state, and legacy state without changing Apple Music playlist
+  contents; and nuke all Overplay SwiftData records locally and save those
+  deletions for iCloud propagation, then recreate default settings and clear
+  local playback state. Apple Music playlists are not deleted.
 
 There is no separate reset-local-playback-state control. On the Mac,
 Settings opens in its own window from the standard Settings command, with
@@ -2905,7 +2905,7 @@ same isolation is required for the planned Mac target.
 Every surface supports VoiceOver, Voice Control, Dynamic Type and the display
 settings, through system controls where possible:
 
-- Buttons whose visible label is short ("Overplay", "the Inbox") are announced by
+- Buttons whose visible label is short ("Overplay", "Inbox") are announced by
   what they do ("Promote to One True Playlist"), and still answer to the
   visible word in Voice Control. Swipe actions are named the same way.
 - State shown by colour or a badge (now playing, unavailable) is also said in
@@ -2948,9 +2948,10 @@ The product is healthy when a user can:
 1. Install and run Overplay on iPhone and iPad, and on the Mac as a Mac
    Catalyst build.
 2. Connect Apple Music on any of them.
-3. Choose a One True Playlist.
+3. Have Overplay make their One True Playlist in Apple Music, at the first
+   chance, and keep it up to date.
 4. Add contributing playlists to the Inbox.
-5. Sync all linked playlists.
+5. Sync a linked playlist, automatically or by hand.
 6. Play any linked playlist in Overplay.
 7. Track skips and playthroughs for all linked playlists.
 8. Surface skip/playthrough history while leaving retirement to explicit user actions.

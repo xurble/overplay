@@ -20,6 +20,8 @@ final class PeriodicPlaylistSyncService {
     @ObservationIgnored private var playCountTask: Task<Void, Never>?
     @ObservationIgnored private let syncPlaylist: @MainActor (PlaylistRecord, ModelContext) async throws -> PlaylistSyncSummary
     @ObservationIgnored private let mergeDuplicateTrackIdentities: @MainActor (ModelContext) async throws -> Void
+    /// The One True Playlist's Apple Music playlist was not found (`SETUP-003`).
+    @ObservationIgnored private let oneTruePlaylistNotFound: @MainActor (ModelContext) async -> Void
 
     init(
         initialDelay: Duration = .seconds(10),
@@ -39,6 +41,9 @@ final class PeriodicPlaylistSyncService {
         },
         mergeDuplicateTrackIdentities: @escaping @MainActor (ModelContext) async throws -> Void = { context in
             try await TrackIdentityMergeService.mergeDuplicates(in: context)
+        },
+        oneTruePlaylistNotFound: @escaping @MainActor (ModelContext) async -> Void = { context in
+            await AppRuntime.shared.checkOneTruePlaylist(in: context, checksPresence: true)
         }
     ) {
         self.initialDelay = initialDelay
@@ -47,6 +52,7 @@ final class PeriodicPlaylistSyncService {
         self.interPlaylistDelay = interPlaylistDelay
         self.syncPlaylist = syncPlaylist
         self.mergeDuplicateTrackIdentities = mergeDuplicateTrackIdentities
+        self.oneTruePlaylistNotFound = oneTruePlaylistNotFound
     }
 
     func start(
@@ -156,6 +162,10 @@ final class PeriodicPlaylistSyncService {
                 playlist.lastSyncError = error.localizedDescription
                 playlist.updatedAt = .now
                 try? context.save()
+                // Deleted in the Music app? Ask before making it again.
+                if playlist.role == .oneTruePlaylist, case PlaylistSyncError.playlistNotFound = error {
+                    await oneTruePlaylistNotFound(context)
+                }
             }
         }
 

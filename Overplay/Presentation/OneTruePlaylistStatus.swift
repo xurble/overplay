@@ -26,7 +26,7 @@ struct OneTruePlaylistStatus: Equatable {
         if isRequested {
             return OneTruePlaylistStatus(
                 title: "Not made yet",
-                note: "A Mac asked for it. Overplay tries again each time it starts, or you can make it from the dashboard now."
+                note: "Your Mac asked for it. Overplay asks to make it when it starts, or open Make Your One True Playlist on the dashboard to make it now."
             )
         }
         return OneTruePlaylistStatus(

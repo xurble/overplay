@@ -17,7 +17,8 @@ struct OneTruePlaylistCreationView: View {
             .navigationTitle("One True Playlist")
             .navigationBarTitleDisplayMode(.inline)
             .task {
-                viewModel.restoreProgress(context: modelContext)
+                await makeRequestedPlaylist()
+                viewModel.restoreProgress(context: modelContext, dependencies: dependencies)
                 await viewModel.loadPlaylists(dependencies: dependencies)
             }
             .onChange(of: viewModel.message) { _, message in
@@ -25,6 +26,21 @@ struct OneTruePlaylistCreationView: View {
                 StatusToast.shared.show(message)
                 viewModel.message = nil
             }
+    }
+
+    /// A Mac asked for it: a device that can make it does so now, with the
+    /// Mac's choice, rather than asking again. A failure leaves the card's
+    /// own Copy and Start Empty.
+    private func makeRequestedPlaylist() async {
+        guard dependencies.canCreatePlaylists(),
+              let settings = try? modelContext.fetch(FetchDescriptor<OverplaySettings>()).first,
+              settings.pendingOneTruePlaylistRequestedAt != nil, settings.selectedPlaylistID == nil else { return }
+        viewModel.isCreatingOneTruePlaylist = true
+        await runtime.fulfilPendingOneTruePlaylist(in: modelContext)
+        viewModel.isCreatingOneTruePlaylist = false
+        if settings.selectedPlaylistID == nil {
+            viewModel.message = "Overplay couldn’t make the playlist your Mac asked for. Check your connection, or make one below."
+        }
     }
 
     private var dependencies: SetupViewModel.Dependencies {

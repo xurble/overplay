@@ -122,6 +122,20 @@ struct AppRouter: View {
                 .accessibilityAddTraits(.isModal)
             }
         }
+        // Never made silently: the Overplay playlist a Mac asked for, or one
+        // deleted from Apple Music (`SETUP-002`, `SETUP-003`).
+        .alert(
+            runtime.oneTruePlaylistPrompt?.title ?? "",
+            isPresented: isShowingOneTruePlaylistPrompt,
+            presenting: runtime.oneTruePlaylistPrompt
+        ) { prompt in
+            Button(prompt.actionTitle) {
+                Task { await runtime.makeOneTruePlaylist(for: prompt, in: modelContext) }
+            }
+            Button("Not Now", role: .cancel) { runtime.declineOneTruePlaylistPrompt() }
+        } message: { prompt in
+            Text(prompt.message)
+        }
         .sheet(item: $artworkPresentation.request) { request in
             PlaylistCollageSettingsView(layout: request.layout, stroke: request.stroke) { layout, stroke in
                 artworkPresentation.apply(layout: layout, stroke: stroke)
@@ -151,6 +165,14 @@ struct AppRouter: View {
 
     private var settings: OverplaySettings? {
         settingsRecords.first
+    }
+
+    private var isShowingOneTruePlaylistPrompt: Binding<Bool> {
+        Binding {
+            runtime.oneTruePlaylistPrompt != nil && !startupViewModel.isSettingUp && runtime.libraryRestoration.isReady
+        } set: { _ in
+            // Each button clears the prompt itself.
+        }
     }
 
     private var shouldShowPermissionView: Bool {

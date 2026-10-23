@@ -12,9 +12,13 @@ final class AudioOutputMonitor {
 
     private(set) var ports: [AudioOutputPort]
     private(set) var volume: Float
-    /// Set while the pill reads the system volume view, which follows the
-    /// volume buttons; the session's own reading is stale then and is ignored.
-    @ObservationIgnored var followsVolumeElsewhere = false
+    /// Pills reading the system volume view, which follows the volume
+    /// buttons; while any does, the session's stale reading is ignored.
+    @ObservationIgnored private var volumeViewReaders = 0
+    var followsVolumeElsewhere: Bool { volumeViewReaders > 0 }
+
+    func beginReadingVolumeView() { volumeViewReaders += 1 }
+    func endReadingVolumeView() { volumeViewReaders = max(volumeViewReaders - 1, 0) }
 
     @ObservationIgnored private let isLive: Bool
     @ObservationIgnored private var users = 0

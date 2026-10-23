@@ -192,6 +192,30 @@ struct PeriodicPlaylistSyncServiceTests {
         #expect(recorder.syncedIDs.contains("remote"))
     }
 
+    /// `SETUP-003`: a One True Playlist the sync cannot find asks the app to
+    /// check, which asks the user before making it again; nothing else does.
+    @Test("a One True Playlist missing from Apple Music is reported, a missing source is not")
+    func missingOneTruePlaylistIsReported() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let main = playlist(musicPlaylistID: "p.main", lastSyncedAt: nil, lastSyncError: nil)
+        let source = PlaylistRecord(musicPlaylistID: "p.source", name: "Source", role: .triageSource)
+        context.insert(main)
+        context.insert(source)
+        try context.save()
+        var reports = 0
+        let service = PeriodicPlaylistSyncService(interPlaylistDelay: .zero) { _, _ in
+            throw PlaylistSyncError.playlistNotFound
+        } oneTruePlaylistNotFound: { _ in
+            reports += 1
+        }
+
+        await service.syncLinkedPlaylists(context: context, force: true)
+
+        #expect(reports == 1)
+        #expect(main.lastSyncError != nil && source.lastSyncError != nil)
+    }
+
     private final class SyncRecorder {
         var syncedIDs: [String] = []
         var mergeCount = 0

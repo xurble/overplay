@@ -69,7 +69,7 @@ final class AppRuntime {
                 self.repairTrackLocations(in: context)
                 ApplePlayCountSyncService.shared.reconcile(in: context, playbackController: self.playbackController)
                 // A Mac may have asked for the One True Playlist (`SETUP-002`).
-                await self.fulfilPendingOneTruePlaylist(in: context)
+                await self.checkOneTruePlaylist(in: context)
             }
         }
     }
@@ -83,6 +83,46 @@ final class AppRuntime {
             playbackController.reconcileTrackMembership(context: context)
         } catch {
             StartupProfiler.mark("Track location repair failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Asked before the One True Playlist's Apple Music playlist is made
+    /// (`SETUP-002`, `SETUP-003`); the app presents it as an alert.
+    private(set) var oneTruePlaylistPrompt: OneTruePlaylistPrompt?
+    /// "Not Now" holds until the next launch.
+    @ObservationIgnored private var declinedOneTruePlaylistPrompt = false
+    @ObservationIgnored private var isMakingOneTruePlaylist = false
+
+    /// `checksPresence`: a sync could not find the playlist, so look it up.
+    func checkOneTruePlaylist(in context: ModelContext, checksPresence: Bool = false) async {
+        guard !declinedOneTruePlaylistPrompt, !isMakingOneTruePlaylist, oneTruePlaylistPrompt == nil else { return }
+        oneTruePlaylistPrompt = await OneTruePlaylistPresenceService().prompt(in: context, checksPresence: checksPresence)
+    }
+
+    func declineOneTruePlaylistPrompt() {
+        oneTruePlaylistPrompt = nil
+        declinedOneTruePlaylistPrompt = true
+    }
+
+    /// The user agreed: make the playlist the prompt described.
+    func makeOneTruePlaylist(for prompt: OneTruePlaylistPrompt, in context: ModelContext) async {
+        oneTruePlaylistPrompt = nil
+        isMakingOneTruePlaylist = true
+        defer { isMakingOneTruePlaylist = false }
+        switch prompt {
+        case .requestedByMac:
+            await fulfilPendingOneTruePlaylist(in: context)
+            if (try? context.fetch(FetchDescriptor<OverplaySettings>()).first?.selectedPlaylistID) == nil {
+                StatusToast.shared.show("Overplay couldn’t make the playlist. It will ask again next time it starts.")
+            }
+        case .missing:
+            do {
+                let result = try await OneTruePlaylistRebuildService().rebuild(in: context)
+                playbackController.reconcilePlaylistSelection(context: context)
+                StatusToast.shared.show("Made “\(result.name)” again in Apple Music with \(result.addedCount) songs.")
+            } catch {
+                StatusToast.shared.show(UserFacingError.message(for: error))
+            }
         }
     }
 

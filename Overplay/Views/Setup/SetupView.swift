@@ -42,7 +42,7 @@ struct SetupView: View {
                 StatusToast.shared.show("iCloud library check: \(state)")
             }
             #endif
-            viewModel.restoreProgress(context: modelContext)
+            viewModel.restoreProgress(context: modelContext, dependencies: dependencies)
             await viewModel.loadPlaylists(dependencies: dependencies)
         }
         // Startup restores a library that arrived from iCloud meanwhile.

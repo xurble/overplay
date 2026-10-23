@@ -139,8 +139,6 @@ enum PlaylistRepository {
         return TriageBucketConvergenceResult(bucket: bucket, createdBucket: true)
     }
 
-    /// Looks the bucket up without creating it, for read-only callers that
-    /// must not write to the store just to render an empty state.
     /// The bucket was named "Triage" until 2026-10-23; it is the Inbox now.
     /// The name syncs, so the first device to start renames it everywhere.
     /// True when it saved a change.
@@ -156,6 +154,8 @@ enum PlaylistRepository {
         return true
     }
 
+    /// Looks the bucket up without creating it, for read-only callers that
+    /// must not write to the store just to render an empty state.
     static func existingTriageBucket(in context: ModelContext) throws -> PlaylistRecord? {
         let buckets = try triageBuckets(in: context)
         return buckets.first(where: \.isActive) ?? buckets.first

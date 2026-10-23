@@ -176,7 +176,7 @@ struct SetupViewModelTests {
                               context: context, dependencies: harness.dependencies)
 
         let rebuilt = SetupViewModel()
-        rebuilt.restoreProgress(context: context)
+        rebuilt.restoreProgress(context: context, dependencies: harness.dependencies)
         #expect(rebuilt.oneTruePlaylistID == "p.overplay")
         #expect(rebuilt.triageSourceIDs == ["p.tiktok"])
         #expect(rebuilt.reachablePages == SetupPage.allCases)
@@ -207,5 +207,24 @@ struct SetupViewModelTests {
                                context: context, dependencies: harness.dependencies)
         #expect(triage.foundExistingLibrary)
         #expect(try PlaylistRepository.playlist(musicPlaylistID: "p.tiktok", in: context) == nil)
+    }
+
+    @Test("a Mac's request answers the card on a Mac, but an iPhone with one still offers to make it")
+    func requestOnlyAnswersOnDevicesThatCannotCreate() async throws {
+        var harness = try await harness()
+        let context = harness.container.mainContext
+        harness.dependencies.canCreatePlaylists = { false }
+        let mac = SetupViewModel()
+        await mac.createOneTruePlaylist(copying: nil, context: context, dependencies: harness.dependencies)
+        #expect(mac.isOneTruePlaylistRequested)
+
+        // The same library on an iPhone, whose request has not been made yet.
+        harness.dependencies.canCreatePlaylists = { true }
+        let phone = SetupViewModel()
+        phone.restoreProgress(context: context, dependencies: harness.dependencies)
+        #expect(!phone.hasChosenOneTruePlaylist)
+        await phone.createOneTruePlaylist(copying: nil, context: context, dependencies: harness.dependencies)
+        #expect(phone.hasOneTruePlaylist)
+        #expect(harness.created.count == 1)
     }
 }

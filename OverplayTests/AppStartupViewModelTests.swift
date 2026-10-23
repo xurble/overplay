@@ -240,8 +240,8 @@ struct AppStartupViewModelTests {
         } prepareLibrary: {
             onEvent("prepare")
             try await prepareLibrary()
-        } fulfilPendingOneTruePlaylist: {
-            onEvent("pending-otp")
+        } checkOneTruePlaylist: {
+            onEvent("check-otp")
         }
     }
 
@@ -280,6 +280,6 @@ struct AppStartupViewModelTests {
         model.retryLibraryPreparation(dependencies: dependencies)
         await model.authorizedServicesTask?.value
         #expect(!model.isRestoringFromCloud)
-        #expect(events == ["prepare", "prepare", "settings", "monitor", "pending-otp"])
+        #expect(events == ["prepare", "prepare", "settings", "monitor", "check-otp"])
     }
 }
