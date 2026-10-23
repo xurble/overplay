@@ -2379,7 +2379,8 @@ Show:
   search runs when it is submitted. No destination picker. On iPhone the
   field is the whole top bar, in place of the navigation bar, with X beside it
   to go back; it never moves to a separate search layer. iPad and Mac show the
-  system search field in the toolbar.
+  same bar of their own at the top, without X, since Search is a sidebar
+  destination there; the system search field needed dismissing twice.
 - Up to 20 Apple Music catalogue songs below, drawn as playlist track rows,
   with counts and retired state for songs Overplay tracks. Library-only
   songs, albums and artists are not searched. Tapping a song plays it, as

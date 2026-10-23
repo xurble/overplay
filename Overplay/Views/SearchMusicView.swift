@@ -46,29 +46,30 @@ struct SearchMusicView: View {
             }
     }
 
-    /// iPhone: a single bar replaces the navigation bar, so search never
-    /// moves between layers. iPad and Mac keep the toolbar search field.
+    /// One bar of its own at the top, so search never moves between layers
+    /// and never needs dismissing twice (the system search field did both).
+    /// iPhone: it replaces the navigation bar, with X to leave search. iPad
+    /// and Mac: search is a sidebar destination, so there is nothing to leave.
     @ViewBuilder
     private func searchField(_ content: some View) -> some View {
         if PlayerPlacement(horizontalSizeClass, verticalSizeClass) == .sheet {
             content
                 .toolbar(.hidden, for: .navigationBar)
                 .safeAreaBar(edge: .top) {
-                    SearchBarView(text: $viewModel.searchText, isFocused: $isSearchFocused) {
-                        Task { await viewModel.searchService.search(viewModel.searchText) }
-                    } close: {
+                    SearchBarView(text: $viewModel.searchText, isFocused: $isSearchFocused, submit: submitSearch) {
                         dismiss()
                     }
                 }
         } else {
             content
-                .searchable(text: $viewModel.searchText, placement: .navigationBarDrawer(displayMode: .always),
-                            prompt: "Songs in Apple Music")
-                .searchFocused($isSearchFocused)
-                .onSubmit(of: .search) {
-                    Task { await viewModel.searchService.search(viewModel.searchText) }
+                .safeAreaBar(edge: .top) {
+                    SearchBarView(text: $viewModel.searchText, isFocused: $isSearchFocused, submit: submitSearch, close: nil)
                 }
         }
+    }
+
+    private func submitSearch() {
+        Task { await viewModel.searchService.search(viewModel.searchText) }
     }
 
     private var resultsList: some View {
@@ -196,7 +197,8 @@ private struct SearchBarView: View {
     @Binding var text: String
     var isFocused: FocusState<Bool>.Binding
     var submit: () -> Void
-    var close: () -> Void
+    /// Nil where search is a place of its own (a sidebar destination).
+    var close: (() -> Void)?
 
     var body: some View {
         GlassEffectContainer {
@@ -224,16 +226,18 @@ private struct SearchBarView: View {
                 .frame(height: 44)
                 .glassEffect(.regular.interactive(), in: Capsule())
 
-                Button(action: close) {
-                    Image(systemName: "xmark")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 44, height: 44)
-                        .contentShape(Circle())
+                if let close {
+                    Button(action: close) {
+                        Image(systemName: "xmark")
+                            .font(.body.weight(.semibold))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: Circle())
+                    .accessibilityLabel("Close Search")
+                    .accessibilityIdentifier("search-close")
                 }
-                .buttonStyle(.plain)
-                .glassEffect(.regular.interactive(), in: Circle())
-                .accessibilityLabel("Close Search")
-                .accessibilityIdentifier("search-close")
             }
         }
         .padding(.horizontal, 16)
