@@ -117,7 +117,7 @@ struct SplitAppShell: View {
                     }
                 }
 
-                Section("Playlists") {
+                Section("Overplaying") {
                     ForEach(activePlaylists) { playlist in
                         Label(playlist.name, systemImage: playlistIcon(for: playlist))
                             .accessibilityValue(playbackController.isPlaying(playlist.playbackContext()) ? "Now playing" : "")
@@ -129,6 +129,20 @@ struct SplitAppShell: View {
                         .accessibilityValue(isRetiredPlaying ? "Now playing" : "")
                         .tag(AppShellDestination.retired)
                         .accessibilityIdentifier("sidebar-retired")
+
+                    Label("Deep Dives", systemImage: "square.stack.3d.up")
+                        .tag(AppShellDestination.deepDives)
+                        .accessibilityIdentifier("sidebar-deep-dives")
+                }
+
+                // The Apple Music library by category, as on the phone's
+                // dashboard (`LIB-001`).
+                Section("Library") {
+                    ForEach(LibraryBrowser.Category.allCases) { category in
+                        Label(category.rawValue, systemImage: category.systemImage)
+                            .tag(AppShellDestination.library(category))
+                            .accessibilityIdentifier("sidebar-library-\(category.rawValue)")
+                    }
                 }
             }
             .miniPlayerScrollContentInset()

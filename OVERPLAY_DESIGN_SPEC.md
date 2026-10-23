@@ -182,8 +182,11 @@ iPad is the review and management experience as well as a playback device.
 
 - Regular width uses `NavigationSplitView`; compact width falls back to the
   stacked dashboard flow.
-- The sidebar provides Dashboard, One True Playlist, the Inbox, Retired,
-  Search, History, and Settings.
+- The sidebar has Dashboard and Search (plus History and Settings on iPad),
+  then **Overplaying**: the One True Playlist, the Inbox, Retired and Deep
+  Dives (every Recent Deep Dive, `PLAY-019`); then **Library**: Playlists,
+  Albums, Artists and Songs from Apple Music (`LIB-001`), as on the phone's
+  dashboard.
 - Sidebar selection is scene-local. Regular width matches an open iPhone
   Duo: the list and Now Playing each take half the window, side by side when
   it is wider than tall and Now Playing above the list when it is taller. The
@@ -2127,8 +2130,8 @@ hardware covers Now Playing ownership, transport and the custom buttons.
 
 Screens are adaptive rather than separate products. Compact width uses stacked
 navigation from the dashboard. Regular width uses a `NavigationSplitView`
-sidebar for Dashboard, Search, History, Settings, linked playlists, and
-playlist detail, laid out as on an open iPhone Duo on iPad and in columns on a
+sidebar for Dashboard, Search, History, Settings, the Overplaying playlists,
+Deep Dives, the Library categories, and playlist detail, laid out as on an open iPhone Duo on iPad and in columns on a
 Mac (see iPad and Mac). Native Mac presentation is planned.
 
 Switching between the two (folding or unfolding an iPhone Duo, resizing a
