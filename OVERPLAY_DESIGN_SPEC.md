@@ -71,7 +71,7 @@ Music's global play count or skip count.
 | --- | --- | --- |
 | `PLAT-001` | The app supports iPhone and iPad on iOS/iPadOS 26+, with CarPlay supplied by the iPhone app, and the Mac on macOS 26+ through a Mac Catalyst build of the same app, which cannot write Apple Music playlists. A native Mac target is planned, not implemented. | `Overplay.xcodeproj/project.pbxproj`, `Overplay/App/Shell/PlatformShell.swift`, `Overplay/App/Shell/SplitLayoutPolicy.swift` |
 | `AUTH-001` | Normal use requires Apple Music authorization, catalogue playback capability, and Sync Library. The simulator supplies a ready state for development. | `Overplay/Services/MusicAuthorizationService.swift`, `Overplay/App/StartupAuthorizationGate.swift` |
-| `PLAYLIST-001` | Exactly one active One True Playlist is selected. Selecting another demotes the previous main playlist to a triage source. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/NewModelRepositoryTests.swift` |
+| `PLAYLIST-001` | Exactly one active One True Playlist is selected. Making a new one demotes the previous main playlist to a triage source. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/NewModelRepositoryTests.swift` |
 | `PLAYLIST-003` | There is at most one triage bucket. It owns every triage item, is ensured during startup, and has a reserved `musicPlaylistID` rather than an Apple Music playlist, so it is never fetched or synced directly. | `Overplay/Persistence/PlaylistRepository.swift`, `OverplayTests/TriageBucketTests.swift` |
 | `PLAYLIST-004` | Sources contribute attachments, not duplicate rows. A deliberate source link/re-link revives older retirements into Triage; ordinary sync never revives them. Active OTP takes precedence over source intake. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
 | `PLAYLIST-005` | Last-source unlink deletes untouched, non-explicit active Triage rows and unowned retired 0/0 rows. Active explicit keep or prior listening (even reset) survives. Nonzero counts and necessary OTP suppression always survive. | `Overplay/Persistence/TrackRetentionPolicy.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
@@ -82,7 +82,7 @@ Music's global play count or skip count.
 | `PLAYLIST-011` | The retention rule is re-applied by a sweep at startup and after each background sync cycle, to retired rows and deferred deletions only, with every deletion recorded in history. | `Overplay/Persistence/TrackRetentionPolicy.swift`, `OverplayTests/SyncCleanupTests.swift` |
 | `LOC-001` | A retirement or restore survives another device's stale CloudKit write. After each import and at startup, a song's newest `evicted`/`restored` history event re-applies its decision when it is newer than the row's `locationChangedAt`; promotions are left to the next One True Playlist sync. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/TrackLocationRepairTests.swift` |
 | `PLAYLIST-006` | Pre-bucket triage data migrates onto the bucket at startup. The migration is idempotent and keyed on the stored legacy role value, not a local flag. | `Overplay/Persistence/TriageBucketMigrationService.swift`, `OverplayTests/TriageBucketTests.swift` |
-| `PLAYLIST-002` | Initial setup can create a managed playlist, copy an existing playlist into a managed playlist, or link an existing playlist as incoming-only. | `Overplay/ViewModels/PlaylistSelectionViewModel.swift`, `Overplay/Services/PlaylistSyncService.swift` |
+| `PLAYLIST-002` | The One True Playlist is always one Overplay created, empty or as a copy of an existing playlist, because MusicKit lets an app edit only playlists it created. It is made in setup (`SETUP-001`), or from the dashboard when a library has none; an existing playlist cannot be chosen or swapped in. Changed 2026-10-23: choosing an existing playlist, linking one as incoming-only, Make Main and Sync All were removed with the playlist selection screen. | `Overplay/Views/OneTruePlaylistCreationView.swift`, `Overplay/Services/PlaylistSyncService.swift` |
 | `SETUP-001` | A new library starts in setup: swipeable cards introduce the features, then the One True Playlist card needs a choice (a new managed "Overplay" playlist, empty or copied from an existing playlist, which is unchanged) and the Triage card needs one (sources, with TikTok and Shazam playlists suggested, or Add Sources Later). Swiping cannot pass an undecided card. The library is created by the first choice or by finishing; finishing syncs the chosen sources. Choices are read back from the store, so a rebuilt setup screen never makes a second playlist; no CarPlay, Siri, import or readiness retry opens a library while setup shows; a library that arrives from iCloud ends setup and is restored, never replaced. | `Overplay/ViewModels/SetupViewModel.swift`, `Overplay/Views/Setup/`, `OverplayTests/SetupViewModelTests.swift` |
 | `SETUP-002` | On a Mac, which cannot create Apple Music playlists, setup's One True Playlist choice is saved in the synced settings as a request (empty, or a copy of a named playlist). The first iPhone or iPad to start up or import with the request makes the managed "Overplay" playlist, selects it and clears the request; a One True Playlist chosen meanwhile clears it instead. A failure keeps it for the next launch or import. Two iPhones opening at the same moment could both make one. | `Overplay/Services/PendingOneTruePlaylistService.swift`, `OverplayTests/PendingOneTruePlaylistServiceTests.swift` |
 | `SYNC-001` | Automatic sync starts no sooner than a minute after launch (and 10 seconds after authorization), runs every 30 minutes, skips fresh successful playlists, retries failed playlists, prioritizes the playing and selected playlists, and pauses while a playback failure is active. | `Overplay/Services/PeriodicPlaylistSyncService.swift`, `OverplayTests/PeriodicPlaylistSyncServiceTests.swift` |
@@ -115,7 +115,7 @@ Music's global play count or skip count.
 | `SIRI-002` | An intent that launches Overplay with no window starts the same startup as CarPlay and waits up to 8 seconds for the library; if it is not ready, the intent says so and changes nothing. | `Overplay/App/AppRuntime.swift` |
 | `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
 | `HISTORY-001` | History is filterable and paged. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. History is never the source of counts. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
-| `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, playlist selection, MusicKit diagnostics (including whether the One True Playlist is still editable), and the diagnostic Now Playing mirror. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
+| `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, the One True Playlist shown with a link to Apple Music, Triage Sources, display options, Siri phrases, MusicKit diagnostics (including whether the One True Playlist is still editable), and the diagnostic Now Playing mirror. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
 | `SURFACE-001` | Every playback action exposed by SwiftUI or CarPlay runs through the shared playback controller with identical semantics. System transport controls act on the player directly and their effects are processed through the same observation path. A surface may expose fewer actions but never a different version of one. | Confirmed product requirement (2026-08-31, revised 2026-10-04); `Overplay/Services/PlaybackController.swift`, `Overplay/CarPlaySupport/CarPlayCoordinator.swift` |
 | `SURFACE-002` | Every observed player change is published as one snapshot to every Overplay surface within one observation cycle; system surfaces read the same player. Current track, playlist context, play state, position, outgoing-session evaluation and active-playlist projection must not diverge. | Confirmed product requirement (2026-08-31, revised 2026-10-04); `Overplay/Services/PlaybackController.swift` |
 | `SURFACE-003` | Equivalent iOS/iPadOS and CarPlay actions use one controller decision, including in-intent jump versus new intent, resume versus restart, and failure handling. | Confirmed product requirement (2026-09-25); `Overplay/Services/PlaybackController.swift` |
@@ -291,8 +291,9 @@ Each linked playlist stores:
 - Whether the playlist is active.
 
 Exactly one active playlist has the `oneTruePlaylist` role, and at most one has
-the `triageBucket` role. Selecting another main playlist demotes the previous
-one to a triage source. The current UI can add and remove contributing
+the `triageBucket` role. Making a new main playlist demotes the previous one
+to a triage source (`PLAYLIST-002`: Overplay only ever makes it). The current
+UI can add and remove contributing
 playlists from the triage sources screen; it does not rename linked playlists
 or delete their Apple Music source playlists.
 
@@ -644,8 +645,9 @@ sync or a recorded error is retried. Catch-up cycles prioritize the currently
 playing playlist, then the selected One True Playlist, then the remaining
 playlists in stored order, with pacing between playlist operations.
 
-The user can manually sync one playlist or all linked playlists. Selecting or
-creating a linked playlist starts a background refresh. Successful search adds
+The user can manually sync one playlist, from its page or from Triage
+Sources; there is no Sync All. Linking a Triage source or making the One True
+Playlist starts a background refresh. Successful search adds
 and promotions write their local result immediately; search then syncs the
 destination playlist when possible.
 
@@ -2173,18 +2175,21 @@ Continue is disabled, and swiping stops, on the One True Playlist and Triage
 cards until each has its choice. A new playlist is found by its ID, because
 Apple Music's library list can lag it.
 
-### Playlist management screen
+### Triage Sources screen
 
-Purpose: manage linked Apple Music playlists.
+Purpose: manage the playlists that feed Triage. Opened from Settings and from
+Triage's page.
 
 Required capabilities:
 
-- Choose the One True Playlist.
 - Add and remove the triage bucket's contributing playlists.
 - Search/filter Apple Music library playlists.
-- Show playlist artwork, role, track count, and sync status.
-- Manually sync one playlist or all playlists. Bulk sync skips the bucket,
-  which has no remote playlist to fetch.
+- Show track count and sync status.
+- Manually sync one linked playlist.
+
+The One True Playlist is not chosen here or anywhere else (`PLAYLIST-002`).
+When a library has none, the dashboard offers **Make Your One True Playlist**,
+which opens setup's One True Playlist card.
 
 Platform notes:
 

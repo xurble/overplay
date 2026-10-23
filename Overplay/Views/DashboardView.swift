@@ -31,12 +31,14 @@ struct DashboardView: View {
                                               bottom: DashboardLayout.blockSpacing, trailing: 16))
                 } else {
                     NavigationLink {
-                        PlaylistSelectionView()
+                        OneTruePlaylistCreationView()
                             .nowPlayingColumnToggle()
                     } label: {
                         PlaylistHomeRowView(
-                            title: "Link One True Playlist",
-                            detail: "Choose the main playlist Overplay manages.",
+                            title: "Make Your One True Playlist",
+                            detail: settings.pendingOneTruePlaylistRequestedAt != nil
+                                ? "Your iPhone or iPad makes it the next time Overplay opens there."
+                                : "Overplay creates it in Apple Music, empty or as a copy of a playlist.",
                             systemImage: "arrow.up.circle",
                             badgeTint: .pink
                         )

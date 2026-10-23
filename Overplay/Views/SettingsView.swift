@@ -147,6 +147,7 @@ struct SettingsView: View {
                     systemImage: "square.on.square"
                 )
             }
+            .accessibilityIdentifier("settings-find-duplicates")
         } header: {
             Text("Library")
         }

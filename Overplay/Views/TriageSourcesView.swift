@@ -159,7 +159,7 @@ struct TriageSourcesView: View {
     }
 
     private var dependencies: PlaylistSelectionViewModel.Dependencies {
-        .live(playbackController: playbackController) {}
+        .live(playbackController: playbackController)
     }
 }
 
