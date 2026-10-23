@@ -151,17 +151,22 @@ struct SplitAppShell: View {
             // The Mac window has no title bar to fill; its sidebar shows none.
             .navigationTitle(SplitLayoutPolicy.keepsColumns ? "" : "Overplay")
         } detail: {
+            // The dashboard is always the root; a sidebar choice is pushed
+            // on it, so Back leads home as when the dashboard opened it, with
+            // the sidebar shown or hidden.
             NavigationStack(path: $detailPath) {
-                detailView
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier("detail-\(selectedDestination.storageValue)")
-                    .nowPlayingColumnToggle()
+                destinationView(.dashboard)
+                    .navigationDestination(for: AppShellDestination.self) { destination in
+                        destinationView(destination)
+                    }
             }
         }
-        .onChange(of: storedSelection) { _, newValue in
+        .onChange(of: storedSelection, initial: true) { _, newValue in
             Self.logger.info("Sidebar selection: \(newValue, privacy: .public)")
-            detailPath = NavigationPath()
-            shellPlace?.destination = selectedDestination
+            // One sidebar screen at a time: a new choice replaces the last.
+            let destination = selectedDestination
+            detailPath = destination == .dashboard ? NavigationPath() : NavigationPath([destination])
+            shellPlace?.destination = destination
         }
         .onAppear {
             guard let placeOnOpen else { return }
@@ -170,6 +175,10 @@ struct SplitAppShell: View {
         }
         .onChange(of: detailPath.count) { _, count in
             Self.logger.info("Detail navigation depth: \(count, privacy: .public)")
+            // Back to the root: the sidebar shows the dashboard again.
+            if count == 0, selectedDestination != .dashboard {
+                storedSelection = AppShellDestination.dashboard.storageValue
+            }
         }
         .modifier(SplitStyle(sidebarOverlaysList: sidebarOverlaysList))
         // On the split view, not the detail stack: pushed screens take their
@@ -178,10 +187,13 @@ struct SplitAppShell: View {
         .focusedSceneValue(\.shellCommands, shellCommands)
     }
 
-    private var detailView: some View {
-        AppShellDestinationView(destination: selectedDestination, settings: settings) { resolvedID in
+    private func destinationView(_ destination: AppShellDestination) -> some View {
+        AppShellDestinationView(destination: destination, settings: settings) { resolvedID in
             storedSelection = AppShellDestination.playlist(resolvedID).storageValue
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("detail-\(destination.storageValue)")
+        .nowPlayingColumnToggle()
     }
 
     private var isNarrow: Bool { SplitLayoutPolicy.isNarrow(totalWidth) }
@@ -309,7 +321,6 @@ struct SplitAppShell: View {
         Binding {
             selectedDestination
         } set: { newSelection in
-            detailPath = NavigationPath()
             storedSelection = (newSelection ?? .dashboard).storageValue
             // The sidebar was slid over the list to choose; close it.
             if sidebarOverlaysList { narrowSidebarShown = false }

@@ -187,6 +187,9 @@ iPad is the review and management experience as well as a playback device.
   Dives (every Recent Deep Dive, `PLAY-019`); then **Library**: Playlists,
   Albums, Artists and Songs from Apple Music (`LIB-001`), as on the phone's
   dashboard.
+- The dashboard is the main column's root; a sidebar choice is pushed on it,
+  replacing the previous sidebar screen, so Back returns to the dashboard as
+  when the dashboard opened that screen, whether or not the sidebar shows.
 - Sidebar selection is scene-local. Regular width matches an open iPhone
   Duo: the list and Now Playing each take half the window, side by side when
   it is wider than tall and Now Playing above the list when it is taller. The

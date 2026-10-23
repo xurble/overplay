@@ -59,9 +59,14 @@ struct DuplicateTracksView: View {
         busy = true
         defer { busy = false }
         do {
-            groups = try await DuplicateTrackService.scan(in: context)
+            let result = try await DuplicateTrackService.scan(in: context)
+            groups = result.groups
             selected.removeAll()
             message = groups.isEmpty ? "No apparent duplicates found." : "Review each group and select the tracks that are the same recording."
+            if result.uncheckedCount > 0 {
+                let songs = result.uncheckedCount == 1 ? "1 song" : "\(result.uncheckedCount) songs"
+                message = (message ?? "") + " Apple Music couldn’t check \(songs), so they were matched on what Overplay already knew."
+            }
         } catch is CancellationError { }
         catch {
             // Existing persisted evidence remains useful while offline.

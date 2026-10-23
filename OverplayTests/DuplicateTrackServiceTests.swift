@@ -63,6 +63,42 @@ struct DuplicateTrackServiceTests {
         return try DuplicateTrackService.candidates(in: context)
     }
 
+    /// A song Apple Music cannot answer for no longer ends the whole scan.
+    @Test func scanSkipsSongsAppleMusicCannotAnswerFor() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        _ = try fixture(context)
+        let gone = TrackRecord(libraryID: "i.gone", title: "Gone", artistName: "Artist")
+        context.insert(gone)
+        context.insert(PlaylistItemRecord(playlistID: try PlaylistRepository.triageBucket(in: context).id, trackID: gone.id,
+                                          sourceMusicPlaylistIDs: ["source-gone"]))
+        try context.save()
+        let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "a") }, fetch: { kind, ids, _ in
+            // As the web API does for a batch holding an unanswerable song.
+            if ids.contains("i.gone") { throw MusicIdentityResolver.ResolutionError.incompleteResponse }
+            return Dictionary(uniqueKeysWithValues: ids.map { ($0, kind == .catalog ? [.init(id: $0, type: "songs")] : []) })
+        })
+
+        let result = try await DuplicateTrackService.scan(in: context, resolver: resolver)
+
+        #expect(result.groups.count == 1)
+        #expect(result.uncheckedCount == 1)
+        #expect(gone.hasDocumentedIdentity == false)
+    }
+
+    @Test func rejectedRequestsAreSkippedButAccessAndBusyFailuresStop() {
+        #expect(DuplicateTrackService.isUnansweredStatus(400))
+        #expect(DuplicateTrackService.isUnansweredStatus(404))
+        #expect(DuplicateTrackService.isUnansweredStatus(422))
+        #expect(!DuplicateTrackService.isUnansweredStatus(401))
+        #expect(!DuplicateTrackService.isUnansweredStatus(403))
+        #expect(!DuplicateTrackService.isUnansweredStatus(429))
+        #expect(!DuplicateTrackService.isUnansweredStatus(500))
+        #expect(DuplicateTrackService.isUnanswered(MusicIdentityResolver.ResolutionError.incompleteResponse))
+        #expect(!DuplicateTrackService.isUnanswered(MusicIdentityResolver.ResolutionError.unauthorized))
+        #expect(!DuplicateTrackService.isUnanswered(URLError(.notConnectedToInternet)))
+    }
+
     @Test func scanIsOnlyASuggestionAndCancellationDoesNothing() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let candidates = try fixture(container.mainContext)

@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import MusicKit
 import SwiftData
 
 @MainActor
@@ -96,7 +97,26 @@ enum DuplicateTrackService {
         return groups.filter { $0.count > 1 }.map { ids in Group(candidates: candidates.filter { ids.contains($0.id) }) }
     }
 
-    static func scan(in context: ModelContext, resolver: MusicIdentityResolver = .shared) async throws -> [Group] {
+    static func isUnanswered(_ error: Error) -> Bool {
+        if case MusicIdentityResolver.ResolutionError.incompleteResponse = error { return true }
+        if let request = error as? MusicDataRequest.Error { return isUnansweredStatus(request.status) }
+        return false
+    }
+
+    /// A request Apple Music refused for what it asked about (400 Bad Request,
+    /// 404, 422), not for who asked or when (401, 403, 429) or a server fault.
+    static func isUnansweredStatus(_ status: Int) -> Bool {
+        (400..<500).contains(status) && ![401, 403, 429].contains(status)
+    }
+
+    struct ScanResult {
+        var groups: [Group]
+        /// Songs Apple Music could not answer for, matched on what Overplay
+        /// already knew about them.
+        var uncheckedCount: Int
+    }
+
+    static func scan(in context: ModelContext, resolver: MusicIdentityResolver = .shared) async throws -> ScanResult {
         let tracks = try TrackRecordRepository.allTracks(in: context)
         let snapshots = tracks.map { track in
             var snapshot = TrackSnapshot(id: track.catalogID ?? track.libraryID ?? track.id.uuidString,
@@ -106,9 +126,9 @@ enum DuplicateTrackService {
             snapshot.isrc = track.isrc
             return snapshot
         }
-        let enriched = try await resolver.enrich(snapshots)
+        let (enriched, checked) = try await enrichSkippingUnanswered(snapshots, resolver: resolver)
         try Task.checkCancellation()
-        for (index, track) in tracks.enumerated() where !track.isDeleted {
+        for (index, track) in tracks.enumerated() where !track.isDeleted && checked[index] {
             let snapshot = enriched[index]
             // Do not replace a newer sync's identity while the scan was awaiting.
             if track.catalogID == snapshots[index].catalogID, track.libraryID == snapshots[index].libraryID {
@@ -116,7 +136,28 @@ enum DuplicateTrackService {
             }
         }
         try context.save()
-        return groups(try candidates(in: context))
+        return ScanResult(groups: groups(try candidates(in: context)), uncheckedCount: checked.count { !$0 })
+    }
+
+    /// Apple Music may not answer for some songs (one removed from the
+    /// library, or an ID it rejects as malformed), and one such song fails the
+    /// whole request. Imports stop there; a scan only suggests, so it halves
+    /// the request until it finds the song and goes on without it. Answers
+    /// already fetched are cached, so only the failing part is asked again.
+    /// Access, rate-limit, server and network failures still end the scan.
+    static func enrichSkippingUnanswered(
+        _ snapshots: [TrackSnapshot], resolver: MusicIdentityResolver
+    ) async throws -> (snapshots: [TrackSnapshot], checked: [Bool]) {
+        guard !snapshots.isEmpty else { return ([], []) }
+        do {
+            return (try await resolver.enrich(snapshots), Array(repeating: true, count: snapshots.count))
+        } catch where isUnanswered(error) {
+            guard snapshots.count > 1 else { return (snapshots, [false]) }
+            let middle = snapshots.count / 2
+            let first = try await enrichSkippingUnanswered(Array(snapshots[..<middle]), resolver: resolver)
+            let second = try await enrichSkippingUnanswered(Array(snapshots[middle...]), resolver: resolver)
+            return (first.snapshots + second.snapshots, first.checked + second.checked)
+        }
     }
 
     static func validate(_ selected: [Candidate], destination: Destination?, in context: ModelContext) throws -> Destination {
