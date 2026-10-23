@@ -259,7 +259,19 @@ private struct PlayerCardTransform: ViewModifier, Animatable {
     /// before it reaches the mini player.
     private static let fadeStart: CGFloat = 0.7
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func body(content: Content) -> some View {
+        if reduceMotion {
+            // No zoom: the player fades, and a swipe down fades it with the finger.
+            content.opacity(1 - min(max(closeProgress, 0), 1))
+        } else {
+            moving(content)
+        }
+    }
+
+    @ViewBuilder
+    private func moving(_ content: Content) -> some View {
         let width = max(screenSize.width, 1)
         let height = max(screenSize.height, 1)
         let start = CGRect(x: 0, y: 0, width: width, height: height)

@@ -19,8 +19,10 @@ struct SetupOneTruePlaylistCardView: View {
                     .foregroundStyle(viewModel.hasChosenOneTruePlaylist ? .green : .pink)
                     .symbolRenderingMode(.hierarchical)
                     .contentTransition(.symbolEffect(.replace))
+                    .accessibilityHidden(true)
                 Text(title)
                     .font(.title.bold())
+                    .accessibilityAddTraits(.isHeader)
                     .multilineTextAlignment(.center)
                 Text(detail)
                     .font(.body)
@@ -44,7 +46,7 @@ struct SetupOneTruePlaylistCardView: View {
 
     private var symbol: String {
         if viewModel.isOneTruePlaylistRequested { return "iphone.and.arrow.forward" }
-        return viewModel.hasOneTruePlaylist ? "checkmark.circle.fill" : "star.circle.fill"
+        return viewModel.hasOneTruePlaylist ? "checkmark.circle.fill" : "arrow.up.circle.fill"
     }
 
     private var title: String {

@@ -28,6 +28,9 @@ struct SettingsView: View {
     @State private var showResetConfirmation = false
     @State private var showNukeConfirmation = false
     @State private var showRebuildConfirmation = false
+    @State private var tab = Pane.general
+    @AppStorage(AppearancePreference.storageKey) private var appearance = AppearancePreference.automatic
+    @AppStorage(PlayerBackgroundPreference.storageKey) private var playerBackground = PlayerBackgroundPreference.art
     @State private var viewModel = SettingsViewModel()
     @AppStorage(SystemNowPlayingBridge.mirrorDefaultsKey) private var mirrorsNowPlaying = false
 
@@ -35,163 +38,9 @@ struct SettingsView: View {
         Group {
             if pane == .all {
                 Form {
-                    if pane != .troubleshooting {
-                        Section {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(settings.selectedPlaylistName ?? "None")
-                                        .font(.body)
-                                    SettingsSubtitle(
-                                        "Your One True Playlist. Retirements and sending triage tracks to Overplay are manual."
-                                    )
-                                }
-                                Spacer()
-                                NavigationLink("Change") {
-                                    PlaylistSelectionView()
-                                        .nowPlayingColumnToggle()
-                                }
-                            }
-                        } header: {
-                            Text("Monitored Playlist")
-                        }
-
-                        Section {
-                            SettingsSliderRow(
-                                title: "Skip threshold: \(Int(settings.skipThresholdPercentage))%",
-                                subtitle: "An early skip counts only if playback stops before this percentage of the track.",
-                                value: $settings.skipThresholdPercentage,
-                                range: 1...99,
-                                step: 1
-                            )
-
-                            SettingsSliderRow(
-                                title: "Minimum listening time: \(Int(settings.minimumSkipListeningSeconds)) seconds",
-                                subtitle: "Playback must reach this duration before an early skip can be counted.",
-                                value: $settings.minimumSkipListeningSeconds,
-                                range: 0...60,
-                                step: 1
-                            )
-
-                            SettingsSliderRow(
-                                title: "Playthrough threshold: \(Int(settings.playthroughThresholdPercentage))%",
-                                subtitle: "Listening past this percentage counts as a full playthrough instead of a skip.",
-                                value: $settings.playthroughThresholdPercentage,
-                                range: 1...100,
-                                step: 1
-                            )
-                        } header: {
-                            Text("Tracking Rules")
-                        } footer: {
-                            Text("Plays show the higher of Overplay’s count and Apple Music’s, which includes listening outside Overplay; when Apple’s is higher, Overplay’s count rises to match. Apple’s count may update late. These thresholds apply only to Overplay.")
-                                .font(.caption)
-                        }
-                    }
-
-                    if pane != .general {
-                        Section {
-                            NavigationLink("Find Duplicates", destination: DuplicateTracksView().nowPlayingColumnToggle())
-                        }
-
-                        if let oneTruePlaylist, !ProcessInfo.processInfo.isMacCatalystApp {
-                            RebuildPlaylistSection(
-                                playlistName: oneTruePlaylist.name,
-                                editsRefused: oneTruePlaylist.remoteEditsRefusedAt != nil,
-                                isRebuilding: viewModel.isRebuildingPlaylist
-                            ) {
-                                showRebuildConfirmation = true
-                            }
-                        }
-
-                        Section {
-                            Button(role: .destructive) {
-                                showResetConfirmation = true
-                            } label: {
-                                SettingsActionLabel(
-                                    title: "Reset All Local Overplay Stats",
-                                    subtitle: "Resets both displayed play counts, skips, and retired state without changing Apple Music’s own counts or playlists.",
-                                    systemImage: "arrow.counterclockwise"
-                                )
-                            }
-                        }
-
-                        Section {
-                            Button(role: .destructive) {
-                                showNukeConfirmation = true
-                            } label: {
-                                SettingsActionLabel(
-                                    title: "Nuke Database",
-                                    subtitle: "Deletes all Overplay records locally and syncs those deletions through iCloud.",
-                                    systemImage: "trash"
-                                )
-                            }
-                        } header: {
-                            Text("Database")
-                        }
-
-                        Section {
-                            if let musicKitActivityReport = viewModel.musicKitActivityReport {
-                                MusicKitActivityReportView(summary: musicKitActivityReport)
-
-                                DisclosureGroup("Full Activity Report") {
-                                    Text(musicKitActivityReport.text)
-                                        .font(.system(.caption2, design: .monospaced))
-                                        .textSelection(.enabled)
-                                }
-
-                                Button {
-                                    viewModel.refreshMusicKitActivityReport(dependencies: dependencies)
-                                } label: {
-                                    Label("Refresh", systemImage: "arrow.clockwise")
-                                }
-
-                                if !viewModel.activityLogFiles.isEmpty {
-                                    ShareLink(items: viewModel.activityLogFiles) {
-                                        Label("Share Activity Log", systemImage: "square.and.arrow.up")
-                                    }
-                                }
-
-                                Button(role: .destructive) {
-                                    viewModel.resetMusicKitActivityLog(dependencies: dependencies)
-                                } label: {
-                                    Label("Clear Recorded Activity", systemImage: "trash")
-                                }
-                            }
-                        } header: {
-                            Text("Apple Music Call Activity")
-                        } footer: {
-                            Text("Every Overplay call into Apple Music is recorded with its size, duration, and outcome, and kept across launches. Reach for this after Apple Music misbehaves system-wide. Share Activity Log sends the summary and a full log for each of the last 10 launches, as of the last refresh.")
-                                .font(.caption)
-                        }
-
-                        Section {
-                            Button {
-                                Task { await runMusicKitDiagnostics() }
-                            } label: {
-                                SettingsActionLabel(
-                                    title: viewModel.isRunningMusicKitDiagnostics ? "Running MusicKit Diagnostics" : "Run MusicKit Diagnostics",
-                                    subtitle: "Checks Apple Music authorization, playlist access, whether the One True Playlist is still editable, and playback readiness. Makes several live Apple Music requests.",
-                                    systemImage: "waveform.path.ecg"
-                                )
-                            }
-                            .disabled(viewModel.isRunningMusicKitDiagnostics)
-
-                            if let musicKitDiagnosticsReport = viewModel.musicKitDiagnosticsReport {
-                                Text(musicKitDiagnosticsReport)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .textSelection(.enabled)
-                            }
-
-                            SettingsLabeledToggle(
-                                title: "Mirror Now Playing from Overplay",
-                                subtitle: "Diagnostic only, this device. Use it to check CarPlay on a new iOS release; normally Apple Music publishes Now Playing itself.",
-                                isOn: $mirrorsNowPlaying
-                            )
-                            .onChange(of: mirrorsNowPlaying) { _, isOn in
-                                AppRuntime.shared.nowPlayingBridge.isMirrorEnabled = isOn
-                            }
-                        } header: {
-                            Text("Diagnostics")
-                        }
+                    switch tab {
+                    case .troubleshooting: troubleshootingSections
+                    default: generalSections
                     }
 
                     if let message = viewModel.message {
@@ -201,6 +50,7 @@ struct SettingsView: View {
                         }
                     }
                 }
+                .safeAreaBar(edge: .top) { tabPicker }
                 .miniPlayerScrollContentInset()
             } else {
                 macPane
@@ -242,6 +92,232 @@ struct SettingsView: View {
         } message: {
             Text("This deletes Overplay records locally and saves the deletions so iCloud can sync them. Apple Music playlists are not deleted.")
         }
+    }
+
+    // MARK: - iPhone and iPad tabs
+
+    /// General settings first; the tools for when something is wrong apart.
+    private var tabPicker: some View {
+        Picker("Settings", selection: $tab) {
+            Text("General").tag(Pane.general)
+            Text("Troubleshooting").tag(Pane.troubleshooting)
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal)
+        .padding(.bottom, 8)
+    }
+
+    @ViewBuilder private var generalSections: some View {
+        Section {
+            LabeledContent {
+                Text(oneTruePlaylistName)
+            } label: {
+                Label("One True Playlist", systemImage: "arrow.up.circle")
+            }
+            if let url = appleMusicURL {
+                Link(destination: url) {
+                    Label("Open in Apple Music", systemImage: "arrow.up.forward.app")
+                }
+            }
+            NavigationLink {
+                TriageSourcesView()
+                    .nowPlayingColumnToggle()
+            } label: {
+                SettingsActionLabel(
+                    title: "Triage Sources",
+                    subtitle: "Playlists whose new songs arrive in Triage for you to promote or retire.",
+                    systemImage: "tray.full"
+                )
+            }
+        } header: {
+            Text("Playlists")
+        } footer: {
+            Text("Overplay made this playlist and keeps it up to date: songs join it when you promote them and leave it when you retire them. Play it anywhere Apple Music plays.")
+                .font(.caption)
+        }
+
+        Section {
+            NavigationLink {
+                DuplicateTracksView()
+                    .nowPlayingColumnToggle()
+            } label: {
+                SettingsActionLabel(
+                    title: "Find Duplicates",
+                    subtitle: "Songs that appear more than once, such as a single and its album version, for you to merge.",
+                    systemImage: "square.on.square"
+                )
+            }
+        } header: {
+            Text("Library")
+        }
+
+        Section {
+            Picker("Appearance", selection: $appearance) {
+                ForEach(AppearancePreference.allCases) { Text($0.title).tag($0) }
+            }
+            Picker("Player Background", selection: $playerBackground) {
+                ForEach(PlayerBackgroundPreference.allCases) { Text($0.title).tag($0) }
+            }
+        } header: {
+            Text("Display")
+        } footer: {
+            Text("Automatic follows your device’s Light or Dark setting. The player shows the playing song’s album art blurred behind its controls, or just the colour picked from that art. Both apply to this device only.")
+                .font(.caption)
+        }
+
+        SiriShortcutsSectionView()
+
+        Section {
+            SettingsSliderRow(
+                title: "Skip threshold: \(Int(settings.skipThresholdPercentage))%",
+                subtitle: "An early skip counts only if playback stops before this percentage of the track.",
+                value: $settings.skipThresholdPercentage,
+                range: 1...99,
+                step: 1
+            )
+
+            SettingsSliderRow(
+                title: "Minimum listening time: \(Int(settings.minimumSkipListeningSeconds)) seconds",
+                subtitle: "Playback must reach this duration before an early skip can be counted.",
+                value: $settings.minimumSkipListeningSeconds,
+                range: 0...60,
+                step: 1
+            )
+
+            SettingsSliderRow(
+                title: "Playthrough threshold: \(Int(settings.playthroughThresholdPercentage))%",
+                subtitle: "Listening past this percentage counts as a full playthrough instead of a skip.",
+                value: $settings.playthroughThresholdPercentage,
+                range: 1...100,
+                step: 1
+            )
+        } header: {
+            Text("Counting Plays and Skips")
+        } footer: {
+            Text("Plays show the higher of Overplay’s count and Apple Music’s, which includes listening outside Overplay; when Apple’s is higher, Overplay’s count rises to match. Apple’s count may update late. These thresholds apply only to Overplay.")
+                .font(.caption)
+        }
+    }
+
+    @ViewBuilder private var troubleshootingSections: some View {
+        Section {
+            Text("Tools for when something isn’t right. You shouldn’t need them day to day.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .listRowBackground(Color.clear)
+        }
+
+        if let oneTruePlaylist, !ProcessInfo.processInfo.isMacCatalystApp {
+            RebuildPlaylistSection(
+                playlistName: oneTruePlaylist.name,
+                editsRefused: oneTruePlaylist.remoteEditsRefusedAt != nil,
+                isRebuilding: viewModel.isRebuildingPlaylist
+            ) {
+                showRebuildConfirmation = true
+            }
+        }
+
+        Section {
+            if let musicKitActivityReport = viewModel.musicKitActivityReport {
+                MusicKitActivityReportView(summary: musicKitActivityReport)
+
+                DisclosureGroup("Full Activity Report") {
+                    Text(musicKitActivityReport.text)
+                        .font(.system(.caption2, design: .monospaced))
+                        .textSelection(.enabled)
+                }
+
+                Button {
+                    viewModel.refreshMusicKitActivityReport(dependencies: dependencies)
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+
+                if !viewModel.activityLogFiles.isEmpty {
+                    ShareLink(items: viewModel.activityLogFiles) {
+                        Label("Share Activity Log", systemImage: "square.and.arrow.up")
+                    }
+                }
+
+                Button(role: .destructive) {
+                    viewModel.resetMusicKitActivityLog(dependencies: dependencies)
+                } label: {
+                    Label("Clear Recorded Activity", systemImage: "trash")
+                }
+            }
+        } header: {
+            Text("Apple Music Call Activity")
+        } footer: {
+            Text("Every Overplay call into Apple Music is recorded with its size, duration, and outcome, and kept across launches. Reach for this after Apple Music misbehaves system-wide. Share Activity Log sends the summary and a full log for each of the last 10 launches, as of the last refresh.")
+                .font(.caption)
+        }
+
+        Section {
+            Button {
+                Task { await runMusicKitDiagnostics() }
+            } label: {
+                SettingsActionLabel(
+                    title: viewModel.isRunningMusicKitDiagnostics ? "Running MusicKit Diagnostics" : "Run MusicKit Diagnostics",
+                    subtitle: "Checks Apple Music authorization, playlist access, whether the One True Playlist is still editable, and playback readiness. Makes several live Apple Music requests.",
+                    systemImage: "waveform.path.ecg"
+                )
+            }
+            .disabled(viewModel.isRunningMusicKitDiagnostics)
+
+            if let musicKitDiagnosticsReport = viewModel.musicKitDiagnosticsReport {
+                Text(musicKitDiagnosticsReport)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+            }
+
+            SettingsLabeledToggle(
+                title: "Mirror Now Playing from Overplay",
+                subtitle: "Diagnostic only, this device. Use it to check CarPlay on a new iOS release; normally Apple Music publishes Now Playing itself.",
+                isOn: $mirrorsNowPlaying
+            )
+            .onChange(of: mirrorsNowPlaying) { _, isOn in
+                AppRuntime.shared.nowPlayingBridge.isMirrorEnabled = isOn
+            }
+        } header: {
+            Text("Diagnostics")
+        }
+
+        Section {
+            Button(role: .destructive) {
+                showResetConfirmation = true
+            } label: {
+                SettingsActionLabel(
+                    title: "Reset All Local Overplay Stats",
+                    subtitle: "Resets both displayed play counts, skips, and retired state without changing Apple Music’s own counts or playlists.",
+                    systemImage: "arrow.counterclockwise"
+                )
+            }
+
+            Button(role: .destructive) {
+                showNukeConfirmation = true
+            } label: {
+                SettingsActionLabel(
+                    title: "Nuke Database",
+                    subtitle: "Deletes all Overplay records locally and syncs those deletions through iCloud.",
+                    systemImage: "trash"
+                )
+            }
+        } header: {
+            Text("Start Over")
+        } footer: {
+            Text("Both ask first, and neither can be undone. Your Apple Music playlists are never deleted.")
+                .font(.caption)
+        }
+    }
+
+    private var oneTruePlaylistName: String {
+        if let name = settings.selectedPlaylistName { return name }
+        return settings.pendingOneTruePlaylistRequestedAt != nil ? "Waiting for your iPhone" : "Not made yet"
+    }
+
+    /// The One True Playlist in the Music app's library.
+    private var appleMusicURL: URL? {
+        settings.selectedPlaylistID.flatMap { URL(string: "https://music.apple.com/library/playlist/\($0)") }
     }
 
     private var oneTruePlaylist: PlaylistRecord? {
@@ -325,8 +401,12 @@ private struct SettingsSliderRow: View {
                 Text(title)
                 SettingsSubtitle(subtitle)
             }
+            // The slider carries them, so VoiceOver hears them with it.
+            .accessibilityHidden(true)
 
             Slider(value: $value, in: range, step: step)
+                .accessibilityLabel(title)
+                .accessibilityHint(subtitle)
         }
     }
 }
@@ -456,28 +536,51 @@ extension SettingsView {
             MacSettingsLabel("One True Playlist:")
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 10) {
-                    Text(settings.selectedPlaylistName ?? "None")
-                    NavigationLink("Change…") {
-                        macPushed(PlaylistSelectionView())
+                    Text(oneTruePlaylistName)
+                    if let url = appleMusicURL {
+                        Link("Open in Apple Music", destination: url)
+                            .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.bordered)
                 }
-                MacSettingsNote("Retirements and sending triage tracks to Overplay are manual.")
+                MacSettingsNote(settings.pendingOneTruePlaylistRequestedAt != nil && settings.selectedPlaylistID == nil
+                    ? "A Mac can’t create Apple Music playlists. Your iPhone or iPad makes it the next time Overplay opens there."
+                    : "Overplay made this playlist and keeps it up to date: songs join it when you promote them and leave it when you retire them.")
+            }
+        }
+        GridRow {
+            MacSettingsLabel("Appearance:")
+            Picker("Appearance", selection: $appearance) {
+                ForEach(AppearancePreference.allCases) { Text($0.title).tag($0) }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .fixedSize()
+        }
+        GridRow {
+            MacSettingsLabel("Player background:")
+            VStack(alignment: .leading, spacing: 6) {
+                Picker("Player background", selection: $playerBackground) {
+                    ForEach(PlayerBackgroundPreference.allCases) { Text($0.title).tag($0) }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .fixedSize()
+                MacSettingsNote("The playing song’s album art blurred behind the player, or just the colour picked from it.")
             }
         }
         GridRow {
             MacSettingsLabel("Skip threshold:")
-            MacSettingsSlider(value: $settings.skipThresholdPercentage, range: 1...99, unit: "%",
+            MacSettingsSlider(title: "Skip threshold", value: $settings.skipThresholdPercentage, range: 1...99, unit: "%",
                               note: "An early skip counts only if playback stops before this percentage of the track.")
         }
         GridRow {
             MacSettingsLabel("Minimum listening:")
-            MacSettingsSlider(value: $settings.minimumSkipListeningSeconds, range: 0...60, unit: " s",
+            MacSettingsSlider(title: "Minimum listening time", value: $settings.minimumSkipListeningSeconds, range: 0...60, unit: " s",
                               note: "Playback must reach this duration before an early skip can be counted.")
         }
         GridRow {
             MacSettingsLabel("Playthrough threshold:")
-            MacSettingsSlider(value: $settings.playthroughThresholdPercentage, range: 1...100, unit: "%",
+            MacSettingsSlider(title: "Playthrough threshold", value: $settings.playthroughThresholdPercentage, range: 1...100, unit: "%",
                               note: "Listening past this percentage counts as a full playthrough instead of a skip.")
         }
         GridRow {
@@ -590,6 +693,8 @@ private struct MacSettingsNote: View {
 }
 
 private struct MacSettingsSlider: View {
+    /// For VoiceOver: the grid's label column is a separate element.
+    var title: String
     @Binding var value: Double
     var range: ClosedRange<Double>
     var unit: String
@@ -600,6 +705,9 @@ private struct MacSettingsSlider: View {
             HStack(spacing: 10) {
                 Slider(value: $value, in: range, step: 1)
                     .frame(width: 220)
+                    .accessibilityLabel(title)
+                    .accessibilityValue("\(Int(value))\(unit)")
+                    .accessibilityHint(note)
                 Text("\(Int(value))\(unit)")
                     .monospacedDigit()
                     .frame(width: 44, alignment: .leading)

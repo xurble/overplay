@@ -49,7 +49,7 @@ struct PlaylistSummaryPresentationTests {
 
         #expect(triageBucket.roleTitle == "Find the next big thing")
         #expect(triageBucket.shortRoleTitle == "Triage")
-        #expect(triageBucket.iconIntent.systemImage == "play.fill")
+        #expect(triageBucket.iconIntent.systemImage == "arrow.right.circle.fill")
         #expect(triageBucket.displayPriority == 1)
         #expect(triageBucket.writePolicyTitle == "Incoming only")
         #expect(triageBucket.sourceTitle == "Apple Music")

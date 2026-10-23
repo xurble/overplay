@@ -27,6 +27,13 @@ final class SystemVolumeControl {
         volumeView = nil
     }
 
+    /// The system volume as the hidden view's slider shows it. It follows
+    /// the volume buttons, which the app's own audio session never reports:
+    /// Apple Music plays, so that session is never active.
+    var currentVolume: Float? {
+        volumeView?.firstDescendant(of: UISlider.self)?.value
+    }
+
     @discardableResult
     func setVolume(_ volume: Float) -> Bool {
         attachIfNeeded()

@@ -21,6 +21,7 @@ struct AudioOutputPillView: View {
     var monitor: AudioOutputMonitor = .shared
 
     private let volumeControl = SystemVolumeControl.shared
+    @Environment(\.scenePhase) private var scenePhase
     @State private var routePicker = AudioRoutePickerControl()
     @State private var width: CGFloat = 0
     @State private var dragStartVolume: Float?
@@ -81,6 +82,17 @@ struct AudioOutputPillView: View {
         }
         .onChange(of: isExpanded) { _, isExpanded in
             setVolumeControlAttached(isExpanded)
+        }
+        // The volume buttons, while the pill is on screen: in the background
+        // (music playing, the phone in a pocket) nobody sees it.
+        .task(id: isExpanded && scenePhase == .active) {
+            guard isExpanded, scenePhase == .active else { return }
+            while !Task.isCancelled {
+                if dragStartVolume == nil, let volume = volumeControl.currentVolume, abs(volume - monitor.volume) > 0.001 {
+                    monitor.showVolume(volume)
+                }
+                try? await Task.sleep(for: .milliseconds(200))
+            }
         }
     }
 

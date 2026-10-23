@@ -999,7 +999,7 @@ final class CarPlayCoordinator: NSObject {
                 completion()
             }
         }
-        let template = CPListTemplate(title: track.title, sections: [CPListSection(items: [album, artist])])
+        let template = CPListTemplate(title: "Dive Deeper", sections: [CPListSection(items: [album, artist])])
         interfaceController.pushTemplate(template, animated: true, completion: nil)
     }
 

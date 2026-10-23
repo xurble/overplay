@@ -44,11 +44,8 @@ struct RecentTileView: View {
                     .frame(width: Self.side, height: Self.side)
 
                 if RecentCollectionPresentation.isPlaying(recent, controller: playbackController) {
-                    Image(systemName: "play.fill")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.white)
-                        .padding(5)
-                        .background(.green, in: Circle())
+                    NowPlayingBadgeView(diameter: 28)
+                        .padding(recent.collection.kind == .album ? 4 : 10)
                 }
             }
 

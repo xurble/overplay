@@ -84,6 +84,9 @@ struct MiniPlayerLozengeView: View {
         .glassEffect(.regular.tint(theme?.background.opacity(Self.tintOpacity)), in: .capsule)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("mini-player")
+        // A fixed-height bar: past this its text would be cut off, so the
+        // largest sizes show the Large Content Viewer instead (touch and hold).
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
     }
 
     private var progressLine: some View {

@@ -119,11 +119,13 @@ struct SplitAppShell: View {
                 Section("Playlists") {
                     ForEach(activePlaylists) { playlist in
                         Label(playlist.name, systemImage: playlistIcon(for: playlist))
+                            .accessibilityValue(playbackController.isPlaying(playlist.playbackContext()) ? "Now playing" : "")
                             .tag(AppShellDestination.playlist(playlist.id))
                             .accessibilityIdentifier("sidebar-playlist-\(playlist.name)")
                     }
 
                     Label("Retired", systemImage: retiredIcon)
+                        .accessibilityValue(retiredIcon == "arrow.right.circle.fill" ? "Now playing" : "")
                         .tag(AppShellDestination.retired)
                         .accessibilityIdentifier("sidebar-retired")
                 }
@@ -263,12 +265,12 @@ struct SplitAppShell: View {
 
     private var retiredIcon: String {
         let bucket = activePlaylists.first(where: \.isTriageBucket)
-        return playbackController.isPlaying(bucket?.playbackContext(.retired)) ? "play.fill" : "archivebox.fill"
+        return playbackController.isPlaying(bucket?.playbackContext(.retired)) ? "arrow.right.circle.fill" : "archivebox.fill"
     }
 
     private func playlistIcon(for playlist: PlaylistRecord) -> String {
         if playbackController.isPlaying(playlist.playbackContext()) {
-            return "play.fill"
+            return "arrow.right.circle.fill"
         }
 
         switch playlist.role {

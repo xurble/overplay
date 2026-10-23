@@ -19,7 +19,7 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
             case .retired:
                 "archivebox.fill"
             case .currentPlayback:
-                "play.fill"
+                "arrow.right.circle.fill"
             }
         }
     }

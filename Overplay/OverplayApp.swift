@@ -70,6 +70,7 @@ struct OverplayApp: App {
         WindowGroup {
             ContentView(runtime: .shared)
                 .hidesMacTitlebar()
+                .appliesAppearancePreference()
         }
         .modelContainer(modelContainer)
         .commands { OverplayCommands() }
@@ -83,6 +84,7 @@ struct OverplayApp: App {
         // A Mac opens Settings in its own window (`OverplayCommands`).
         WindowGroup("Settings", id: SettingsWindowView.windowID, for: String.self) { _ in
             SettingsWindowView(runtime: .shared)
+                .appliesAppearancePreference()
         }
         .modelContainer(modelContainer)
 #endif

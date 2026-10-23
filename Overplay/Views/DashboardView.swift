@@ -67,6 +67,8 @@ struct DashboardView: View {
                             Image(systemName: retiredSummary.iconIntent.systemImage)
                                 .foregroundStyle(retiredSummary.isCurrentPlaybackPlaylist ? .green : .gray)
                         }
+                        // Green says it is playing; VoiceOver hears it.
+                        .accessibilityValue(retiredSummary.isCurrentPlaybackPlaylist ? "Now playing" : "")
                     }
                 }
             }
@@ -76,6 +78,7 @@ struct DashboardView: View {
                 Section {
                     Text("Recent Deep Dives")
                         .font(.headline)
+                        .accessibilityAddTraits(.isHeader)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: DashboardLayout.blockSpacing, leading: 16, bottom: 6, trailing: 16))
                     RecentsRowView(recents: recents)
@@ -160,11 +163,8 @@ struct DashboardView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
                 if isPlaying(summary) {
-                    Image(systemName: summary.iconIntent.systemImage)
-                        .font(.footnote.weight(.bold))
-                        .foregroundStyle(.white)
+                    NowPlayingBadgeView(diameter: 30)
                         .padding(6)
-                        .background(badgeTint(for: summary, role: playlist.role), in: Circle())
                 }
             }
             .overlay {
@@ -180,6 +180,7 @@ struct DashboardView: View {
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
+        .accessibilityValue(isPlaying(summary) ? "Now playing" : "")
     }
 
     /// The One True Playlist is what is audible now.
@@ -319,5 +320,6 @@ private struct TriageHomeRowView: View {
             Image(systemName: "tray.fill")
                 .foregroundStyle(summary.isCurrentPlaybackPlaylist ? .green : .teal)
         }
+        .accessibilityValue(summary.isCurrentPlaybackPlaylist ? "Now playing" : "")
     }
 }

@@ -12,13 +12,17 @@ struct ThemedPlayerHost<Content: View>: View {
 
     @State private var artworkTheme = AlbumArtworkTheme.fallback
     @State private var glassBackdrop = PlayerGlassBackdrop()
+    @AppStorage(PlayerBackgroundPreference.storageKey) private var background = PlayerBackgroundPreference.art
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         let artworkTheme = displayedTheme
         content(artworkTheme) { applyArtworkTheme($0, source: "debug-refresh") }
             .coordinateSpace(.named(PlayerGlassBackdrop.coordinateSpace))
             .environment(\.playerGlassArtwork, glassArtwork)
-            .environment(\.playerGlassBackdrop, artworkTheme.isFallback ? nil : glassBackdrop)
+            // Text reads against the art under it; with no art, the theme
+            // colours already suit the plain background.
+            .environment(\.playerGlassBackdrop, artworkTheme.isFallback || background != .art || reduceTransparency ? nil : glassBackdrop)
             .animation(.easeInOut(duration: 0.35), value: artworkTheme)
             .task(id: artworkThemeIdentity) {
                 await loadArtworkTheme()

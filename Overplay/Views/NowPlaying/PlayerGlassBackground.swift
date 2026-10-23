@@ -206,6 +206,9 @@ struct PlayerGlassArtBackground: View {
 
     @Environment(\.playerGlassArtwork) private var artwork
     @Environment(\.playerGlassBackdrop) private var backdrop
+    @AppStorage(PlayerBackgroundPreference.storageKey) private var background = PlayerBackgroundPreference.art
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     private let motion = PlayerGlassMotion.shared
     static let oversize: CGFloat = 1.25
     private static let blur: CGFloat = 8
@@ -216,6 +219,8 @@ struct PlayerGlassArtBackground: View {
     /// size and position, and a shrinking sheet crops it rather than
     /// shrinking it, so its edges never show.
     @State private var fullHeight: CGFloat = 0
+
+    private var tilt: CGSize { reduceMotion ? .zero : motion.tilt }
 
     /// The art square for a player of this size.
     static func artFrame(for size: CGSize, fullHeight: CGFloat) -> CGRect {
@@ -233,7 +238,8 @@ struct PlayerGlassArtBackground: View {
                 // A solid pane of the theme colour: what shows until the art
                 // arrives, as the art draws nothing until then.
                 tint
-                if let artwork {
+                // Reduce Transparency: the solid colour, nothing seen through.
+                if background == .art, !reduceTransparency, let artwork {
                     NowPlayingArtworkView(urlString: artwork.urlString, playlistID: artwork.playlistID, cornerRadius: 0,
                                           showsPlaceholder: false)
                         .accessibilityHidden(true)
@@ -241,8 +247,8 @@ struct PlayerGlassArtBackground: View {
                         .frame(width: frame.width, height: frame.height)
                         .blur(radius: Self.blur)
                         .offset(
-                            x: frame.minX + motion.tilt.width * margin * Self.parallax,
-                            y: frame.minY + motion.tilt.height * margin * Self.parallax
+                            x: frame.minX + tilt.width * margin * Self.parallax,
+                            y: frame.minY + tilt.height * margin * Self.parallax
                         )
                 }
                 tint.opacity(Self.wash)
@@ -259,8 +265,11 @@ struct PlayerGlassArtBackground: View {
             fullHeight = max(fullHeight, size.height)
             backdrop?.artFrame = Self.artFrame(for: size, fullHeight: fullHeight)
         }
-        .onAppear { motion.start() }
-        .onDisappear { motion.stop() }
+        // Reduce Motion: the art stays still as the phone tilts.
+        .onChange(of: reduceMotion, initial: true) { _, reduce in
+            if reduce { motion.stop() } else { motion.start() }
+        }
+        .onDisappear { if !reduceMotion { motion.stop() } }
     }
 }
 

@@ -68,7 +68,8 @@ struct SetupView: View {
             }
         default:
             if let feature = page.feature {
-                SetupFeatureCardView(feature: feature, footnote: page == .welcome ? welcomeFootnote : nil)
+                SetupFeatureCardView(feature: feature, footnote: page == .welcome ? welcomeFootnote : nil,
+                                     showsSiriTip: page == .carPlay)
             }
         }
     }
@@ -120,7 +121,7 @@ enum SetupPage: Int, CaseIterable, Identifiable {
             SetupFeature(symbol: "music.note.list", tint: .pink, title: "Welcome to Overplay",
                 text: "Overplay helps you keep your favourite music fresh. You decide what stays: promote the songs you love and retire the ones you're done with, with a tap.")
         case .oneTruePlaylistIntro:
-            SetupFeature(symbol: "star.circle.fill", tint: .pink, title: "One True Playlist",
+            SetupFeature(symbol: "arrow.up.circle.fill", tint: .pink, title: "One True Playlist",
                 text: "Your main playlist, the one you play most. Overplay counts every play and skip, so you can see which songs have earned their place.")
         case .triageIntro:
             SetupFeature(symbol: "tray.fill", tint: .teal, title: "Triage",

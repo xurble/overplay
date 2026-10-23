@@ -85,13 +85,21 @@ struct SearchMusicView: View {
 
             ForEach(results) { result in
                 if let song = songs[result.id] {
-                    PlaylistTrackRowView(
-                        summary: song.summary,
-                        playlistID: Self.collection(for: result).reservedPlaylistID,
-                        isCurrent: RecentCollectionPresentation.isCurrent(
-                            song, groupKey: Self.collection(for: result).groupKey, controller: playbackController
+                    // A tap plays the song, as Play Now does.
+                    Button {
+                        Task { await play(result) }
+                    } label: {
+                        PlaylistTrackRowView(
+                            summary: song.summary,
+                            playlistID: Self.collection(for: result).reservedPlaylistID,
+                            isCurrent: RecentCollectionPresentation.isCurrent(
+                                song, groupKey: Self.collection(for: result).groupKey, controller: playbackController
+                            )
                         )
-                    )
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Plays this song")
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
                     .swipeActions(edge: .leading) {
                         if song.canMoveToOneTruePlaylist {
@@ -100,6 +108,7 @@ struct SearchMusicView: View {
                             } label: {
                                 Label("Overplay", systemImage: "arrow.up.circle")
                             }
+                            .accessibilityLabel("Add to One True Playlist")
                             .tint(.pink)
                         }
                     }
@@ -110,6 +119,7 @@ struct SearchMusicView: View {
                             } label: {
                                 Label("Triage", systemImage: "tray.fill")
                             }
+                            .accessibilityLabel("Add to Triage")
                             .tint(.green)
                         }
                         Button {

@@ -77,8 +77,10 @@ private struct PlaylistManagementContentView: View {
                         Label(detail.playlist.roleTitle, systemImage: detail.playlist.iconIntent.systemImage)
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(roleTint(for: detail.playlist))
+                            .accessibilityValue(detail.playlist.isCurrentPlaybackPlaylist ? "Now playing" : "")
                         Text(detail.playlist.title)
                             .font(.title2.bold())
+                            .accessibilityAddTraits(.isHeader)
                     }
 
                     Button {
@@ -121,6 +123,7 @@ private struct PlaylistManagementContentView: View {
                                 } label: {
                                     Label("Overplay", systemImage: "arrow.up.circle")
                                 }
+                                .accessibilityLabel("Promote to One True Playlist")
                                 .tint(.pink)
                                 .disabled(viewModel.promotingItemIDs.contains(row.id))
                             }

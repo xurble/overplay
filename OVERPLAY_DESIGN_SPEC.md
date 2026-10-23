@@ -1026,7 +1026,9 @@ Specified and implemented 2026-10-08 (`PLAY-018`, #83). The device evidence at
 the end of this section is still open.
 
 While a song is playing, the user can switch to the album it comes from, or to
-the artist's best-known songs, from Now Playing in the app or in CarPlay.
+the artist's best-known songs, from Now Playing in the app or in CarPlay. Both
+surfaces title the choice "Dive Deeper": the app's menu has it as a heading,
+and CarPlay's action list as its title.
 
 ### Actions (`PLAY-018`)
 
@@ -2266,6 +2268,10 @@ Show:
   volume; tapping it opens the system route picker, where AirPlay devices are
   chosen. Output and volume belong to the system: the pill only shows and
   opens them, and does not configure the audio session or touch playback.
+  While the pill is on screen and Overplay is in the foreground, it reads the
+  level from the hidden system volume view five times a second, so it follows
+  the volume buttons: the app's own audio session is never active, so it is
+  never told. In the background it does not check.
 
 Now Playing displays the player-reported track (`PLAY-011`). When the
 current entry is unattributed, the curation actions are disabled rather than
@@ -2364,7 +2370,8 @@ Show:
   system search field in the toolbar.
 - Up to 20 Apple Music catalogue songs below, drawn as playlist track rows,
   with counts and retired state for songs Overplay tracks. Library-only
-  songs, albums and artists are not searched.
+  songs, albums and artists are not searched. Tapping a song plays it, as
+  **Play Now** does.
 - Swipe right: Overplay (One True Playlist). Swipe left: Triage, and beside it
   More. Each swipe is offered only when it would move the song, as in a
   collection's song list. A context menu offers the same actions.
@@ -2417,9 +2424,22 @@ Platform notes:
 
 Purpose: configure behaviour.
 
-Settings:
+Two tabs, General and Troubleshooting: a segmented control pinned at the top
+on iPhone and iPad, the window's tabs on a Mac.
 
-- Selected One True Playlist and link-management navigation.
+General:
+
+- **Playlists:** the One True Playlist, shown, not chosen: Overplay made it
+  (`SETUP-001`), with **Open in Apple Music**. While a Mac waits for an
+  iPhone to make it (`SETUP-002`), it says so. **Triage Sources** opens the
+  contributing-playlist list.
+- **Library:** Find Duplicates.
+- **Display**, per device: **Appearance** Automatic (default), Light or Dark,
+  for the whole app (CarPlay follows the car); **Player Background** Album Art
+  (default) or Theme Colour, the colour alone behind the full player.
+- **Siri & Shortcuts:** the five phrases (`SIRI-001`) and Apple's Shortcuts
+  link. Nothing needs installing; iOS registers them with the app.
+- **Counting Plays and Skips:**
 - Skip threshold percentage.
 - Minimum listening time before skip can count.
 - Playthrough threshold percentage.
@@ -2428,6 +2448,11 @@ Settings:
 - Nuke all Overplay SwiftData records locally and save those deletions for
   iCloud propagation, then recreate default settings and clear local playback
   state. Apple Music playlists are not deleted.
+
+Troubleshooting, in this order: rebuild the One True Playlist's Apple Music
+playlist (`PLAYLIST-009`), Apple Music call activity, diagnostics, and Start
+Over (reset stats, nuke database) last:
+
 - Run MusicKit authorization, playlist-access, and playback-readiness
   diagnostics.
 - Diagnostic, device-local: **Mirror Now Playing from Overplay** (default off,
@@ -2865,6 +2890,26 @@ more, without Try Again, if the player becomes stuck.
 CarPlay UI logic should remain isolated from the iPhone/iPad SwiftUI shell.
 The iPad shell does not depend on CarPlay-specific types or entitlements; the
 same isolation is required for the planned Mac target.
+
+## Accessibility
+
+Every surface supports VoiceOver, Voice Control, Dynamic Type and the display
+settings, through system controls where possible:
+
+- Buttons whose visible label is short ("Overplay", "Triage") are announced by
+  what they do ("Promote to One True Playlist"), and still answer to the
+  visible word in Voice Control. Swipe actions are named the same way.
+- State shown by colour or a badge (now playing, unavailable) is also said in
+  words. Decorative symbols are hidden; screen and card titles are headings.
+- The progress bar reads elapsed and total time; settings sliders carry their
+  name and explanation.
+- Reduce Motion: the full player fades instead of growing from the mini
+  player, and the art does not move with the phone's tilt.
+- Reduce Transparency: the full player shows the theme colour, not the art.
+- The mini player's text stops at the largest standard size, as its bar has a
+  fixed height; it and the transport buttons offer the Large Content Viewer.
+- CarPlay's own templates provide its accessibility; its art badges cannot be
+  described.
 
 ## Development Guidelines
 
