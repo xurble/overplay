@@ -1854,7 +1854,9 @@ queue that is normal. The iPhone/iPad status
 line shows it with **Try Again**, the primary control becomes Retry, and CarPlay
 presents one alert per failure episode with **Try Again**. Witnessed progress or
 a successful recovery clears any failure, including a command error after which
-MusicKit started playing anyway.
+MusicKit started playing anyway. CarPlay's alert waits until the episode is 5
+seconds old, and goes by itself once the failure clears: on 2026-10-24 it came
+up, and by the time it was dismissed MusicKit was playing.
 
 Nothing retries automatically. When the user presses Play while a failure is
 active, the controller runs a recovery ladder and stops at the first rung that
@@ -2902,8 +2904,9 @@ CarPlay supports:
 CarPlay does not provide a separate skip-history browser. Now Playing metadata
 and artwork come from the `ApplicationMusicPlayer` host. Custom buttons are
 enabled only when the current entry is attributed (`PLAY-012`). A shared
-playback failure presents one alert per failure episode (`PLAY-014`), and one
-more, without Try Again, if the player becomes stuck.
+playback failure presents one alert per failure episode (`PLAY-014`), 5
+seconds after the episode begins and taken down once it clears, and one more,
+without Try Again, if the player becomes stuck.
 
 CarPlay UI logic should remain isolated from the iPhone/iPad SwiftUI shell.
 The iPad shell does not depend on CarPlay-specific types or entitlements; the

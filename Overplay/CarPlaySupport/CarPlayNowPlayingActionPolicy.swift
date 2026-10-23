@@ -56,6 +56,31 @@ enum CarPlayNowPlayingActionPolicy {
     }
 }
 
+/// When CarPlay alerts the shared playback failure (`PLAY-014`). MusicKit
+/// often recovers by itself within a moment, such as after a command error
+/// it plays through, so the alert waits out a grace period from the start of
+/// the episode, and an alert already up goes once the failure clears.
+enum CarPlayFailureAlert: Equatable, Sendable {
+    case none
+    case present
+    case wait(until: Date)
+    case dismiss
+
+    static let grace: TimeInterval = 5
+
+    static func decide(
+        failure: PlaybackFailure?,
+        alerted: PlaybackFailure.Kind?,
+        isShowingFailureAlert: Bool,
+        now: Date
+    ) -> Self {
+        guard let failure else { return isShowingFailureAlert ? .dismiss : .none }
+        guard PlaybackFailure.needsAlert(failure.kind, alerted: alerted) else { return .none }
+        let due = failure.since.addingTimeInterval(grace)
+        return now >= due ? .present : .wait(until: due)
+    }
+}
+
 /// What CarPlay shows after a playback action. The controller decides
 /// success (`SURFACE-003`); this only maps its shared state to a template.
 enum CarPlayPlaybackOutcome: Equatable, Sendable {

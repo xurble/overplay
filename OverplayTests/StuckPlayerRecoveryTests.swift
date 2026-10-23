@@ -329,6 +329,31 @@ struct StuckPlayerRecoveryTests {
         #expect(PlaybackFailure(kind: .stalled, message: "", since: .now).offersRetry)
     }
 
+    /// 2026-10-24: the alert came up and, by the time it was dismissed,
+    /// MusicKit had started playing by itself.
+    @Test func carPlayAlertWaitsOutGraceAndGoesWhenTheFailureClears() {
+        let since = Date(timeIntervalSinceReferenceDate: 1_000)
+        let failure = PlaybackFailure(kind: .command, message: "", since: since)
+        let due = since.addingTimeInterval(CarPlayFailureAlert.grace)
+        func decide(_ failure: PlaybackFailure?, alerted: PlaybackFailure.Kind? = nil,
+                    showing: Bool = false, at now: Date) -> CarPlayFailureAlert {
+            CarPlayFailureAlert.decide(failure: failure, alerted: alerted, isShowingFailureAlert: showing, now: now)
+        }
+
+        #expect(decide(failure, at: since) == .wait(until: due))
+        #expect(decide(failure, at: due.addingTimeInterval(-0.1)) == .wait(until: due))
+        #expect(decide(failure, at: due) == .present)
+        // Once per episode; a later kind keeps the episode's start, so becoming
+        // stuck replaces the alert without a second wait.
+        #expect(decide(failure, alerted: .command, showing: true, at: due) == .none)
+        var stuck = failure
+        stuck.kind = .stuck
+        #expect(decide(stuck, alerted: .command, showing: true, at: due) == .present)
+        // Cleared: only Overplay's own failure alert is taken down.
+        #expect(decide(nil, alerted: .command, showing: true, at: due) == .dismiss)
+        #expect(decide(nil, at: due) == .none)
+    }
+
     @Test func networkPathsAreDescribedForTheLog() {
         #expect(NetworkReachabilityMonitor.describe(status: "satisfied", interfaces: ["wifi"],
                                                     isExpensive: false, isConstrained: false)
