@@ -2308,10 +2308,11 @@ Platform notes:
   swiping it up slides Now Playing up full screen. A downward swipe starting
   anywhere on it, controls and margins included, moves it with the finger and
   closes it past the threshold; a sideways drag (the volume pill) does not.
-  Once a drag is a swipe down, the controls ignore it until the finger
-  lifts, so a swipe that started on a button never presses it. A swipe the
-  system interrupts (Control Center, a call) puts the player back open with
-  its controls on. Behind the
+  The swipe is a UIKit pan that begins only for a drag more down than
+  across and, once it does, cancels the touch for the control under it, as a
+  scroll view does, so a swipe that started on a button never presses it. A
+  swipe the system interrupts (Control Center, a call) puts the player back
+  open. Behind the
   blurred art is a solid pane of the theme colour, which is all that shows
   until the art arrives.
   A drag handle at the top, clear of the Dynamic Island, closes it on a tap.
