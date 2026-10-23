@@ -211,7 +211,8 @@ The Mac build has its own menus and windows:
   with shortcuts; **Controls** has Play/Pause, Next and Previous, which step
   aside while a text field is focused; **View** shows or hides the sidebar and
   Now Playing. Document and New Window items are removed.
-- Search, History and Settings are not in the Mac sidebar.
+- Search is in the Mac sidebar, under Dashboard; History and Settings are
+  not (Go menu and the Settings window).
 - Settings opens in its own window, with General and Troubleshooting tabs,
   sized to its controls; only Close is enabled.
 - While Now Playing is hidden, a mini player sits in the title bar, with the
@@ -2391,8 +2392,8 @@ Show:
 Platform notes:
 
 - iPhone reaches Search from the dashboard's top-right button and the menu on
-  a playlist screen. iPad has a sidebar entry, and the Mac has Go → Search
-  (⌘F).
+  a playlist screen. iPad and the Mac have a sidebar entry, and the Mac also
+  has Go → Search (⌘F).
 - The Mac has no MusicKit playlist writes, so adding to the One True Playlist
   or another playlist fails there; the Inbox and Play Now work.
 

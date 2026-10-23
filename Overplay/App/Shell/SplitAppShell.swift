@@ -102,11 +102,12 @@ struct SplitAppShell: View {
                     Label("Dashboard", systemImage: "rectangle.grid.2x2")
                         .tag(AppShellDestination.dashboard)
                         .accessibilityIdentifier("sidebar-dashboard")
-                    // A Mac reaches these from its menus (`OverplayCommands`).
+                    Label("Search", systemImage: "magnifyingglass")
+                        .tag(AppShellDestination.search)
+                        .accessibilityIdentifier("sidebar-search")
+                    // A Mac reaches these from its menus (`OverplayCommands`)
+                    // and its Settings window.
                     if !SplitLayoutPolicy.keepsColumns {
-                        Label("Search", systemImage: "magnifyingglass")
-                            .tag(AppShellDestination.search)
-                            .accessibilityIdentifier("sidebar-search")
                         Label("History", systemImage: "clock.arrow.circlepath")
                             .tag(AppShellDestination.history)
                             .accessibilityIdentifier("sidebar-history")
