@@ -4,7 +4,8 @@ import Testing
 @testable import Overplay
 
 @MainActor
-@Suite("One True Playlist a Mac asked for")
+// Serialized: the in-flight request is shared by the whole app.
+@Suite("One True Playlist a Mac asked for", .serialized)
 struct PendingOneTruePlaylistServiceTests {
     private func library(pendingSource: AppleMusicPlaylist?) throws -> ModelContainer {
         let container = try OverplayTestSupport.makeModelContainer()

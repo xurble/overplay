@@ -17,6 +17,7 @@ struct PendingOneTruePlaylistService {
     /// flight and gets its playlist, so it never reports a failure or makes a
     /// second playlist while the first is still being made.
     private static var inFlight: Task<PersistentIdentifier?, Never>?
+    static var isFulfilling: Bool { inFlight != nil }
 
     /// Asks a Mac to leave the One True Playlist for an iPhone or iPad.
     static func request(copying source: AppleMusicPlaylist?, in context: ModelContext) throws {

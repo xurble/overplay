@@ -40,7 +40,7 @@ struct OneTruePlaylistPresenceServiceTests {
     @Test("a One True Playlist missing from Apple Music is asked about; an unknown answer asks nothing")
     func missing() async throws {
         let container = try library(selected: true, requested: false)
-        #expect(await service(exists: false).prompt(in: container.mainContext, checksPresence: true) == .missing(name: "Overplay"))
+        #expect(await service(exists: false).prompt(in: container.mainContext, checksPresence: true) == .missing(name: "Overplay", playlistID: "p.overplay"))
         #expect(await service(exists: true).prompt(in: container.mainContext, checksPresence: true) == nil)
         #expect(await service(exists: nil).prompt(in: container.mainContext, checksPresence: true) == nil)
         #expect(await service(canCreate: false, exists: false).prompt(in: container.mainContext, checksPresence: true) == nil)
@@ -65,6 +65,27 @@ struct OneTruePlaylistPresenceServiceTests {
         await #expect(throws: URLError.self) {
             try await AppleMusicLibraryPlaylistResources.exists(playlistID: "p.overplay") { _ in throw URLError(.notConnectedToInternet) }
         }
+    }
+
+    @Test("saying yes to a stale missing prompt makes nothing")
+    func staleMissingPromptMakesNothing() async throws {
+        let container = try library(selected: true, requested: false)
+        let context = container.mainContext
+        #expect(await service(exists: false).isStillMissing("p.overplay", in: context))
+        // The library caught up, or the answer is unknown.
+        #expect(await !service(exists: true).isStillMissing("p.overplay", in: context))
+        #expect(await !service(exists: nil).isStillMissing("p.overplay", in: context))
+        // Another device made it again: the One True Playlist has a new ID.
+        try #require(try PlaylistRepository.oneTruePlaylist(in: context)).musicPlaylistID = "p.remade"
+        #expect(await !service(exists: false).isStillMissing("p.overplay", in: context))
+    }
+
+    @Test("Make It Again reports songs this device could not add")
+    func remadeMessage() {
+        let full = OneTruePlaylistRebuildService.Result(name: "Overplay", addedCount: 10, skippedCount: 0)
+        #expect(OneTruePlaylistPrompt.remadeMessage(full) == "Made “Overplay” again in Apple Music with 10 songs.")
+        let partial = OneTruePlaylistRebuildService.Result(name: "Overplay", addedCount: 8, skippedCount: 2)
+        #expect(OneTruePlaylistPrompt.remadeMessage(partial).hasSuffix("2 songs couldn’t be added from this device; they stay in Overplay."))
     }
 
     @Test("with nothing made or asked for, nothing is asked")

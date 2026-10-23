@@ -95,7 +95,8 @@ final class AppRuntime {
 
     /// `checksPresence`: a sync could not find the playlist, so look it up.
     func checkOneTruePlaylist(in context: ModelContext, checksPresence: Bool = false) async {
-        guard !declinedOneTruePlaylistPrompt, !isMakingOneTruePlaylist, oneTruePlaylistPrompt == nil else { return }
+        guard !declinedOneTruePlaylistPrompt, !isMakingOneTruePlaylist, !PendingOneTruePlaylistService.isFulfilling,
+              oneTruePlaylistPrompt == nil else { return }
         oneTruePlaylistPrompt = await OneTruePlaylistPresenceService().prompt(in: context, checksPresence: checksPresence)
     }
 
@@ -115,7 +116,11 @@ final class AppRuntime {
             if (try? context.fetch(FetchDescriptor<OverplaySettings>()).first?.selectedPlaylistID) == nil {
                 StatusToast.shared.show("Overplay couldn’t make the playlist. It will ask again next time it starts.")
             }
-        case .missing:
+        case .missing(_, let playlistID):
+            guard await OneTruePlaylistPresenceService().isStillMissing(playlistID, in: context) else {
+                StatusToast.shared.show("Your Overplay playlist is in Apple Music, so nothing was made.")
+                return
+            }
             do {
                 let result = try await playbackController.rebuildOneTruePlaylist(context: context)
                 StatusToast.shared.show(OneTruePlaylistPrompt.remadeMessage(result))

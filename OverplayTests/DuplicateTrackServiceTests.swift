@@ -104,6 +104,8 @@ struct DuplicateTrackServiceTests {
         #expect(key("Left Behind", "Artist") == "name:left behind|artist")
         #expect(key("Stay With Me", "Sam Smith") != key("Stay", "Sam Smith"))
         #expect(key("Lift Me Up (Feather Mix)", "Artist") != key("Lift Me Up", "Artist"))
+        #expect(key("A Feat of Clay", "Artist") == "name:a feat of clay|artist")
+        #expect(key("Get Lucky featuring Pharrell Williams", "Daft Punk") == key("Get Lucky", "Daft Punk"))
     }
 
     /// Duplicates Overplay already knows are found with no Apple Music call;

@@ -24,9 +24,10 @@ enum DuplicateNameKey {
         pattern: #"\s*[\(\[]\s*(?:feat|ft|featuring|with)\b\.?\s+[^\)\]]*[\)\]]"#,
         options: [.caseInsensitive]
     )
-    /// "Song feat. X" to the end of the title.
+    /// "Song feat. X" to the end of the title; without brackets only "feat.",
+    /// "ft." or "featuring" count, so "A Feat of Clay" stays whole.
     private static let trailingFeaturing = try! NSRegularExpression(
-        pattern: #"\s+(?:feat|ft|featuring)\b\.?\s+.*$"#,
+        pattern: #"\s+(?:feat\.|ft\.|featuring\b)\s*.*$"#,
         options: [.caseInsensitive]
     )
 

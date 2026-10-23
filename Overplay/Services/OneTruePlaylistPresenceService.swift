@@ -6,12 +6,12 @@ import SwiftData
 /// Apple Music (`SETUP-003`). Overplay asks before making it.
 enum OneTruePlaylistPrompt: Equatable, Identifiable {
     case requestedByMac(sourceName: String?)
-    case missing(name: String)
+    case missing(name: String, playlistID: String)
 
     var id: String {
         switch self {
         case .requestedByMac: "requested"
-        case .missing(let name): "missing-\(name)"
+        case .missing(_, let playlistID): "missing-\(playlistID)"
         }
     }
 
@@ -27,7 +27,7 @@ enum OneTruePlaylistPrompt: Equatable, Identifiable {
         case .requestedByMac(let sourceName):
             let contents = sourceName.map { "with the songs from \($0)" } ?? "empty to start"
             return "Your Mac asked for a new Apple Music playlist called Overplay, \(contents). A Mac can’t create playlists, so this device will."
-        case .missing(let name):
+        case .missing(let name, _):
             return "Overplay can’t find “\(name)” in your Apple Music library. If you deleted it, Overplay can make it again with the songs in your One True Playlist. If it’s still there, choose Not Now."
         }
     }
@@ -79,6 +79,16 @@ struct OneTruePlaylistPresenceService {
         }
         guard checksPresence, let playlist = try? PlaylistRepository.oneTruePlaylist(in: context),
               await playlistExists(playlist.musicPlaylistID) == false else { return nil }
-        return .missing(name: playlist.name)
+        return .missing(name: playlist.name, playlistID: playlist.musicPlaylistID)
+    }
+
+    /// Whether a "missing" answer still holds when the user says yes: the
+    /// alert may have waited while another device made the playlist again
+    /// (the One True Playlist now has another ID) or the library caught up.
+    /// Anything but a confirmed absence makes nothing.
+    func isStillMissing(_ playlistID: String, in context: ModelContext) async -> Bool {
+        guard let playlist = try? PlaylistRepository.oneTruePlaylist(in: context),
+              playlist.musicPlaylistID == playlistID else { return false }
+        return await playlistExists(playlistID) == false
     }
 }
