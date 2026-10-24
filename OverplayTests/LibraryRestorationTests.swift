@@ -97,13 +97,38 @@ struct LibraryRestorationTests {
         try context.save()
         #expect(try LibraryRestorationService.restoredSettings(in: context) != nil)
 
-        // Startup's repair deletes it, and only it.
+        // Startup's repair folds it into the keeper's membership, and leaves
+        // a membership still arriving alone (`LOC-002`).
         let stillArriving = PlaylistItemRecord(playlistID: playlist.id, trackID: UUID())
         context.insert(stillArriving)
-        #expect(try PlaylistItemRepository.deleteMergeLeftovers(in: context) == 1)
+        #expect(try PlaylistItemRepository.repairMergeLeftovers(in: context) == 1)
         try context.save()
         let remaining = try PlaylistItemRepository.allItems(in: context).map(\.trackID)
+        #expect(remaining.count == 2)
         #expect(Set(remaining) == [keeper.id, stillArriving.trackID])
+    }
+
+    /// Only a membership whose track is missing is excused: one of a donor
+    /// track that exists again is still checked.
+    @Test func aMergedAwayTrackThatExistsIsStillChecked() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        _ = try seed(context)
+        let playlist = try #require(try context.fetch(FetchDescriptor<PlaylistRecord>()).first)
+        let keeper = TrackRecord(libraryID: "i.keeper", title: "Song", artistName: "Artist")
+        let donor = TrackRecord(libraryID: "i.donor", title: "Song", artistName: "Artist")
+        context.insert(keeper)
+        context.insert(donor)
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: keeper.id))
+        let mergedAway = UUID()
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: mergedAway))
+        // Its playlist has not arrived yet.
+        context.insert(PlaylistItemRecord(playlistID: UUID(), trackID: donor.id))
+        try ListenLedger.recordLineage(keeper: keeper.id, donor: mergedAway, in: context)
+        try ListenLedger.recordLineage(keeper: keeper.id, donor: donor.id, in: context)
+        try context.save()
+
+        #expect(try LibraryRestorationService.restoredSettings(in: context) == nil)
     }
 
     @Test func successfulRestorationAllowsOfflineRestartButNotANewStore() async throws {

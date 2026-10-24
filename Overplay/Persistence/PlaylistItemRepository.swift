@@ -41,18 +41,37 @@ enum PlaylistItemRepository {
         return Set(events.compactMap { ListenLedger.lineageDonor(sessionID: $0.sessionID) })
     }
 
-    /// Memberships whose track a merge absorbed and deleted. A merge removes
-    /// them, but one written again by another device before it heard of the
-    /// merge comes back through iCloud. Never a missing delivery: the track
-    /// is gone for good, so they are deleted. Returns how many.
+    /// Memberships of a track a merge absorbed and deleted (`LOC-002`). A
+    /// merge moves them to the track that survives it, but one delivered
+    /// after the merge, or written again by a device that had not heard of
+    /// it, comes back through iCloud pointing at the deleted track. Each is
+    /// moved to the surviving track, following chained merges, with its
+    /// history events, as the merge itself does; the one-row-per-track
+    /// collapse then keeps the newer location decision with its playlist.
+    /// Only one whose survivor is gone too is deleted. Returns how many were
+    /// repaired.
     @discardableResult
-    static func deleteMergeLeftovers(in context: ModelContext) throws -> Int {
-        let trackIDs = Set(try context.fetch(FetchDescriptor<TrackRecord>()).map(\.id))
-        let orphans = try allItems(in: context).filter { !$0.isDeleted && !trackIDs.contains($0.trackID) }
-        guard !orphans.isEmpty else { return 0 }
+    static func repairMergeLeftovers(in context: ModelContext) throws -> Int {
         let mergedAway = try mergedAwayTrackIDs(in: context)
-        let leftovers = orphans.filter { mergedAway.contains($0.trackID) }
-        leftovers.forEach(context.delete)
+        guard !mergedAway.isEmpty else { return 0 }
+        let leftovers = try items(forTrackIDs: Array(mergedAway), in: context).filter {
+            try TrackRecordRepository.track(id: $0.trackID, in: context) == nil
+        }
+        var movedAny = false
+        for leftover in leftovers {
+            let donorID = leftover.trackID
+            guard let keeperID = try ListenLedger.keeper(absorbing: donorID, in: context) else {
+                context.delete(leftover)
+                continue
+            }
+            let donorEventTrackID: UUID? = donorID
+            for event in try context.fetch(FetchDescriptor<HistoryEvent>(predicate: #Predicate { $0.trackID == donorEventTrackID })) {
+                event.trackID = keeperID
+            }
+            leftover.trackID = keeperID
+            movedAny = true
+        }
+        if movedAny { try mergeDuplicateItems(in: context, save: false) }
         return leftovers.count
     }
 
