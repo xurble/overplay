@@ -76,6 +76,36 @@ struct LibraryRestorationTests {
         #expect(try container.mainContext.fetchCount(FetchDescriptor<OverplaySettings>()) == 1)
     }
 
+    /// 2026-10-23: a membership written again by another device after a
+    /// merge deleted its track kept every launch waiting for that track.
+    @Test func aMembershipLeftByAMergeDoesNotKeepRestorationWaiting() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        _ = try seed(context)
+        let playlist = try #require(try context.fetch(FetchDescriptor<PlaylistRecord>()).first)
+        let keeper = TrackRecord(libraryID: "i.keeper", title: "Song", artistName: "Artist")
+        context.insert(keeper)
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: keeper.id))
+        let mergedAway = UUID()
+        let leftover = PlaylistItemRecord(playlistID: playlist.id, trackID: mergedAway)
+        context.insert(leftover)
+        try context.save()
+        // Without a merge record it may still be arriving: keep waiting.
+        #expect(try LibraryRestorationService.restoredSettings(in: context) == nil)
+
+        try ListenLedger.recordLineage(keeper: keeper.id, donor: mergedAway, in: context)
+        try context.save()
+        #expect(try LibraryRestorationService.restoredSettings(in: context) != nil)
+
+        // Startup's repair deletes it, and only it.
+        let stillArriving = PlaylistItemRecord(playlistID: playlist.id, trackID: UUID())
+        context.insert(stillArriving)
+        #expect(try PlaylistItemRepository.deleteMergeLeftovers(in: context) == 1)
+        try context.save()
+        let remaining = try PlaylistItemRepository.allItems(in: context).map(\.trackID)
+        #expect(Set(remaining) == [keeper.id, stillArriving.trackID])
+    }
+
     @Test func successfulRestorationAllowsOfflineRestartButNotANewStore() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         _ = try seed(container.mainContext)

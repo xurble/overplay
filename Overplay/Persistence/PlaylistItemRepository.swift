@@ -32,6 +32,30 @@ enum PlaylistItemRepository {
         })).filter { !$0.isDeleted }
     }
 
+    /// Tracks an identity merge absorbed: each merge writes an immutable
+    /// lineage event naming the donor (`COUNT-002`), so this survives the
+    /// donor's deletion and any later overwrite of the keeper's lineage list.
+    static func mergedAwayTrackIDs(in context: ModelContext) throws -> Set<UUID> {
+        let lineage = ListenEventKind.lineage.rawValue
+        let events = try context.fetch(FetchDescriptor<ListenEvent>(predicate: #Predicate { $0.kindRawValue == lineage }))
+        return Set(events.compactMap { ListenLedger.lineageDonor(sessionID: $0.sessionID) })
+    }
+
+    /// Memberships whose track a merge absorbed and deleted. A merge removes
+    /// them, but one written again by another device before it heard of the
+    /// merge comes back through iCloud. Never a missing delivery: the track
+    /// is gone for good, so they are deleted. Returns how many.
+    @discardableResult
+    static func deleteMergeLeftovers(in context: ModelContext) throws -> Int {
+        let trackIDs = Set(try context.fetch(FetchDescriptor<TrackRecord>()).map(\.id))
+        let orphans = try allItems(in: context).filter { !$0.isDeleted && !trackIDs.contains($0.trackID) }
+        guard !orphans.isEmpty else { return 0 }
+        let mergedAway = try mergedAwayTrackIDs(in: context)
+        let leftovers = orphans.filter { mergedAway.contains($0.trackID) }
+        leftovers.forEach(context.delete)
+        return leftovers.count
+    }
+
     static func resetAllStats(in context: ModelContext) throws {
         let items = try allItems(in: context)
         let resetAt = Date.now

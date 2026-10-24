@@ -187,6 +187,25 @@ struct DuplicateTrackServiceTests {
         #expect(try TrackRecordRepository.track(catalogID: "2", libraryID: nil, in: context)?.id == result.trackID)
     }
 
+    /// A membership that arrived after the scan may carry statistics, so the
+    /// merge refuses rather than deleting it with its track or leaving it
+    /// pointing at a deleted one.
+    @Test func aMembershipArrivingAfterTheScanMakesTheMergeStale() throws {
+        let container = try OverplayTestSupport.makeModelContainer(); let context = container.mainContext
+        let candidates = try fixture(context)
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let arrived = PlaylistItemRecord(playlistID: bucket.id, trackID: candidates[1].id)
+        arrived.evictedAt = .now
+        context.insert(arrived)
+        try context.save()
+
+        #expect(throws: DuplicateTrackService.MergeError.stale) {
+            try DuplicateTrackService.merge(candidates, destination: nil, in: context)
+        }
+        #expect(try TrackRecordRepository.allTracks(in: context).count == 2)
+        #expect(try PlaylistItemRepository.allItems(in: context).count == 3)
+    }
+
     @Test(arguments: DuplicateTrackService.Destination.allCases)
     func mixedCollectionsRequireChoice(_ destination: DuplicateTrackService.Destination) throws {
         let container = try OverplayTestSupport.makeModelContainer(); let context = container.mainContext

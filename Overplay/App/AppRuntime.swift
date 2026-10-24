@@ -78,7 +78,9 @@ final class AppRuntime {
     /// retirement or restore; the history events put it back (`LOC-001`).
     func repairTrackLocations(in context: ModelContext) {
         do {
-            guard try TrackLocationService.repairRetirementState(in: context) > 0 else { return }
+            let leftovers = try PlaylistItemRepository.deleteMergeLeftovers(in: context)
+            if leftovers > 0 { StartupProfiler.mark("Deleted \(leftovers) memberships left by merges") }
+            guard try TrackLocationService.repairRetirementState(in: context) + leftovers > 0 else { return }
             try context.save()
             playbackController.reconcileTrackMembership(context: context)
         } catch {
