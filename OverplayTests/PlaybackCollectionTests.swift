@@ -331,6 +331,79 @@ struct PlaybackCollectionTests {
         #expect(try fixture.context.fetch(FetchDescriptor<RecentCollectionRecord>()).isEmpty)
     }
 
+    /// The shared Library action every surface calls (`LIB-001`): the songs
+    /// as a deep dive, from the tapped song, never added to Recents.
+    @Test func libraryPlayStartsAtTheSongAndSkipsRecents() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        _ = try catalog(for: fixture)
+        let item = LibraryBrowser.Item(kind: .album, libraryID: "l.album", title: "Library Album")
+        let entries = try ["alb-1", "alb-2"].enumerated().map { index, id in
+            LibraryBrowser.Entry(song: Self.song(id, "Album Song \(index + 1)"), track: .song(try Self.catalogSong(id, "Album Song \(index + 1)")))
+        }
+
+        let started = await LibraryBrowser.play(item, entries: entries, startingAt: "alb-2",
+                                                controller: fixture.controller, context: fixture.context)
+
+        #expect(started)
+        #expect(fixture.controller.currentTrack?.title == "Album Song 2")
+        let intent = try #require(fixture.intentStore.loadIntent())
+        #expect(intent.collection?.kind == .libraryAlbum)
+        #expect(intent.collection?.groupKey == item.collection.groupKey)
+        #expect(try fixture.context.fetch(FetchDescriptor<RecentCollectionRecord>()).isEmpty)
+    }
+
+    /// Shuffle from either surface: the whole collection, shuffled.
+    @Test func libraryShufflePlaysTheWholeCollectionShuffled() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        _ = try catalog(for: fixture)
+        let (item, entries) = try libraryAlbum()
+
+        let started = await LibraryBrowser.play(item, entries: entries, startingAt: nil,
+                                                controller: fixture.controller, context: fixture.context)
+
+        #expect(started)
+        #expect(Set(fixture.player.submittedTitles.last ?? []) == ["Album Song 1", "Album Song 2"])
+        #expect(fixture.player.commands.contains("shuffle=songs"))
+        #expect(try fixture.context.fetch(FetchDescriptor<RecentCollectionRecord>()).isEmpty)
+    }
+
+    /// A song of the Library collection already playing is selected in
+    /// place, without a new queue (`SURFACE-003`).
+    @Test func librarySongInThePlayingCollectionIsSelectedInPlace() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        _ = try catalog(for: fixture)
+        let (item, entries) = try libraryAlbum()
+        await LibraryBrowser.play(item, entries: entries, startingAt: "alb-1",
+                                  controller: fixture.controller, context: fixture.context)
+        let submissions = fixture.player.submitCount
+
+        let started = await LibraryBrowser.play(item, entries: entries, startingAt: "alb-2",
+                                                controller: fixture.controller, context: fixture.context)
+
+        #expect(started)
+        #expect(fixture.player.submitCount == submissions)
+        #expect(fixture.controller.currentTrack?.title == "Album Song 2")
+    }
+
+    private func libraryAlbum() throws -> (LibraryBrowser.Item, [LibraryBrowser.Entry]) {
+        let item = LibraryBrowser.Item(kind: .album, libraryID: "l.album", title: "Library Album")
+        let entries = try ["alb-1", "alb-2"].enumerated().map { index, id in
+            LibraryBrowser.Entry(song: Self.song(id, "Album Song \(index + 1)"),
+                                 track: .song(try Self.catalogSong(id, "Album Song \(index + 1)")))
+        }
+        return (item, entries)
+    }
+
+    private static func catalogSong(_ id: String, _ title: String) throws -> Song {
+        try JSONDecoder().decode(Song.self, from: JSONSerialization.data(withJSONObject: [
+            "id": id, "type": "songs",
+            "attributes": ["name": title, "artistName": "Artist 0", "albumName": "Album", "genreNames": []]
+        ]))
+    }
+
     @Test func failedOneTruePlaylistAddAddsNothing() async throws {
         let fixture = try PlaybackFixture()
         defer { fixture.cleanUp() }

@@ -33,6 +33,11 @@ final class AppRuntime {
     private init() {
         // Counting and item reads wait for restoration; playback does not.
         playbackController.isLibraryReady = { [weak self] in self?.libraryRestoration.isReady ?? false }
+        // An old Library list refreshes only while nothing plays (`LOAD-001`).
+        let controller = playbackController
+        LibraryCache.shared.playbackState = { [weak controller] in
+            (controller?.isPlaying ?? false, controller?.playbackFailure != nil)
+        }
     }
 
     func configure(modelContainer: ModelContainer) {

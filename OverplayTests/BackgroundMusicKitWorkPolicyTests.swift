@@ -11,6 +11,14 @@ struct BackgroundMusicKitWorkPolicyTests {
         #expect(BackgroundMusicKitWorkPolicy.periodicPlayCountInterval == .seconds(900))
     }
 
+    /// An old Library list waits for a pause: MusicKit reports nothing about
+    /// how much of a song is buffered.
+    @Test func staleLibraryRefreshWaitsWhilePlayingOrFailing() {
+        #expect(BackgroundMusicKitWorkPolicy.allowsStaleLibraryRefresh(isPlaying: false, hasPlaybackFailure: false))
+        #expect(!BackgroundMusicKitWorkPolicy.allowsStaleLibraryRefresh(isPlaying: true, hasPlaybackFailure: false))
+        #expect(!BackgroundMusicKitWorkPolicy.allowsStaleLibraryRefresh(isPlaying: false, hasPlaybackFailure: true))
+    }
+
     @Test func nothingAutomaticStartsInTheFirstMinuteAfterLaunch() {
         let launched = ContinuousClock.now
         let saved = BackgroundMusicKitWorkPolicy.launchedAt

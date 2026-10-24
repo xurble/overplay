@@ -1,5 +1,6 @@
 import Foundation
 @preconcurrency import MusicKit
+import SwiftData
 
 /// The user's Apple Music library by category, as the Music app's Library
 /// shows it, read from the web library API (as playlist sync reads iCloud's
@@ -46,6 +47,8 @@ enum LibraryBrowser {
 
         var id: String { "\(kind.rawValue):\(libraryID)" }
         var artworkURL: String? { artwork?.url(width: 512, height: 512)?.absoluteString }
+        /// A row's thumbnail: a tenth of the download, as the phone's rows use.
+        var rowArtworkURL: String? { artwork?.url(width: 160, height: 160)?.absoluteString }
         var kindName: String { kind.rawValue }
 
         var collection: PlaybackCollection {
@@ -129,6 +132,20 @@ enum LibraryBrowser {
             }
             return unique(tracks.compactMap(entry))
         }
+    }
+
+    /// The shared Library play action, from every surface (`LIB-001`,
+    /// `SURFACE-003`): a playlist's, album's or artist's songs from this
+    /// device's own copies, as a deep dive never added to Recent Deep Dives.
+    /// No song shuffles.
+    @discardableResult
+    static func play(
+        _ item: Item, entries: [Entry], startingAt catalogSongID: String?,
+        controller: PlaybackController, context: ModelContext
+    ) async -> Bool {
+        let tracks = await playableTracks(for: entries)
+        return await controller.playCollection(item.collection, songs: entries.map(\.song), startingAt: catalogSongID,
+                                               recordsRecent: false, tracks: tracks, context: context)
     }
 
     /// The tracks to queue for these songs, keyed by song ID: this device's
