@@ -65,10 +65,15 @@ final class LibraryRestorationService {
         let sourceIDs = Set(playlists.map(\.musicPlaylistID))
         var items = try context.fetch(FetchDescriptor<PlaylistItemRecord>())
         // A membership whose track a merge absorbed is left over, not still
-        // arriving: waiting for that track would wait forever.
+        // arriving: waiting for that track would wait forever. Its survivor
+        // must be here, though, or the song may have no membership yet
+        // (`LOC-002`).
         if items.contains(where: { !tracks.contains($0.trackID) }) {
             let mergedAway = try PlaylistItemRepository.mergedAwayTrackIDs(in: context)
-            items.removeAll { !tracks.contains($0.trackID) && mergedAway.contains($0.trackID) }
+            try items.removeAll { item in
+                guard !tracks.contains(item.trackID), mergedAway.contains(item.trackID) else { return false }
+                return try ListenLedger.keeper(absorbing: item.trackID, in: context) != nil
+            }
         }
         guard items.allSatisfy({
             tracks.contains($0.trackID) && playlistIDs.contains($0.playlistID)

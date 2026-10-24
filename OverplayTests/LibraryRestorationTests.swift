@@ -108,6 +108,25 @@ struct LibraryRestorationTests {
         #expect(Set(remaining) == [keeper.id, stillArriving.trackID])
     }
 
+    /// The survivor must be here too: otherwise the song may have no
+    /// membership until it arrives (`LOC-002`).
+    @Test func aMembershipLeftByAMergeWaitsForItsSurvivor() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        _ = try seed(context)
+        let playlist = try #require(try context.fetch(FetchDescriptor<PlaylistRecord>()).first)
+        let mergedAway = UUID()
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: mergedAway))
+        let survivor = TrackRecord(libraryID: "i.survivor", title: "Song", artistName: "Artist")
+        try ListenLedger.recordLineage(keeper: survivor.id, donor: mergedAway, in: context)
+        try context.save()
+        #expect(try LibraryRestorationService.restoredSettings(in: context) == nil)
+
+        context.insert(survivor)
+        try context.save()
+        #expect(try LibraryRestorationService.restoredSettings(in: context) != nil)
+    }
+
     /// Only a membership whose track is missing is excused: one of a donor
     /// track that exists again is still checked.
     @Test func aMergedAwayTrackThatExistsIsStillChecked() throws {

@@ -118,7 +118,7 @@ struct MergeLeftoverRepairTests {
         try f.context.save()
 
         let repaired = try TrackLocationService.repairLocations(in: f.context)
-        #expect(repaired.mergeLeftovers == 1)
+        #expect(repaired.mergeLeftovers == 2)
         #expect(repaired.retirements == 1)
         let remaining = try items(f)
         #expect(remaining.map(\.trackID) == [keeper.id])
@@ -140,15 +140,104 @@ struct MergeLeftoverRepairTests {
         #expect(try items(f).map(\.trackID) == [survivor.id])
     }
 
-    @Test func aLeftoverWhoseSurvivorIsGoneTooIsDeleted() throws {
+    /// A survivor that is not here has usually not arrived yet: deleting the
+    /// leftover could leave the song with no membership on every device.
+    @Test func aLeftoverWaitsForItsSurvivorToArrive() throws {
         let f = try fixture()
         let donorID = UUID()
-        try ListenLedger.recordLineage(keeper: UUID(), donor: donorID, in: f.context)
+        let survivor = TrackRecord(libraryID: "i.survivor", title: "Song", artistName: "Artist")
+        try ListenLedger.recordLineage(keeper: survivor.id, donor: donorID, in: f.context)
         f.context.insert(PlaylistItemRecord(playlistID: f.otp.id, trackID: donorID))
         try f.context.save()
 
+        #expect(try PlaylistItemRepository.repairMergeLeftovers(in: f.context) == 0)
+        #expect(try items(f).map(\.trackID) == [donorID])
+
+        f.context.insert(survivor)
+        try f.context.save()
         #expect(try PlaylistItemRepository.repairMergeLeftovers(in: f.context) == 1)
-        #expect(try items(f).isEmpty)
+        #expect(try items(f).map(\.trackID) == [survivor.id])
+    }
+
+    /// The other device's decision may come only as a history event, in a
+    /// later import than its membership, or with no membership at all.
+    @Test func aRetirementEventArrivingAfterItsMembershipStillReachesTheSurvivor() throws {
+        let f = try fixture()
+        let keeper = track("i.keeper", in: f.context)
+        let donorID = UUID()
+        try ListenLedger.recordLineage(keeper: keeper.id, donor: donorID, in: f.context)
+        f.context.insert(PlaylistItemRecord(playlistID: f.otp.id, trackID: donorID))
+        try f.context.save()
+        #expect(try TrackLocationService.repairLocations(in: f.context).mergeLeftovers == 1)
+        try f.context.save()
+
+        let retiredAt = Date.now
+        f.context.insert(HistoryEvent(playlistID: f.otp.id, trackID: donorID, eventType: .evicted, source: .user,
+                                      createdAt: retiredAt))
+        try f.context.save()
+
+        let repaired = try TrackLocationService.repairLocations(in: f.context)
+        #expect(repaired.mergeLeftovers == 1)
+        #expect(repaired.retirements == 1)
+        let remaining = try items(f)
+        #expect(remaining.map(\.trackID) == [keeper.id])
+        #expect(remaining.first?.playlistID == f.bucket.id)
+        #expect(remaining.first?.evictedAt == retiredAt)
+    }
+
+    /// Two devices merged the same song into different tracks.
+    @Test func aTrackMergedIntoTwoJoinsTheSameSurvivorEverywhere() throws {
+        let f = try fixture()
+        let first = track("i.first", in: f.context)
+        let second = track("i.second", in: f.context)
+        let notHere = UUID()
+        let donorID = UUID()
+        try ListenLedger.recordLineage(keeper: notHere, donor: donorID, in: f.context)
+        try ListenLedger.recordLineage(keeper: second.id, donor: donorID, in: f.context)
+        try ListenLedger.recordLineage(keeper: first.id, donor: donorID, in: f.context)
+        let lineage = ListenEventKind.lineage.rawValue
+        for event in try f.context.fetch(FetchDescriptor<ListenEvent>(predicate: #Predicate { $0.kindRawValue == lineage })) {
+            event.occurredAt = switch event.trackID {
+            case notHere: Date(timeIntervalSince1970: 100)
+            case second.id: Date(timeIntervalSince1970: 200)
+            default: Date(timeIntervalSince1970: 300)
+            }
+        }
+        f.context.insert(PlaylistItemRecord(playlistID: f.otp.id, trackID: donorID))
+        try f.context.save()
+
+        // The earliest merge whose survivor is here, whatever the fetch order.
+        #expect(try ListenLedger.keeper(absorbing: donorID, in: f.context) == second.id)
+        #expect(try PlaylistItemRepository.repairMergeLeftovers(in: f.context) == 1)
+        #expect(try items(f).map(\.trackID) == [second.id])
+    }
+
+    /// A user merge removes the donor's memberships; one written again by a
+    /// device that had not heard of it joins the merged song.
+    @Test func aMembershipWrittenAgainAfterAUserMergeJoinsTheMergedSong() throws {
+        let f = try fixture()
+        for index in 1...2 {
+            let track = TrackRecord(catalogID: String(index), title: "Song", artistName: "Artist")
+            track.isrc = "SAME-RECORDING"
+            f.context.insert(track)
+            f.context.insert(PlaylistItemRecord(playlistID: f.bucket.id, trackID: track.id,
+                                                sourceMusicPlaylistIDs: ["source-\(index)"]))
+        }
+        try f.context.save()
+        let candidates = try DuplicateTrackService.candidates(in: f.context)
+        let result = try DuplicateTrackService.merge(candidates, destination: nil, in: f.context)
+        try f.context.save()
+        let donorID = try #require(candidates.map(\.id).first { $0 != result.trackID })
+        #expect(try TrackRecordRepository.track(id: donorID, in: f.context) == nil)
+
+        let rewritten = PlaylistItemRecord(playlistID: f.bucket.id, trackID: donorID, sourceMusicPlaylistIDs: ["source-late"])
+        f.context.insert(rewritten)
+        try f.context.save()
+
+        #expect(try TrackLocationService.repairLocations(in: f.context).mergeLeftovers == 1)
+        let remaining = try items(f)
+        #expect(remaining.map(\.trackID) == [result.trackID])
+        #expect(remaining.first?.sourceMusicPlaylistIDs.contains("source-late") == true)
     }
 
     /// A merge record alone is not enough: a donor track that exists again,

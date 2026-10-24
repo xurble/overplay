@@ -330,24 +330,33 @@ enum ListenLedger {
     }
 
     /// The surviving track that absorbed `trackID`, following lineage until a
-    /// track that still exists. Nil when nothing absorbed it.
+    /// track that exists here. A track merged into two (two devices merging
+    /// at once) prefers the nearer keeper that exists, then the earlier
+    /// merge, so every device chooses the same one. Nil when nothing absorbed
+    /// it, or its keeper has not arrived yet.
     static func keeper(absorbing trackID: UUID, in context: ModelContext) throws -> UUID? {
         let lineage = ListenEventKind.lineage.rawValue
-        var current = trackID
         var visited: Set<UUID> = [trackID]
-        while true {
-            let sessionID = "lineage:\(current.uuidString)"
-            var descriptor = FetchDescriptor<ListenEvent>(predicate: #Predicate {
-                $0.kindRawValue == lineage && $0.sessionID == sessionID
-            })
-            descriptor.fetchLimit = 1
-            // Every merge writes a lineage event, so the immutable record is
-            // enough; no scan of every track during playback.
-            guard let keeper = try context.fetch(descriptor).first?.trackID,
-                  visited.insert(keeper).inserted else { return nil }
-            if try TrackRecordRepository.track(id: keeper, in: context) != nil { return keeper }
-            current = keeper
+        var frontier = [trackID]
+        while !frontier.isEmpty {
+            var next: [UUID] = []
+            for current in frontier {
+                let sessionID = "lineage:\(current.uuidString)"
+                // Every merge writes a lineage event, so the immutable records
+                // are enough; no scan of every track during playback.
+                let keepers = try context.fetch(FetchDescriptor<ListenEvent>(predicate: #Predicate {
+                    $0.kindRawValue == lineage && $0.sessionID == sessionID
+                })).sorted {
+                    $0.occurredAt != $1.occurredAt ? $0.occurredAt < $1.occurredAt : $0.id.uuidString < $1.id.uuidString
+                }.map(\.trackID)
+                for keeper in keepers where visited.insert(keeper).inserted {
+                    if try TrackRecordRepository.track(id: keeper, in: context) != nil { return keeper }
+                    next.append(keeper)
+                }
+            }
+            frontier = next
         }
+        return nil
     }
 
     private static func lineageClosure(
