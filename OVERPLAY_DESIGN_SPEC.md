@@ -2928,6 +2928,11 @@ CarPlay supports:
 - Move the current retired track to the Inbox with explicit keep intent.
 - Return to the root menu from Now Playing.
 
+CarPlay turns off iOS 27's MiniPlayer (`allowsMiniPlayer = false`), so Now
+Playing is reached from the navigation bar's Now Playing button, as before
+iOS 27. The MiniPlayer offers only play/pause and skip, with none of
+Overplay's custom buttons (owner request, 2026-10-24).
+
 CarPlay does not provide a separate skip-history browser. Now Playing metadata
 and artwork come from the `ApplicationMusicPlayer` host. Custom buttons are
 enabled only when the current entry is attributed (`PLAY-012`). A shared
