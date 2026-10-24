@@ -74,6 +74,15 @@ enum TrackLocationService {
         if !preserveForMerge { try TrackRetentionPolicy.deleteIfUnowned(item, in: context) }
     }
 
+    /// Startup's and each import's location repairs, in order: memberships
+    /// left by merges join their surviving tracks with their history events
+    /// (`LOC-002`), then the newest history events re-apply what stale writes
+    /// overwrote (`LOC-001`), those included.
+    static func repairLocations(in context: ModelContext) throws -> (mergeLeftovers: Int, retirements: Int) {
+        let mergeLeftovers = try PlaylistItemRepository.repairMergeLeftovers(in: context)
+        return (mergeLeftovers, try repairRetirementState(in: context))
+    }
+
     /// CloudKit keeps whichever device saved a whole row last, so a device
     /// that has not yet imported a retirement or restore can write the row
     /// back (`LOC-001`). History events are separate append-only records and

@@ -60,6 +60,33 @@ struct VideoTrackPolicyTests {
         #expect(try await VideoTrackCleanupService.removeVideos(in: context, defaults: defaults.defaults) == 1)
     }
 
+    /// A song merged into a video went with it: a membership or history event
+    /// of that song would otherwise wait for a survivor that is gone
+    /// (`LOC-002`). One that another merge kept stays.
+    @Test("Cleanup removes rows of tracks a video absorbed, unless another merge kept them")
+    func cleanupRemovesRowsOfAbsorbedTracks() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let video = TrackRecord(libraryID: "i.video", title: "Video", artistName: "Artist")
+        video.confirmedAliases = [.catalog("video")]
+        let song = TrackRecord(catalogID: "song", title: "Song", artistName: "Artist")
+        context.insert(video)
+        context.insert(song)
+        let absorbed = UUID()
+        let alsoKept = UUID()
+        try ListenLedger.recordLineage(keeper: video.id, donor: absorbed, in: context)
+        try ListenLedger.recordLineage(keeper: video.id, donor: alsoKept, in: context)
+        try ListenLedger.recordLineage(keeper: song.id, donor: alsoKept, in: context)
+        context.insert(PlaylistItemRecord(playlistID: UUID(), trackID: absorbed))
+        context.insert(HistoryEvent(trackID: absorbed, eventType: .trackAdded, source: .user))
+        context.insert(PlaylistItemRecord(playlistID: UUID(), trackID: alsoKept))
+        try context.save()
+
+        #expect(try await VideoTrackCleanupService.removeVideos(knownVideoIDs: ["video"], in: context) == 1)
+        #expect(try PlaylistItemRepository.allItems(in: context).map(\.trackID) == [alsoKept])
+        #expect(try context.fetch(FetchDescriptor<HistoryEvent>()).isEmpty)
+    }
+
     @Test("Remote video identities remove legacy rows without playback data, including aliases")
     func cleanupUsingRemoteEvidence() async throws {
         let container = try OverplayTestSupport.makeModelContainer()

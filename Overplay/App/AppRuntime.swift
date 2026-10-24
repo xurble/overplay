@@ -76,9 +76,14 @@ final class AppRuntime {
 
     /// An import can carry another device's stale row over a newer local
     /// retirement or restore; the history events put it back (`LOC-001`).
+    /// A membership of a track a merge absorbed joins its survivor (`LOC-002`).
     func repairTrackLocations(in context: ModelContext) {
         do {
-            guard try TrackLocationService.repairRetirementState(in: context) > 0 else { return }
+            let repaired = try TrackLocationService.repairLocations(in: context)
+            if repaired.mergeLeftovers > 0 {
+                StartupProfiler.mark("Moved \(repaired.mergeLeftovers) memberships left by merges to their surviving tracks")
+            }
+            guard repaired.mergeLeftovers + repaired.retirements > 0 else { return }
             try context.save()
             playbackController.reconcileTrackMembership(context: context)
         } catch {

@@ -76,6 +76,96 @@ struct LibraryRestorationTests {
         #expect(try container.mainContext.fetchCount(FetchDescriptor<OverplaySettings>()) == 1)
     }
 
+    /// 2026-10-23: a membership written again by another device after a
+    /// merge deleted its track kept every launch waiting for that track.
+    @Test func aMembershipLeftByAMergeDoesNotKeepRestorationWaiting() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        _ = try seed(context)
+        let playlist = try #require(try context.fetch(FetchDescriptor<PlaylistRecord>()).first)
+        let keeper = TrackRecord(libraryID: "i.keeper", title: "Song", artistName: "Artist")
+        context.insert(keeper)
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: keeper.id))
+        let mergedAway = UUID()
+        let leftover = PlaylistItemRecord(playlistID: playlist.id, trackID: mergedAway)
+        context.insert(leftover)
+        try context.save()
+        // Without a merge record it may still be arriving: keep waiting.
+        #expect(try LibraryRestorationService.restoredSettings(in: context) == nil)
+
+        try ListenLedger.recordLineage(keeper: keeper.id, donor: mergedAway, in: context)
+        try context.save()
+        #expect(try LibraryRestorationService.restoredSettings(in: context) != nil)
+
+        // Startup's repair folds it into the keeper's membership, and leaves
+        // a membership still arriving alone (`LOC-002`).
+        let stillArriving = PlaylistItemRecord(playlistID: playlist.id, trackID: UUID())
+        context.insert(stillArriving)
+        #expect(try PlaylistItemRepository.repairMergeLeftovers(in: context) == 1)
+        try context.save()
+        let remaining = try PlaylistItemRepository.allItems(in: context).map(\.trackID)
+        #expect(remaining.count == 2)
+        #expect(Set(remaining) == [keeper.id, stillArriving.trackID])
+    }
+
+    /// The survivor must be here too: otherwise the song may have no
+    /// membership until it arrives (`LOC-002`).
+    @Test func aMembershipLeftByAMergeWaitsForItsSurvivor() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        _ = try seed(context)
+        let playlist = try #require(try context.fetch(FetchDescriptor<PlaylistRecord>()).first)
+        let mergedAway = UUID()
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: mergedAway))
+        let survivor = TrackRecord(libraryID: "i.survivor", title: "Song", artistName: "Artist")
+        try ListenLedger.recordLineage(keeper: survivor.id, donor: mergedAway, in: context)
+        try context.save()
+        #expect(try LibraryRestorationService.restoredSettings(in: context) == nil)
+
+        context.insert(survivor)
+        try context.save()
+        #expect(try LibraryRestorationService.restoredSettings(in: context) != nil)
+    }
+
+    /// Only the leftover's track is excused: a playlist it names that has not
+    /// arrived is still waited for.
+    @Test func aMembershipLeftByAMergeStillWaitsForItsPlaylist() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        _ = try seed(context)
+        let keeper = TrackRecord(libraryID: "i.keeper", title: "Song", artistName: "Artist")
+        context.insert(keeper)
+        let mergedAway = UUID()
+        context.insert(PlaylistItemRecord(playlistID: UUID(), trackID: mergedAway))
+        try ListenLedger.recordLineage(keeper: keeper.id, donor: mergedAway, in: context)
+        try context.save()
+
+        #expect(try LibraryRestorationService.restoredSettings(in: context) == nil)
+    }
+
+    /// Only a membership whose track is missing is excused: one of a donor
+    /// track that exists again is still checked.
+    @Test func aMergedAwayTrackThatExistsIsStillChecked() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        _ = try seed(context)
+        let playlist = try #require(try context.fetch(FetchDescriptor<PlaylistRecord>()).first)
+        let keeper = TrackRecord(libraryID: "i.keeper", title: "Song", artistName: "Artist")
+        let donor = TrackRecord(libraryID: "i.donor", title: "Song", artistName: "Artist")
+        context.insert(keeper)
+        context.insert(donor)
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: keeper.id))
+        let mergedAway = UUID()
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: mergedAway))
+        // Its playlist has not arrived yet.
+        context.insert(PlaylistItemRecord(playlistID: UUID(), trackID: donor.id))
+        try ListenLedger.recordLineage(keeper: keeper.id, donor: mergedAway, in: context)
+        try ListenLedger.recordLineage(keeper: keeper.id, donor: donor.id, in: context)
+        try context.save()
+
+        #expect(try LibraryRestorationService.restoredSettings(in: context) == nil)
+    }
+
     @Test func successfulRestorationAllowsOfflineRestartButNotANewStore() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         _ = try seed(container.mainContext)

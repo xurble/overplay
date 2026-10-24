@@ -50,6 +50,9 @@ enum VideoTrackCleanupService {
         guard !videos.isEmpty else { return 0 }
         let trackIDs = Set(videos.map(\.id))
         let localIDs = Set(trackIDs.map(\.uuidString))
+        var absorbed: Set<UUID> = []
+        for video in videos { absorbed.formUnion(try ListenLedger.identities(for: video.id, in: context)) }
+        absorbed.subtract(trackIDs)
         // UUID references are not SwiftData relationships, so remove dependents explicitly.
         for item in try PlaylistItemRepository.allItems(in: context) where trackIDs.contains(item.trackID) {
             context.delete(item)
@@ -59,11 +62,34 @@ enum VideoTrackCleanupService {
         }
         for video in videos { context.delete(video) }
         try context.save()
+        try removeRowsOfAbsorbedTracks(absorbed, in: context)
 
         if let waypoint = PlaybackWaypointStore.load(from: defaults), localIDs.contains(waypoint.localTrackID) {
             PlaybackWaypointStore.clear(from: defaults, flushImmediately: true)
         }
         return videos.count
+    }
+
+    /// Tracks a removed video had absorbed by merging went with it. A
+    /// membership or history event of one, left over or written again,
+    /// would wait for a survivor that is gone (`LOC-002`), so it goes too,
+    /// unless another merge kept that track.
+    private static func removeRowsOfAbsorbedTracks(_ absorbed: Set<UUID>, in context: ModelContext) throws {
+        var orphaned: Set<UUID> = []
+        for trackID in absorbed
+        where try TrackRecordRepository.track(id: trackID, in: context) == nil
+            && ListenLedger.keeper(absorbing: trackID, in: context) == nil {
+            orphaned.insert(trackID)
+        }
+        guard !orphaned.isEmpty else { return }
+        for item in try PlaylistItemRepository.items(forTrackIDs: Array(orphaned), in: context) {
+            context.delete(item)
+        }
+        let eventTrackIDs: [UUID?] = Array(orphaned)
+        for event in try context.fetch(FetchDescriptor<HistoryEvent>(predicate: #Predicate { eventTrackIDs.contains($0.trackID) })) {
+            context.delete(event)
+        }
+        try context.save()
     }
 
     nonisolated private static func videoTrackIDs(among trackIDs: [UUID]) -> Set<UUID> {

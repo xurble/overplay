@@ -81,6 +81,7 @@ Music's global play count or skip count.
 | `PLAYLIST-010` | Ordinary sync skips a song no lookup can identify: the rest syncs; the skipped row is untouched; absence-dependent steps are skipped; the playlist keeps an error and retries. More than a fifth unidentifiable, or any in a copy, still stops the fetch. | `Overplay/Services/AppleMusicPlaylistSourceSync.swift`, `OverplayTests/MusicLibraryIdentityImportTests.swift` |
 | `PLAYLIST-011` | The retention rule is re-applied by a sweep at startup and after each background sync cycle, to retired rows and deferred deletions only, with every deletion recorded in history. | `Overplay/Persistence/TrackRetentionPolicy.swift`, `OverplayTests/SyncCleanupTests.swift` |
 | `LOC-001` | A retirement or restore survives another device's stale CloudKit write. After each import and at startup, a song's newest `evicted`/`restored` history event re-applies its decision when it is newer than the row's `locationChangedAt`; promotions are left to the next One True Playlist sync. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/TrackLocationRepairTests.swift` |
+| `LOC-002` | A membership of a track a merge absorbed and deleted (delivered after the merge, or written again by a device that had not heard of it) joins the surviving track. After each import and at startup, before `LOC-001`, it is moved to the track that survives the merge, following chained merges through lineage events; the one-row-per-track collapse then keeps the newer location decision with its playlist. History events for the deleted track move too, with or without a membership, so `LOC-001` re-applies a decision only they carry. A track merged into two (two devices at once) joins the nearer survivor that is here, then the earlier merge, so every device chooses the same one. Nothing is deleted: a leftover whose survivor is not here waits for a later import. Restoration does not wait for a merged-away track once its survivor is here; the leftover's playlist and sources are still checked. Video cleanup also removes memberships and history events of tracks a removed video had absorbed, unless another merge kept them. | `Overplay/Persistence/PlaylistItemRepository.swift`, `Overplay/Services/TrackLocationService.swift`, `OverplayTests/MergeLeftoverRepairTests.swift` |
 | `PLAYLIST-006` | Pre-bucket Inbox data migrates onto the bucket at startup. The migration is idempotent and keyed on the stored legacy role value, not a local flag. | `Overplay/Persistence/TriageBucketMigrationService.swift`, `OverplayTests/TriageBucketTests.swift` |
 | `PLAYLIST-002` | The One True Playlist is always one Overplay created, empty or as a copy of an existing playlist, because MusicKit lets an app edit only playlists it created. It is made in setup (`SETUP-001`), or from the dashboard when a library has none; an existing playlist cannot be chosen or swapped in. Changed 2026-10-23: choosing an existing playlist, linking one as incoming-only, Make Main and Sync All were removed with the playlist selection screen. | `Overplay/Views/OneTruePlaylistCreationView.swift`, `Overplay/Services/PlaylistSyncService.swift` |
 | `SETUP-001` | A new library starts in setup: swipeable cards introduce the features, then the One True Playlist card needs a choice (a new managed "Overplay" playlist, empty or copied from an existing playlist, which is unchanged) and the Inbox card needs one (sources, with TikTok and Shazam playlists suggested, or Add Sources Later). Swiping cannot pass an undecided card. The library is created by the first choice or by finishing; finishing syncs the chosen sources. Choices are read back from the store, so a rebuilt setup screen never makes a second playlist; no CarPlay, Siri, import or readiness retry opens a library while setup shows; a library that arrives from iCloud ends setup and is restored, never replaced. | `Overplay/ViewModels/SetupViewModel.swift`, `Overplay/Views/Setup/`, `OverplayTests/SetupViewModelTests.swift` |
@@ -2784,6 +2785,12 @@ The following are not requirements of the current product:
   are now shared failures (`PLAY-014`): Play runs recovery, and a stuck player
   advises force-quitting. The cause is open ([GitHub #90](https://github.com/xurble/overplay/issues/90),
   `PLAYBACK_RELIABILITY_FINDINGS.md`). No Feedback report has been filed yet.
+- **A merge leftover whose survivor was a removed video (`LOC-002`).** Video
+  cleanup removes the rows of tracks the video had absorbed that are on the
+  device at the time. One delivered later, after the video is gone, names a
+  survivor that never arrives, so restoration on a new device waits for it.
+  Only legacy video data can cause this; telling it apart from a survivor
+  still arriving would need a record of the removal.
 - **iOS 27 CarPlay Now Playing (unverified).** A developer report (Apple
   forum thread 847151) says CarPlay's `CPNowPlayingTemplate` on iOS 27 reads
   only the app's own Now Playing client and does not follow
@@ -3155,7 +3162,13 @@ On an unrecognised local store, require a successful import event for that
 store and a usable configuration: exactly one settings record, its selected
 Overplay playlist, an Inbox, and valid track/playlist references for
 all memberships currently delivered. Do not repair incomplete references or
-choose arbitrarily between competing settings records. A cloud rebuild receipt
+choose arbitrarily between competing settings records. One exception: a
+membership whose track is missing and named as a donor by a merge lineage
+event does not wait for that track, which is gone for good, once the track
+that survived the merge is here; the location repair then moves it to that
+track (`LOC-002`). On
+2026-10-23 such a membership, written again by another device after the
+merge, kept every launch waiting. A cloud rebuild receipt
 alone does not establish device readiness. CloudKit delivers records
 incrementally; this gate establishes configuration and referential readiness,
 not an atomic snapshot of every cloud record. Later records can still arrive.
