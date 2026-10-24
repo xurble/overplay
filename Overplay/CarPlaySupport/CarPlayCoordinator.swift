@@ -692,11 +692,6 @@ final class CarPlayCoordinator: NSObject {
         nowPlayingTemplate.add(self)
         nowPlayingTemplate.isUpNextButtonEnabled = true
         nowPlayingTemplate.isAlbumArtistButtonEnabled = false
-        // iOS 27's MiniPlayer offers only play/pause and skip; the navigation
-        // bar's Now Playing button opens the full player, with curation.
-        if #available(iOS 27.0, *) {
-            nowPlayingTemplate.allowsMiniPlayer = false
-        }
         updateNowPlayingButtons()
         updateAlbumArtistButton()
     }
