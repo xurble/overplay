@@ -127,6 +127,22 @@ struct LibraryRestorationTests {
         #expect(try LibraryRestorationService.restoredSettings(in: context) != nil)
     }
 
+    /// Only the leftover's track is excused: a playlist it names that has not
+    /// arrived is still waited for.
+    @Test func aMembershipLeftByAMergeStillWaitsForItsPlaylist() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        _ = try seed(context)
+        let keeper = TrackRecord(libraryID: "i.keeper", title: "Song", artistName: "Artist")
+        context.insert(keeper)
+        let mergedAway = UUID()
+        context.insert(PlaylistItemRecord(playlistID: UUID(), trackID: mergedAway))
+        try ListenLedger.recordLineage(keeper: keeper.id, donor: mergedAway, in: context)
+        try context.save()
+
+        #expect(try LibraryRestorationService.restoredSettings(in: context) == nil)
+    }
+
     /// Only a membership whose track is missing is excused: one of a donor
     /// track that exists again is still checked.
     @Test func aMergedAwayTrackThatExistsIsStillChecked() throws {

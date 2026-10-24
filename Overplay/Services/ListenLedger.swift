@@ -315,7 +315,7 @@ enum ListenLedger {
 
     /// The track plus everything it absorbed, transitively, from both the
     /// track's lineage list and immutable lineage events.
-    private static func identities(for trackID: UUID, in context: ModelContext) throws -> Set<UUID> {
+    static func identities(for trackID: UUID, in context: ModelContext) throws -> Set<UUID> {
         let lineage = ListenEventKind.lineage.rawValue
         var result: Set<UUID> = [trackID]
         var pending: [UUID] = [trackID]

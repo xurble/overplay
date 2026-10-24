@@ -212,6 +212,44 @@ struct MergeLeftoverRepairTests {
         #expect(try items(f).map(\.trackID) == [second.id])
     }
 
+    /// A survivor reached in one merge is preferred to one reached through a
+    /// chain, even when the chain began with an earlier merge.
+    @Test func theNearerSurvivorWinsOverAnEarlierChain() throws {
+        let f = try fixture()
+        let near = track("i.near", in: f.context)
+        let deep = track("i.deep", in: f.context)
+        let middle = UUID()
+        let donorID = UUID()
+        try ListenLedger.recordLineage(keeper: middle, donor: donorID, in: f.context)
+        try ListenLedger.recordLineage(keeper: deep.id, donor: middle, in: f.context)
+        try ListenLedger.recordLineage(keeper: near.id, donor: donorID, in: f.context)
+        let lineage = ListenEventKind.lineage.rawValue
+        for event in try f.context.fetch(FetchDescriptor<ListenEvent>(predicate: #Predicate { $0.kindRawValue == lineage })) {
+            event.occurredAt = event.trackID == near.id ? Date(timeIntervalSince1970: 300) : Date(timeIntervalSince1970: 100)
+        }
+        try f.context.save()
+
+        #expect(try ListenLedger.keeper(absorbing: donorID, in: f.context) == near.id)
+    }
+
+    /// Merges recorded at the same moment are told apart by their record IDs,
+    /// which every device shares.
+    @Test func simultaneousMergesAreSettledByRecordID() throws {
+        let f = try fixture()
+        let first = track("i.first", in: f.context)
+        let second = track("i.second", in: f.context)
+        let donorID = UUID()
+        try ListenLedger.recordLineage(keeper: first.id, donor: donorID, in: f.context)
+        try ListenLedger.recordLineage(keeper: second.id, donor: donorID, in: f.context)
+        let lineage = ListenEventKind.lineage.rawValue
+        let events = try f.context.fetch(FetchDescriptor<ListenEvent>(predicate: #Predicate { $0.kindRawValue == lineage }))
+        for event in events { event.occurredAt = Date(timeIntervalSince1970: 100) }
+        try f.context.save()
+
+        let expected = try #require(events.min { $0.id.uuidString < $1.id.uuidString }).trackID
+        #expect(try ListenLedger.keeper(absorbing: donorID, in: f.context) == expected)
+    }
+
     /// A user merge removes the donor's memberships; one written again by a
     /// device that had not heard of it joins the merged song.
     @Test func aMembershipWrittenAgainAfterAUserMergeJoinsTheMergedSong() throws {

@@ -63,20 +63,22 @@ final class LibraryRestorationService {
         let tracks = Set(try context.fetch(FetchDescriptor<TrackRecord>()).map(\.id))
         let playlistIDs = Set(playlists.map(\.id))
         let sourceIDs = Set(playlists.map(\.musicPlaylistID))
-        var items = try context.fetch(FetchDescriptor<PlaylistItemRecord>())
+        let items = try context.fetch(FetchDescriptor<PlaylistItemRecord>())
         // A membership whose track a merge absorbed is left over, not still
-        // arriving: waiting for that track would wait forever. Its survivor
-        // must be here, though, or the song may have no membership yet
-        // (`LOC-002`).
-        if items.contains(where: { !tracks.contains($0.trackID) }) {
+        // arriving: waiting for that track would wait forever. Only its track
+        // is excused, and only once its survivor is here, or the song may
+        // have no membership yet (`LOC-002`).
+        var excusedTrackIDs: Set<UUID> = []
+        let missing = Set(items.map(\.trackID)).subtracting(tracks)
+        if !missing.isEmpty {
             let mergedAway = try PlaylistItemRepository.mergedAwayTrackIDs(in: context)
-            try items.removeAll { item in
-                guard !tracks.contains(item.trackID), mergedAway.contains(item.trackID) else { return false }
-                return try ListenLedger.keeper(absorbing: item.trackID, in: context) != nil
+            for trackID in missing.intersection(mergedAway)
+            where try ListenLedger.keeper(absorbing: trackID, in: context) != nil {
+                excusedTrackIDs.insert(trackID)
             }
         }
         guard items.allSatisfy({
-            tracks.contains($0.trackID) && playlistIDs.contains($0.playlistID)
+            (tracks.contains($0.trackID) || excusedTrackIDs.contains($0.trackID)) && playlistIDs.contains($0.playlistID)
                 && Set($0.sourceMusicPlaylistIDs).isSubset(of: sourceIDs)
         }) else { return nil }
         return settings
