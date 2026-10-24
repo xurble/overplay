@@ -843,7 +843,7 @@ final class CarPlayCoordinator: NSObject {
             interfaceController?.dismissTemplate(animated: true, completion: nil)
         }
         let template = CPAlertTemplate(
-            titleVariants: [failure.message, failure.offersRetry ? "Playback problem" : "Force-quit Overplay"],
+            titleVariants: [failure.message, failure.offersRetry ? "Playback problem" : "Turn mobile data off and on"],
             actions: failure.offersRetry ? [retry, dismiss] : [dismiss]
         )
         failureAlert = template

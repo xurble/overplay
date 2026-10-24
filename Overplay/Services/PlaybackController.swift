@@ -193,7 +193,17 @@ final class PlaybackController {
     /// A session continuing across a resubmission of the same track.
     @ObservationIgnored private var pendingCarriedSession: ObservedSession?
     /// Bumped by every start or selection; a slower, older start yields.
-    @ObservationIgnored private var startGeneration = 0
+    /// Each is also a wish to play.
+    @ObservationIgnored private var startGeneration = 0 {
+        didSet { playWantedAt = .now }
+    }
+    /// When playback was last wanted: a Play or start from Overplay, or the
+    /// player reporting `playing`. Overplay's own Pause clears it. Only then
+    /// may the network's return recover playback (`PLAY-014`).
+    @ObservationIgnored private var playWantedAt: Date?
+    @ObservationIgnored private var isRecoveringForNetworkReturn = false
+    /// Gives new connections a moment before recovery calls the player.
+    @ObservationIgnored var networkSettleDelay: Duration = .seconds(2)
     @ObservationIgnored private var samplingGeneration = 0
     /// The last recovery rung that ran, so repeated presses escalate.
     @ObservationIgnored private var recoveryEscalation: (rung: Int, at: Date)?
@@ -946,6 +956,7 @@ final class PlaybackController {
 
     func play(context: ModelContext) async {
         adopt(context)
+        playWantedAt = .now
         // Play takes over from a start still preparing.
         startHold = nil
         if playbackFailure != nil {
@@ -967,6 +978,7 @@ final class PlaybackController {
 
     func pause() {
         playEpisode = nil
+        playWantedAt = nil
         player.pause()
         isPlaying = false
         saveResumePoint(force: true)
@@ -1853,9 +1865,10 @@ final class PlaybackController {
     /// one rung higher than the last, so repeated failures reach rung 3. Each
     /// rung is recorded before Overplay waits on it, so a press while a rung
     /// hangs escalates instead of repeating it (#84). A stuck player gets one
-    /// fresh queue (rung 3) per failure, then no more calls until it answers.
-    private func recover(now: Date = .now) async {
-        if let failure = playbackFailure, failure.kind == .stuck, let stuckSince,
+    /// fresh queue (rung 3) per failure, then no more calls until it answers,
+    /// and one more each time the network returns.
+    private func recover(now: Date = .now, afterNetworkReturn: Bool = false) async {
+        if !afterNetworkReturn, let failure = playbackFailure, failure.kind == .stuck, let stuckSince,
            let escalation = recoveryEscalation, escalation.rung == 3, escalation.at >= stuckSince {
             activityLog.record(.playbackRecoveryAttempt, detail: "user play: player stuck, no call made")
             statusMessage = failure.message
@@ -1872,8 +1885,9 @@ final class PlaybackController {
         if player.currentEntryID == nil { firstRung = 3 }
         if queueNeedsFreshStart { firstRung = 3 }
         firstRung = min(firstRung, 3)
+        let origin = afterNetworkReturn ? "network returned" : "user play"
         activityLog.record(.playbackRecoveryAttempt, magnitude: Double(firstRung),
-                           detail: queueNeedsFreshStart ? "user play: queue never prepared" : "user play")
+                           detail: queueNeedsFreshStart ? "\(origin): queue never prepared" : origin)
         resetStallEvidence()
         // A later press's rung 3 replaces the queue; this press then yields.
         let generation = startGeneration
@@ -1932,6 +1946,31 @@ final class PlaybackController {
         }
     }
 
+    static let networkRecoveryWindow: TimeInterval = 300
+
+    /// The network is back after dropping. On 2026-10-24 turning mobile data
+    /// off and on again brought playback back where force-quitting had been
+    /// the advice: it replaces every connection the system streams on. So
+    /// while a failure is active, and playback was wanted within the window
+    /// with no Pause since, its return runs the recovery a Play press would,
+    /// once per return; a stuck player gets a fresh queue again. The one
+    /// automatic recovery besides the unprepared queue repair (`PLAY-014`).
+    func networkReturned(now: Date = .now) async {
+        guard playbackFailure != nil, context != nil, !isRecoveringForNetworkReturn else { return }
+        guard let playWantedAt, now.timeIntervalSince(playWantedAt) < Self.networkRecoveryWindow else {
+            activityLog.record(.playbackRecoveryAttempt, detail: "network returned: playback not wanted recently, no call made")
+            return
+        }
+        isRecoveringForNetworkReturn = true
+        defer { isRecoveringForNetworkReturn = false }
+        try? await Task.sleep(for: networkSettleDelay)
+        // Recovered, or paused, while the connections settled.
+        guard playbackFailure != nil, self.playWantedAt != nil else { return }
+        startHold = nil
+        await recover(afterNetworkReturn: true)
+        await observePlayer()
+    }
+
     private func recovered(rung: Int, at date: Date) {
         recoveryEscalation = (rung, date)
         resetStallEvidence()
@@ -1979,6 +2018,7 @@ final class PlaybackController {
             return
         }
         if status == .playing {
+            playWantedAt = now
             guard var episode = playEpisode, episode.entryID == entryID else {
                 playEpisode = PlayEpisode(entryID: entryID, since: now, lastPosition: position)
                 return
@@ -2055,11 +2095,11 @@ final class PlaybackController {
     static let didNotStartLowStorageMessage =
         "Apple Music couldn't start this song because storage is almost full. Free up some space, then press Play to try again."
     static let stillNotStartingMessage =
-        "Apple Music still can't start playback. Force-quit Overplay and open it again."
+        "Apple Music still can't start playback. Turn mobile data off and on again, and Overplay will try again when it's back. If that doesn't help, force-quit Overplay."
     static let stillNotStartingLowStorageMessage =
-        "Apple Music still can't start playback, and storage is almost full. Free up some space, or force-quit Overplay and open it again."
+        "Apple Music still can't start playback, and storage is almost full. Free up some space, or turn mobile data off and on again."
     static let stuckMessage =
-        "Overplay has lost its connection to Apple Music. Force-quit Overplay and open it again to keep playing."
+        "Overplay has lost its connection to Apple Music. Turn mobile data off and on again, and Overplay will try again when it's back. If that doesn't help, force-quit Overplay."
 
     static func failureMessage(for error: Error) -> String {
         UserFacingError.message(for: error)

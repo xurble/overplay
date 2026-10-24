@@ -316,6 +316,98 @@ struct StuckPlayerRecoveryTests {
         #expect(fixture.player.commands.count > commandsBefore)
     }
 
+    // MARK: - Network return
+
+    /// 2026-10-24: turning mobile data off and on again brought playback back
+    /// where force-quitting had been the advice.
+    @Test func aStallRecoversWhenTheNetworkReturns() async throws {
+        let (fixture, log) = try fixture(hung: HungPrepares(passing: 2))
+        defer { fixture.cleanUp() }
+        fixture.controller.networkSettleDelay = .zero
+        await start(fixture)
+        await stall(fixture)
+        #expect(fixture.controller.playbackFailure?.kind == .stalled)
+
+        await fixture.controller.networkReturned()
+
+        #expect(fixture.controller.playbackFailure == nil)
+        #expect(fixture.controller.isPlaying)
+        #expect(events(log, .playbackRecoveryAttempt) == ["network returned"])
+        #expect(events(log, .playerCallStarted).contains("prepare recovery rung=2"))
+    }
+
+    @Test func theNetworkReturningDoesNothingWithoutAFailure() async throws {
+        let (fixture, log) = try fixture(hung: HungPrepares(passing: 1))
+        defer { fixture.cleanUp() }
+        fixture.controller.networkSettleDelay = .zero
+        await start(fixture)
+        let commandsBefore = fixture.player.commands
+
+        await fixture.controller.networkReturned()
+
+        #expect(fixture.player.commands == commandsBefore)
+        #expect(events(log, .playbackRecoveryAttempt).isEmpty)
+    }
+
+    @Test func theNetworkReturningAfterPauseDoesNotPlay() async throws {
+        let (fixture, log) = try fixture(hung: HungPrepares(passing: 2))
+        defer { fixture.cleanUp() }
+        fixture.controller.networkSettleDelay = .zero
+        await start(fixture)
+        await stall(fixture)
+        fixture.controller.pause()
+        let commandsBefore = fixture.player.commands
+
+        await fixture.controller.networkReturned()
+
+        #expect(fixture.player.commands == commandsBefore)
+        #expect(fixture.controller.playbackFailure?.kind == .stalled)
+        #expect(events(log, .playbackRecoveryAttempt) == ["network returned: playback not wanted recently, no call made"])
+    }
+
+    @Test func theNetworkReturningLongAfterPlaybackWasWantedDoesNotPlay() async throws {
+        let (fixture, log) = try fixture(hung: HungPrepares(passing: 2))
+        defer { fixture.cleanUp() }
+        fixture.controller.networkSettleDelay = .zero
+        await start(fixture)
+        await stall(fixture)
+        let commandsBefore = fixture.player.commands
+
+        await fixture.controller.networkReturned(now: .now.addingTimeInterval(PlaybackController.networkRecoveryWindow + 1))
+
+        #expect(fixture.player.commands == commandsBefore)
+        #expect(events(log, .playbackRecoveryAttempt) == ["network returned: playback not wanted recently, no call made"])
+    }
+
+    @Test func aStuckPlayerGetsAnotherFreshQueueWhenTheNetworkReturns() async throws {
+        let hung = HungPrepares()
+        let (fixture, log) = try fixture(hung: hung)
+        defer { fixture.cleanUp() }
+        fixture.controller.stuckCallLimit = .milliseconds(50)
+        fixture.controller.startHoldLimit = .milliseconds(50)
+        fixture.controller.networkSettleDelay = .zero
+        let starting = Task { await start(fixture) }
+        try await waitUntil { fixture.controller.playbackFailure?.kind == .stuck }
+        // The press's fresh queue hangs too, so a further press sends nothing.
+        let press = Task { await fixture.controller.play(context: fixture.context) }
+        try await waitUntil { hung.waiting.count == 2 }
+        try await Task.sleep(for: .milliseconds(100))
+        await fixture.controller.play(context: fixture.context)
+        #expect(events(log, .playbackRecoveryAttempt).contains { $0.contains("no call made") })
+
+        // The network's return gives it one more, which plays.
+        hung.passing = 1
+        await fixture.controller.networkReturned()
+
+        #expect(fixture.player.submitCount == 3)
+        #expect(events(log, .playbackRecoveryAttempt).last?.hasPrefix("network returned") == true)
+        #expect(fixture.controller.playbackFailure == nil)
+        #expect(fixture.controller.isPlaying)
+        hung.releaseAll()
+        await press.value
+        await starting.value
+    }
+
     // MARK: - Surfaces
 
     @Test func surfacesAlertAgainOnlyWhenThePlayerBecomesStuck() {

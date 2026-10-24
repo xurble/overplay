@@ -61,6 +61,9 @@ struct OverplayApp: App {
             // device-local intent can be shown, resumed and controlled now.
             AppRuntime.shared.playbackController.restoreIntent()
             AppRuntime.shared.playbackController.startMonitoring()
+            NetworkReachabilityMonitor.shared.onReturn = {
+                Task { await AppRuntime.shared.playbackController.networkReturned() }
+            }
             NetworkReachabilityMonitor.shared.start()
             AudioSessionEventRecorder.shared.start()
         }
