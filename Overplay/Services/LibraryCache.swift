@@ -21,6 +21,10 @@ final class LibraryCache {
     private(set) var failures: [LibraryBrowser.Category: String] = [:]
     private(set) var refreshing: Set<LibraryBrowser.Category> = []
 
+    /// Whether music is playing, and whether a playback failure is active;
+    /// `AppRuntime` connects it to the shared controller.
+    @ObservationIgnored var playbackState: @MainActor () -> (isPlaying: Bool, hasFailure: Bool) = { (false, false) }
+    @ObservationIgnored private var waitingRefreshes: Set<LibraryBrowser.Category> = []
     @ObservationIgnored private var refreshedAt: [LibraryBrowser.Category: Date] = [:]
     @ObservationIgnored private var loadedFromDisk: Set<LibraryBrowser.Category> = []
 
@@ -36,11 +40,20 @@ final class LibraryCache {
         await loadFromDisk(category)
         if !hasContent(category) {
             await refresh(category)
-        } else if Date.now.timeIntervalSince(refreshedAt[category] ?? .distantPast) > Self.staleAfter {
-            // The saved copy shows now. A screen restored at launch waits out
-            // the quiet minute before refreshing it (`LOAD-001`).
+        } else if Date.now.timeIntervalSince(refreshedAt[category] ?? .distantPast) > Self.staleAfter,
+                  waitingRefreshes.insert(category).inserted {
+            // The saved copy shows now. The refresh waits out the launch quiet
+            // minute, then for nothing to be playing (`LOAD-001`).
             Task {
+                defer { waitingRefreshes.remove(category) }
                 try? await Task.sleep(until: BackgroundMusicKitWorkPolicy.launchQuietEnds)
+                while true {
+                    let state = playbackState()
+                    if BackgroundMusicKitWorkPolicy.allowsStaleLibraryRefresh(
+                        isPlaying: state.isPlaying, hasPlaybackFailure: state.hasFailure
+                    ) { break }
+                    try? await Task.sleep(for: BackgroundMusicKitWorkPolicy.staleLibraryRefreshRecheck)
+                }
                 await refresh(category)
             }
         }

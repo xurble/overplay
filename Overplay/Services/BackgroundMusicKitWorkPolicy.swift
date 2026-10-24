@@ -28,6 +28,16 @@ enum BackgroundMusicKitWorkPolicy {
         !isPlaying && !hasPlaybackFailure
     }
 
+    /// A Library list that is merely old waits for a pause: the cached copy
+    /// shows meanwhile. MusicKit reports nothing about how much of a song is
+    /// buffered, so "not playing" is the only safe moment.
+    static func allowsStaleLibraryRefresh(isPlaying: Bool, hasPlaybackFailure: Bool) -> Bool {
+        !isPlaying && !hasPlaybackFailure
+    }
+
+    /// How often a waiting stale refresh looks again.
+    static let staleLibraryRefreshRecheck: Duration = .seconds(30)
+
     static func allowsLibraryDiscovery(lastDiscoveryAt: Date?, now: Date, isPlaying: Bool) -> Bool {
         guard !isPlaying else { return false }
         return lastDiscoveryAt.map { now.timeIntervalSince($0) >= discoveryInterval } ?? true

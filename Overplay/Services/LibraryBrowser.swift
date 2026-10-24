@@ -47,6 +47,8 @@ enum LibraryBrowser {
 
         var id: String { "\(kind.rawValue):\(libraryID)" }
         var artworkURL: String? { artwork?.url(width: 512, height: 512)?.absoluteString }
+        /// A row's thumbnail: a tenth of the download, as the phone's rows use.
+        var rowArtworkURL: String? { artwork?.url(width: 160, height: 160)?.absoluteString }
         var kindName: String { kind.rawValue }
 
         var collection: PlaybackCollection {

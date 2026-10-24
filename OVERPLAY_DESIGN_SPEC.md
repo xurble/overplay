@@ -1345,12 +1345,17 @@ in CarPlay without Songs.
 - **CarPlay:** a section headed "Library" under Recent Deep Dives lists
   Playlists, Artists and Albums (owner request, 2026-10-24); Songs is left
   out. A category lists its items from the same cache, up to CarPlay's list
-  limit. An item opens its songs with Shuffle and Play at the top, as a
-  Recent Deep Dive does, and plays through the same shared Library action
-  as the phone.
+  limit, with thumbnail artwork as the phone's rows use. An item opens at
+  once, as on the phone, showing "Loading…" until its songs arrive, then
+  its songs with Shuffle and Play at the top, as a Recent Deep Dive does.
+  It plays through the same shared Library action as the phone.
 - **Cache:** lists are cached per device in the caches folder and never
-  synced. A list opens at once from the cache, refreshes in the background
-  once it is 30 minutes old, and fills once the launch quiet minute is over. Library
+  synced. A list opens at once from the cache, and fills once the launch
+  quiet minute is over. Once it is 30 minutes old it refreshes in the
+  background, but only while nothing is playing and no playback failure is
+  active (`LOAD-001`): MusicKit reports nothing about how much of a song is
+  buffered, so a pause is the only safe moment. Meanwhile the old copy
+  shows. Library
   artwork shares Overplay's artwork cache and is evicted first under pressure.
 
 ## Play/Skip History

@@ -180,6 +180,7 @@ final class CarPlayCoordinator: NSObject {
         recentsTemplate = nil
         visibleRecentTemplate = nil
         visibleRecentID = nil
+        clearLibraryLists()
         lastNowPlayingButtonSignature = nil
         lastNowPlayingContext = nil
         displayedActions = []
@@ -197,6 +198,7 @@ final class CarPlayCoordinator: NSObject {
         recentsTemplate = nil
         visibleRecentTemplate = nil
         visibleRecentID = nil
+        clearLibraryLists()
         rootRenderer.stop()
         rootRenderer = CarPlayListRenderer()
         let template = CPListTemplate(title: "Overplay", sections: [])
@@ -363,7 +365,7 @@ final class CarPlayCoordinator: NSObject {
                 isPlaying: playbackController.currentTrack != nil
                     && playbackController.playingCollectionGroupKey == item.collection.groupKey,
                 disclosure: true,
-                artwork: .track(url: item.artworkURL, playlistID: ArtworkCacheService.libraryPlaylistID))
+                artwork: .track(url: item.rowArtworkURL, playlistID: ArtworkCacheService.libraryPlaylistID))
         }
         let message: String = if let failure = cache.failures[category] {
             "Couldn't load your \(category.rawValue.lowercased()): \(failure)"
@@ -376,8 +378,9 @@ final class CarPlayCoordinator: NSObject {
             ? [Row(id: "empty", title: message, isEnabled: false)] : rows)]), on: template, actions: actions)
     }
 
-    /// Loads the songs first, so the list opens filled; the tapped row shows
-    /// CarPlay's spinner meanwhile.
+    /// Opens at once, as on the phone, and fills when the songs arrive: a
+    /// slow load must never push the list later over whatever the driver
+    /// has moved on to.
     private func showLibraryItem(_ item: LibraryBrowser.Item) async {
         guard runtime?.libraryRestoration.isReady == true else { return }
         libraryItemRenderer.stop()
@@ -387,17 +390,34 @@ final class CarPlayCoordinator: NSObject {
         visibleLibraryItem = item
         visibleLibraryEntries = []
         libraryItemPlaceholder = "Loading…"
-        do {
-            let entries = try await LibraryBrowser.songs(in: item)
-            guard libraryItemTemplate === template else { return }
-            visibleLibraryEntries = entries
-            libraryItemPlaceholder = entries.isEmpty ? "No songs Overplay can play." : nil
-        } catch {
-            guard libraryItemTemplate === template else { return }
-            libraryItemPlaceholder = "Couldn't load the songs: \(UserFacingError.message(for: error))"
-        }
         updateLibraryItemList(template)
+        Task { [weak self, weak template] in
+            var entries: [LibraryBrowser.Entry] = []
+            var placeholder: String?
+            do {
+                entries = try await LibraryBrowser.songs(in: item)
+                placeholder = entries.isEmpty ? "No songs Overplay can play." : nil
+            } catch {
+                placeholder = "Couldn't load the songs: \(UserFacingError.message(for: error))"
+            }
+            guard let self, let template, self.libraryItemTemplate === template else { return }
+            self.visibleLibraryEntries = entries
+            self.libraryItemPlaceholder = placeholder
+            self.updateLibraryItemList(template)
+        }
         await pushList(template, renderer: libraryItemRenderer) { [weak self] in self?.libraryItemTemplate === template }
+    }
+
+    /// The Library lists go with the template stack (a disconnect or a new root).
+    private func clearLibraryLists() {
+        libraryCategoryRenderer.stop()
+        libraryItemRenderer.stop()
+        libraryCategoryTemplate = nil
+        visibleLibraryCategory = nil
+        libraryItemTemplate = nil
+        visibleLibraryItem = nil
+        visibleLibraryEntries = []
+        libraryItemPlaceholder = nil
     }
 
     /// Shuffle and Play, then the songs, like a Recent Deep Dive.
