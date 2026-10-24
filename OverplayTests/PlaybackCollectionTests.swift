@@ -331,6 +331,35 @@ struct PlaybackCollectionTests {
         #expect(try fixture.context.fetch(FetchDescriptor<RecentCollectionRecord>()).isEmpty)
     }
 
+    /// The shared Library action every surface calls (`LIB-001`): the songs
+    /// as a deep dive, from the tapped song, never added to Recents.
+    @Test func libraryPlayStartsAtTheSongAndSkipsRecents() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        _ = try catalog(for: fixture)
+        let item = LibraryBrowser.Item(kind: .album, libraryID: "l.album", title: "Library Album")
+        let entries = try ["alb-1", "alb-2"].enumerated().map { index, id in
+            LibraryBrowser.Entry(song: Self.song(id, "Album Song \(index + 1)"), track: .song(try Self.catalogSong(id, "Album Song \(index + 1)")))
+        }
+
+        let started = await LibraryBrowser.play(item, entries: entries, startingAt: "alb-2",
+                                                controller: fixture.controller, context: fixture.context)
+
+        #expect(started)
+        #expect(fixture.controller.currentTrack?.title == "Album Song 2")
+        let intent = try #require(fixture.intentStore.loadIntent())
+        #expect(intent.collection?.kind == .libraryAlbum)
+        #expect(intent.collection?.groupKey == item.collection.groupKey)
+        #expect(try fixture.context.fetch(FetchDescriptor<RecentCollectionRecord>()).isEmpty)
+    }
+
+    private static func catalogSong(_ id: String, _ title: String) throws -> Song {
+        try JSONDecoder().decode(Song.self, from: JSONSerialization.data(withJSONObject: [
+            "id": id, "type": "songs",
+            "attributes": ["name": title, "artistName": "Artist 0", "albumName": "Album", "genreNames": []]
+        ]))
+    }
+
     @Test func failedOneTruePlaylistAddAddsNothing() async throws {
         let fixture = try PlaybackFixture()
         defer { fixture.cleanUp() }
