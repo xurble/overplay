@@ -3,7 +3,8 @@ import Network
 
 /// Process-wide network path observer. It records each change of path in the
 /// activity log, so a stall can be read against the network it happened on
-/// (#84). It never gates or retries playback.
+/// (#84). It never gates playback; its return after a drop is offered to
+/// playback recovery (`PLAY-014`).
 @MainActor
 final class NetworkReachabilityMonitor {
     static let shared = NetworkReachabilityMonitor()
@@ -11,6 +12,8 @@ final class NetworkReachabilityMonitor {
     private let monitor = NWPathMonitor()
     private(set) var isReachable = true
     private(set) var lastDescription: String?
+    /// Called when the path is satisfied again after it was not.
+    var onReturn: (@MainActor () -> Void)?
 
     private init() {
         monitor.pathUpdateHandler = { [weak self] path in
@@ -18,7 +21,9 @@ final class NetworkReachabilityMonitor {
             let description = Self.describe(path)
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                let returned = !self.isReachable && isReachable
                 self.isReachable = isReachable
+                if returned { self.onReturn?() }
                 guard description != self.lastDescription else { return }
                 self.lastDescription = description
                 MusicKitActivityLog.shared.record(.networkPathChanged, detail: description)

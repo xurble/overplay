@@ -15,7 +15,7 @@ enum SysdiagnoseReminder {
     static let buttonTitle = "Take a Sysdiagnose First"
     static let title = "Take a Sysdiagnose"
     static let explanation =
-        "A sysdiagnose shows what Overplay is stuck waiting on. Take it before you force-quit: relaunching clears what it would show."
+        "A sysdiagnose shows what Overplay is stuck waiting on. Take it before you turn mobile data off and on or force-quit: either can clear what it would show."
 
     /// Only a stuck player is shown the reminder: a relaunch clears the state
     /// the sysdiagnose would capture.
@@ -34,14 +34,14 @@ enum SysdiagnoseReminder {
             let button = device == .pad ? "top" : "side"
             return [
                 "Press both volume buttons and the \(button) button together for about a second. Holding longer opens the power-off screen.",
-                "Wait a minute, then force-quit Overplay and open it again.",
+                "Wait a minute, then turn mobile data off and on again. If Overplay still doesn't play, force-quit it and open it again.",
                 "About 10 minutes later the sysdiagnose is in Settings → Privacy & Security → Analytics & Improvements → Analytics Data.",
                 "Share it with Overplay's activity log from Settings → Apple Music Call Activity.",
             ]
         case .mac:
             return [
                 "Press Shift-Control-Option-Command-Period. The screen flashes.",
-                "Wait a minute, then force-quit Overplay with Option-Command-Escape and open it again.",
+                "Wait a minute, then turn Wi-Fi off and on again. If Overplay still doesn't play, force-quit it with Option-Command-Escape and open it again.",
                 "A few minutes later Finder opens the sysdiagnose in /private/var/tmp.",
                 "Share it with Overplay's activity log from Settings → Apple Music Call Activity.",
             ]

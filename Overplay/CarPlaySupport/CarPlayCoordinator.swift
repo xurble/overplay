@@ -98,6 +98,8 @@ final class CarPlayCoordinator: NSObject {
     /// The failure kind last alerted in this episode; nil when none is active.
     private var alertedFailureKind: PlaybackFailure.Kind?
     private weak var failureAlert: CPAlertTemplate?
+    /// Shows the failure alert once its grace period ends.
+    private var failureAlertCheck: Task<Void, Never>?
     private var libraryChangeObserver: NSObjectProtocol?
     // Shuffle and repeat are player modes; they work before the library is restored.
     private lazy var shuffleButton = CPNowPlayingShuffleButton { [weak self] _ in
@@ -786,19 +788,39 @@ final class CarPlayCoordinator: NSObject {
 
     /// The shared playback failure (`PLAY-014`), once per episode, and again,
     /// replacing the earlier alert, when the player becomes stuck or answers
-    /// again (#84). "Try Again" runs the same user-initiated recovery as Play
-    /// on every other surface; a stuck player is not offered it.
+    /// again (#84). It waits out a grace period, and goes once the failure
+    /// clears. "Try Again" runs the same user-initiated recovery as Play on
+    /// every other surface; a stuck player is not offered it.
     private func presentDeliveryStallAlertIfNeeded() {
         guard let playbackController else { return }
-        guard let failure = playbackController.playbackFailure else {
-            alertedFailureKind = nil
+        failureAlertCheck?.cancel()
+        let failure = playbackController.playbackFailure
+        if failure == nil { alertedFailureKind = nil }
+        guard let interfaceController else { return }
+        let presented = interfaceController.presentedTemplate
+        switch CarPlayFailureAlert.decide(
+            failure: failure,
+            alerted: alertedFailureKind,
+            isShowingFailureAlert: presented != nil && presented === failureAlert,
+            now: .now
+        ) {
+        case .none:
             return
-        }
-        guard PlaybackFailure.needsAlert(failure.kind, alerted: alertedFailureKind),
-              let interfaceController else {
+        case .dismiss:
+            interfaceController.dismissTemplate(animated: true, completion: nil)
             return
+        case .wait(let due):
+            failureAlertCheck = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(max(0, due.timeIntervalSinceNow)))
+                guard !Task.isCancelled else { return }
+                self?.presentDeliveryStallAlertIfNeeded()
+            }
+            return
+        case .present:
+            break
         }
-        if let presented = interfaceController.presentedTemplate {
+        guard let failure else { return }
+        if let presented {
             // Only the earlier failure alert is replaced; anything else stays.
             guard presented === failureAlert else { return }
             interfaceController.dismissTemplate(animated: false) { [weak self] _, _ in
@@ -821,7 +843,7 @@ final class CarPlayCoordinator: NSObject {
             interfaceController?.dismissTemplate(animated: true, completion: nil)
         }
         let template = CPAlertTemplate(
-            titleVariants: [failure.message, failure.offersRetry ? "Playback problem" : "Force-quit Overplay"],
+            titleVariants: [failure.message, failure.offersRetry ? "Playback problem" : "Turn mobile data off and on"],
             actions: failure.offersRetry ? [retry, dismiss] : [dismiss]
         )
         failureAlert = template
