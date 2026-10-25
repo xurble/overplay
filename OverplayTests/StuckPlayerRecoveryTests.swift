@@ -118,6 +118,45 @@ struct StuckPlayerRecoveryTests {
         #expect(!fixture.controller.isStartingPlayback)
     }
 
+    @Test(arguments: [false, true])
+    func aTrackLookupCountsAsStartingBeforeAnyPlayerCall(lookupFails: Bool) async throws {
+        // Resolving tracks makes no player call, and `isPlaying` is false. A
+        // lookup that fails ends the start just the same.
+        var held: [CheckedContinuation<Void, Never>] = []
+        let fixture = try PlaybackFixture(preparePlaybackTracks: { _, _ in
+            await withCheckedContinuation { held.append($0) }
+            if lookupFails { throw CancellationError() }
+        })
+        defer { fixture.cleanUp() }
+
+        let starting = Task { await start(fixture) }
+        try await waitUntil { held.count == 1 }
+        #expect(fixture.player.commands.isEmpty)
+        #expect(!fixture.controller.isPlaying)
+        #expect(fixture.controller.isStartingPlayback)
+        held.removeFirst().resume()
+        await starting.value
+        #expect(!fixture.controller.isStartingPlayback)
+    }
+
+    @Test func aCallThatNeverReturnsStopsCountingAsStartingOnceStuck() async throws {
+        // Otherwise CarPlay's Library would never refresh again until relaunch.
+        let hung = HungPrepares()
+        let (fixture, _) = try fixture(hung: hung)
+        defer { fixture.cleanUp() }
+        fixture.controller.stuckCallLimit = .milliseconds(50)
+        fixture.controller.startHoldLimit = .milliseconds(50)
+
+        let starting = Task { await start(fixture) }
+        try await waitUntil { hung.waiting.count == 1 }
+        #expect(fixture.controller.isStartingPlayback)
+        try await waitUntil { !fixture.controller.isStartingPlayback }
+        #expect(hung.waiting.count == 1)
+
+        hung.releaseAll()
+        await starting.value
+    }
+
     // MARK: - Stuck
 
     @Test func aCallUnansweredAtTheLimitMakesThePlayerStuck() async throws {

@@ -202,11 +202,14 @@ struct CarPlayListRendererTests {
     @Test("playing art carries the phone's green play badge, on rows, cards and tiles; symbols do not")
     func playingArtCarriesTheBadge() async throws {
         var loaded: [CarPlayListPresentation.Row.Artwork] = []
+        // Real art is larger than any slot: on art smaller than a tile the
+        // badge is a few pixels wide at 2x, and its white arrow blurs away.
+        let side: CGFloat = 160
         let renderer = CarPlayListRenderer(loadArtwork: { artwork in
             loaded.append(artwork)
-            return UIGraphicsImageRenderer(size: CGSize(width: 40, height: 40)).image { context in
+            return UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { context in
                 UIColor.blue.setFill()
-                context.fill(CGRect(x: 0, y: 0, width: 40, height: 40))
+                context.fill(CGRect(x: 0, y: 0, width: side, height: side))
             }
         }, record: { _, _ in })
         defer { renderer.stop() }
@@ -296,9 +299,16 @@ struct CarPlayListRendererTests {
         }
         let circle = CarPlayPlayingBadge.circle(in: image.size, displayed: displayed)
         let edge = pixel(CGPoint(x: circle.midX - circle.width * 0.38, y: circle.midY))
-        let centre = pixel(CGPoint(x: circle.midX, y: circle.midY))
+        // The arrow's shaft is thin, so the exact centre may fall on its
+        // anti-aliased edge: look for white just around it.
+        let reach = circle.width * 0.1
+        let offsets = stride(from: -reach, through: reach, by: reach / 2)
+        let whitest = offsets.flatMap { dx in offsets.map { dy in
+            let near = pixel(CGPoint(x: circle.midX + dx, y: circle.midY + dy))
+            return min(near.0, near.1, near.2)
+        } }.max() ?? 0
         let isGreen = edge.1 > 0.6 && edge.0 < 0.4 && edge.2 < 0.5
-        let isWhite = min(centre.0, centre.1, centre.2) > 0.85
+        let isWhite = whitest > 0.85
         return isGreen && isWhite
     }
 }

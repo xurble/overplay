@@ -1353,12 +1353,16 @@ in CarPlay without Songs.
   synced. A list opens at once from the cache, and fills once the launch
   quiet minute is over. Once it is 30 minutes old it refreshes in the
   background when opened, and the old copy shows meanwhile. On the phone the
-  refresh starts at once: someone is looking at the list, and the Add to
+  refresh starts as soon as the launch quiet minute is over, whatever is
+  playing: someone is looking at the list, and the Add to
   Playlist sheet, nearly always opened during playback, must not offer
   playlists that are gone or miss new ones (owner decision, 2026-10-25). In
   CarPlay, opened while driving to music, it waits until playback has been
   quiet at two checks in a row, 30 seconds apart: nothing playing, no start
   loading or player call unanswered, and no playback failure (`LOAD-001`).
+  A player call that never returns stops counting once it is past the stuck
+  limit and the start hold together, so a recovered player does not hold the
+  refresh off until relaunch.
   MusicKit reports nothing about how much of a song is buffered, so a quiet
   player is the only moment known to be safe. A refresh that has begun runs
   to its end, so one may still overlap a start that follows it. Library
