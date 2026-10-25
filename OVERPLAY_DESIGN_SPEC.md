@@ -1361,8 +1361,9 @@ in CarPlay without Songs.
   quiet at two checks in a row, 30 seconds apart: nothing playing, no start
   loading or player call unanswered, and no playback failure (`LOAD-001`).
   A player call that never returns stops counting once it is past the stuck
-  limit and the start hold together, so a recovered player does not hold the
-  refresh off until relaunch.
+  limit and the start hold together, as does a start waiting on it, so a
+  recovered player does not hold the refresh off until relaunch. A start
+  still looking up its tracks counts however long that takes.
   MusicKit reports nothing about how much of a song is buffered, so a quiet
   player is the only moment known to be safe. A refresh that has begun runs
   to its end, so one may still overlap a start that follows it. Library

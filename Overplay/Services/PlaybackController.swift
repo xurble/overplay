@@ -203,22 +203,28 @@ final class PlaybackController {
     @ObservationIgnored private var playWantedAt: Date?
     /// When each start still resolving or loading, and each player call not
     /// yet answered, began.
-    @ObservationIgnored private var startsInFlight: [Int: ContinuousClock.Instant] = [:]
+    @ObservationIgnored private var startsInFlight: [Int: (began: ContinuousClock.Instant, isPlayerCall: Bool)] = [:]
     @ObservationIgnored private var lastStartToken = 0
     /// A start or a player call is under way. `isPlaying` is false all the
     /// while a queue loads, so background work that must not compete with
-    /// playback asks this too (`LOAD-001`). Work older than a stuck call and
-    /// a start hold together no longer counts: a call that never returns is
-    /// the stuck failure's business, and playback may recover around it.
+    /// playback asks this too (`LOAD-001`). A player call unanswered past a
+    /// stuck call and a start hold together no longer counts, nor does a start
+    /// waiting on such a call: a call that never returns is the stuck
+    /// failure's business, and playback may recover around it. A start still
+    /// looking up its tracks counts however long that takes.
     var isStartingPlayback: Bool {
-        let since = ContinuousClock.now - (stuckCallLimit + startHoldLimit)
-        return startsInFlight.values.contains { $0 > since }
+        let cutoff = ContinuousClock.now - (stuckCallLimit + startHoldLimit)
+        let latestStuckCall = startsInFlight.values.filter { $0.isPlayerCall && $0.began <= cutoff }.map(\.began).max()
+        return startsInFlight.values.contains { work in
+            if work.isPlayerCall { return work.began > cutoff }
+            return latestStuckCall.map { work.began > $0 } ?? true
+        }
     }
 
     /// Marks a start or player call as under way until `endStart`.
-    private func beginStart() -> Int {
+    private func beginStart(isPlayerCall: Bool = false) -> Int {
         lastStartToken &+= 1
-        startsInFlight[lastStartToken] = .now
+        startsInFlight[lastStartToken] = (.now, isPlayerCall)
         return lastStartToken
     }
 
@@ -756,7 +762,7 @@ final class PlaybackController {
         _ call: String, outcome: PlayerCallOutcome? = nil, _ body: () async throws -> Void
     ) async throws {
         activityLog.record(.playerCallStarted, detail: call)
-        let startToken = beginStart()
+        let startToken = beginStart(isPlayerCall: true)
         defer { endStart(startToken) }
         let outcome = outcome ?? PlayerCallOutcome()
         let answersAtStart = playerAnswers
