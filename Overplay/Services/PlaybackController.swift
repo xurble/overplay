@@ -201,6 +201,12 @@ final class PlaybackController {
     /// player reporting `playing`. Overplay's own Pause clears it. Only then
     /// may the network's return recover playback (`PLAY-014`).
     @ObservationIgnored private var playWantedAt: Date?
+    /// Starts still resolving or loading, and player calls not yet answered.
+    @ObservationIgnored private var startsInFlight = 0
+    /// A start or a player call is under way. `isPlaying` is false all the
+    /// while a queue loads, so background work that must not compete with
+    /// playback asks this too (`LOAD-001`).
+    var isStartingPlayback: Bool { startsInFlight > 0 }
     @ObservationIgnored private var isRecoveringForNetworkReturn = false
     /// Gives new connections a moment before recovery calls the player.
     @ObservationIgnored var networkSettleDelay: Duration = .seconds(2)
@@ -734,6 +740,8 @@ final class PlaybackController {
         _ call: String, outcome: PlayerCallOutcome? = nil, _ body: () async throws -> Void
     ) async throws {
         activityLog.record(.playerCallStarted, detail: call)
+        startsInFlight += 1
+        defer { startsInFlight -= 1 }
         let outcome = outcome ?? PlayerCallOutcome()
         let answersAtStart = playerAnswers
         let watchdog = Task { [weak self, limit = stuckCallLimit] in
@@ -1178,6 +1186,8 @@ final class PlaybackController {
         shuffle: Bool,
         context: ModelContext
     ) async {
+        startsInFlight += 1
+        defer { startsInFlight -= 1 }
         let inputs: PlaybackQueueOrchestrator.PlaylistInputs
         do {
             inputs = try PlaybackQueueOrchestrator.playlistInputs(for: playlist.musicPlaylistID, in: context)
@@ -1243,6 +1253,8 @@ final class PlaybackController {
     private func resubmit(
         _ intent: PlaybackIntent, from member: PlaybackIntent.Member?, position: Double, refreshingStart: Bool = false
     ) async {
+        startsInFlight += 1
+        defer { startsInFlight -= 1 }
         startGeneration &+= 1
         let generation = startGeneration
         let resolved: [String: Track]
@@ -1497,6 +1509,8 @@ final class PlaybackController {
     @discardableResult
     func playCurrentCollection(_ request: PlaybackCollection.Request, context: ModelContext) async -> Bool {
         adopt(context)
+        startsInFlight += 1
+        defer { startsInFlight -= 1 }
         guard let songID = currentCatalogSongID else {
             statusMessage = PlaybackCollectionError.songNotInCatalog.localizedDescription
             return false
@@ -1552,6 +1566,8 @@ final class PlaybackController {
         recordsRecent: Bool, tracks: [String: Track] = [:], context: ModelContext
     ) async -> Bool {
         adopt(context)
+        startsInFlight += 1
+        defer { startsInFlight -= 1 }
         for (id, track) in tracks {
             collectionTrackCache.set(try? JSONEncoder().encode(track), forCatalogSongID: id)
         }

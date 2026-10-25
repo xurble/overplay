@@ -99,6 +99,25 @@ struct StuckPlayerRecoveryTests {
         #expect(fixture.controller.playbackFailure == nil)
     }
 
+    // MARK: - Starting
+
+    @Test func aLoadingStartCountsAsStartingPlaybackWhileNotPlaying() async throws {
+        // Background Library work asks this: `isPlaying` is false meanwhile (`LOAD-001`).
+        let hung = HungPrepares()
+        let (fixture, _) = try fixture(hung: hung)
+        defer { fixture.cleanUp() }
+        #expect(!fixture.controller.isStartingPlayback)
+
+        let starting = Task { await start(fixture) }
+        try await waitUntil { hung.waiting.count == 1 }
+        #expect(fixture.controller.isStartingPlayback)
+        #expect(!fixture.controller.isPlaying)
+
+        hung.releaseAll()
+        await starting.value
+        #expect(!fixture.controller.isStartingPlayback)
+    }
+
     // MARK: - Stuck
 
     @Test func aCallUnansweredAtTheLimitMakesThePlayerStuck() async throws {

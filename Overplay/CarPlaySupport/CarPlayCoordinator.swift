@@ -334,7 +334,7 @@ final class CarPlayCoordinator: NSObject {
         updateLibraryCategoryList(template)
         observeLibraryCache(template, category: category)
         interfaceController.pushTemplate(template, animated: true, completion: nil)
-        Task { await LibraryCache.shared.prepare(category) }
+        Task { await LibraryCache.shared.prepare(category, waitsForQuietPlayback: true) }
     }
 
     /// The list follows the cache as it loads or refreshes, while it is open.

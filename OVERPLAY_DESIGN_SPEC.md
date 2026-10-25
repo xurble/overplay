@@ -106,7 +106,7 @@ Music's global play count or skip count.
 | `PLAY-017` | Native `Track` objects needed for playback are cached on disk per device; cold launches do not need to re-resolve the whole playlist, a cached track is reused only while it is the song its record names (its library or catalog ID), a library ID that no longer exists in the account library falls back to the record's catalog ID, and unresolvable songs are omitted rather than failing playback, with each omission recorded in the activity log. The cache is emptied only when the Apple Music account or storefront it was filled under changes, never on a relaunch or a failed or offline account check, and a playback lookup gives up after 15 seconds. | `Overplay/Services/DevicePlaybackCache.swift` |
 | `COUNT-001` | Counting observes playback and never commands, delays or vetoes it. Skips require witnessed listening; playthroughs are position-based; suspended spans never produce skips. | `Overplay/Playback/ListeningSessionTracker.swift`, `Overplay/UseCases/PlaybackSessionEvaluationService.swift` |
 | `COUNT-002` | Counted outcomes are immutable ledger events with idempotent session IDs. Displayed counts are derived from the ledger, including absorbed track identities; merges and resets never edit counts. Apple's calculated play count, when higher, is recorded as a floor event that plays never fall below. | `Overplay/Services/ListenLedger.swift`, `Overplay/Models/ListenEvent.swift` |
-| `LOAD-001` | Overplay adds no avoidable Apple Music load during playback: no automatic sync, play-count, artwork or Library work in the first minute after launch (a Library screen restored at launch shows its saved copy and refreshes after the minute; one with no saved copy loads at once, as if opened), no steady-state queue enumeration, bulk Apple play-count refresh at most every 15 minutes and never while playing, library discovery scans at most every 6 hours, and no background MusicKit work while a playback failure is active. | `Overplay/Services/ApplePlayCountSyncService.swift`, `Overplay/Services/PeriodicPlaylistSyncService.swift` |
+| `LOAD-001` | Overplay adds no avoidable Apple Music load during playback: no automatic sync, play-count, artwork or Library work in the first minute after launch (a Library screen restored at launch shows its saved copy and refreshes after the minute; one with no saved copy loads at once, as if opened), an old Library list opened in CarPlay refreshing only once playback is quiet, no steady-state queue enumeration, bulk Apple play-count refresh at most every 15 minutes and never while playing, library discovery scans at most every 6 hours, and no background MusicKit work while a playback failure is active. | `Overplay/Services/ApplePlayCountSyncService.swift`, `Overplay/Services/PeriodicPlaylistSyncService.swift` |
 | `CAR-002` | Presented menus retain row and artwork identity. Only changed visible values are published; section replacement requires structural change. Presentation reads never mutate playback or persistence. | `Overplay/CarPlaySupport/CarPlayListRenderer.swift` |
 | `PLAY-018` | Now Playing in the app and CarPlay plays the current song's album from track 1, or its artist's Essentials playlist, else its Top Songs with versions collapsed, through one shared start. Tracked songs are counted and curated as usual; untracked songs offer Add to the Inbox and Add to One True Playlist. A failed lookup changes nothing. | `Overplay/Playback/PlaybackCollection.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/PlaybackCollectionTests.swift` |
 | `PLAY-019` | Recents keeps the 10 most recently played albums and artists, synced through iCloud, one per album or artist, newest first. The main screen shows them as one scrolling row of artwork and CarPlay as a Recents menu; each opens its saved songs with Shuffle and Play, played through the shared selection action and from this device's saved tracks. | `Overplay/Persistence/RecentCollectionRepository.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/RecentsTests.swift` |
@@ -1140,8 +1140,8 @@ Titles never decide it.
   rows, "Play album *title*" and "Play *artist*". Choosing a row runs the
   shared action and returns to Now Playing; a failed lookup shows an alert,
   and a shared playback failure its own alert. This action list is an
-  exception to the three-level navigation of `CAR-001`; Recents is the other
-  (`PLAY-019`). Add to
+  exception to the three-level navigation of `CAR-001`; Recents
+  (`PLAY-019`) and the Library categories (`LIB-001`) are the others. Add to
   the Inbox and Add to One True Playlist are Now Playing custom buttons in the
   slots Promote and Retire use (hardware check in `TODO.md`, CarPlay hardware
   pass).
@@ -1352,10 +1352,16 @@ in CarPlay without Songs.
 - **Cache:** lists are cached per device in the caches folder and never
   synced. A list opens at once from the cache, and fills once the launch
   quiet minute is over. Once it is 30 minutes old it refreshes in the
-  background, but only while nothing is playing and no playback failure is
-  active (`LOAD-001`): MusicKit reports nothing about how much of a song is
-  buffered, so a pause is the only safe moment. Meanwhile the old copy
-  shows. Library
+  background when opened, and the old copy shows meanwhile. On the phone the
+  refresh starts at once: someone is looking at the list, and the Add to
+  Playlist sheet, nearly always opened during playback, must not offer
+  playlists that are gone or miss new ones (owner decision, 2026-10-25). In
+  CarPlay, opened while driving to music, it waits until playback has been
+  quiet at two checks in a row, 30 seconds apart: nothing playing, no start
+  loading or player call unanswered, and no playback failure (`LOAD-001`).
+  MusicKit reports nothing about how much of a song is buffered, so a quiet
+  player is the only moment known to be safe. A refresh that has begun runs
+  to its end, so one may still overlap a start that follows it. Library
   artwork shares Overplay's artwork cache and is evicted first under pressure.
 
 ## Play/Skip History
