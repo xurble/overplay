@@ -918,7 +918,8 @@ final class CarPlayCoordinator: NSObject {
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, generation == self.playbackObservationGeneration else { return }
-                for renderer in [self.rootRenderer, self.playlistRenderer, self.recentsRenderer, self.recentRenderer] {
+                for renderer in [self.rootRenderer, self.playlistRenderer, self.recentsRenderer, self.recentRenderer,
+                                 self.libraryCategoryRenderer, self.libraryItemRenderer] {
                     renderer.playbackStateChanged()
                 }
                 self.observePlayingState(generation: generation)
