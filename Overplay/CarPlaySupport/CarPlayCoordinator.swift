@@ -739,6 +739,24 @@ final class CarPlayCoordinator: NSObject {
     private func startPlaybackObservation() {
         playbackObservationGeneration += 1
         observePlaybackController(generation: playbackObservationGeneration)
+        observePlayingState(generation: playbackObservationGeneration)
+    }
+
+    /// Playing and paused change no list content, but CarPlay's playing
+    /// indicator must be told again (`CarPlayListRenderer.playbackStateChanged`).
+    private func observePlayingState(generation: Int) {
+        guard generation == playbackObservationGeneration, let playbackController else { return }
+        withObservationTracking {
+            _ = playbackController.isPlaying
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, generation == self.playbackObservationGeneration else { return }
+                for renderer in [self.rootRenderer, self.playlistRenderer, self.recentsRenderer, self.recentRenderer] {
+                    renderer.playbackStateChanged()
+                }
+                self.observePlayingState(generation: generation)
+            }
+        }
     }
 
     private func stopPlaybackObservation() {

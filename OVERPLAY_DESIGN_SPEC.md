@@ -454,12 +454,18 @@ Artwork loading must not block playlist rendering or playback. Store actual
 for expanded artwork and recognition (longest edge, preserving aspect ratio).
 The expanded player shows available 128 artwork while 512 loads. Lists may use
 cached images and load missing artwork while scrolling. In CarPlay, what is
-playing shows the phone's marker: a white play triangle in a green circle at
-the bottom-trailing corner of a track row's, playlist card's or Recent Deep
-Dives tile's art, a green inbox for the Inbox, and a green play symbol for Retired.
-CarPlay drew no indicator of its own for Overplay's playing rows in the car,
-and list images cannot animate. Rows still set CarPlay's leading playing
-indicator, in case it appears.
+playing shows the phone's marker: a white arrow in a green circle at the
+bottom-trailing corner of a track row's, playlist card's or Recent Deep Dives
+tile's art, a green inbox for the Inbox, and a green play symbol for Retired.
+On iOS 26 CarPlay drew no indicator of its own for Overplay's playing rows in
+the car, and list images cannot animate. On iOS 27 it animates its leading
+playing indicator over a row's art (2026-10-25), so a playing standard row
+shows that instead of the marker (owner request); cards and tiles have no
+CarPlay indicator and keep the marker, and the Inbox and Retired keep their
+green symbols, as on the phone dashboard. The root's playing Inbox row showed
+the indicator still while the list it opened animated: suspected to be because
+the row was marked playing when its start began, before the audio. Whenever
+the player starts or stops, every list marks its playing rows again.
 
 Decoded images share a 24 MiB cost budget across playlists. Source downloads and
 image processing are bounded and coalesced. Artwork failures cool down for 60

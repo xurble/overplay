@@ -199,16 +199,99 @@ struct CarPlayListRendererTests {
         #expect(item.playingIndicatorLocation == .leading)
     }
 
+    /// Blue art at the size the badge tests use.
+    private func blueArt(_ loaded: @escaping @MainActor (CarPlayListPresentation.Row.Artwork) -> Void)
+        -> @MainActor (CarPlayListPresentation.Row.Artwork) async -> UIImage? {
+        { artwork in
+            loaded(artwork)
+            return UIGraphicsImageRenderer(size: CGSize(width: 160, height: 160)).image { context in
+                UIColor.blue.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 160, height: 160))
+            }
+        }
+    }
+
+    @Test("on iOS 27 a playing row shows CarPlay's own indicator, not the badge; cards and tiles keep it")
+    func systemIndicatorReplacesTheBadgeOnRows() async throws {
+        var loads = 0
+        let renderer = CarPlayListRenderer(loadArtwork: blueArt { _ in loads += 1 }, record: { _, _ in },
+                                           badgesRows: false)
+        defer { renderer.stop() }
+        let template = CPListTemplate(title: "Tracks", sections: [])
+        typealias Row = CarPlayListPresentation.Row
+        let art = Row.Artwork.track(url: "a", playlistID: "p")
+        renderer.update(.init(sections: [.init(id: "list", rows: [
+            Row(id: "card", title: "Card", isPlaying: true, artwork: .track(url: "c", playlistID: "p"), style: .card),
+            Row(id: "row", title: "Row", isPlaying: true, artwork: art),
+            Row(id: "strip", title: "Strip", style: .strip([
+                .init(id: "tile", title: "Tile", artwork: .track(url: "t", playlistID: "p"), isPlaying: true),
+            ])),
+        ])]), on: template, actions: [:])
+        let deadline = ContinuousClock.now + .seconds(2)
+        while loads < 3, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        try await Task.sleep(for: .milliseconds(50))
+
+        let item = try #require(renderer.items["row"])
+        #expect(item.isPlaying)
+        #expect(try !hasPlayingBadge(try #require(item.image)))
+        let card = try #require(renderer.imageRows["card"]?.elements.first?.image)
+        #expect(try hasPlayingBadge(card, displayed: CPListImageRowItemCardElement.maximumImageSize))
+        let tile = try #require(renderer.imageRows["strip"]?.elements.first?.image)
+        #expect(try hasPlayingBadge(tile, displayed: CPListImageRowItemRowElement.maximumImageSize))
+    }
+
+    @Test("starting or stopping the player marks the playing rows again, and only those still playing")
+    func playbackStateChangeReplaysThePlayingIndicator() async throws {
+        var details: [String] = []
+        let renderer = CarPlayListRenderer(record: { _, detail in details.append(detail) })
+        defer { renderer.stop() }
+        let template = CPListTemplate(title: "Overplay", sections: [])
+        func state(playing: String?) -> CarPlayListPresentation {
+            .init(sections: [.init(id: "list", rows: [
+                .init(id: "inbox", title: "Inbox", isPlaying: playing == "inbox"),
+                .init(id: "retired", title: "Retired", isPlaying: playing == "retired"),
+            ])])
+        }
+        renderer.update(state(playing: "inbox"), on: template, actions: [:])
+        let inbox = try #require(renderer.items["inbox"])
+        let retired = try #require(renderer.items["retired"])
+
+        renderer.playbackStateChanged()
+        // Unmarked at once, marked again on the next turn.
+        #expect(!inbox.isPlaying)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(inbox.isPlaying)
+        #expect(!retired.isPlaying)
+        #expect(details.last == "rows=inbox fields=playing-replayed")
+
+        // A row that stopped playing in between is not marked again.
+        renderer.playbackStateChanged()
+        renderer.update(state(playing: "retired"), on: template, actions: [:])
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(!inbox.isPlaying)
+        #expect(retired.isPlaying)
+
+        // Nothing playing: nothing to replay.
+        renderer.update(state(playing: nil), on: template, actions: [:])
+        let recorded = details.count
+        renderer.playbackStateChanged()
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(details.count == recorded)
+    }
+
     @Test("playing art carries the phone's green play badge, on rows, cards and tiles; symbols do not")
     func playingArtCarriesTheBadge() async throws {
         var loaded: [CarPlayListPresentation.Row.Artwork] = []
+        // Real art is larger than any slot: on art smaller than a tile the
+        // badge is a few pixels wide at 2x, and its white arrow blurs away.
+        let side: CGFloat = 160
         let renderer = CarPlayListRenderer(loadArtwork: { artwork in
             loaded.append(artwork)
-            return UIGraphicsImageRenderer(size: CGSize(width: 40, height: 40)).image { context in
+            return UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { context in
                 UIColor.blue.setFill()
-                context.fill(CGRect(x: 0, y: 0, width: 40, height: 40))
+                context.fill(CGRect(x: 0, y: 0, width: side, height: side))
             }
-        }, record: { _, _ in })
+        }, record: { _, _ in }, badgesRows: true)
         defer { renderer.stop() }
         let template = CPListTemplate(title: "Tracks", sections: [])
         typealias Row = CarPlayListPresentation.Row
@@ -296,9 +379,16 @@ struct CarPlayListRendererTests {
         }
         let circle = CarPlayPlayingBadge.circle(in: image.size, displayed: displayed)
         let edge = pixel(CGPoint(x: circle.midX - circle.width * 0.38, y: circle.midY))
-        let centre = pixel(CGPoint(x: circle.midX, y: circle.midY))
+        // The arrow's shaft is thin, so the exact centre may fall on its
+        // anti-aliased edge: look for white just around it.
+        let reach = circle.width * 0.1
+        let offsets = stride(from: -reach, through: reach, by: reach / 2)
+        let whitest = offsets.flatMap { dx in offsets.map { dy in
+            let near = pixel(CGPoint(x: circle.midX + dx, y: circle.midY + dy))
+            return min(near.0, near.1, near.2)
+        } }.max() ?? 0
         let isGreen = edge.1 > 0.6 && edge.0 < 0.4 && edge.2 < 0.5
-        let isWhite = min(centre.0, centre.1, centre.2) > 0.85
+        let isWhite = whitest > 0.85
         return isGreen && isWhite
     }
 }
