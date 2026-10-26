@@ -199,6 +199,86 @@ struct CarPlayListRendererTests {
         #expect(item.playingIndicatorLocation == .leading)
     }
 
+    /// Blue art at the size the badge tests use.
+    private func blueArt(_ loaded: @escaping @MainActor (CarPlayListPresentation.Row.Artwork) -> Void)
+        -> @MainActor (CarPlayListPresentation.Row.Artwork) async -> UIImage? {
+        { artwork in
+            loaded(artwork)
+            return UIGraphicsImageRenderer(size: CGSize(width: 160, height: 160)).image { context in
+                UIColor.blue.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 160, height: 160))
+            }
+        }
+    }
+
+    @Test("on iOS 27 a playing row shows CarPlay's own indicator, not the badge; cards and tiles keep it")
+    func systemIndicatorReplacesTheBadgeOnRows() async throws {
+        var loads = 0
+        let renderer = CarPlayListRenderer(loadArtwork: blueArt { _ in loads += 1 }, record: { _, _ in },
+                                           badgesRows: false)
+        defer { renderer.stop() }
+        let template = CPListTemplate(title: "Tracks", sections: [])
+        typealias Row = CarPlayListPresentation.Row
+        let art = Row.Artwork.track(url: "a", playlistID: "p")
+        renderer.update(.init(sections: [.init(id: "list", rows: [
+            Row(id: "card", title: "Card", isPlaying: true, artwork: .track(url: "c", playlistID: "p"), style: .card),
+            Row(id: "row", title: "Row", isPlaying: true, artwork: art),
+            Row(id: "strip", title: "Strip", style: .strip([
+                .init(id: "tile", title: "Tile", artwork: .track(url: "t", playlistID: "p"), isPlaying: true),
+            ])),
+        ])]), on: template, actions: [:])
+        let deadline = ContinuousClock.now + .seconds(2)
+        while loads < 3, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        try await Task.sleep(for: .milliseconds(50))
+
+        let item = try #require(renderer.items["row"])
+        #expect(item.isPlaying)
+        #expect(try !hasPlayingBadge(try #require(item.image)))
+        let card = try #require(renderer.imageRows["card"]?.elements.first?.image)
+        #expect(try hasPlayingBadge(card, displayed: CPListImageRowItemCardElement.maximumImageSize))
+        let tile = try #require(renderer.imageRows["strip"]?.elements.first?.image)
+        #expect(try hasPlayingBadge(tile, displayed: CPListImageRowItemRowElement.maximumImageSize))
+    }
+
+    @Test("starting or stopping the player marks the playing rows again, and only those still playing")
+    func playbackStateChangeReplaysThePlayingIndicator() async throws {
+        var details: [String] = []
+        let renderer = CarPlayListRenderer(record: { _, detail in details.append(detail) })
+        defer { renderer.stop() }
+        let template = CPListTemplate(title: "Overplay", sections: [])
+        func state(playing: String?) -> CarPlayListPresentation {
+            .init(sections: [.init(id: "list", rows: [
+                .init(id: "inbox", title: "Inbox", isPlaying: playing == "inbox"),
+                .init(id: "retired", title: "Retired", isPlaying: playing == "retired"),
+            ])])
+        }
+        renderer.update(state(playing: "inbox"), on: template, actions: [:])
+        let inbox = try #require(renderer.items["inbox"])
+        let retired = try #require(renderer.items["retired"])
+
+        renderer.playbackStateChanged()
+        // Unmarked at once, marked again on the next turn.
+        #expect(!inbox.isPlaying)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(inbox.isPlaying)
+        #expect(!retired.isPlaying)
+        #expect(details.last == "rows=inbox fields=playing-replayed")
+
+        // A row that stopped playing in between is not marked again.
+        renderer.playbackStateChanged()
+        renderer.update(state(playing: "retired"), on: template, actions: [:])
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(!inbox.isPlaying)
+        #expect(retired.isPlaying)
+
+        // Nothing playing: nothing to replay.
+        renderer.update(state(playing: nil), on: template, actions: [:])
+        let recorded = details.count
+        renderer.playbackStateChanged()
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(details.count == recorded)
+    }
+
     @Test("playing art carries the phone's green play badge, on rows, cards and tiles; symbols do not")
     func playingArtCarriesTheBadge() async throws {
         var loaded: [CarPlayListPresentation.Row.Artwork] = []
@@ -211,7 +291,7 @@ struct CarPlayListRendererTests {
                 UIColor.blue.setFill()
                 context.fill(CGRect(x: 0, y: 0, width: side, height: side))
             }
-        }, record: { _, _ in })
+        }, record: { _, _ in }, badgesRows: true)
         defer { renderer.stop() }
         let template = CPListTemplate(title: "Tracks", sections: [])
         typealias Row = CarPlayListPresentation.Row
