@@ -250,9 +250,10 @@ final class CarPlayCoordinator: NSObject {
             if let triage = summaries.first(where: { $0.role == .triageBucket && $0.playbackScope == .active }) {
                 var triageRow = row(triage)
                 triageRow.detail = triage.triageDetail(sourceCount: triageSourceCount())
-                // The inbox icon, not artwork, coloured as on the phone dashboard:
-                // green while Triage plays.
-                triageRow.artwork = .symbol("tray.fill", tint: triageRow.isPlaying ? .systemGreen : .systemTeal)
+                // The inbox icon, not artwork, as on the phone dashboard: a
+                // green play symbol while Triage plays, as Retired.
+                triageRow.artwork = triageRow.isPlaying
+                    ? .symbol("play.fill", tint: .systemGreen) : .symbol("tray.fill", tint: .systemTeal)
                 triageRows.append(triageRow)
             }
             if let retired = summaries.first(where: { $0.playbackScope == .retired }) {

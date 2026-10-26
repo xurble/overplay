@@ -72,6 +72,10 @@ struct DashboardView: View {
                         // Green says it is playing; VoiceOver hears it.
                         .accessibilityValue(retiredSummary.isCurrentPlaybackPlaylist ? "Now playing" : "")
                     }
+                    // The same margins as the Inbox row above. With the system's
+                    // own, Retired sat further left than the Inbox on an open
+                    // iPhone Duo's left half (2026-10-26).
+                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                 }
             }
 
@@ -317,8 +321,9 @@ private struct TriageHomeRowView: View {
                     .foregroundStyle(.secondary)
             }
         } icon: {
-            // The inbox, not the collage; green while Triage plays, as Retired.
-            Image(systemName: "tray.fill")
+            // The inbox, not the collage; the green play arrow while Triage
+            // plays, as Retired.
+            Image(systemName: summary.isCurrentPlaybackPlaylist ? summary.iconIntent.systemImage : "tray.fill")
                 .foregroundStyle(summary.isCurrentPlaybackPlaylist ? .green : .teal)
         }
         .accessibilityValue(summary.isCurrentPlaybackPlaylist ? "Now playing" : "")
