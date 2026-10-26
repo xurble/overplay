@@ -17,10 +17,9 @@ struct ContentView: View {
             .environment(runtime)
             .environment(runtime.authorizationService)
             .environment(runtime.playbackController)
-            // Buttons are untinted on iPhone and iPad, as the system draws its
-            // own bar buttons such as Back (owner request, 2026-10-26); the
-            // Mac keeps its own accent.
-            .tint(ProcessInfo.processInfo.isMacCatalystApp ? nil : Color.primary)
+            // iPhone and iPad take the app icon's purple for buttons and
+            // highlights; the Mac keeps its own accent.
+            .tint(ProcessInfo.processInfo.isMacCatalystApp ? nil : Color.overplayIcon)
             .modifier(StatusToastOverlay())
             // The player's messages become the toast. Left set: CarPlay reads
             // them for its own alerts.
@@ -40,4 +39,19 @@ struct ContentView: View {
 #Preview {
     ContentView(runtime: .shared)
         .modelContainer(PreviewContainer.make())
+}
+
+extension View {
+    /// A toolbar button in the label colour, as the system draws its own bar
+    /// buttons such as Back (owner request, 2026-10-26). The rest of the app
+    /// keeps the purple, and so do confirmation buttons, as the system tints
+    /// them too. The Mac keeps its own accent.
+    func untintedToolbarButton() -> some View {
+        tint(ProcessInfo.processInfo.isMacCatalystApp ? nil : Color.primary)
+    }
+}
+
+extension Color {
+    /// The app icon's background (`overplay_default_icon.icon`).
+    static let overplayIcon = Color(.displayP3, red: 0.53600, green: 0.17834, blue: 0.66090)
 }

@@ -284,6 +284,7 @@ struct AddToPlaylistView: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel", role: .cancel) { dismiss() }
+                    .untintedToolbarButton()
             }
         }
         .task { await cache.prepare(.playlists) }

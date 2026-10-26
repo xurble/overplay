@@ -39,6 +39,7 @@ struct DuplicateMergeConfirmationView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .untintedToolbarButton()
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Merge") {

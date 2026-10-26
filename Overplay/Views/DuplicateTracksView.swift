@@ -37,8 +37,6 @@ struct DuplicateTracksView: View {
                             }
                         }
                         .disabled(busy)
-                        // The system's green, not the app's untinted buttons.
-                        .tint(.green)
                     }
                     Button("Review Selected Merge") {
                         mergeRequest = DuplicateMergeRequest(candidates: group.candidates, selectedIDs: selected)

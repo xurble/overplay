@@ -132,6 +132,7 @@ struct DashboardView: View {
                     } label: {
                         Label("Settings", systemImage: "gearshape")
                     }
+                    .untintedToolbarButton()
                 } else {
                     NavigationLink {
                         SettingsView(settings: settings)
@@ -139,6 +140,7 @@ struct DashboardView: View {
                     } label: {
                         Label("Settings", systemImage: "gearshape")
                     }
+                    .untintedToolbarButton()
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -149,6 +151,7 @@ struct DashboardView: View {
                     Label("Search", systemImage: "magnifyingglass")
                 }
                 .accessibilityIdentifier("dashboard-search")
+                .untintedToolbarButton()
             }
         }
     }

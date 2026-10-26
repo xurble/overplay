@@ -457,9 +457,6 @@ private struct SettingsLabeledToggle: View {
                 SettingsSubtitle(subtitle)
             }
         }
-        // A switch stays the system's green; the app's untinted buttons
-        // would make it black.
-        .tint(.green)
     }
 }
 

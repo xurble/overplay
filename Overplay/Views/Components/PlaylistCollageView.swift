@@ -105,7 +105,7 @@ struct PlaylistCollageSettingsView: View {
             }
             .navigationTitle("Playlist Artwork")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.untintedToolbarButton() }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { save(layout, stroke); dismiss() }
                 }
