@@ -36,8 +36,11 @@ struct PlaylistCollageView: View {
             .accessibilityAction(named: "Settings") { showSettings() }
             .accessibilityAction(named: "Regenerate") { regenerate() }
             .contextMenu {
-                Button("Settings", systemImage: "slider.horizontal.3") { showSettings() }
-                Button("Regenerate", systemImage: "arrow.clockwise") { regenerate() }
+                Group {
+                    Button("Settings", systemImage: "slider.horizontal.3") { showSettings() }
+                    Button("Regenerate", systemImage: "arrow.clockwise") { regenerate() }
+                }
+                .untinted()
             }
             if let errorMessage { Text(errorMessage).font(.caption).foregroundStyle(.secondary) }
         }
@@ -105,7 +108,7 @@ struct PlaylistCollageSettingsView: View {
             }
             .navigationTitle("Playlist Artwork")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.untintedToolbarButton() }
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.untinted() }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { save(layout, stroke); dismiss() }
                 }

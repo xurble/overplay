@@ -24,7 +24,7 @@ struct SysdiagnoseReminderView: View {
                     Button("Done") {
                         dismiss()
                     }
-                    .untintedToolbarButton()
+                    .untinted()
                 }
             }
         }

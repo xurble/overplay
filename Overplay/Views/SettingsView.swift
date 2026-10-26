@@ -182,9 +182,11 @@ struct SettingsView: View {
             Picker("Appearance", selection: $appearance) {
                 ForEach(AppearancePreference.allCases) { Text($0.title).tag($0) }
             }
+            .untinted()
             Picker("Player Background", selection: $playerBackground) {
                 ForEach(PlayerBackgroundPreference.allCases) { Text($0.title).tag($0) }
             }
+            .untinted()
         } header: {
             Text("Display")
         } footer: {

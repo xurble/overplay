@@ -29,6 +29,7 @@ struct HistoryView: View {
                     }
                 }
                 .pickerStyle(.menu)
+                .untinted()
             }
 
             Section {

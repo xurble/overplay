@@ -42,11 +42,11 @@ struct ContentView: View {
 }
 
 extension View {
-    /// A toolbar button in the label colour, as the system draws its own bar
-    /// buttons such as Back (owner request, 2026-10-26). The rest of the app
-    /// keeps the purple, and so do confirmation buttons, as the system tints
-    /// them too. The Mac keeps its own accent.
-    func untintedToolbarButton() -> some View {
+    /// Toolbar buttons and pop-up menus in the label colour, as the system
+    /// draws its own bar buttons such as Back (owner request, 2026-10-26).
+    /// The rest of the app keeps the purple, and so do confirmation buttons,
+    /// as the system tints them too. The Mac keeps its own accent.
+    func untinted() -> some View {
         tint(ProcessInfo.processInfo.isMacCatalystApp ? nil : Color.primary)
     }
 }

@@ -41,7 +41,7 @@ private struct NowPlayingColumnToggleToolbar: ViewModifier {
                         Label(title, systemImage: "sidebar.trailing")
                     }
                     .help(title)
-                    .untintedToolbarButton()
+                    .untinted()
                 }
             }
         }

@@ -132,17 +132,20 @@ struct SearchMusicView: View {
                         .tint(.gray)
                     }
                     .contextMenu {
-                        if song.canMoveToOneTruePlaylist {
-                            Button("Add to Overplay", systemImage: "arrow.up.circle") {
-                                Task { await move(result, toOneTruePlaylist: true) }
+                        Group {
+                            if song.canMoveToOneTruePlaylist {
+                                Button("Add to Overplay", systemImage: "arrow.up.circle") {
+                                    Task { await move(result, toOneTruePlaylist: true) }
+                                }
                             }
-                        }
-                        if song.canMoveToTriage {
-                            Button("Add to the Inbox", systemImage: "tray.fill") {
-                                Task { await move(result, toOneTruePlaylist: false) }
+                            if song.canMoveToTriage {
+                                Button("Add to the Inbox", systemImage: "tray.fill") {
+                                    Task { await move(result, toOneTruePlaylist: false) }
+                                }
                             }
+                            moreActions(for: result)
                         }
-                        moreActions(for: result)
+                        .untinted()
                     }
                 }
             }
@@ -284,7 +287,7 @@ struct AddToPlaylistView: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel", role: .cancel) { dismiss() }
-                    .untintedToolbarButton()
+                    .untinted()
             }
         }
         .task { await cache.prepare(.playlists) }
