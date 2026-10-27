@@ -201,6 +201,34 @@ final class PlaybackController {
     /// player reporting `playing`. Overplay's own Pause clears it. Only then
     /// may the network's return recover playback (`PLAY-014`).
     @ObservationIgnored private var playWantedAt: Date?
+    /// When each start still resolving or loading, and each player call not
+    /// yet answered, began.
+    @ObservationIgnored private var startsInFlight: [Int: (began: ContinuousClock.Instant, isPlayerCall: Bool)] = [:]
+    @ObservationIgnored private var lastStartToken = 0
+    /// A start or a player call is under way. `isPlaying` is false all the
+    /// while a queue loads, so background work that must not compete with
+    /// playback asks this too (`LOAD-001`). A player call unanswered past a
+    /// stuck call and a start hold together no longer counts, nor does a start
+    /// waiting on such a call: a call that never returns is the stuck
+    /// failure's business, and playback may recover around it. A start still
+    /// looking up its tracks counts however long that takes.
+    var isStartingPlayback: Bool {
+        let cutoff = ContinuousClock.now - (stuckCallLimit + startHoldLimit)
+        let latestStuckCall = startsInFlight.values.filter { $0.isPlayerCall && $0.began <= cutoff }.map(\.began).max()
+        return startsInFlight.values.contains { work in
+            if work.isPlayerCall { return work.began > cutoff }
+            return latestStuckCall.map { work.began > $0 } ?? true
+        }
+    }
+
+    /// Marks a start or player call as under way until `endStart`.
+    private func beginStart(isPlayerCall: Bool = false) -> Int {
+        lastStartToken &+= 1
+        startsInFlight[lastStartToken] = (.now, isPlayerCall)
+        return lastStartToken
+    }
+
+    private func endStart(_ token: Int) { startsInFlight[token] = nil }
     @ObservationIgnored private var isRecoveringForNetworkReturn = false
     /// Gives new connections a moment before recovery calls the player.
     @ObservationIgnored var networkSettleDelay: Duration = .seconds(2)
@@ -734,6 +762,8 @@ final class PlaybackController {
         _ call: String, outcome: PlayerCallOutcome? = nil, _ body: () async throws -> Void
     ) async throws {
         activityLog.record(.playerCallStarted, detail: call)
+        let startToken = beginStart(isPlayerCall: true)
+        defer { endStart(startToken) }
         let outcome = outcome ?? PlayerCallOutcome()
         let answersAtStart = playerAnswers
         let watchdog = Task { [weak self, limit = stuckCallLimit] in
@@ -1178,6 +1208,8 @@ final class PlaybackController {
         shuffle: Bool,
         context: ModelContext
     ) async {
+        let startToken = beginStart()
+        defer { endStart(startToken) }
         let inputs: PlaybackQueueOrchestrator.PlaylistInputs
         do {
             inputs = try PlaybackQueueOrchestrator.playlistInputs(for: playlist.musicPlaylistID, in: context)
@@ -1243,6 +1275,8 @@ final class PlaybackController {
     private func resubmit(
         _ intent: PlaybackIntent, from member: PlaybackIntent.Member?, position: Double, refreshingStart: Bool = false
     ) async {
+        let startToken = beginStart()
+        defer { endStart(startToken) }
         startGeneration &+= 1
         let generation = startGeneration
         let resolved: [String: Track]
@@ -1497,6 +1531,8 @@ final class PlaybackController {
     @discardableResult
     func playCurrentCollection(_ request: PlaybackCollection.Request, context: ModelContext) async -> Bool {
         adopt(context)
+        let startToken = beginStart()
+        defer { endStart(startToken) }
         guard let songID = currentCatalogSongID else {
             statusMessage = PlaybackCollectionError.songNotInCatalog.localizedDescription
             return false
@@ -1552,6 +1588,8 @@ final class PlaybackController {
         recordsRecent: Bool, tracks: [String: Track] = [:], context: ModelContext
     ) async -> Bool {
         adopt(context)
+        let startToken = beginStart()
+        defer { endStart(startToken) }
         for (id, track) in tracks {
             collectionTrackCache.set(try? JSONEncoder().encode(track), forCatalogSongID: id)
         }

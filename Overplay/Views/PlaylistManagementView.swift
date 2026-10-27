@@ -219,6 +219,7 @@ private struct PlaylistManagementContentView: View {
                 } label: {
                     Label("Playlist Controls", systemImage: "ellipsis.circle")
                 }
+                .untinted()
             }
         }
     }

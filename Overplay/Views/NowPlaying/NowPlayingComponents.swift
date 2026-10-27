@@ -112,6 +112,7 @@ struct PlayCollectionMenuView<MenuLabel: View>: View {
             label(playbackController.canPlayCurrentCollection)
         }
         .disabled(!playbackController.canPlayCurrentCollection)
+        .untinted()
         .accessibilityHint("Plays this song's album or artist")
     }
 

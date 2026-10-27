@@ -25,6 +25,7 @@ struct DuplicateMergeConfirmationView: View {
                                 Text(value.rawValue).tag(Optional(value))
                             }
                         }
+                        .untinted()
                     } else if let destination {
                         Text("Keep in \(destination.rawValue)")
                     }
@@ -39,6 +40,7 @@ struct DuplicateMergeConfirmationView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                        .untinted()
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Merge") {

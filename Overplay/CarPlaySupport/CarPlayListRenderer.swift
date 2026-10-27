@@ -93,15 +93,48 @@ final class CarPlayListRenderer {
     private static let headerSlotID = "listHeader"
     private let loadArtwork: @MainActor (Row.Artwork) async -> UIImage?
     private let record: (MusicKitActivityOperation, String) -> Void
+    /// Whether a playing standard row's art carries the badge: only where
+    /// CarPlay draws no playing indicator of its own (`CarPlayPlayingBadge`).
+    private let badgesRows: Bool
 
     init(
         loadArtwork: @escaping @MainActor (Row.Artwork) async -> UIImage? = CarPlayListRenderer.loadArtwork,
         record: @escaping (MusicKitActivityOperation, String) -> Void = {
             MusicKitActivityLog.shared.record($0, detail: $1)
-        }
+        },
+        badgesRows: Bool = !CarPlayPlayingBadge.systemIndicatorShows
     ) {
         self.loadArtwork = loadArtwork
         self.record = record
+        self.badgesRows = badgesRows
+    }
+
+    /// Marks the playing rows again after the player starts or stops. On
+    /// iOS 27 CarPlay animates a playing row's indicator, but the root's
+    /// Inbox row, marked playing when its start began, stayed still while
+    /// the list it opened animated (2026-10-25). Suspected: CarPlay takes the
+    /// indicator's motion from whether the app is playing when `isPlaying` is
+    /// set. Setting it again once that changes brings the rows up to date.
+    /// Only where CarPlay draws its own indicator: elsewhere the badge marks
+    /// the row, and the two writes would do nothing but redraw it.
+    func playbackStateChanged() {
+        guard !badgesRows else { return }
+        let playingIDs = presentation.sections.flatMap(\.rows).filter(\.isPlaying).map(\.id)
+        let playing = playingIDs.compactMap { id in items[id].map { (id, $0) } }
+        guard !playing.isEmpty else { return }
+        playing.forEach { $0.1.isPlaying = false }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            // Only rows that are still playing, in this renderer's list.
+            let replayed = playing.filter { id, item in
+                self.items[id] === item
+                    && self.presentation.sections.contains { $0.rows.contains { $0.id == id && $0.isPlaying } }
+            }
+            replayed.forEach { $0.1.isPlaying = true }
+            // Names only the rows marked again: the car check reads this line.
+            guard !replayed.isEmpty else { return }
+            self.record(.carPlayListMutation, "rows=\(replayed.map(\.0).joined(separator: ",")) fields=playing-replayed")
+        }
     }
 
     func stop() {
@@ -148,7 +181,7 @@ final class CarPlayListRenderer {
         let oldRows = Dictionary(uniqueKeysWithValues: presentation.sections.flatMap(\.rows).map { ($0.id, $0) })
         let rows = next.sections.flatMap(\.rows)
         let styles = Dictionary(rows.map { ($0.id, $0.style) }, uniquingKeysWith: { first, _ in first })
-        let slotIDs = Set((Self.headerSlots(next.header) + Self.artworkSlots(in: rows)).map(\.id))
+        let slotIDs = Set((Self.headerSlots(next.header) + artworkSlots(in: rows)).map(\.id))
         items = items.filter { styles[$0.key] == .standard }
         imageRows = imageRows.filter { styles[$0.key].map { $0 != .standard } ?? false }
         elements = elements.filter { slotIDs.contains($0.key) }
@@ -156,7 +189,7 @@ final class CarPlayListRenderer {
         requestedArtwork = requestedArtwork.filter { slotIDs.contains($0.key) }
         loadedArtwork = loadedArtwork.filter { slotIDs.contains($0.key) }
         plainImages = plainImages.filter { slotIDs.contains($0.key) }
-        applyBadgeChanges(Self.artworkSlots(in: rows))
+        applyBadgeChanges(artworkSlots(in: rows))
         var replacedItem = false
         for row in rows {
             if row.style != .standard {
@@ -350,9 +383,11 @@ final class CarPlayListRenderer {
     }
 
     /// Every artwork the list shows, in display order: one per standard row
-    /// or card, one per strip tile. Playing art carries the badge; a playing
-    /// symbol row changes its symbol instead.
-    private static func artworkSlots(in rows: some Sequence<Row>) -> [(id: String, artwork: Row.Artwork)] {
+    /// or card, one per strip tile. Playing art carries the badge, on a
+    /// standard row only when `badgesRows`; a playing symbol row changes its
+    /// symbol instead.
+    private func artworkSlots(in rows: some Sequence<Row>) -> [(id: String, artwork: Row.Artwork)] {
+        let badgesRows = badgesRows
         func slot(_ artwork: Row.Artwork, playing: Bool, displayed: CGSize) -> Row.Artwork {
             if case .symbol = artwork { return artwork }
             return playing ? .playing(artwork, displayed: displayed) : artwork
@@ -368,7 +403,7 @@ final class CarPlayListRenderer {
                 row.artwork.map { [(row.id, slot($0, playing: row.isPlaying,
                                                displayed: CPListImageRowItemCardElement.maximumImageSize))] } ?? []
             case .standard:
-                row.artwork.map { [(row.id, slot($0, playing: row.isPlaying,
+                row.artwork.map { [(row.id, slot($0, playing: row.isPlaying && badgesRows,
                                                displayed: CPListItem.maximumImageSize))] } ?? []
             }
         }
@@ -382,7 +417,7 @@ final class CarPlayListRenderer {
                 // CarPlay can display. Unchanged rows never restart artwork.
                 let rows = self.presentation.sections.flatMap(\.rows).prefix(CPListTemplate.maximumItemCount)
                 let header = Self.headerSlots(self.presentation.header)
-                guard let slot = (header + Self.artworkSlots(in: rows)).first(where: { self.requestedArtwork[$0.id] != $0.artwork }) else {
+                guard let slot = (header + self.artworkSlots(in: rows)).first(where: { self.requestedArtwork[$0.id] != $0.artwork }) else {
                     self.artworkTask = nil
                     return
                 }
@@ -395,7 +430,7 @@ final class CarPlayListRenderer {
                 }
                 guard !Task.isCancelled else { return }
                 let allRows = self.presentation.sections.flatMap(\.rows)
-                let current = Self.headerSlots(self.presentation.header) + Self.artworkSlots(in: allRows)
+                let current = Self.headerSlots(self.presentation.header) + self.artworkSlots(in: allRows)
                 guard current.first(where: { $0.id == slot.id })?.artwork == slot.artwork else { continue }
                 if let plain { self.plainImages[slot.id] = (slot.artwork.plain, plain) }
                 // Keep the previous image through loading and failures.
@@ -433,13 +468,21 @@ final class CarPlayListRenderer {
     }
 }
 
-/// The iPhone's now-playing badge, a white play triangle in a green circle at
-/// the art's bottom-trailing corner. In the car, CarPlay drew no indicator of
-/// its own for `isPlaying` rows (2026-10-21), perhaps because Overplay's audio
-/// comes from Apple's music service rather than the app; rows keep `isPlaying`
-/// in case it does. Symbol rows show playing in the symbol instead, as on the
-/// phone dashboard.
+/// The iPhone's now-playing badge, a white arrow in a green circle at the
+/// art's bottom-trailing corner. On iOS 26 CarPlay drew no indicator of its
+/// own for `isPlaying` rows in the car (2026-10-21), perhaps because
+/// Overplay's audio comes from Apple's music service rather than the app, so
+/// every playing art carries the badge. On iOS 27 CarPlay animates its own
+/// indicator over a standard row's art (2026-10-25), so those rows show that
+/// instead; cards and strip tiles have no indicator of CarPlay's and keep
+/// the badge. Symbol rows show playing in the symbol, as on the phone
+/// dashboard.
 enum CarPlayPlayingBadge {
+    /// Whether CarPlay draws its own playing indicator on a standard row.
+    static var systemIndicatorShows: Bool {
+        if #available(iOS 27.0, *) { true } else { false }
+    }
+
     /// The circle's diameter as a fraction of a list row's art: a little
     /// larger than on the phone, to read at a glance in the car.
     static let diameter: CGFloat = 0.38

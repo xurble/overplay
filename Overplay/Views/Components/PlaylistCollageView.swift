@@ -36,8 +36,11 @@ struct PlaylistCollageView: View {
             .accessibilityAction(named: "Settings") { showSettings() }
             .accessibilityAction(named: "Regenerate") { regenerate() }
             .contextMenu {
-                Button("Settings", systemImage: "slider.horizontal.3") { showSettings() }
-                Button("Regenerate", systemImage: "arrow.clockwise") { regenerate() }
+                Group {
+                    Button("Settings", systemImage: "slider.horizontal.3") { showSettings() }
+                    Button("Regenerate", systemImage: "arrow.clockwise") { regenerate() }
+                }
+                .untinted()
             }
             if let errorMessage { Text(errorMessage).font(.caption).foregroundStyle(.secondary) }
         }
@@ -95,9 +98,11 @@ struct PlaylistCollageSettingsView: View {
                 Picker("Layout", selection: $layout) {
                     ForEach(PlaylistCollageLayout.allCases) { Text($0.title).tag($0) }
                 }
+                .untinted()
                 Picker("Borders", selection: $stroke) {
                     ForEach(PlaylistCollageStroke.allCases) { Text($0.title).tag($0) }
                 }
+                .untinted()
                 Section {
                     Text("Artwork refreshes when you next open this playlist after 24 hours. Touch and hold the artwork to regenerate it anytime.")
                         .foregroundStyle(.secondary)
@@ -105,7 +110,7 @@ struct PlaylistCollageSettingsView: View {
             }
             .navigationTitle("Playlist Artwork")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() }.untinted() }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { save(layout, stroke); dismiss() }
                 }

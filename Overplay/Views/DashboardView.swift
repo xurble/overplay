@@ -72,6 +72,10 @@ struct DashboardView: View {
                         // Green says it is playing; VoiceOver hears it.
                         .accessibilityValue(retiredSummary.isCurrentPlaybackPlaylist ? "Now playing" : "")
                     }
+                    // The same margins as the Inbox row above. With the system's
+                    // own, Retired sat further left than the Inbox on an open
+                    // iPhone Duo's left half (2026-10-26).
+                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                 }
             }
 
@@ -110,6 +114,10 @@ struct DashboardView: View {
                         Label(category.rawValue, systemImage: category.systemImage)
                     }
                     .accessibilityIdentifier("library-\(category.rawValue)")
+                    // The same margins as the "Library" heading and the Inbox
+                    // and Retired rows: mixed with the system's own, rows sat
+                    // apart on an open iPhone Duo's left half.
+                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                 }
             }
         }
@@ -128,6 +136,7 @@ struct DashboardView: View {
                     } label: {
                         Label("Settings", systemImage: "gearshape")
                     }
+                    .untinted()
                 } else {
                     NavigationLink {
                         SettingsView(settings: settings)
@@ -135,6 +144,7 @@ struct DashboardView: View {
                     } label: {
                         Label("Settings", systemImage: "gearshape")
                     }
+                    .untinted()
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -145,6 +155,7 @@ struct DashboardView: View {
                     Label("Search", systemImage: "magnifyingglass")
                 }
                 .accessibilityIdentifier("dashboard-search")
+                .untinted()
             }
         }
     }
@@ -317,8 +328,9 @@ private struct TriageHomeRowView: View {
                     .foregroundStyle(.secondary)
             }
         } icon: {
-            // The inbox, not the collage; green while Triage plays, as Retired.
-            Image(systemName: "tray.fill")
+            // The inbox, not the collage; the green play arrow while Triage
+            // plays, as Retired.
+            Image(systemName: summary.isCurrentPlaybackPlaylist ? summary.iconIntent.systemImage : "tray.fill")
                 .foregroundStyle(summary.isCurrentPlaybackPlaylist ? .green : .teal)
         }
         .accessibilityValue(summary.isCurrentPlaybackPlaylist ? "Now playing" : "")

@@ -29,9 +29,8 @@ struct LibraryCollectionView: View {
             ArtworkView(urlString: item.artworkURL, pixelSize: 512,
                         playlistID: ArtworkCacheService.libraryPlaylistID, cornerRadius: 16)
         } onPlay: { song in
-            let tracks = await LibraryBrowser.playableTracks(for: entries)
-            await playbackController.playCollection(collection, songs: savedSongs, startingAt: song?.catalogID,
-                                                    recordsRecent: false, tracks: tracks, context: modelContext)
+            await LibraryBrowser.play(item, entries: entries, startingAt: song?.catalogID,
+                                      controller: playbackController, context: modelContext)
         } onMove: { song, toOneTruePlaylist in
             guard let saved = savedSongs.first(where: { $0.catalogID == song.catalogID }) else { return }
             await playbackController.moveCollectionSong(saved, toOneTruePlaylist: toOneTruePlaylist, context: modelContext)

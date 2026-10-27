@@ -68,6 +68,7 @@ struct AlbumArtworkThemeDebugSheet: View {
                     Button("Done") {
                         dismiss()
                     }
+                    .untinted()
                 }
                 ToolbarItemGroup(placement: .primaryAction) {
                     if let report {
@@ -77,6 +78,7 @@ struct AlbumArtworkThemeDebugSheet: View {
                         } label: {
                             Label(didCopyReport ? "Copied" : "Copy", systemImage: didCopyReport ? "checkmark" : "doc.on.doc")
                         }
+                        .untinted()
                     }
                     Button {
                         onRefresh()
@@ -84,6 +86,7 @@ struct AlbumArtworkThemeDebugSheet: View {
                         Label("Rerun", systemImage: "arrow.clockwise")
                     }
                     .disabled(isLoading)
+                    .untinted()
                 }
             }
             .onChange(of: report) { _, _ in

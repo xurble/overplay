@@ -6,7 +6,8 @@ import Foundation
 /// never synced (every device reads the same web library itself). Each entry
 /// keeps its artwork's background colour, so a tint can show before the
 /// artwork does. A list older than `staleAfter` refreshes in the background
-/// when opened; empty lists fill a few seconds after launch.
+/// when opened, in CarPlay only once playback is quiet; empty lists fill a
+/// few seconds after launch.
 @MainActor
 @Observable
 final class LibraryCache {
@@ -21,6 +22,9 @@ final class LibraryCache {
     private(set) var failures: [LibraryBrowser.Category: String] = [:]
     private(set) var refreshing: Set<LibraryBrowser.Category> = []
 
+    /// What playback is doing; `AppRuntime` connects it to the shared controller.
+    @ObservationIgnored var playbackActivity: @MainActor () -> BackgroundMusicKitWorkPolicy.PlaybackActivity = { .init() }
+    @ObservationIgnored private var waitingRefreshes: Set<LibraryBrowser.Category> = []
     @ObservationIgnored private var refreshedAt: [LibraryBrowser.Category: Date] = [:]
     @ObservationIgnored private var loadedFromDisk: Set<LibraryBrowser.Category> = []
 
@@ -31,19 +35,38 @@ final class LibraryCache {
     }
 
     /// What opening a list does: show the saved copy, fetch when there is
-    /// none, refresh in the background when it is old.
-    func prepare(_ category: LibraryBrowser.Category) async {
+    /// none, refresh in the background when it is old. CarPlay's refresh
+    /// waits for playback to be quiet, since it is opened while driving to
+    /// music (`LOAD-001`); the phone's does not, since someone is looking at
+    /// the list and a sheet such as Add to Playlist must not offer stale
+    /// playlists.
+    func prepare(_ category: LibraryBrowser.Category, waitsForQuietPlayback: Bool = false) async {
         await loadFromDisk(category)
         if !hasContent(category) {
             await refresh(category)
-        } else if Date.now.timeIntervalSince(refreshedAt[category] ?? .distantPast) > Self.staleAfter {
-            // The saved copy shows now. A screen restored at launch waits out
-            // the quiet minute before refreshing it (`LOAD-001`).
+        } else if isStale(category), waitingRefreshes.insert(category).inserted {
+            // The saved copy shows now. The refresh waits out the launch quiet
+            // minute (`LOAD-001`).
+            Task {
+                defer { waitingRefreshes.remove(category) }
+                try? await Task.sleep(until: BackgroundMusicKitWorkPolicy.launchQuietEnds)
+                if waitsForQuietPlayback {
+                    await BackgroundMusicKitWorkPolicy.waitForQuietPlayback { playbackActivity() }
+                }
+                // The phone may have refreshed it meanwhile.
+                if isStale(category) { await refresh(category) }
+            }
+        } else if isStale(category), !waitsForQuietPlayback, !refreshing.contains(category) {
+            // CarPlay's refresh is waiting; the phone does not wait for it.
             Task {
                 try? await Task.sleep(until: BackgroundMusicKitWorkPolicy.launchQuietEnds)
-                await refresh(category)
+                if isStale(category) { await refresh(category) }
             }
         }
+    }
+
+    private func isStale(_ category: LibraryBrowser.Category) -> Bool {
+        Date.now.timeIntervalSince(refreshedAt[category] ?? .distantPast) > Self.staleAfter
     }
 
     /// A few seconds after launch: fill any empty list, one at a time.

@@ -42,6 +42,7 @@ struct SetupPlaylistPickerView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", systemImage: "xmark") { dismiss() }
+                        .untinted()
                 }
             }
         }

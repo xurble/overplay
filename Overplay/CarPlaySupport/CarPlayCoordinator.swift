@@ -95,6 +95,15 @@ final class CarPlayCoordinator: NSObject {
     private weak var recentsTemplate: CPListTemplate?
     private weak var visibleRecentTemplate: CPListTemplate?
     private var visibleRecentID: UUID?
+    // Library (`LIB-001`): a category's list, and the collection open from it.
+    private var libraryCategoryRenderer = CarPlayListRenderer()
+    private var libraryItemRenderer = CarPlayListRenderer()
+    private weak var libraryCategoryTemplate: CPListTemplate?
+    private var visibleLibraryCategory: LibraryBrowser.Category?
+    private weak var libraryItemTemplate: CPListTemplate?
+    private var visibleLibraryItem: LibraryBrowser.Item?
+    private var visibleLibraryEntries: [LibraryBrowser.Entry] = []
+    private var libraryItemPlaceholder: String?
     /// The failure kind last alerted in this episode; nil when none is active.
     private var alertedFailureKind: PlaybackFailure.Kind?
     private weak var failureAlert: CPAlertTemplate?
@@ -171,6 +180,7 @@ final class CarPlayCoordinator: NSObject {
         recentsTemplate = nil
         visibleRecentTemplate = nil
         visibleRecentID = nil
+        clearLibraryLists()
         lastNowPlayingButtonSignature = nil
         lastNowPlayingContext = nil
         displayedActions = []
@@ -188,6 +198,7 @@ final class CarPlayCoordinator: NSObject {
         recentsTemplate = nil
         visibleRecentTemplate = nil
         visibleRecentID = nil
+        clearLibraryLists()
         rootRenderer.stop()
         rootRenderer = CarPlayListRenderer()
         let template = CPListTemplate(title: "Overplay", sections: [])
@@ -239,9 +250,10 @@ final class CarPlayCoordinator: NSObject {
             if let triage = summaries.first(where: { $0.role == .triageBucket && $0.playbackScope == .active }) {
                 var triageRow = row(triage)
                 triageRow.detail = triage.triageDetail(sourceCount: triageSourceCount())
-                // The inbox icon, not artwork, coloured as on the phone dashboard:
-                // green while Triage plays.
-                triageRow.artwork = .symbol("tray.fill", tint: triageRow.isPlaying ? .systemGreen : .systemTeal)
+                // The inbox icon, not artwork, as on the phone dashboard: a
+                // green play symbol while Triage plays, as Retired.
+                triageRow.artwork = triageRow.isPlaying
+                    ? .symbol("play.fill", tint: .systemGreen) : .symbol("tray.fill", tint: .systemTeal)
                 triageRows.append(triageRow)
             }
             if let retired = summaries.first(where: { $0.playbackScope == .retired }) {
@@ -278,6 +290,14 @@ final class CarPlayCoordinator: NSObject {
                 sections = [Section(id: "empty", rows: [Row(id: "empty", title: "No linked playlists",
                     detail: "Open Overplay on iPhone to choose playlists.", isEnabled: false)])]
             }
+            // The Apple Music library by category, as on the phone, without
+            // Songs (`LIB-001`).
+            let libraryRows = Self.libraryCategories.map { category -> Row in
+                let id = "library-\(category.id)"
+                actions[id] = { [weak self] in self?.showLibraryCategory(category) }
+                return Row(id: id, title: category.rawValue, disclosure: true, artwork: .symbol(category.systemImage))
+            }
+            sections.append(Section(id: "library", header: "Library", rows: libraryRows))
         } catch {
             // A failed read is not evidence that the displayed library vanished.
             guard rootRenderer.presentation.sections.isEmpty else { return }
@@ -300,6 +320,154 @@ final class CarPlayCoordinator: NSObject {
         guard let modelContext, let playlists = try? PlaylistRepository.activePlaylists(in: modelContext) else { return 0 }
         return playlists.filter { $0.role == .triageSource }.count
     }
+
+    // MARK: - Library (`LIB-001`)
+
+    private static let libraryCategories: [LibraryBrowser.Category] = [.playlists, .artists, .albums]
+
+    private func showLibraryCategory(_ category: LibraryBrowser.Category) {
+        guard runtime?.libraryRestoration.isReady == true, let interfaceController else { return }
+        libraryCategoryRenderer.stop()
+        libraryCategoryRenderer = CarPlayListRenderer()
+        let template = CPListTemplate(title: category.rawValue, sections: [])
+        libraryCategoryTemplate = template
+        visibleLibraryCategory = category
+        updateLibraryCategoryList(template)
+        observeLibraryCache(template, category: category)
+        interfaceController.pushTemplate(template, animated: true, completion: nil)
+        Task { await LibraryCache.shared.prepare(category, waitsForQuietPlayback: true) }
+    }
+
+    /// The list follows the cache as it loads or refreshes, while it is open.
+    private func observeLibraryCache(_ template: CPListTemplate, category: LibraryBrowser.Category) {
+        let cache = LibraryCache.shared
+        withObservationTracking {
+            _ = cache.items[category]
+            _ = cache.failures[category]
+            _ = cache.refreshing
+        } onChange: { [weak self, weak template] in
+            Task { @MainActor [weak self, weak template] in
+                guard let self, let template, self.libraryCategoryTemplate === template else { return }
+                self.updateLibraryCategoryList(template)
+                self.observeLibraryCache(template, category: category)
+            }
+        }
+    }
+
+    private func updateLibraryCategoryList(_ template: CPListTemplate) {
+        guard let category = visibleLibraryCategory, let playbackController else { return }
+        typealias Row = CarPlayListPresentation.Row
+        let cache = LibraryCache.shared
+        var actions: [String: @MainActor () async -> Void] = [:]
+        let items = cache.items[category] ?? []
+        let rows = items.prefix(CPListTemplate.maximumItemCount).map { item -> Row in
+            actions[item.id] = { [weak self] in await self?.showLibraryItem(item) }
+            return Row(id: item.id, title: item.title, detail: item.subtitle,
+                isPlaying: playbackController.currentTrack != nil
+                    && playbackController.playingCollectionGroupKey == item.collection.groupKey,
+                disclosure: true,
+                artwork: .track(url: item.rowArtworkURL, playlistID: ArtworkCacheService.libraryPlaylistID))
+        }
+        let message: String = if let failure = cache.failures[category] {
+            "Couldn't load your \(category.rawValue.lowercased()): \(failure)"
+        } else if !cache.hasContent(category) || cache.refreshing.contains(category) {
+            "Loading…"
+        } else {
+            "No \(category.rawValue.lowercased()) in your library."
+        }
+        libraryCategoryRenderer.update(.init(sections: [.init(id: "items", rows: rows.isEmpty
+            ? [Row(id: "empty", title: message, isEnabled: false)] : rows)]), on: template, actions: actions)
+    }
+
+    /// Opens at once, as on the phone, and fills when the songs arrive: a
+    /// slow load must never push the list later over whatever the driver
+    /// has moved on to.
+    private func showLibraryItem(_ item: LibraryBrowser.Item) async {
+        guard runtime?.libraryRestoration.isReady == true else { return }
+        libraryItemRenderer.stop()
+        libraryItemRenderer = CarPlayListRenderer()
+        let template = CPListTemplate(title: item.title, sections: [])
+        libraryItemTemplate = template
+        visibleLibraryItem = item
+        visibleLibraryEntries = []
+        libraryItemPlaceholder = "Loading…"
+        updateLibraryItemList(template)
+        Task { [weak self, weak template] in
+            var entries: [LibraryBrowser.Entry] = []
+            var placeholder: String?
+            do {
+                entries = try await LibraryBrowser.songs(in: item)
+                placeholder = entries.isEmpty ? "No songs Overplay can play." : nil
+            } catch {
+                placeholder = "Couldn't load the songs: \(UserFacingError.message(for: error))"
+            }
+            guard let self, let template, self.libraryItemTemplate === template else { return }
+            self.visibleLibraryEntries = entries
+            self.libraryItemPlaceholder = placeholder
+            self.updateLibraryItemList(template)
+        }
+        await pushList(template, renderer: libraryItemRenderer) { [weak self] in self?.libraryItemTemplate === template }
+    }
+
+    /// The Library lists go with the template stack (a disconnect or a new root).
+    private func clearLibraryLists() {
+        libraryCategoryRenderer.stop()
+        libraryItemRenderer.stop()
+        libraryCategoryTemplate = nil
+        visibleLibraryCategory = nil
+        libraryItemTemplate = nil
+        visibleLibraryItem = nil
+        visibleLibraryEntries = []
+        libraryItemPlaceholder = nil
+    }
+
+    /// Shuffle and Play, then the songs, like a Recent Deep Dive.
+    private func updateLibraryItemList(_ template: CPListTemplate) {
+        guard let item = visibleLibraryItem, let modelContext, let playbackController else { return }
+        typealias Row = CarPlayListPresentation.Row
+        let groupKey = item.collection.groupKey
+        var actions: [String: @MainActor () async -> Void] = [
+            "shuffle": { [weak self] in await self?.playLibraryItem(startingAt: nil) }
+        ]
+        let songs = RecentCollectionPresentation.songs(visibleLibraryEntries.map(\.song), rowID: Self.libraryRowID, in: modelContext)
+        let rows: [Row] = songs.prefix(max(0, CPListTemplate.maximumItemCount - 1)).map { song in
+            actions[song.catalogID] = { [weak self] in await self?.playLibraryItem(startingAt: song.catalogID) }
+            return Row(id: song.catalogID, title: song.summary.title, detail: song.summary.detailText,
+                isPlaying: RecentCollectionPresentation.isCurrent(song, groupKey: groupKey, controller: playbackController),
+                artwork: .track(url: song.summary.artworkURLString, playlistID: ArtworkCacheService.libraryPlaylistID))
+        }
+        let header = CarPlayListPresentation.Header(
+            title: item.title,
+            subtitle: "\(item.kindName) · \(PlaylistSummaryPresentation.trackCountLabel(songs.count))",
+            artwork: .track(url: item.artworkURL, playlistID: ArtworkCacheService.libraryPlaylistID, size: 512),
+            shuffleActionID: "shuffle",
+            canShuffle: !rows.isEmpty
+        )
+        libraryItemRenderer.update(.init(header: header, sections: [
+            .init(id: "tracks", rows: rows.isEmpty
+                ? [Row(id: "empty", title: libraryItemPlaceholder ?? "No songs Overplay can play.", isEnabled: false)] : rows)
+        ]), on: template, actions: actions)
+    }
+
+    /// The shared Library action (`LIB-001`, `SURFACE-003`); CarPlay only
+    /// presents the outcome.
+    private func playLibraryItem(startingAt catalogSongID: String?) async {
+        guard let item = visibleLibraryItem, let playbackController, let modelContext else { return }
+        let entries = visibleLibraryEntries
+        let started = await MusicKitActivityLog.shared.withOrigin(.carPlay) {
+            await LibraryBrowser.play(item, entries: entries, startingAt: catalogSongID,
+                                      controller: playbackController, context: modelContext)
+        }
+        refreshAfterTrackAction()
+        if started {
+            showNowPlaying()
+        } else if playbackController.playbackFailure == nil {
+            showPlaybackFailure(title: "Playback failed")
+        }
+    }
+
+    /// Library songs have no Overplay row of their own, as on the phone.
+    private static let libraryRowID = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
 
     // MARK: - Recents (`PLAY-019`)
 
@@ -739,6 +907,25 @@ final class CarPlayCoordinator: NSObject {
     private func startPlaybackObservation() {
         playbackObservationGeneration += 1
         observePlaybackController(generation: playbackObservationGeneration)
+        observePlayingState(generation: playbackObservationGeneration)
+    }
+
+    /// Playing and paused change no list content, but CarPlay's playing
+    /// indicator must be told again (`CarPlayListRenderer.playbackStateChanged`).
+    private func observePlayingState(generation: Int) {
+        guard generation == playbackObservationGeneration, let playbackController else { return }
+        withObservationTracking {
+            _ = playbackController.isPlaying
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, generation == self.playbackObservationGeneration else { return }
+                for renderer in [self.rootRenderer, self.playlistRenderer, self.recentsRenderer, self.recentRenderer,
+                                 self.libraryCategoryRenderer, self.libraryItemRenderer] {
+                    renderer.playbackStateChanged()
+                }
+                self.observePlayingState(generation: generation)
+            }
+        }
     }
 
     private func stopPlaybackObservation() {
@@ -1071,6 +1258,14 @@ final class CarPlayCoordinator: NSObject {
 
         if listTemplate === recentsTemplate {
             updateRecentsList(listTemplate)
+            return
+        }
+        if listTemplate === libraryCategoryTemplate {
+            updateLibraryCategoryList(listTemplate)
+            return
+        }
+        if listTemplate === libraryItemTemplate {
+            updateLibraryItemList(listTemplate)
             return
         }
         if listTemplate === visibleRecentTemplate {

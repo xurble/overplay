@@ -99,6 +99,96 @@ struct StuckPlayerRecoveryTests {
         #expect(fixture.controller.playbackFailure == nil)
     }
 
+    // MARK: - Starting
+
+    @Test func aLoadingStartCountsAsStartingPlaybackWhileNotPlaying() async throws {
+        // Background Library work asks this: `isPlaying` is false meanwhile (`LOAD-001`).
+        let hung = HungPrepares()
+        let (fixture, _) = try fixture(hung: hung)
+        defer { fixture.cleanUp() }
+        #expect(!fixture.controller.isStartingPlayback)
+
+        let starting = Task { await start(fixture) }
+        try await waitUntil { hung.waiting.count == 1 }
+        #expect(fixture.controller.isStartingPlayback)
+        #expect(!fixture.controller.isPlaying)
+
+        hung.releaseAll()
+        await starting.value
+        #expect(!fixture.controller.isStartingPlayback)
+    }
+
+    @Test(arguments: [false, true])
+    func aTrackLookupCountsAsStartingBeforeAnyPlayerCall(lookupFails: Bool) async throws {
+        // Resolving tracks makes no player call, and `isPlaying` is false. A
+        // slow lookup counts past the stuck-call limits, which are only for
+        // player calls; one that fails ends the start just the same.
+        var held: [CheckedContinuation<Void, Never>] = []
+        let fixture = try PlaybackFixture(preparePlaybackTracks: { _, _ in
+            await withCheckedContinuation { held.append($0) }
+            if lookupFails { throw CancellationError() }
+        })
+        defer { fixture.cleanUp() }
+        fixture.controller.stuckCallLimit = .milliseconds(20)
+        fixture.controller.startHoldLimit = .milliseconds(20)
+
+        let starting = Task { await start(fixture) }
+        try await waitUntil { held.count == 1 }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(fixture.player.commands.isEmpty)
+        #expect(!fixture.controller.isPlaying)
+        #expect(fixture.controller.isStartingPlayback)
+        held.removeFirst().resume()
+        await starting.value
+        #expect(!fixture.controller.isStartingPlayback)
+    }
+
+    @Test func anAlbumLookupCountsAsStarting() async throws {
+        // Play Album looks the album up before any queue is made.
+        var held: [CheckedContinuation<Void, Never>] = []
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        await start(fixture)
+        let album = try FakePlaybackCatalog.album()
+        fixture.controller.playbackCatalog = PlaybackCatalog(
+            collection: { _, _ in
+                await withCheckedContinuation { held.append($0) }
+                return album
+            },
+            songs: { _ in [:] }
+        )
+        fixture.controller.collectionTrackCache = DevicePlaybackCache(directory: nil)
+        fixture.controller.pause()
+        try await waitUntil { !fixture.controller.isPlaying && !fixture.controller.isStartingPlayback }
+
+        let starting = Task { await fixture.controller.playCurrentCollection(.album, context: fixture.context) }
+        try await waitUntil { held.count == 1 }
+        #expect(!fixture.controller.isPlaying)
+        #expect(fixture.controller.isStartingPlayback)
+        held.removeFirst().resume()
+        #expect(await starting.value)
+        #expect(!fixture.controller.isStartingPlayback)
+    }
+
+    @Test func aCallThatNeverReturnsStopsCountingAsStartingOnceStuck() async throws {
+        // Otherwise CarPlay's Library would never refresh again until relaunch.
+        let hung = HungPrepares()
+        let (fixture, _) = try fixture(hung: hung)
+        defer { fixture.cleanUp() }
+        // Long enough to see it starting first, even on a busy run.
+        fixture.controller.stuckCallLimit = .milliseconds(50)
+        fixture.controller.startHoldLimit = .seconds(2)
+
+        let starting = Task { await start(fixture) }
+        try await waitUntil { hung.waiting.count == 1 }
+        #expect(fixture.controller.isStartingPlayback)
+        try await waitUntil { !fixture.controller.isStartingPlayback }
+        #expect(hung.waiting.count == 1)
+
+        hung.releaseAll()
+        await starting.value
+    }
+
     // MARK: - Stuck
 
     @Test func aCallUnansweredAtTheLimitMakesThePlayerStuck() async throws {
