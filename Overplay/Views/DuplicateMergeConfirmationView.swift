@@ -25,6 +25,7 @@ struct DuplicateMergeConfirmationView: View {
                                 Text(value.rawValue).tag(Optional(value))
                             }
                         }
+                        .untinted()
                     } else if let destination {
                         Text("Keep in \(destination.rawValue)")
                     }

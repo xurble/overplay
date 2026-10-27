@@ -98,9 +98,11 @@ struct PlaylistCollageSettingsView: View {
                 Picker("Layout", selection: $layout) {
                     ForEach(PlaylistCollageLayout.allCases) { Text($0.title).tag($0) }
                 }
+                .untinted()
                 Picker("Borders", selection: $stroke) {
                     ForEach(PlaylistCollageStroke.allCases) { Text($0.title).tag($0) }
                 }
+                .untinted()
                 Section {
                     Text("Artwork refreshes when you next open this playlist after 24 hours. Touch and hold the artwork to regenerate it anytime.")
                         .foregroundStyle(.secondary)

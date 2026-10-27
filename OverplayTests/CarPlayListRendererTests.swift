@@ -243,7 +243,7 @@ struct CarPlayListRendererTests {
     @Test("starting or stopping the player marks the playing rows again, and only those still playing")
     func playbackStateChangeReplaysThePlayingIndicator() async throws {
         var details: [String] = []
-        let renderer = CarPlayListRenderer(record: { _, detail in details.append(detail) })
+        let renderer = CarPlayListRenderer(record: { _, detail in details.append(detail) }, badgesRows: false)
         defer { renderer.stop() }
         let template = CPListTemplate(title: "Overplay", sections: [])
         func state(playing: String?) -> CarPlayListPresentation {
@@ -264,18 +264,40 @@ struct CarPlayListRendererTests {
         #expect(!retired.isPlaying)
         #expect(details.last == "rows=inbox fields=playing-replayed")
 
-        // A row that stopped playing in between is not marked again.
+        // A row that stopped playing in between is not marked again, nor
+        // named in the log the car check reads.
+        let beforeSkip = details.filter { $0.hasSuffix("playing-replayed") }.count
         renderer.playbackStateChanged()
         renderer.update(state(playing: "retired"), on: template, actions: [:])
         try await Task.sleep(for: .milliseconds(50))
         #expect(!inbox.isPlaying)
         #expect(retired.isPlaying)
+        #expect(details.filter { $0.hasSuffix("playing-replayed") }.count == beforeSkip)
 
         // Nothing playing: nothing to replay.
         renderer.update(state(playing: nil), on: template, actions: [:])
         let recorded = details.count
         renderer.playbackStateChanged()
         try await Task.sleep(for: .milliseconds(50))
+        #expect(details.count == recorded)
+    }
+
+    @Test("where the badge marks playing rows (iOS 26), starting or stopping the player leaves them alone")
+    func badgedRowsAreNotReplayed() async throws {
+        var details: [String] = []
+        let renderer = CarPlayListRenderer(record: { _, detail in details.append(detail) }, badgesRows: true)
+        defer { renderer.stop() }
+        let template = CPListTemplate(title: "Overplay", sections: [])
+        renderer.update(.init(sections: [.init(id: "list", rows: [
+            .init(id: "inbox", title: "Inbox", isPlaying: true),
+        ])]), on: template, actions: [:])
+        let inbox = try #require(renderer.items["inbox"])
+        let recorded = details.count
+
+        renderer.playbackStateChanged()
+        #expect(inbox.isPlaying)
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(inbox.isPlaying)
         #expect(details.count == recorded)
     }
 

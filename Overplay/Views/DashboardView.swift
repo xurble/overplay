@@ -114,6 +114,10 @@ struct DashboardView: View {
                         Label(category.rawValue, systemImage: category.systemImage)
                     }
                     .accessibilityIdentifier("library-\(category.rawValue)")
+                    // The same margins as the "Library" heading and the Inbox
+                    // and Retired rows: mixed with the system's own, rows sat
+                    // apart on an open iPhone Duo's left half.
+                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                 }
             }
         }

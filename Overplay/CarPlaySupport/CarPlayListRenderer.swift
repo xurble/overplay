@@ -115,7 +115,10 @@ final class CarPlayListRenderer {
     /// the list it opened animated (2026-10-25). Suspected: CarPlay takes the
     /// indicator's motion from whether the app is playing when `isPlaying` is
     /// set. Setting it again once that changes brings the rows up to date.
+    /// Only where CarPlay draws its own indicator: elsewhere the badge marks
+    /// the row, and the two writes would do nothing but redraw it.
     func playbackStateChanged() {
+        guard !badgesRows else { return }
         let playingIDs = presentation.sections.flatMap(\.rows).filter(\.isPlaying).map(\.id)
         let playing = playingIDs.compactMap { id in items[id].map { (id, $0) } }
         guard !playing.isEmpty else { return }
@@ -123,11 +126,14 @@ final class CarPlayListRenderer {
         Task { @MainActor [weak self] in
             guard let self else { return }
             // Only rows that are still playing, in this renderer's list.
-            for (id, item) in playing where self.items[id] === item
-                && self.presentation.sections.contains(where: { $0.rows.contains { $0.id == id && $0.isPlaying } }) {
-                item.isPlaying = true
+            let replayed = playing.filter { id, item in
+                self.items[id] === item
+                    && self.presentation.sections.contains { $0.rows.contains { $0.id == id && $0.isPlaying } }
             }
-            self.record(.carPlayListMutation, "rows=\(playing.map(\.0).joined(separator: ",")) fields=playing-replayed")
+            replayed.forEach { $0.1.isPlaying = true }
+            // Names only the rows marked again: the car check reads this line.
+            guard !replayed.isEmpty else { return }
+            self.record(.carPlayListMutation, "rows=\(replayed.map(\.0).joined(separator: ",")) fields=playing-replayed")
         }
     }
 

@@ -37,6 +37,7 @@ struct SearchMusicView: View {
             .confirmationDialog(moreResult?.title ?? "", isPresented: isShowingMore, titleVisibility: .visible,
                                 presenting: moreResult) { result in
                 moreActions(for: result)
+                    .untinted()
             }
             .sheet(item: $playlistResult) { result in
                 NavigationStack {
