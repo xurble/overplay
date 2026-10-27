@@ -455,12 +455,15 @@ for expanded artwork and recognition (longest edge, preserving aspect ratio).
 The expanded player shows available 128 artwork while 512 loads. Lists may use
 cached images and load missing artwork while scrolling. In CarPlay, what is
 playing shows the phone's marker: a white arrow in a green circle at the
-bottom-trailing corner of a track row's, playlist card's or Recent Deep Dives
+bottom-trailing corner of a track or playlist row's or Recent Deep Dives
 tile's art, and a green play symbol in place of the Inbox's or Retired's own.
+The root lists the One True Playlist as an ordinary row, its art and track
+count, above the Inbox and Retired (owner request, 2026-10-27; it was a large
+card).
 On iOS 26 CarPlay drew no indicator of its own for Overplay's playing rows in
 the car, and list images cannot animate. On iOS 27 it animates its leading
 playing indicator over a row's art (2026-10-25), so a playing standard row
-shows that instead of the marker (owner request); cards and tiles have no
+shows that instead of the marker (owner request); strip tiles have no
 CarPlay indicator and keep the marker, and the Inbox and Retired keep their
 green symbols, as on the phone dashboard. The root's playing Inbox row showed
 the indicator still while the list it opened animated: suspected to be because
