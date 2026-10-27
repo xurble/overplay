@@ -236,17 +236,14 @@ final class CarPlayCoordinator: NSObject {
         }
         do {
             let summaries = try playlistSummaries()
-            // The One True Playlist leads as a large artwork card, as on the phone.
-            // Cards have no CarPlay playing indicator: the art carries the
-            // phone's now-playing badge and the subtitle says so.
+            // The One True Playlist, the Inbox and Retired share one headerless
+            // section. The One True Playlist leads as an ordinary row, its art
+            // and its track count (owner request, 2026-10-27), so it shows
+            // CarPlay's playing indicator like any other row.
+            var playlistRows: [Row] = []
             if let main = summaries.first(where: { $0.role == .oneTruePlaylist }) {
-                var mainRow = row(main)
-                mainRow.style = .card
-                mainRow.detail = mainRow.isPlaying ? "Now Playing" : nil
-                sections.append(Section(id: "main", rows: [mainRow]))
+                playlistRows.append(row(main))
             }
-            // Triage and a compact Retired row share one headerless section, as on the phone dashboard.
-            var triageRows: [Row] = []
             if let triage = summaries.first(where: { $0.role == .triageBucket && $0.playbackScope == .active }) {
                 var triageRow = row(triage)
                 triageRow.detail = triage.triageDetail(sourceCount: triageSourceCount())
@@ -254,7 +251,7 @@ final class CarPlayCoordinator: NSObject {
                 // green play symbol while Triage plays, as Retired.
                 triageRow.artwork = triageRow.isPlaying
                     ? .symbol("play.fill", tint: .systemGreen) : .symbol("tray.fill", tint: .systemTeal)
-                triageRows.append(triageRow)
+                playlistRows.append(triageRow)
             }
             if let retired = summaries.first(where: { $0.playbackScope == .retired }) {
                 var retiredRow = row(retired)
@@ -262,9 +259,9 @@ final class CarPlayCoordinator: NSObject {
                 // As on the phone dashboard: a green play symbol while Retired plays.
                 retiredRow.artwork = retiredRow.isPlaying
                     ? .symbol("play.fill", tint: .systemGreen) : .symbol("archivebox.fill", tint: .systemGray)
-                triageRows.append(retiredRow)
+                playlistRows.append(retiredRow)
             }
-            if !triageRows.isEmpty { sections.append(Section(id: "triage", rows: triageRows)) }
+            if !playlistRows.isEmpty { sections.append(Section(id: "playlists", rows: playlistRows)) }
             // Recent Deep Dives (`PLAY-019`): a strip of artwork tiles, as on the
             // phone. A tile opens that album or artist; the title opens the list.
             if let modelContext, let playbackController,
