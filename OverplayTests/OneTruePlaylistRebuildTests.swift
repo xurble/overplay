@@ -92,6 +92,23 @@ struct OneTruePlaylistRebuildTests {
         #expect(recorder.created.first?.ids.count == 2)
     }
 
+    @Test("A genuinely empty One True Playlist can be made again")
+    func emptyPlaylistCanBeRebuilt() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        for item in try PlaylistItemRepository.items(forPlaylistID: fixture.playlist.id, in: fixture.context) {
+            try TrackActionService.evictTrack(item, playlist: fixture.playlist, message: "Retired manually", in: fixture.context)
+        }
+        let recorder = Recorder()
+        fixture.controller.playlistRebuild = Self.service(recorder: recorder)
+
+        let result = try await fixture.controller.rebuildOneTruePlaylist(context: fixture.context)
+
+        #expect(recorder.created.count == 1)
+        #expect(recorder.created.first?.ids.isEmpty == true)
+        #expect(result == .init(name: "Main", addedCount: 0, skippedCount: 0))
+        #expect(fixture.playlist.musicPlaylistID == "p.rebuilt")
+    }
+
     @Test("Nothing changes when no song can be added, when creation fails, or on a Mac")
     func failuresChangeNothing() async throws {
         let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }

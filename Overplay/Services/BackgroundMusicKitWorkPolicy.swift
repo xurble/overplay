@@ -44,6 +44,13 @@ enum BackgroundMusicKitWorkPolicy {
         !activity.isPlaying && !activity.isStarting && !activity.hasFailure
     }
 
+    static func allowsPlaylistPresenceCheck(
+        _ activity: PlaybackActivity,
+        now: ContinuousClock.Instant = .now
+    ) -> Bool {
+        !isInLaunchQuietPeriod(now: now) && allowsStaleLibraryRefresh(activity)
+    }
+
     /// How often a waiting stale refresh looks again.
     static let staleLibraryRefreshRecheck: Duration = .seconds(30)
     /// Quiet checks in a row a refresh needs: one quiet moment may be the

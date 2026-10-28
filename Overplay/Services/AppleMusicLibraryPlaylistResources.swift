@@ -91,9 +91,22 @@ enum AppleMusicLibraryPlaylistResources {
         guard !playlistID.isEmpty, let url = components.url else { throw PlaylistSyncError.incompletePlaylist }
         do {
             let response = try JSONDecoder().decode(Response.self, from: await request(url))
+            MusicKitActivityLog.shared.record(
+                .diagnosticNote,
+                magnitude: Double(response.data.count),
+                detail: "OTP web presence result=\(response.data.isEmpty ? "missing" : "present") resourceCount=\(response.data.count) requestedIDMatch=\(response.data.contains { $0.id == playlistID })"
+            )
             return !response.data.isEmpty
         } catch let error as MusicDataRequest.Error where error.status == 404 {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP web presence result=missing status=404")
             return false
+        } catch {
+            let nsError = error as NSError
+            MusicKitActivityLog.shared.record(
+                .diagnosticNote,
+                detail: "OTP web presence result=unknown errorDomain=\(nsError.domain) errorCode=\(nsError.code) description=\(nsError.localizedDescription)"
+            )
+            throw error
         }
     }
 

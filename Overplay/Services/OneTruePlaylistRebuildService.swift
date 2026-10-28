@@ -87,7 +87,11 @@ struct OneTruePlaylistRebuildService {
     }
     var createPlaylist: @MainActor (String, [Track]) async throws -> Playlist = { name, items in
         let created = try await MusicKitActivityLog.shared.measure(.libraryPlaylistCreate, magnitude: Double(items.count)) {
-            try await AppleMusicPlaylistWrites.createPlaylist(name: name, description: "Managed by Overplay", items: items)
+            if items.isEmpty {
+                try await AppleMusicPlaylistWrites.createPlaylist(name: name, description: "Managed by Overplay")
+            } else {
+                try await AppleMusicPlaylistWrites.createPlaylist(name: name, description: "Managed by Overplay", items: items)
+            }
         }
         CachingMusicLibraryPlaylistFetcher.shared.invalidate()
         return created
@@ -120,7 +124,7 @@ struct OneTruePlaylistRebuildService {
             let records = active.compactMap { inputs.tracksByID[$0.trackID] }
             let tracksByID = await addableTracks(records, previousID)
             let items = records.compactMap { tracksByID[$0.id] }
-            guard !items.isEmpty else { throw RebuildError.nothingToAdd }
+            guard !items.isEmpty || active.isEmpty else { throw RebuildError.nothingToAdd }
 
             let created: Playlist
             do {

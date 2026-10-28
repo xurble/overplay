@@ -155,4 +155,30 @@ struct OneTruePlaylistPromptControllerTests {
         await controller.check(in: container.mainContext, checksPresence: true)
         #expect(controller.prompt == nil)
     }
+
+    @Test("overlapping launch and sync checks share one presence lookup")
+    func overlappingChecksShareLookup() async throws {
+        let container = try library()
+        var presence = OneTruePlaylistPresenceService()
+        presence.canCreatePlaylists = { true }
+        var checks = 0
+        var controller: OneTruePlaylistPromptController!
+        presence.playlistExists = { _ in
+            checks += 1
+            await controller.check(in: container.mainContext, checksPresence: true)
+            return false
+        }
+        controller = OneTruePlaylistPromptController(dependencies: .init(
+            presence: presence,
+            isFulfilling: { false },
+            fulfilPending: { _ in },
+            rebuild: { _ in .init(name: "Overplay", addedCount: 0, skippedCount: 0) },
+            show: { _ in }
+        ))
+
+        await controller.check(in: container.mainContext, checksPresence: true)
+
+        #expect(checks == 1)
+        #expect(controller.prompt == missing)
+    }
 }

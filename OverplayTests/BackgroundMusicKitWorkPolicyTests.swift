@@ -58,6 +58,16 @@ struct BackgroundMusicKitWorkPolicyTests {
         #expect(!BackgroundMusicKitWorkPolicy.isInLaunchQuietPeriod(now: launched + .seconds(60)))
     }
 
+    @Test func playlistPresenceWaitsForLaunchAndQuietPlayback() {
+        typealias Activity = BackgroundMusicKitWorkPolicy.PlaybackActivity
+        let ready = BackgroundMusicKitWorkPolicy.launchQuietEnds
+        #expect(!BackgroundMusicKitWorkPolicy.allowsPlaylistPresenceCheck(Activity(), now: ready - .seconds(1)))
+        #expect(BackgroundMusicKitWorkPolicy.allowsPlaylistPresenceCheck(Activity(), now: ready))
+        #expect(!BackgroundMusicKitWorkPolicy.allowsPlaylistPresenceCheck(Activity(isPlaying: true), now: ready))
+        #expect(!BackgroundMusicKitWorkPolicy.allowsPlaylistPresenceCheck(Activity(isStarting: true), now: ready))
+        #expect(!BackgroundMusicKitWorkPolicy.allowsPlaylistPresenceCheck(Activity(hasFailure: true), now: ready))
+    }
+
     @Test func automaticSyncPausesDuringAPlaybackFailure() {
         #expect(BackgroundMusicKitWorkPolicy.allowsAutomaticSync(hasPlaybackFailure: false))
         #expect(!BackgroundMusicKitWorkPolicy.allowsAutomaticSync(hasPlaybackFailure: true))

@@ -21,23 +21,62 @@ final class OneTruePlaylistPromptController {
     /// until the next launch.
     @ObservationIgnored private var declined = false
     @ObservationIgnored private var isMaking = false
+    @ObservationIgnored private var isChecking = false
     private let dependencies: Dependencies
 
     init(dependencies: Dependencies = Dependencies()) {
         self.dependencies = dependencies
     }
 
-    private var canAsk: Bool {
-        !declined && !isMaking && !dependencies.isFulfilling() && prompt == nil
-    }
-
-    /// `checksPresence`: a sync could not find the playlist, so look it up.
+    /// `checksPresence`: look up the playlist after a failed sync or while
+    /// playback is quiet following launch or foreground activation.
     func check(in context: ModelContext, checksPresence: Bool = false) async {
-        guard canAsk else { return }
+        guard !declined else {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP check suppressed: declined this launch")
+            return
+        }
+        guard !isChecking else {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP check suppressed: already checking")
+            return
+        }
+        guard !isMaking else {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP check suppressed: making playlist")
+            return
+        }
+        guard !dependencies.isFulfilling() else {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP check suppressed: fulfilling request")
+            return
+        }
+        guard prompt == nil else {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP check suppressed: prompt already assigned")
+            return
+        }
+        isChecking = true
+        defer { isChecking = false }
         let found = await dependencies.presence.prompt(in: context, checksPresence: checksPresence)
         // The user may have answered another prompt during the lookup.
-        guard canAsk else { return }
+        guard !Task.isCancelled else {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP check result suppressed: cancelled")
+            return
+        }
+        guard !declined else {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP check result suppressed: declined")
+            return
+        }
+        guard !isMaking else {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP check result suppressed: making playlist")
+            return
+        }
+        guard !dependencies.isFulfilling() else {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP check result suppressed: fulfilling request")
+            return
+        }
+        guard prompt == nil else {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP check result suppressed: prompt already assigned")
+            return
+        }
         prompt = found
+        MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP prompt assignment=\(found == nil ? "none" : "alert") checksPresence=\(checksPresence)")
     }
 
     func decline() {

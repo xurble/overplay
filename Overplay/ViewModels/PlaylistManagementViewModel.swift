@@ -27,6 +27,9 @@ final class PlaylistManagementViewModel {
         var playPlaylistFromTrack: (PlaylistRecord, TrackRecord, PlaylistPlaybackScope, OverplaySettings, ModelContext) async -> Void
         var playPlaylist: (PlaylistRecord, PlaylistPlaybackScope, OverplaySettings, ModelContext) async -> Void
         var syncPlaylist: (PlaylistRecord, ModelContext) async throws -> Int
+        var oneTruePlaylistNotFound: (ModelContext) async -> Void = { context in
+            await AppRuntime.shared.checkOneTruePlaylist(in: context, checksPresence: true)
+        }
         var reconcileStoredOrder: (PlaylistRecord, ModelContext) -> Void
         var promote: (PlaylistItemRecord, PlaylistRecord, ModelContext) async throws -> Void
         var evict: (PlaylistItemRecord, PlaylistRecord, ModelContext) throws -> Void
@@ -298,6 +301,9 @@ final class PlaylistManagementViewModel {
             message = "Synced \(count) tracks from \(playlist.name)."
         } catch {
             message = UserFacingError.message(for: error)
+            if playlist.role == .oneTruePlaylist, case PlaylistSyncError.playlistNotFound = error {
+                await dependencies.oneTruePlaylistNotFound(context)
+            }
         }
     }
 
