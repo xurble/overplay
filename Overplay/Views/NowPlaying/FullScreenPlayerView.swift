@@ -125,6 +125,7 @@ struct FullScreenPlayerView: View {
             screenSize: screenSize,
             miniPlayerFrame: miniPlayerFrame
         ))
+        .modifier(UnderVerticalBar(adjustsSafeArea: false))
     }
 
     /// The card follows the finger down and, past the threshold, closes;
@@ -231,7 +232,7 @@ private struct FullScreenPlayerContent: View {
 /// player's frame as `closeProgress` goes from 0 to 1. Its content scales evenly and the
 /// card's outline, rounding into the capsule, clips it. It is opaque until it
 /// is nearly there, then fades out as it reaches the mini player. Rendering only: layout and the safe area never change.
-private struct PlayerCardTransform: ViewModifier, Animatable {
+struct PlayerCardTransform: ViewModifier, Animatable {
     var closeProgress: CGFloat
     var screenSize: CGSize
     var miniPlayerFrame: CGRect
@@ -241,19 +242,52 @@ private struct PlayerCardTransform: ViewModifier, Animatable {
         set { closeProgress = newValue }
     }
 
-    private static let movingCornerRadius: CGFloat = 50
     /// Opaque for most of the shrink; fades out over the last stretch, just
     /// before it reaches the mini player.
     private static let fadeStart: CGFloat = 0.7
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.playerVerticalBarEdge) private var verticalBarEdge
+    @Environment(\.layoutDirection) private var layoutDirection
+    @State private var hasSeenVerticalBar = false
+
+    static func minimumCornerRadius(progress: CGFloat, targetHeight: CGFloat, scale: CGFloat, startsSquare: Bool) -> CGFloat {
+        let t = min(max(progress, 0), 1)
+        let startingRadius: CGFloat = startsSquare ? 0 : 50
+        return (startingRadius * (1 - t) + targetHeight / 2 * t) / scale
+    }
+
+    /// The Duo's square portrait-left edge moves to the top on a clockwise
+    /// turn and to the bottom on a counterclockwise turn.
+    static func maskShape(progress: CGFloat, targetHeight: CGFloat, scale: CGFloat, verticalBarEdge: HorizontalEdge?, hasSeenVerticalBar: Bool, isLandscape: Bool, isClockwise: Bool, layoutDirection: LayoutDirection) -> ConcentricRectangle {
+        let isDuoFront = verticalBarEdge != nil || hasSeenVerticalBar
+        let roundedRadius = minimumCornerRadius(progress: progress, targetHeight: targetHeight, scale: scale, startsSquare: false)
+        let rounded: Edge.Corner.Style = isDuoFront ? .fixed(roundedRadius) : .concentric(minimum: .fixed(roundedRadius))
+        let squared: Edge.Corner.Style = .fixed(minimumCornerRadius(progress: progress, targetHeight: targetHeight, scale: scale, startsSquare: true))
+        let topLeft = isDuoFront && (!isLandscape || isClockwise) ? squared : rounded
+        let topRight = isDuoFront && isLandscape && isClockwise ? squared : rounded
+        let bottomLeft = isDuoFront && (!isLandscape || !isClockwise) ? squared : rounded
+        let bottomRight = isDuoFront && isLandscape && !isClockwise ? squared : rounded
+        let isLeftToRight = layoutDirection == .leftToRight
+        return ConcentricRectangle(
+            topLeadingCorner: isLeftToRight ? topLeft : topRight,
+            topTrailingCorner: isLeftToRight ? topRight : topLeft,
+            bottomLeadingCorner: isLeftToRight ? bottomLeft : bottomRight,
+            bottomTrailingCorner: isLeftToRight ? bottomRight : bottomLeft
+        )
+    }
 
     func body(content: Content) -> some View {
-        if reduceMotion {
-            // No zoom: the player fades, and a swipe down fades it with the finger.
-            content.opacity(1 - min(max(closeProgress, 0), 1))
-        } else {
-            moving(content)
+        Group {
+            if reduceMotion {
+                // No zoom: the player fades, and a swipe down fades it with the finger.
+                content.opacity(1 - min(max(closeProgress, 0), 1))
+            } else {
+                moving(content)
+            }
+        }
+        .onChange(of: verticalBarEdge, initial: true) { _, edge in
+            if edge != nil { hasSeenVerticalBar = true }
         }
     }
 
@@ -274,13 +308,20 @@ private struct PlayerCardTransform: ViewModifier, Animatable {
             height: start.height + (target.height - start.height) * t
         )
         let scale = card.width / width
-        let startRadius = t > 0 ? Self.movingCornerRadius : 0
-        let radius = startRadius + (target.height / 2 - startRadius) * t
         let opacity = t < Self.fadeStart ? 1 : max(0, (1 - t) / (1 - Self.fadeStart))
 
         content
             .mask(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: radius / scale, style: .continuous)
+                Self.maskShape(
+                    progress: t,
+                    targetHeight: target.height,
+                    scale: scale,
+                    verticalBarEdge: verticalBarEdge,
+                    hasSeenVerticalBar: hasSeenVerticalBar,
+                    isLandscape: screenSize.width > screenSize.height,
+                    isClockwise: PhoneTurn.shared.isClockwise,
+                    layoutDirection: layoutDirection
+                )
                     .frame(width: card.width / scale, height: card.height / scale)
             }
             .scaleEffect(scale, anchor: .topLeading)
