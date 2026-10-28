@@ -50,7 +50,7 @@ enum OneTruePlaylistPrompt: Equatable, Identifiable {
 @MainActor
 struct OneTruePlaylistPresenceService {
     var canCreatePlaylists: () -> Bool = { !ProcessInfo.processInfo.isMacCatalystApp }
-    /// Whether iCloud's copy of the library has this playlist; nil when it
+    /// Whether iCloud's complete library playlist list contains this ID; nil when it
     /// cannot tell, which never prompts. The sync that could not find it read
     /// this device's library, which can lag iCloud (a playlist made on
     /// another device, or a library still catching up), so this asks the web
@@ -59,7 +59,7 @@ struct OneTruePlaylistPresenceService {
         do {
             return try await AppleMusicLibraryPlaylistResources.exists(playlistID: id)
         } catch {
-            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP presence result=unknown after web lookup")
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP presence result=unknown after web library membership check")
             return nil
         }
     }

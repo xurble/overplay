@@ -71,40 +71,32 @@ enum AppleMusicLibraryPlaylistResources {
         return response.data.first?.attributes?.canEdit
     }
 
-    /// Whether iCloud's copy of the library has this playlist, independent of
-    /// how far this device's library has synced. Apple Music answers 404 for
-    /// a playlist that is not there.
+    /// Whether a complete enumeration of iCloud's library contains this playlist,
+    /// independent of how far this device's library has synced. A direct resource
+    /// lookup can still return a playlist after it has left the library.
     static func exists(
         playlistID: String,
         request: (URL) async throws -> Data = { url in
-            try await MusicKitActivityLog.shared.measure(.libraryPlaylistLookup, detail: "web library playlist presence") {
+            try await MusicKitActivityLog.shared.measure(.libraryPlaylistEnumeration, detail: "OTP web library membership page") {
                 try await MusicDataRequest(urlRequest: URLRequest(url: url)).response().data
             }
         }
     ) async throws -> Bool {
-        struct Response: Decodable {
-            struct Resource: Decodable { var id: String }
-            var data: [Resource]
-        }
-        var components = URLComponents(string: "https://api.music.apple.com")!
-        components.path = "/v1/me/library/playlists/\(playlistID)"
-        guard !playlistID.isEmpty, let url = components.url else { throw PlaylistSyncError.incompletePlaylist }
+        guard !playlistID.isEmpty else { throw PlaylistSyncError.incompletePlaylist }
         do {
-            let response = try JSONDecoder().decode(Response.self, from: await request(url))
+            let playlists = try await fetchAll(request: request)
+            let found = playlists.contains { $0.id == playlistID }
             MusicKitActivityLog.shared.record(
                 .diagnosticNote,
-                magnitude: Double(response.data.count),
-                detail: "OTP web presence result=\(response.data.isEmpty ? "missing" : "present") resourceCount=\(response.data.count) requestedIDMatch=\(response.data.contains { $0.id == playlistID })"
+                magnitude: Double(playlists.count),
+                detail: "OTP web library membership result=\(found ? "present" : "missing") playlistCount=\(playlists.count)"
             )
-            return !response.data.isEmpty
-        } catch let error as MusicDataRequest.Error where error.status == 404 {
-            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP web presence result=missing status=404")
-            return false
+            return found
         } catch {
             let nsError = error as NSError
             MusicKitActivityLog.shared.record(
                 .diagnosticNote,
-                detail: "OTP web presence result=unknown errorDomain=\(nsError.domain) errorCode=\(nsError.code) description=\(nsError.localizedDescription)"
+                detail: "OTP web library membership result=unknown playlistCount=unknown errorDomain=\(nsError.domain) errorCode=\(nsError.code)"
             )
             throw error
         }
