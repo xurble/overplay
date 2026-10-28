@@ -27,8 +27,8 @@ enum OneTruePlaylistPrompt: Equatable, Identifiable {
         case .requestedByMac(let sourceName):
             let contents = sourceName.map { "with the songs from \($0)" } ?? "empty to start"
             return "Your Mac asked for a new Apple Music playlist called Overplay, \(contents). A Mac can’t create playlists, so this device will."
-        case .missing(let name, _):
-            return "Overplay can’t find “\(name)” in your Apple Music library. If you deleted it, Overplay can make it again with the songs in your One True Playlist. If it’s still there, choose Not Now."
+        case .missing:
+            return "Overplay can’t find its playlist in your Apple Music library. If you deleted it, Overplay can make it again with the songs in your One True Playlist. If it’s still there, choose Not Now."
         }
     }
 
