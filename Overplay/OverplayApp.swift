@@ -103,6 +103,7 @@ struct OverplayApp: App {
         guard phase == .background || phase == .active else { return }
 
         if phase == .background {
+            AppRuntime.shared.periodicPlaylistSyncService.cancelOneTruePlaylistPresenceCheck()
             // Persist recorded Apple Music activity now: an incident that
             // ends in a device reboot must not lose the run-up to it.
             MusicKitActivityLog.shared.flush()
@@ -134,6 +135,9 @@ struct OverplayApp: App {
         // Overplay was away stay stale on screen.
         if phase == .active {
             await AppRuntime.shared.playbackController.reconcilePlayerState(context: context)
+            AppRuntime.shared.periodicPlaylistSyncService.checkOneTruePlaylistPresence(
+                context: context, playbackController: AppRuntime.shared.playbackController
+            )
             // At launch the periodic refresh comes after the quiet minute,
             // and only while nothing is playing (`LOAD-001`).
             if !BackgroundMusicKitWorkPolicy.isInLaunchQuietPeriod() {

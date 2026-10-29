@@ -48,22 +48,48 @@ struct OneTruePlaylistPresenceServiceTests {
         #expect(await service(exists: false).prompt(in: container.mainContext, checksPresence: false) == nil)
     }
 
-    @Test("presence asks iCloud's web library for the playlist, not this device's library")
+    @Test("presence checks every page of iCloud's library, including later-page matches")
     func presenceAsksTheWebLibrary() async throws {
         var requested: [URL] = []
         let found = try await AppleMusicLibraryPlaylistResources.exists(playlistID: "p.overplay") { url in
             requested.append(url)
-            return Data(#"{"data":[{"id":"p.overplay"}]}"#.utf8)
+            return Data((requested.count == 1
+                ? #"{"data":[{"id":"p.other","type":"library-playlists","attributes":{"name":"Other"}}],"next":"/v1/me/library/playlists?offset=1"}"#
+                : #"{"data":[{"id":"p.overplay","type":"library-playlists","attributes":{"name":"Overplay"}}]}"#).utf8)
         }
         #expect(found)
-        #expect(requested.map(\.absoluteString) == ["https://api.music.apple.com/v1/me/library/playlists/p.overplay"])
-        let empty = try await AppleMusicLibraryPlaylistResources.exists(playlistID: "p.overplay") { _ in
-            Data(#"{"data":[]}"#.utf8)
+        #expect(requested.map(\.absoluteString) == [
+            "https://api.music.apple.com/v1/me/library/playlists?limit=100",
+            "https://api.music.apple.com/v1/me/library/playlists?offset=1"
+        ])
+        var absentPages = 0
+        let absent = try await AppleMusicLibraryPlaylistResources.exists(playlistID: "p.overplay") { _ in
+            absentPages += 1
+            return Data((absentPages == 1
+                ? #"{"data":[{"id":"p.other","type":"library-playlists","attributes":{"name":"Other"}}],"next":"/v1/me/library/playlists?offset=1"}"#
+                : #"{"data":[]}"#).utf8)
         }
-        #expect(!empty)
-        // Any other failure is unknown, which the service treats as no prompt.
-        await #expect(throws: URLError.self) {
-            try await AppleMusicLibraryPlaylistResources.exists(playlistID: "p.overplay") { _ in throw URLError(.notConnectedToInternet) }
+        #expect(!absent)
+        #expect(absentPages == 2)
+    }
+
+    @Test("failed or incomplete library enumeration never proves a playlist is missing")
+    func incompleteMembershipIsUnknown() async throws {
+        let container = try library(selected: true, requested: false)
+        let context = container.mainContext
+        let firstPage = Data(#"{"data":[{"id":"p.other","type":"library-playlists","attributes":{"name":"Other"}}],"next":"/v1/me/library/playlists?offset=1"}"#.utf8)
+        let failures: [(String, (URL) async throws -> Data)] = [
+            ("network", { _ in throw URLError(.notConnectedToInternet) }),
+            ("authorization", { _ in throw URLError(.userAuthenticationRequired) }),
+            ("decode", { _ in Data(#"{"data":null}"#.utf8) }),
+            ("incomplete", { url in url.query?.contains("offset=") == true ? Data(#"{"data":[],"next":"/v1/me/library/playlists?offset=2"}"#.utf8) : firstPage })
+        ]
+        for (reason, request) in failures {
+            var presence = OneTruePlaylistPresenceService()
+            presence.canCreatePlaylists = { true }
+            presence.playlistExists = { id in try? await AppleMusicLibraryPlaylistResources.exists(playlistID: id, request: request) }
+            #expect(await presence.prompt(in: context, checksPresence: true) == nil, "\(reason) must not prompt")
+            #expect(await presence.isStillMissing("p.overplay", in: context) == nil, "\(reason) must not make a playlist")
         }
     }
 

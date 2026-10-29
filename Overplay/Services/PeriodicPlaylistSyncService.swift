@@ -18,6 +18,8 @@ final class PeriodicPlaylistSyncService {
 
     @ObservationIgnored private var syncTask: Task<Void, Never>?
     @ObservationIgnored private var playCountTask: Task<Void, Never>?
+    @ObservationIgnored private var presenceTask: Task<Void, Never>?
+    @ObservationIgnored private var presenceCheckID: UUID?
     @ObservationIgnored private let syncPlaylist: @MainActor (PlaylistRecord, ModelContext) async throws -> PlaylistSyncSummary
     @ObservationIgnored private let mergeDuplicateTrackIdentities: @MainActor (ModelContext) async throws -> Void
     /// The One True Playlist's Apple Music playlist was not found (`SETUP-003`).
@@ -92,6 +94,42 @@ final class PeriodicPlaylistSyncService {
                 try? await Task.sleep(for: interval)
             }
         }
+        checkOneTruePlaylistPresence(context: context, playbackController: playbackController)
+    }
+
+    /// A fresh sync can be skipped for 30 minutes. Check the OTP separately
+    /// once playback is quiet, including after returning to the foreground.
+    func checkOneTruePlaylistPresence(context: ModelContext, playbackController: PlaybackController) {
+        guard syncTask != nil, presenceTask == nil else { return }
+        let checkID = UUID()
+        presenceCheckID = checkID
+        presenceTask = Task(priority: .background) { @MainActor [weak self] in
+            defer {
+                if self?.presenceCheckID == checkID {
+                    self?.presenceTask = nil
+                    self?.presenceCheckID = nil
+                }
+            }
+            try? await Task.sleep(until: BackgroundMusicKitWorkPolicy.launchQuietEnds)
+            guard !Task.isCancelled else { return }
+            var quietChecks = 0
+            while quietChecks < BackgroundMusicKitWorkPolicy.staleLibraryRefreshQuietChecks {
+                guard !Task.isCancelled else { return }
+                let activity = BackgroundMusicKitWorkPolicy.PlaybackActivity(
+                    isPlaying: playbackController.isPlaying,
+                    isStarting: playbackController.isStartingPlayback,
+                    hasFailure: playbackController.playbackFailure != nil
+                )
+                quietChecks = BackgroundMusicKitWorkPolicy.allowsPlaylistPresenceCheck(activity) ? quietChecks + 1 : 0
+                if quietChecks < BackgroundMusicKitWorkPolicy.staleLibraryRefreshQuietChecks {
+                    do {
+                        try await Task.sleep(for: BackgroundMusicKitWorkPolicy.staleLibraryRefreshRecheck)
+                    } catch { return }
+                }
+            }
+            guard !Task.isCancelled else { return }
+            await self?.oneTruePlaylistNotFound(context)
+        }
     }
 
     func stop() {
@@ -99,6 +137,13 @@ final class PeriodicPlaylistSyncService {
         syncTask = nil
         playCountTask?.cancel()
         playCountTask = nil
+        cancelOneTruePlaylistPresenceCheck()
+    }
+
+    func cancelOneTruePlaylistPresenceCheck() {
+        presenceTask?.cancel()
+        presenceTask = nil
+        presenceCheckID = nil
     }
 
     func syncLinkedPlaylists(

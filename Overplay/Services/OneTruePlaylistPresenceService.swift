@@ -27,8 +27,8 @@ enum OneTruePlaylistPrompt: Equatable, Identifiable {
         case .requestedByMac(let sourceName):
             let contents = sourceName.map { "with the songs from \($0)" } ?? "empty to start"
             return "Your Mac asked for a new Apple Music playlist called Overplay, \(contents). A Mac can’t create playlists, so this device will."
-        case .missing(let name, _):
-            return "Overplay can’t find “\(name)” in your Apple Music library. If you deleted it, Overplay can make it again with the songs in your One True Playlist. If it’s still there, choose Not Now."
+        case .missing:
+            return "Overplay can’t find its playlist in your Apple Music library. If you deleted it, Overplay can make it again with the songs in your One True Playlist. If it’s still there, choose Not Now."
         }
     }
 
@@ -50,7 +50,7 @@ enum OneTruePlaylistPrompt: Equatable, Identifiable {
 @MainActor
 struct OneTruePlaylistPresenceService {
     var canCreatePlaylists: () -> Bool = { !ProcessInfo.processInfo.isMacCatalystApp }
-    /// Whether iCloud's copy of the library has this playlist; nil when it
+    /// Whether iCloud's complete library playlist list contains this ID; nil when it
     /// cannot tell, which never prompts. The sync that could not find it read
     /// this device's library, which can lag iCloud (a playlist made on
     /// another device, or a library still catching up), so this asks the web
@@ -59,23 +59,46 @@ struct OneTruePlaylistPresenceService {
         do {
             return try await AppleMusicLibraryPlaylistResources.exists(playlistID: id)
         } catch {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP presence result=unknown after web library membership check")
             return nil
         }
     }
 
     /// What to ask, or nil when nothing needs making or this device cannot.
-    /// `checksPresence` looks the playlist up in Apple Music; only a sync
-    /// that could not find it asks, so launch adds no Apple Music call
-    /// (`LOAD-001`).
+    /// `checksPresence` looks the playlist up in Apple Music. Callers either
+    /// saw a missing playlist during sync or waited for quiet playback after
+    /// the launch grace period (`LOAD-001`).
     func prompt(in context: ModelContext, checksPresence: Bool) async -> OneTruePlaylistPrompt? {
-        guard canCreatePlaylists(),
-              let settings = try? context.fetch(FetchDescriptor<OverplaySettings>()).first else { return nil }
+        guard canCreatePlaylists() else {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP prompt suppressed: device cannot create playlists")
+            return nil
+        }
+        guard let settings = try? context.fetch(FetchDescriptor<OverplaySettings>()).first else {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP prompt suppressed: settings unavailable")
+            return nil
+        }
         guard settings.selectedPlaylistID != nil else {
-            guard settings.pendingOneTruePlaylistRequestedAt != nil else { return nil }
+            guard settings.pendingOneTruePlaylistRequestedAt != nil else {
+                MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP prompt suppressed: no selected playlist or pending request")
+                return nil
+            }
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP prompt candidate: pending Mac request")
             return .requestedByMac(sourceName: settings.pendingOneTruePlaylistSourceName)
         }
-        guard checksPresence, let playlist = try? PlaylistRepository.oneTruePlaylist(in: context),
-              await playlistExists(playlist.musicPlaylistID) == false else { return nil }
+        guard checksPresence else {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP prompt suppressed: presence check not requested")
+            return nil
+        }
+        guard let playlist = try? PlaylistRepository.oneTruePlaylist(in: context) else {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP prompt suppressed: local playlist unavailable")
+            return nil
+        }
+        let exists = await playlistExists(playlist.musicPlaylistID)
+        guard exists == false else {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP prompt suppressed: web presence \(exists == true ? "present" : "unknown")")
+            return nil
+        }
+        MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP prompt candidate: web presence missing")
         return .missing(name: playlist.name, playlistID: playlist.musicPlaylistID)
     }
 

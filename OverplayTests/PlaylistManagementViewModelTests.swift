@@ -439,6 +439,35 @@ struct PlaylistManagementViewModelTests {
         #expect(viewModel.message == "Synced 7 tracks from Main.")
     }
 
+    @Test("manual One True Playlist sync asks about a missing Apple Music playlist")
+    func missingOneTruePlaylistChecksPresence() async throws {
+        let context = try OverplayTestSupport.makeModelContainer().mainContext
+        let playlist = PlaylistRecord(musicPlaylistID: "missing", name: "Overplay", role: .oneTruePlaylist)
+        let viewModel = PlaylistManagementViewModel()
+        var checks = 0
+        var dependencies = makeDependencies(syncPlaylist: { _, _ in throw PlaylistSyncError.playlistNotFound })
+        dependencies.oneTruePlaylistNotFound = { _ in checks += 1 }
+
+        await viewModel.syncPlaylist(playlist, context: context, dependencies: dependencies)
+
+        #expect(checks == 1)
+        #expect(!viewModel.isSyncing)
+    }
+
+    @Test("other manual sync errors do not ask to rebuild the One True Playlist")
+    func otherSyncErrorsDoNotCheckPresence() async throws {
+        let context = try OverplayTestSupport.makeModelContainer().mainContext
+        let playlist = PlaylistRecord(musicPlaylistID: "missing", name: "Overplay", role: .oneTruePlaylist)
+        let viewModel = PlaylistManagementViewModel()
+        var checks = 0
+        var dependencies = makeDependencies(syncPlaylist: { _, _ in throw URLError(.timedOut) })
+        dependencies.oneTruePlaylistNotFound = { _ in checks += 1 }
+
+        await viewModel.syncPlaylist(playlist, context: context, dependencies: dependencies)
+
+        #expect(checks == 0)
+    }
+
     @Test("play ignores unplayable items")
     func playIgnoresUnplayableItems() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
