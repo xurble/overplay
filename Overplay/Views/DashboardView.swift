@@ -15,13 +15,9 @@ struct DashboardView: View {
     @Environment(\.compactHome) private var compactHome
     @Environment(\.shellNavigator) private var shellNavigator
 
-    /// The lead artwork's side, fitted so the first heading under it shows
-    /// above the mini player; nil until measured.
-    @State private var fittedLeadArtworkSide: CGFloat?
-    @State private var listFrame: CGRect = .zero
-    @State private var listSafeBottom: CGFloat = 0
-    @State private var isScrolledToTop = true
-    @State private var firstHeadingBottom: CGFloat?
+    /// The lead artwork's size, worked out once from the list's height
+    /// (`HeaderArtworkFit`).
+    @State private var leadArtworkFit = HeaderArtworkFit()
     @State private var hasVerticalBar = false
 
     var settings: OverplaySettings
@@ -89,10 +85,6 @@ struct DashboardView: View {
                 Section {
                     Text("Recent Deep Dives")
                         .font(.headline)
-                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: {
-                            firstHeadingBottom = $0
-                            fitLeadArtwork()
-                        }
                         .accessibilityAddTraits(.isHeader)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: DashboardLayout.blockSpacing, leading: 16, bottom: 6, trailing: 16))
@@ -111,11 +103,6 @@ struct DashboardView: View {
                         .accessibilityAddTraits(.isHeader)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: DashboardLayout.blockSpacing, leading: 16, bottom: 6, trailing: 16))
-                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { bottom in
-                            guard recents.isEmpty else { return }
-                            firstHeadingBottom = bottom
-                            fitLeadArtwork()
-                        }
                     MadeForYouRowView(items: madeForYou)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 0, trailing: 0))
@@ -127,12 +114,6 @@ struct DashboardView: View {
             Section {
                 Text("Library")
                     .font(.headline)
-                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { bottom in
-                        guard RecentCollectionRepository.distinct(recentRecords).isEmpty,
-                              MadeForYouLibrary.shared.items.isEmpty else { return }
-                        firstHeadingBottom = bottom
-                        fitLeadArtwork()
-                    }
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: DashboardLayout.blockSpacing, leading: 16, bottom: 6, trailing: 16))
                 ForEach(LibraryBrowser.Category.allCases) { category in
@@ -148,20 +129,7 @@ struct DashboardView: View {
             }
         }
         .listStyle(.plain)
-        .onGeometryChange(for: [CGFloat].self) { proxy in
-            let frame = proxy.frame(in: .global)
-            return [frame.minX, frame.minY, frame.width, frame.height, frame.maxY - proxy.safeAreaInsets.bottom]
-        } action: { values in
-            listFrame = CGRect(x: values[0], y: values[1], width: values[2], height: values[3])
-            listSafeBottom = values[4]
-            fitLeadArtwork()
-        }
-        // Measured only at rest: scrolled, the heading has moved up.
-        .onScrollGeometryChange(for: Bool.self) { abs($0.contentOffset.y + $0.contentInsets.top) < 1 } action: { _, atTop in
-            isScrolledToTop = atTop
-            fitLeadArtwork()
-        }
-        .onChange(of: miniPlayerTop) { fitLeadArtwork() }
+        .headerArtworkFit(leadArtworkFit, below: leadArtworkBelow)
         .task { await MadeForYouLibrary.shared.refresh() }
         .miniPlayerScrollContentInset()
         .onAppear {
@@ -223,22 +191,17 @@ struct DashboardView: View {
 
     /// The One True Playlist leads the screen as artwork over its track count,
     /// as large as leaves the first heading under it readable above the mini
-    /// player (or the screen's bottom), up to a collection's artwork size.
+    /// player (or the screen's bottom), up to a collection's artwork size;
+    /// worked out once from the list's height (`HeaderArtworkFit`).
     private var leadArtworkSide: CGFloat {
-        fittedLeadArtworkSide ?? (PlayerPlacement(horizontalSizeClass, verticalSizeClass) == .sheet
-            ? DashboardLayout.compactLeadArtworkSide
-            : DashboardLayout.regularLeadArtworkSide)
+        leadArtworkFit.side ?? HeaderArtworkFit.minSide
     }
 
-    /// The heading moves with the artwork point for point, so one
-    /// measurement finds the side that puts it at the limit.
-    private func fitLeadArtwork() {
-        guard isScrolledToTop, let firstHeadingBottom, listFrame.width > 0 else { return }
-        let bottom = (miniPlayerTop ?? listSafeBottom) - DashboardLayout.headingMargin
-        let widest = min(DashboardLayout.maxLeadArtworkSide, listFrame.width - 32)
-        let side = min(max(leadArtworkSide + bottom - firstHeadingBottom, DashboardLayout.minLeadArtworkSide), widest).rounded(.down)
-        guard abs(side - leadArtworkSide) >= 1 else { return }
-        fittedLeadArtworkSide = side
+    /// Under the artwork: the track count, the gap, the Inbox and Retired
+    /// rows, and the first heading with a margin.
+    private var leadArtworkBelow: CGFloat {
+        23 + DashboardLayout.blockSpacing
+            + (triageBucket == nil ? 0 : 104) + 36 + DashboardLayout.headingMargin
     }
 
     private func oneTruePlaylistArtwork(for playlist: PlaylistRecord, summary: PlaylistSummaryPresentation) -> some View {
@@ -246,6 +209,8 @@ struct DashboardView: View {
             ZStack(alignment: .bottomTrailing) {
                 PlaylistCollageThumbnailView(playlist: playlist)
                     .frame(width: leadArtworkSide, height: leadArtworkSide)
+                    .headerArtworkFitTop(leadArtworkFit)
+                    .opacity(leadArtworkFit.isSettled ? 1 : 0)
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
                 if isPlaying(summary) {
@@ -345,13 +310,6 @@ private enum DashboardLayout {
     /// the last row and the mini player.
     static let blockSpacing: CGFloat = 14
     static let leadArtworkTopInset: CGFloat = 8
-    /// The lead artwork's side where the player is a sheet (iPhone), and
-    /// everywhere else.
-    static let compactLeadArtworkSide: CGFloat = 180
-    static let regularLeadArtworkSide: CGFloat = 288
-    /// A collection's own artwork is no larger.
-    static let maxLeadArtworkSide: CGFloat = 420
-    static let minLeadArtworkSide: CGFloat = 120
     /// The gap between the first heading under the artwork and the mini
     /// player.
     static let headingMargin: CGFloat = 8

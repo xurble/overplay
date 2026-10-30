@@ -50,7 +50,8 @@ private struct PlaylistManagementContentView: View {
     @State private var cachedDetail: PlaylistManagementViewModel.DetailPresentation?
     @State private var filterText = ""
     @State private var isFiltering = false
-    @State private var artworkFit = HeaderArtworkFit()
+    /// The row tapped while its start runs (`RowStartFeedback`).
+    @State private var startingRowID: PlaylistManagementViewModel.TrackRowPresentation.ID?
 
     init(settings: OverplaySettings, playlist: PlaylistRecord, scope: PlaylistPlaybackScope) {
         self.settings = settings
@@ -74,43 +75,38 @@ private struct PlaylistManagementContentView: View {
         List {
             if !isFiltering {
                 Section {
-                    VStack(alignment: .leading, spacing: 14) {
-                        PlaylistCollageView(playlist: playlist, scope: selectedScope, artworkFit: artworkFit)
-
-                        VStack(alignment: .leading, spacing: 8) {
+                    // The title is the screen's own (owner request, 2026-10-30).
+                    ListHeaderView(
+                        shuffleTitle: viewModel.playButtonTitle,
+                        canShuffle: detail.rows.contains { $0.isPlayable }
+                    ) {
+                        await playPlaylist()
+                    } details: {
+                        // The coloured caption of the One True Playlist, the
+                        // Inbox or Retired, then the track count.
+                        HStack(spacing: 6) {
                             Label(detail.playlist.roleTitle, systemImage: detail.playlist.iconIntent.systemImage)
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(roleTint(for: detail.playlist))
                                 .accessibilityValue(detail.playlist.isCurrentPlaybackPlaylist ? "Now playing" : "")
-                            Text(detail.playlist.title)
-                                .font(.title2.bold())
-                                .accessibilityAddTraits(.isHeader)
+                            Text("· " + PlaylistSummaryPresentation.trackCountLabel(detail.rows.count))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-
-                        Button {
-                            Task { await playPlaylist() }
-                        } label: {
-                            Label(
-                                viewModel.playButtonTitle,
-                                systemImage: "shuffle"
-                            )
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 4)
-                        }
-                        // Filled: purple text on glass is illegible on a dark background.
-                        .buttonStyle(.glassProminent)
-                        .controlSize(.large)
-                        .disabled(!detail.rows.contains { $0.isPlayable })
-
+                    } artwork: {
+                        PlaylistCollageView(playlist: playlist, scope: selectedScope)
                     }
-                    .padding(.vertical, 4)
-                    .headerArtworkFitHeader(artworkFit)
+                    .padding(.top, 4)
+                    .padding(.bottom, 10)
+                    // No lines around the header, and little room before
+                    // the songs' heading (owner request, 2026-10-30).
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                     .id(ListFilter.headerID)
                 }
             }
 
-            Section(selectedScope.title) {
+            Section {
                 if detail.rows.isEmpty {
                     ContentUnavailableView(
                         "No \(selectedScope.title) Tracks",
@@ -125,7 +121,6 @@ private struct PlaylistManagementContentView: View {
                 }
                 ForEach(rows) { row in
                     playlistTrackButton(for: row)
-                        .headerArtworkFitFirstRow(artworkFit, isFirst: row.id == rows.first?.id)
                         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
                         // Right promotes to the One True Playlist; left
                         // retires, or moves a retired track to Triage.
@@ -174,7 +169,7 @@ private struct PlaylistManagementContentView: View {
 
         }
         .listStyle(.plain)
-        .headerArtworkFit(artworkFit)
+        .listSectionSpacing(0)
         .listFilter(text: $filterText, isPresented: $isFiltering, prompt: "Songs or artists")
         .miniPlayerScrollContentInset()
         .onChange(of: viewModel.message) { _, message in
@@ -298,12 +293,16 @@ private struct PlaylistManagementContentView: View {
 
     private func playlistTrackButton(for row: PlaylistManagementViewModel.TrackRowPresentation) -> some View {
         Button {
-            Task { await play(row) }
+            startingRowID = row.id
+            Task {
+                await play(row)
+                startingRowID = nil
+            }
         } label: {
             PlaylistTrackRowView(
                 summary: row.summary,
                 playlistID: playlist.musicPlaylistID,
-                isCurrent: row.isCurrent
+                isCurrent: RowStartFeedback.isCurrent(row.id, starting: startingRowID, playing: row.isCurrent)
             )
         }
         .buttonStyle(.plain)

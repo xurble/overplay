@@ -4,6 +4,7 @@ import SwiftUI
 
 struct SplitAppShell: View {
     private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Overplay", category: "Layout")
+    private static let navLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Overplay", category: "Navigation")
     @Environment(PlaybackController.self) private var playbackController
     @Environment(\.modelContext) private var modelContext
     @Environment(\.shellPlace) private var shellPlace
@@ -29,6 +30,26 @@ struct SplitAppShell: View {
     @State private var narrowSidebarShown = false
     @State private var wideVisibility: NavigationSplitViewVisibility = .all
     @State private var detailPath = NavigationPath()
+    /// A sidebar choice starts a new detail stack already holding its
+    /// screen: replacing the screen in the old stack popped to the
+    /// dashboard and pushed, flashing the dashboard, and could drop the new
+    /// screen on the way.
+    @State private var detailStackID = 0
+
+    /// The path for the current stack only: the stack being replaced clears
+    /// its path as it goes, which emptied the new one's.
+    private var detailPathBinding: Binding<NavigationPath> {
+        let stackID = detailStackID
+        return Binding {
+            detailPath
+        } set: { newPath in
+            guard stackID == detailStackID else {
+                Self.navLogger.info("Ignored path write from a replaced stack (depth \(newPath.count, privacy: .public))")
+                return
+            }
+            detailPath = newPath
+        }
+    }
 
     init(settings: OverplaySettings, place: AppShellDestination?) {
         self.settings = settings
@@ -59,6 +80,8 @@ struct SplitAppShell: View {
                         )
                             .frame(height: stackedPlayerHeight)
                     }
+                    // The keyboard goes over the player and leaves it as it is.
+                    .ignoresSafeArea(.keyboard)
                 } else if showsPlayerColumn {
                     HStack(spacing: 0) {
                         Divider()
@@ -117,6 +140,7 @@ struct SplitAppShell: View {
                                         .toolbar {
                                             ToolbarItem(placement: .topBarTrailing) {
                                                 Button("Hide Sidebar", systemImage: "sidebar.leading") {
+                                                    Self.navLogger.info("Sidebar button (panel): hide")
                                                     withAnimation(.smooth) { sidebarPanelShown = false }
                                                 }
                                                 .untinted()
@@ -139,16 +163,12 @@ struct SplitAppShell: View {
                     .transition(.move(edge: .leading))
                 }
             }
-            // Stacked, the keyboard covers the player rather than shortening
-            // the shell, which made it side by side for the keyboard's stay
-            // (owner request, 2026-10-30).
-            .ignoresSafeArea(isStackedAtFold ? .keyboard : [], edges: .bottom)
             .background(alignment: .topLeading) { sidebarLabelMeasure }
             .onGeometryChange(for: CGSize.self) { $0.size } action: { totalWidth = $0.width; totalHeight = $0.height }
             .onGeometryChange(for: CGFloat?.self) { Self.foldX(in: $0) } action: { foldX = $0 }
             .onGeometryChange(for: CGFloat?.self) { Self.foldY(in: $0) } action: { foldY = $0 }
-            .onChange(of: "\(showsPlayerColumn) \(isStackedAtFold) \(Int(totalWidth)) \(Int(nowPlayingWidth))", initial: true) { _, state in
-                Self.logger.info("Now Playing column shown/stacked/total/column: \(state, privacy: .public)")
+            .onChange(of: "\(showsPlayerColumn) \(isStackedAtFold) \(isSplitAtFold) \(Int(totalWidth))x\(Int(totalHeight)) foldX=\(foldX.map { Int($0) } ?? -1) foldY=\(foldY.map { Int($0) } ?? -1) \(Int(nowPlayingWidth))", initial: true) { _, state in
+                Self.logger.info("Now Playing column shown/stacked/split/size/folds/column: \(state, privacy: .public)")
             }
     }
 
@@ -161,19 +181,22 @@ struct SplitAppShell: View {
             // The dashboard is always the root; a sidebar choice is pushed
             // on it, so Back leads home as when the dashboard opened it, with
             // the sidebar shown or hidden.
-            NavigationStack(path: $detailPath) {
+            NavigationStack(path: detailPathBinding) {
                 destinationView(.dashboard)
                     .navigationDestination(for: AppShellDestination.self) { destination in
                         destinationView(destination)
                     }
             }
+            .id(detailStackID)
+            // Swapped at once: a fade showed the new stack's dashboard.
+            .transition(.identity)
             .background { SplitViewSwipeSwitch(presentsWithGesture: !usesSidebarPanel) }
         }
         .onChange(of: shellNavigator?.request) { _, request in
             if let request { show(request.destination) }
         }
         .onChange(of: storedSelection, initial: true) { _, newValue in
-            Self.logger.info("Sidebar selection: \(newValue, privacy: .public)")
+            Self.navLogger.info("Sidebar selection: \(newValue, privacy: .public)")
             showSelectedDestination()
         }
         .onAppear {
@@ -182,7 +205,7 @@ struct SplitAppShell: View {
             storedSelection = placeOnOpen.storageValue
         }
         .onChange(of: detailPath.count) { _, count in
-            Self.logger.info("Detail navigation depth: \(count, privacy: .public)")
+            Self.navLogger.info("Detail navigation depth: \(count, privacy: .public)")
             // Back to the root: the sidebar shows the dashboard again. Not
             // while a choice replaces the path, which can pass through empty.
             if count == 0, !isSwitchingDestination, selectedDestination != .dashboard {
@@ -193,11 +216,13 @@ struct SplitAppShell: View {
         // On the split view, not the detail stack: pushed screens take their
         // environment from here.
         .environment(\.nowPlayingColumnToggle, columnToggle)
+        .environment(\.listHeaderArtworkWidth, isStackedAtFold ? (showsSidebarPanel ? 0.75 : 0.5) : nil)
         .environment(\.sidebarPanelToggle, usesSidebarPanel ? SidebarPanelToggle(
             isShown: sidebarPanelShown,
             // Stacked, the panel carries the button while it shows.
             showsButton: sidebarPanelIsColumn || !sidebarPanelShown
         ) {
+            Self.navLogger.info("Sidebar button: \(sidebarPanelShown ? "hide" : "show", privacy: .public)")
             withAnimation(.smooth) { sidebarPanelShown.toggle() }
         } : nil)
         .focusedSceneValue(\.shellCommands, shellCommands)
@@ -284,6 +309,8 @@ struct SplitAppShell: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("detail-\(destination.storageValue)")
         .nowPlayingColumnToggle()
+        .onAppear { Self.navLogger.info("Screen entered: \(destination.storageValue, privacy: .public)") }
+        .onDisappear { Self.navLogger.info("Screen left: \(destination.storageValue, privacy: .public)") }
     }
 
     private var isNarrow: Bool { SplitLayoutPolicy.isNarrow(totalWidth) }
@@ -297,14 +324,13 @@ struct SplitAppShell: View {
     private var usesSidebarPanel: Bool { (isSplitAtFold || isStackedAtFold) && !SplitLayoutPolicy.keepsColumns }
     /// Side by side, the panel is a column the list makes room for; stacked
     /// (portrait), it runs the full height and pushes the list and the player
-    /// aside. Either stays open after a choice.
+    /// aside. Either stays open after a choice, and both share one state.
     private var sidebarPanelIsColumn: Bool { isSplitAtFold }
-    /// Side by side, the panel stays as it was left, open at first; stacked
-    /// over the player, it starts closed. The stored value is copied into
-    /// state, because a stored value's change doesn't animate.
-    @AppStorage("overplay.sidebarColumnShown") private var storedSidebarColumnShown = true
-    @State private var sidebarColumnShown: Bool?
-    @State private var sidebarOverlayShown = false
+    /// The panel stays as it was left, in every orientation and between
+    /// launches, open at first (owner request, 2026-10-30). The stored value
+    /// is copied into state, because a stored value's change doesn't animate.
+    @AppStorage("overplay.sidebarColumnShown") private var storedSidebarPanelShown = true
+    @State private var sidebarPanelShownState: Bool?
     @GestureState private var sidebarPanelDrag: CGFloat = 0
     /// The drag at release, held while the panel animates away or back:
     /// the gesture's own value is reset without animation, which popped the
@@ -316,14 +342,10 @@ struct SplitAppShell: View {
         showsSidebarPanel ? max(0, sidebarPanelWidth + 1 + sidebarPanelOffset) : 0
     }
     private var sidebarPanelShown: Bool {
-        get { sidebarPanelIsColumn ? (sidebarColumnShown ?? storedSidebarColumnShown) : sidebarOverlayShown }
+        get { sidebarPanelShownState ?? storedSidebarPanelShown }
         nonmutating set {
-            if sidebarPanelIsColumn {
-                sidebarColumnShown = newValue
-                storedSidebarColumnShown = newValue
-            } else {
-                sidebarOverlayShown = newValue
-            }
+            sidebarPanelShownState = newValue
+            storedSidebarPanelShown = newValue
         }
     }
 
@@ -338,7 +360,10 @@ struct SplitAppShell: View {
                 let closes = min(value.translation.width, value.predictedEndTranslation.width) < -sidebarPanelWidth / 3
                 withAnimation(.smooth) {
                     sidebarPanelReleasedDrag = 0
-                    if closes { sidebarPanelShown = false }
+                    if closes {
+                    Self.navLogger.info("Sidebar swiped away")
+                    sidebarPanelShown = false
+                }
                 }
             }
     }
@@ -384,8 +409,9 @@ struct SplitAppShell: View {
 
     private var isStackedAtFold: Bool { SplitLayoutPolicy.stacksAtFold(totalHeight, foldY: dividerY) }
 
-    /// Stacked, the player takes everything below the dividing line.
-    private var stackedPlayerHeight: CGFloat { max(totalHeight - (dividerY ?? totalHeight), 0) }
+    /// Stacked, the player takes 85% of the height below the dividing line;
+    /// the list above it takes the rest (owner request, 2026-10-30).
+    private var stackedPlayerHeight: CGFloat { (max(totalHeight - (dividerY ?? totalHeight), 0) * 0.85).rounded() }
 
     /// Divided in halves, the player keeps its half and cannot be hidden.
     private var isPinnedAtFold: Bool { isSplitAtFold || isStackedAtFold }
@@ -500,6 +526,7 @@ struct SplitAppShell: View {
     /// Opened from Now Playing: chosen in the sidebar where it has a row,
     /// otherwise pushed on the dashboard.
     private func show(_ destination: AppShellDestination) {
+        Self.navLogger.info("Show requested: \(destination.storageValue, privacy: .public) (selected \(storedSelection, privacy: .public))")
         switch destination {
         case .recent, .madeForYou:
             detailPath = NavigationPath([destination])
@@ -515,14 +542,23 @@ struct SplitAppShell: View {
 
     private func showSelectedDestination() {
         let destination = selectedDestination
+        Self.navLogger.info("Path replaced for: \(destination.storageValue, privacy: .public) (was depth \(detailPath.count, privacy: .public))")
         isSwitchingDestination = true
-        detailPath = destination == .dashboard ? NavigationPath() : NavigationPath([destination])
+        // Swapped in place, as a split view's sidebar does, in a new stack
+        // (`detailStackID`).
+        var swap = Transaction()
+        swap.disablesAnimations = true
+        withTransaction(swap) {
+            if !detailPath.isEmpty || destination != .dashboard { detailStackID += 1 }
+            detailPath = destination == .dashboard ? NavigationPath() : NavigationPath([destination])
+        }
         shellPlace?.destination = destination
         // A screen pushed by view, not by value, can make the stack drop the
         // new path on the way; put it back once the stack has settled.
         Task { @MainActor in
             if detailPath.isEmpty, destination != .dashboard {
-                detailPath = NavigationPath([destination])
+                Self.navLogger.info("Path dropped on the way; restored for: \(destination.storageValue, privacy: .public)")
+                withTransaction(swap) { detailPath = NavigationPath([destination]) }
             }
             isSwitchingDestination = false
         }
@@ -533,6 +569,7 @@ struct SplitAppShell: View {
             selectedDestination
         } set: { newSelection in
             let storageValue = (newSelection ?? .dashboard).storageValue
+            Self.navLogger.info("Sidebar tapped: \(storageValue, privacy: .public) (selected \(storedSelection, privacy: .public), depth \(detailPath.count, privacy: .public))")
             // Choosing the screen already selected still leaves anything
             // pushed on it, such as a playlist opened from the dashboard.
             if storageValue == storedSelection {

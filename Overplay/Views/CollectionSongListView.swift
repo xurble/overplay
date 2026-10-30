@@ -3,7 +3,7 @@ import SwiftUI
 
 /// A collection's songs, played like a playlist: a Recents entry
 /// (`PLAY-019`), or a playlist, album, artist or the songs in the library.
-/// The same header as a playlist (artwork, kind, title, Shuffle and Play),
+/// The same header as a playlist (details, Shuffle and Play, artwork),
 /// then the songs; swiping a song right sends it to the One True Playlist and
 /// left to Triage.
 struct CollectionSongListView<Artwork: View>: View {
@@ -29,48 +29,37 @@ struct CollectionSongListView<Artwork: View>: View {
 
     @State private var filterText = ""
     @State private var isFiltering = false
-    @State private var artworkFit = HeaderArtworkFit()
+    /// The song tapped while its start runs (`RowStartFeedback`).
+    @State private var startingSongID: RecentCollectionPresentation.Song.ID?
 
     var body: some View {
         let shownSongs = songs.filter { filterFields.matches(filterText, $0.summary) }
         List {
             if showsHeader, !isFiltering {
                 Section {
-                    VStack(alignment: .leading, spacing: 14) {
+                    // The title is the screen's own (owner request, 2026-10-30).
+                    ListHeaderView(shuffleTitle: "Shuffle and Play", canShuffle: !songs.isEmpty,
+                                   shuffleIdentifier: "recent-shuffle-and-play") {
+                        await onPlay(nil)
+                    } details: {
+                        Text(subtitle)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    } artwork: {
                         artwork()
                             .aspectRatio(1, contentMode: .fit)
-                            .headerArtworkFitArtwork(artworkFit)
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label(subtitle, systemImage: systemImage)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Text(title)
-                                .font(.title2.bold())
-                        }
-
-                        Button {
-                            Task { await onPlay(nil) }
-                        } label: {
-                            Label("Shuffle and Play", systemImage: "shuffle")
-                                .font(.headline)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 4)
-                        }
-                        // Filled: purple text on glass is illegible on a dark background.
-                        .buttonStyle(.glassProminent)
-                        .controlSize(.large)
-                        .disabled(songs.isEmpty)
-                        .accessibilityIdentifier("recent-shuffle-and-play")
-
                     }
-                    .padding(.vertical, 4)
-                    .headerArtworkFitHeader(artworkFit)
+                    .padding(.top, 4)
+                    .padding(.bottom, 10)
+                    // No lines around the header, and little room before
+                    // the songs' heading (owner request, 2026-10-30).
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                     .id(ListFilter.headerID)
                 }
             }
 
-            Section("Songs") {
+            Section {
                 if let placeholder, songs.isEmpty {
                     Text(placeholder)
                         .foregroundStyle(.secondary)
@@ -80,18 +69,24 @@ struct CollectionSongListView<Artwork: View>: View {
                 }
                 ForEach(shownSongs) { song in
                     Button {
-                        Task { await onPlay(song) }
+                        startingSongID = song.id
+                        Task {
+                            await onPlay(song)
+                            startingSongID = nil
+                        }
                     } label: {
                         PlaylistTrackRowView(
                             summary: song.summary,
                             playlistID: reservedPlaylistID,
-                            isCurrent: RecentCollectionPresentation.isCurrent(song, groupKey: groupKey, controller: playbackController),
+                            isCurrent: RowStartFeedback.isCurrent(
+                                song.id, starting: startingSongID,
+                                playing: RecentCollectionPresentation.isCurrent(song, groupKey: groupKey, controller: playbackController)
+                            ),
                             showsArtwork: showsRowArtwork
                         )
                         .padding(.vertical, showsRowArtwork ? 0 : 10)
                     }
                     .buttonStyle(.plain)
-                    .headerArtworkFitFirstRow(artworkFit, isFirst: song.id == shownSongs.first?.id)
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
                     .swipeActions(edge: .leading) {
                         if song.canMoveToOneTruePlaylist {
@@ -119,7 +114,7 @@ struct CollectionSongListView<Artwork: View>: View {
             }
         }
         .listStyle(.plain)
-        .headerArtworkFit(artworkFit)
+        .listSectionSpacing(0)
         .listFilter(text: $filterText, isPresented: $isFiltering, prompt: filterFields.prompt)
         .miniPlayerScrollContentInset()
         .navigationTitle(title)

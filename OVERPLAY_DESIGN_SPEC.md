@@ -2267,11 +2267,13 @@ it in and out, replacing the system's; it is just wide enough for its longest
 choice, and glass washed with the playing song's artwork colour. Side by side
 it is a column: the player takes a third of the width, the list the rest, and
 it stays open after a choice until closed. Stacked, it runs the full height
-and pushes the list and the player aside together; it starts closed and also stays
-open after a choice. Its own sidebar button sits at its top right, in a bar of its own so it is
+and pushes the list and the player aside together; it also stays
+open after a choice. Open or closed is one setting for both layouts, kept
+between launches, open at first. Its own sidebar button sits at its top right, in a bar of its own so it is
 level with the toolbar's, which hides while it shows. The split view's own
 edge swipe is off while the panel stands in for its sidebar. A leftward swipe on it closes it in either layout. Choosing another
-section from deep inside one opens that section. While a song's colour tints a
+section from deep inside one opens that section, swapped in place without the
+stack's pop and push. While a song's colour tints a
 sidebar (the panel, or the split view's own on iPad and the Mac, where the
 wash is stronger), its icons take the text colour rather than the app's
 purple, and a Mac's selection is grey, so neither loses contrast against the
@@ -2280,8 +2282,8 @@ the sidebar has a Made For You item that opens every mix as a grid of artwork,
 as Deep Dives does (`MFY-001`). On a Mac the
 sidebar is unchanged. Held in portrait,
 or on an iPad taller than wide, the halves stack instead: the list on top and
-the player below, divided at the horizontal fold or the middle (owner request,
-2026-10-30); the keyboard covers the player rather than changing the layout. The player column
+the player below, divided at the horizontal fold or the middle, less 15% of
+the player's height given to the list (owner request, 2026-10-30); the keyboard covers the player rather than changing the layout. The player column
 stays clear of the vertical bar, and toolbar items carry a title as well as a
 symbol for the vertical bar's overflow menu.
 
@@ -2371,11 +2373,12 @@ Show:
   Made For You or Library) readable 8 points above the mini player, or the
   screen's bottom where there is none, up to 420 points (a collection's own
   artwork size) and the row's width. It is measured only while the list is at
-  rest at the top. The glass Play over it keeps its size. Every list's header
-  artwork (playlists, the Inbox, Retired, deep dives, Made For You and Library
-  collections) is fitted the same way, so its title, Shuffle and Play and the
-  first two songs show above the mini player, between 120 and 420 points
-  (`HeaderArtworkFit`; owner request, 2026-10-30).
+  rest at the top. The size is worked out from the list's height and where
+  the artwork starts, not by measuring the rows (which the list does not draw
+  until on screen); the artwork stays hidden until the list stops moving,
+  about a quarter of a second, then shows at that size and keeps it for as
+  long as the screen is open (`HeaderArtworkFit`; owner request,
+  2026-10-30). The glass Play over it keeps its size.
 - Inbox row, including on a fresh install and after its last
   contributing playlist is removed.
 - Global Retired row, including when empty.
@@ -2415,6 +2418,28 @@ Show:
 - Promote action for Inbox tracks.
 - Manual retire/remove action for active tracks.
 - Move to the Inbox and Move to One True Playlist for retired tracks.
+- Header: a details line (the coloured caption with its symbol and the track
+  count for the One True Playlist, the Inbox and Retired; a collection's kind
+  and song count) with Shuffle and Play on the right, a small round filled button
+  showing only the shuffle symbol (`ShuffleAndPlayButton`), then the artwork
+  at the column's full width with a small margin under it, then the songs
+  with no heading and no lines
+  around the header. The title is the screen's own, not repeated; nothing is
+  fitted (owner request, 2026-10-30). Deep dive, Made For You and Library
+  collection headers are the same. Where the list sits above the player (an open phone
+  held in portrait), the artwork is aligned to the leading edge at half the
+  column's width, or three quarters while the sidebar is shown
+  (`ListHeaderView`).
+- Row titles never show a remaster note, with or without a year ("(2025
+  Remaster)", "[Remastered 2009]", " - 2015 Remaster"); when a title is still
+  too long, its trailing bracketed and then parenthesised groups go
+  (`TrackTextVariants`; owner request, 2026-10-30). History rows do the same.
+- A tapped song takes the playing badge at once, and no other row shows it,
+  until its start ends; a slow start still answers the tap. This is the
+  list's own drawing: Now Playing, CarPlay and the system surfaces show only
+  what the player reports, and a failed start puts the badge back. Search
+  results and deep dive, Made For You and Library song lists do the same
+  (`RowStartFeedback`; owner request, 2026-10-30).
 - Toolbar: Sync for the One True Playlist and the Inbox; Retired has none.
   History, Search and the Inbox's contributing playlists are reached from the
   dashboard and Settings, not from here.

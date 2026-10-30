@@ -1,5 +1,17 @@
 import SwiftUI
 
+/// Which row shows the playing badge while a tapped song starts: the tapped
+/// row at once, and no other, so a slow start still answers the tap. Only
+/// the list draws this; the player and every other surface still show what
+/// the player reports, and once the start ends (or fails) so does the list
+/// (owner request, 2026-10-30).
+enum RowStartFeedback {
+    static func isCurrent<ID: Equatable>(_ id: ID, starting: ID?, playing: Bool) -> Bool {
+        guard let starting else { return playing }
+        return id == starting
+    }
+}
+
 struct PlaylistTrackRowView: View {
     var summary: TrackSummaryPresentation
     var playlistID: String
