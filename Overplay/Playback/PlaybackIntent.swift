@@ -44,7 +44,7 @@ struct PlaybackIntent: Codable, Equatable, Sendable {
     }
 
     /// The same playlist and scope, or the same album, artist or other
-    /// collection: a resubmission of one queue, not another (`COUNT-003`).
+    /// collection: choosing a song here is a skip within it (`COUNT-003`).
     func playsSameQueue(as other: PlaybackIntent) -> Bool {
         switch (collection, other.collection) {
         case (nil, nil): musicPlaylistID == other.musicPlaylistID && scope == other.scope

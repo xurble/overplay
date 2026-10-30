@@ -133,14 +133,19 @@ struct SplitAppShell: View {
                 }
             }
             .background(alignment: .topLeading) { sidebarLabelMeasure }
-            .onGeometryChange(for: CGSize.self) { $0.size } action: { totalWidth = $0.width; totalHeight = $0.height }
-            .onGeometryChange(for: CGFloat?.self) { Self.foldX(in: $0) } action: { foldX = $0 }
-            .onGeometryChange(for: CGFloat?.self) { Self.foldY(in: $0) } action: { foldY = $0 }
+            // Measured past the keyboard, so the keyboard never changes the
+            // layout: measured short, open in portrait came to too little
+            // below the fold to stack and turned side by side, until it went.
+            .background {
+                Color.clear
+                    .ignoresSafeArea(.keyboard)
+                    .onGeometryChange(for: CGSize.self) { $0.size } action: { totalWidth = $0.width; totalHeight = $0.height }
+                    .onGeometryChange(for: CGFloat?.self) { Self.foldX(in: $0) } action: { foldX = $0 }
+                    .onGeometryChange(for: CGFloat?.self) { Self.foldY(in: $0) } action: { foldY = $0 }
+            }
             // Stacked, the keyboard covers the shell rather than shortening
-            // it: shortened, open in portrait measured too little below the
-            // fold to stack and turned side by side (owner request,
-            // 2026-10-30). Side by side it shortens the list, which scrolls
-            // clear of it.
+            // it (owner request, 2026-10-30). Side by side it shortens the
+            // list, which scrolls clear of it.
             .ignoresSafeArea(.keyboard, edges: isStackedAtFold ? .bottom : [])
             .onChange(of: "\(showsPlayerColumn) \(isStackedAtFold) \(Int(totalWidth)) \(Int(nowPlayingWidth))", initial: true) { _, state in
                 Self.logger.info("Now Playing column shown/stacked/total/column: \(state, privacy: .public)")
@@ -288,6 +293,8 @@ struct SplitAppShell: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("detail-\(destination.storageValue)")
+        .onAppear { shownDestination = destination }
+        .onDisappear { if shownDestination == destination { shownDestination = nil } }
         // On appearing, and when a sidebar choice replaces the screen in
         // place.
         .task(id: destination) {
@@ -298,8 +305,10 @@ struct SplitAppShell: View {
                 try? await Task.sleep(for: .milliseconds(50))
                 revealDetail(generation: pending.generation)
             } else if destination == .dashboard, detailPath.isEmpty {
-                // The stack dropped the new path on the way, which a screen
-                // pushed by view, not by value, can make it do: push again.
+                // Back at the dashboard on the way to the choice: emptied to
+                // leave a screen opened inside it, or dropped by the stack,
+                // which a screen pushed by view, not by value, can make it
+                // do. Push the choice on it.
                 withTransaction(Self.unanimated) { detailPath = NavigationPath([pending.destination]) }
             }
         }
@@ -364,6 +373,9 @@ struct SplitAppShell: View {
     /// The screen a sidebar choice is on its way to, revealed when it
     /// arrives (`destinationView`).
     @State private var pendingSwitch: (destination: AppShellDestination, generation: Int)?
+    /// The sidebar screen on top of the list, or nil while a screen opened
+    /// inside one covers it, which `detailPath` doesn't record.
+    @State private var shownDestination: AppShellDestination?
     @State private var sidebarLabelWidth: CGFloat = 0
     private var showsSidebarPanel: Bool { usesSidebarPanel && sidebarPanelShown }
 
@@ -537,13 +549,11 @@ struct SplitAppShell: View {
 
     private func showSelectedDestination() {
         let destination = selectedDestination
-        let target = destination == .dashboard ? NavigationPath() : NavigationPath([destination])
         switchGeneration += 1
         let generation = switchGeneration
-        // Already showing it (home, or a screen a dashboard link opened): no
-        // screen arrives to end a fade, so there is none. An earlier choice
-        // still on its way gives way.
-        guard target != detailPath else {
+        // Already showing it: no screen arrives to end a fade, so there is
+        // none. An earlier choice still on its way gives way.
+        guard let path = Self.sidebarSwitchPath(to: destination, from: detailPath, shown: shownDestination) else {
             shellPlace?.destination = destination
             revealDetail(generation: generation)
             return
@@ -558,12 +568,26 @@ struct SplitAppShell: View {
             try? await Task.sleep(for: .seconds(Self.detailFadeOut))
             guard generation == switchGeneration else { return }
             pendingSwitch = (destination, generation)
-            withTransaction(Self.unanimated) { detailPath = target }
+            withTransaction(Self.unanimated) { detailPath = path }
             shellPlace?.destination = destination
             // Shown anyway if the screen never reports in.
             try? await Task.sleep(for: Self.detailRevealTimeout)
             revealDetail(generation: generation)
         }
+    }
+
+    /// The path a sidebar choice sets, or nil when the choice is already on
+    /// top (home, or a screen a dashboard link opened). Chosen again from
+    /// inside a screen opened within it, which the path doesn't record, the
+    /// path is emptied: the stack leaves that screen for the dashboard and
+    /// the choice is pushed on it again (`destinationView`). The dashboard
+    /// can't leave such a screen by its path, which is already empty.
+    static func sidebarSwitchPath(
+        to destination: AppShellDestination, from path: NavigationPath, shown: AppShellDestination?
+    ) -> NavigationPath? {
+        let target = destination == .dashboard ? NavigationPath() : NavigationPath([destination])
+        guard target == path else { return target }
+        return shown == destination || destination == .dashboard ? nil : NavigationPath()
     }
 
     /// The chosen screen is in place: the list fades in. Only for the latest

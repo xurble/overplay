@@ -93,9 +93,10 @@ final class PlaybackController {
     private enum SessionEnd {
         case changedTrack(backward: Bool)
         case queueEnded
-        /// Overplay submitted a queue: the same one again (a selection the
-        /// live queue could not take), or another.
-        case replaced(sameQueue: Bool)
+        /// Overplay submitted a queue. Only a song chosen within the same
+        /// playlist, scope or collection (one the live queue could not take)
+        /// is still a skip; any other start, restart or recovery is not.
+        case replaced(selectsSongInSameQueue: Bool)
     }
 
     // MARK: - Observed state
@@ -943,7 +944,7 @@ final class PlaybackController {
         guard !alreadyCreditedThisPlay(ended, in: context) else { return }
         // Starting something else, or ending a song set aside by a long
         // pause, is not a skip; a playthrough still counts (`COUNT-003`).
-        let skipIgnoredReason: String? = if case .replaced(sameQueue: false) = end {
+        let skipIgnoredReason: String? = if case .replaced(selectsSongInSameQueue: false) = end {
             "another queue started"
         } else if ended.hasLongPause(at: .now) {
             "after a long pause"
@@ -1184,7 +1185,8 @@ final class PlaybackController {
         guard let intent, intent.musicPlaylistID == playlist.musicPlaylistID, intent.scope == scope,
               let member = intent.member(localTrackID: localTrackID) else {
             activityLog.record(.playbackSelectionPath, detail: "newIntent")
-            await startPlayback(playlist, scope: scope, startingTrackID: localTrackID, shuffle: false, context: context)
+            await startPlayback(playlist, scope: scope, startingTrackID: localTrackID, shuffle: false, selectsSong: true,
+                                context: context)
             return
         }
         await select(member, in: intent)
@@ -1221,7 +1223,7 @@ final class PlaybackController {
             }
         }
         activityLog.record(.playbackSelectionPath, detail: "resubmitFromMember")
-        await resubmit(intent, from: member, position: 0)
+        await resubmit(intent, from: member, position: 0, selectsSong: true)
         await observePlayer()
     }
 
@@ -1250,6 +1252,7 @@ final class PlaybackController {
         scope: PlaylistPlaybackScope,
         startingTrackID: String?,
         shuffle: Bool,
+        selectsSong: Bool = false,
         context: ModelContext
     ) async {
         let startToken = beginStart()
@@ -1304,7 +1307,7 @@ final class PlaybackController {
             startingLocalTrackID: shuffle ? nil : playable[startIndex].0.localTrackID
         )
         await submit(intent, tracks: playable.map(\.1), startIndex: startIndex, position: 0, shuffle: shuffle,
-                     generation: generation)
+                     generation: generation, selectsSong: selectsSong)
         if omitted > 0, playbackFailure == nil, generation == startGeneration {
             statusMessage = omitted == 1
                 ? "1 track couldn't be prepared and was left out."
@@ -1317,7 +1320,8 @@ final class PlaybackController {
     /// Resubmits an existing intent from a member, for resume, recovery and
     /// selection when the entry cannot be found in the live queue.
     private func resubmit(
-        _ intent: PlaybackIntent, from member: PlaybackIntent.Member?, position: Double, refreshingStart: Bool = false
+        _ intent: PlaybackIntent, from member: PlaybackIntent.Member?, position: Double, refreshingStart: Bool = false,
+        selectsSong: Bool = false
     ) async {
         let startToken = beginStart()
         defer { endStart(startToken) }
@@ -1360,7 +1364,8 @@ final class PlaybackController {
         // The same intent keeps its shuffle, including across a relaunch.
         let keepsShuffle = shuffleEnabled || resumesShuffled
         await submit(resubmitted, tracks: playable.map(\.1), startIndex: startIndex, position: startPosition, shuffle: false,
-                     keepsShuffle: keepsShuffle, generation: generation, continuesSession: continuesSession)
+                     keepsShuffle: keepsShuffle, generation: generation, continuesSession: continuesSession,
+                     selectsSong: selectsSong)
     }
 
     /// Records the intent, then hands MusicKit the queue in single calls.
@@ -1372,14 +1377,16 @@ final class PlaybackController {
         shuffle: Bool,
         keepsShuffle: Bool = false,
         generation: Int,
-        continuesSession: Bool = false
+        continuesSession: Bool = false,
+        selectsSong: Bool = false
     ) async {
         resumesShuffled = false
         let carried = continuesSession ? session : nil
         if carried == nil, let outgoing = session {
-            // A selection resubmitted within the same playlist still skips;
-            // which path it takes depends on what MusicKit has loaded.
-            finish(outgoing, end: .replaced(sameQueue: self.intent?.playsSameQueue(as: intent) ?? false))
+            // A song chosen within the same queue still skips, whichever path
+            // MusicKit's loaded queue sends it down (`COUNT-003`).
+            let selectsSongInSameQueue = selectsSong && (self.intent?.playsSameQueue(as: intent) ?? false)
+            finish(outgoing, end: .replaced(selectsSongInSameQueue: selectsSongInSameQueue))
         }
         install(intent, persist: true)
         pendingCarriedSession = carried
@@ -1674,13 +1681,15 @@ final class PlaybackController {
             }
             startIndex = index
         }
-        let started = await startCollection(collection, playable: playable, startIndex: startIndex, shuffle: shuffle)
+        let started = await startCollection(collection, playable: playable, startIndex: startIndex, shuffle: shuffle,
+                                            selectsSong: catalogSongID != nil)
         if started, recordsRecent { recordRecent(collection, songs: songs, artworkURLTemplate: nil) }
         return started
     }
 
     private func startCollection(
-        _ collection: PlaybackCollection, playable: [(PlaybackIntent.Member, Track)], startIndex: Int, shuffle: Bool
+        _ collection: PlaybackCollection, playable: [(PlaybackIntent.Member, Track)], startIndex: Int, shuffle: Bool,
+        selectsSong: Bool = false
     ) async -> Bool {
         startGeneration &+= 1
         let generation = startGeneration
@@ -1697,7 +1706,7 @@ final class PlaybackController {
         // only Shuffle and Play shuffles it.
         if !shuffle { player.setShuffleMode(.off) }
         await submit(intent, tracks: playable.map(\.1), startIndex: startIndex, position: 0, shuffle: shuffle,
-                     generation: generation)
+                     generation: generation, selectsSong: selectsSong)
         await observePlayer()
         return generation == startGeneration && playbackFailure == nil
     }
