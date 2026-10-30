@@ -3,9 +3,21 @@ import Testing
 
 struct TrackTextVariantsTests {
     @Test func suffixesAreRemovedInPriorityOrder() {
-        #expect(TrackTextVariants.candidates(for: "Song (Live) [Remastered]") == [
-            "Song (Live) [Remastered]", "Song (Live)", "Song"
+        #expect(TrackTextVariants.candidates(for: "Song (Live) [Deluxe]") == [
+            "Song (Live) [Deluxe]", "Song (Live)", "Song"
         ])
+    }
+
+    @Test func remasterNotesNeverShow() {
+        #expect(TrackTextVariants.candidates(for: "Song (Live) [Remastered]") == ["Song (Live)", "Song"])
+        #expect(TrackTextVariants.removingRemasterNotes(from: "Song (2025 Remaster)") == "Song")
+        #expect(TrackTextVariants.removingRemasterNotes(from: "Song [Remastered 2009]") == "Song")
+        #expect(TrackTextVariants.removingRemasterNotes(from: "Song (2011 Remastered Version) (Live)") == "Song (Live)")
+        #expect(TrackTextVariants.removingRemasterNotes(from: "Song - 2015 Remaster") == "Song")
+        #expect(TrackTextVariants.removingRemasterNotes(from: "Song - Remastered") == "Song")
+        // Only a note goes: a name that is the note, or has none, is kept.
+        #expect(TrackTextVariants.removingRemasterNotes(from: "(Remastered)") == "(Remastered)")
+        #expect(TrackTextVariants.removingRemasterNotes(from: "Remaster Me ") == "Remaster Me ")
     }
 
     @Test(arguments: ["(What's So Funny) About Love", "Song [Live] Again", "(Intro)", "[Intro]", "Song (Unclosed"])
@@ -24,9 +36,9 @@ struct TrackTextVariantsTests {
 
     @Test func shortensArtistAndAlbumIndependently() {
         #expect(TrackTextVariants.candidates(
-            for: ["Artist (Orchestra) [UK]", "Album (Deluxe) [Remastered]"], separator: " - "
+            for: ["Artist (Orchestra) [UK]", "Album (Deluxe) [Expanded]"], separator: " - "
         ) == [
-            "Artist (Orchestra) [UK] - Album (Deluxe) [Remastered]",
+            "Artist (Orchestra) [UK] - Album (Deluxe) [Expanded]",
             "Artist (Orchestra) - Album (Deluxe)", "Artist - Album"
         ])
     }

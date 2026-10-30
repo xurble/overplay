@@ -23,10 +23,12 @@ enum TrackTextVariants {
     /// " - 2015 Remaster", " - Remastered": any group or dash suffix naming a
     /// remaster, with or without a year.
     static func removingRemasterNotes(from text: String) -> String {
-        let cleaned = text
+        let removed = text
             .replacing(/\s*[\(\[][^\(\)\[\]]*\bremaster(?:ed)?\b[^\(\)\[\]]*[\)\]]/.ignoresCase(), with: "")
             .replacing(/\s+[-–—]\s+[^-–—]*\bremaster(?:ed)?\b.*$/.ignoresCase(), with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Text without a note is left exactly as it was.
+        guard removed != text else { return text }
+        let cleaned = removed.trimmingCharacters(in: .whitespacesAndNewlines)
         // A name that is nothing but the note stays as it was.
         return cleaned.isEmpty ? text : cleaned
     }
