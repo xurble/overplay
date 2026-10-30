@@ -31,6 +31,39 @@ struct PlaybackSkipExceptionTests {
         #expect(try fixture.item(0).skipCount == 1)
     }
 
+    /// The live queue cannot take the selection (not loaded yet, windowed
+    /// by shuffle, or re-issued), so it is resubmitted from that song: still
+    /// a skip within the playlist, as a jump in the queue is.
+    @Test func selectingASongTheQueueCannotTakeStillCounts() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        await start(fixture, at: 0)
+        await fixture.listen(seconds: 20)
+        fixture.player.replaceItem(at: 2, with: PlayerItemSnapshot(
+            id: "foreign", identifiers: ["foreign"], title: "Someone Else", artistName: "Elsewhere",
+            albumTitle: nil, artworkURLTemplate: nil, durationSeconds: 200))
+        await start(fixture, at: 2)
+        #expect(fixture.player.submitCount == 2, "The selection should be resubmitted")
+        #expect(fixture.controller.currentTrack?.title == "Song 2")
+        #expect(try fixture.item(0).skipCount == 1)
+    }
+
+    @Test func aResubmissionIsTheSameQueueOnlyForTheSamePlaylistScopeOrCollection() {
+        func intent(_ playlistID: String, _ scope: PlaylistPlaybackScope = .active,
+                    collection: PlaybackCollection? = nil) -> PlaybackIntent {
+            PlaybackIntent(id: UUID(), createdAt: .now, musicPlaylistID: playlistID, scope: scope, members: [],
+                           collection: collection)
+        }
+        let album = PlaybackCollection(kind: .album, catalogID: "alb-1", title: "Album")
+        let otherAlbum = PlaybackCollection(kind: .album, catalogID: "alb-2", title: "Other")
+        #expect(intent("p1").playsSameQueue(as: intent("p1")))
+        #expect(!intent("p1").playsSameQueue(as: intent("p2")))
+        #expect(!intent("p1").playsSameQueue(as: intent("p1", .retired)))
+        #expect(intent("x", collection: album).playsSameQueue(as: intent("y", collection: album)))
+        #expect(!intent("x", collection: album).playsSameQueue(as: intent("x", collection: otherAlbum)))
+        #expect(!intent("p1").playsSameQueue(as: intent("p1", collection: album)))
+    }
+
     @Test func startingAnotherQueueIsNotASkip() async throws {
         let fixture = try PlaybackFixture()
         defer { fixture.cleanUp() }

@@ -136,6 +136,12 @@ struct SplitAppShell: View {
             .onGeometryChange(for: CGSize.self) { $0.size } action: { totalWidth = $0.width; totalHeight = $0.height }
             .onGeometryChange(for: CGFloat?.self) { Self.foldX(in: $0) } action: { foldX = $0 }
             .onGeometryChange(for: CGFloat?.self) { Self.foldY(in: $0) } action: { foldY = $0 }
+            // Stacked, the keyboard covers the shell rather than shortening
+            // it: shortened, open in portrait measured too little below the
+            // fold to stack and turned side by side (owner request,
+            // 2026-10-30). Side by side it shortens the list, which scrolls
+            // clear of it.
+            .ignoresSafeArea(.keyboard, edges: isStackedAtFold ? .bottom : [])
             .onChange(of: "\(showsPlayerColumn) \(isStackedAtFold) \(Int(totalWidth)) \(Int(nowPlayingWidth))", initial: true) { _, state in
                 Self.logger.info("Now Playing column shown/stacked/total/column: \(state, privacy: .public)")
             }
@@ -531,14 +537,18 @@ struct SplitAppShell: View {
 
     private func showSelectedDestination() {
         let destination = selectedDestination
-        // Already home: nothing to replace.
-        guard !detailPath.isEmpty || destination != .dashboard else {
+        let target = destination == .dashboard ? NavigationPath() : NavigationPath([destination])
+        switchGeneration += 1
+        let generation = switchGeneration
+        // Already showing it (home, or a screen a dashboard link opened): no
+        // screen arrives to end a fade, so there is none. An earlier choice
+        // still on its way gives way.
+        guard target != detailPath else {
             shellPlace?.destination = destination
+            revealDetail(generation: generation)
             return
         }
         isSwitchingDestination = true
-        switchGeneration += 1
-        let generation = switchGeneration
         // The list fades out, its screen is replaced unseen and without
         // animation, and it fades back in once the new screen has arrived. A
         // new stack per choice showed the old one's dashboard as it went, and
@@ -548,9 +558,7 @@ struct SplitAppShell: View {
             try? await Task.sleep(for: .seconds(Self.detailFadeOut))
             guard generation == switchGeneration else { return }
             pendingSwitch = (destination, generation)
-            withTransaction(Self.unanimated) {
-                detailPath = destination == .dashboard ? NavigationPath() : NavigationPath([destination])
-            }
+            withTransaction(Self.unanimated) { detailPath = target }
             shellPlace?.destination = destination
             // Shown anyway if the screen never reports in.
             try? await Task.sleep(for: Self.detailRevealTimeout)

@@ -16,11 +16,6 @@ struct PlatformShell: View {
                 CompactAppShell(settings: settings, place: place.destination)
             } else {
                 SplitAppShell(settings: settings, place: place.destination)
-                    // The keyboard covers the shell rather than shortening
-                    // it: shortened, open in portrait measured too little
-                    // below the fold to stack and turned side by side (owner
-                    // request, 2026-10-30).
-                    .ignoresSafeArea(.keyboard, edges: .bottom)
             }
         }
         .environment(\.shellPlace, place)

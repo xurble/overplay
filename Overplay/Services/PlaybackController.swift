@@ -93,7 +93,9 @@ final class PlaybackController {
     private enum SessionEnd {
         case changedTrack(backward: Bool)
         case queueEnded
-        case replaced
+        /// Overplay submitted a queue: the same one again (a selection the
+        /// live queue could not take), or another.
+        case replaced(sameQueue: Bool)
     }
 
     // MARK: - Observed state
@@ -941,7 +943,7 @@ final class PlaybackController {
         guard !alreadyCreditedThisPlay(ended, in: context) else { return }
         // Starting something else, or ending a song set aside by a long
         // pause, is not a skip; a playthrough still counts (`COUNT-003`).
-        let skipIgnoredReason: String? = if case .replaced = end {
+        let skipIgnoredReason: String? = if case .replaced(sameQueue: false) = end {
             "another queue started"
         } else if ended.hasLongPause(at: .now) {
             "after a long pause"
@@ -1374,7 +1376,11 @@ final class PlaybackController {
     ) async {
         resumesShuffled = false
         let carried = continuesSession ? session : nil
-        if carried == nil, let outgoing = session { finish(outgoing, end: .replaced) }
+        if carried == nil, let outgoing = session {
+            // A selection resubmitted within the same playlist still skips;
+            // which path it takes depends on what MusicKit has loaded.
+            finish(outgoing, end: .replaced(sameQueue: self.intent?.playsSameQueue(as: intent) ?? false))
+        }
         install(intent, persist: true)
         pendingCarriedSession = carried
         awaitingFirstEntryOfSubmission = intent.startingLocalTrackID

@@ -43,6 +43,16 @@ struct PlaybackIntent: Codable, Equatable, Sendable {
         PlaylistPlaybackContext(musicPlaylistID: musicPlaylistID, scope: scope)
     }
 
+    /// The same playlist and scope, or the same album, artist or other
+    /// collection: a resubmission of one queue, not another (`COUNT-003`).
+    func playsSameQueue(as other: PlaybackIntent) -> Bool {
+        switch (collection, other.collection) {
+        case (nil, nil): musicPlaylistID == other.musicPlaylistID && scope == other.scope
+        case let (mine?, theirs?): mine.groupKey == theirs.groupKey
+        default: false
+        }
+    }
+
     func member(localTrackID: String?) -> Member? {
         guard let localTrackID else { return nil }
         return members.first { $0.localTrackID == localTrackID }
