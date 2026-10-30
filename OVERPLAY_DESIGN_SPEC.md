@@ -2269,7 +2269,7 @@ it is a column: the player takes a third of the width, the list the rest, and
 it stays open after a choice until closed. Stacked, it runs the full height
 and pushes the list and the player aside together; it also stays
 open after a choice. Open or closed is one setting for both layouts, kept
-between launches, open at first. Its own sidebar button sits at its top right, in a bar of its own so it is
+between launches, open at first. In either layout its own sidebar button sits at its top right, in a bar of its own so it is
 level with the toolbar's, which hides while it shows. The split view's own
 edge swipe is off while the panel stands in for its sidebar. A leftward swipe on it closes it in either layout. Choosing another
 section from deep inside one opens that section, swapped in place without the

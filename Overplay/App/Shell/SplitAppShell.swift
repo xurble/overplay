@@ -121,30 +121,21 @@ struct SplitAppShell: View {
                     // takes the rest beside the player (owner request,
                     // 2026-10-30).
                     HStack(spacing: 0) {
-                        Group {
-                            if sidebarPanelIsColumn {
-                                sidebarList(isPanel: true)
-                                    // Clear of the screen's rounded corner.
-                                    .contentMargins(.top, 16, for: .scrollContent)
-                            } else {
-                                // Stacked, the panel carries the sidebar button
-                                // at its top right, in a bar of its own so it is
-                                // level with the list's (owner request,
-                                // 2026-10-30).
-                                NavigationStack {
-                                    sidebarList(isPanel: true)
-                                        .toolbar {
-                                            ToolbarItem(placement: .topBarTrailing) {
-                                                Button("Hide Sidebar", systemImage: "sidebar.leading") {
-                                                    withAnimation(.smooth) { sidebarPanelShown = false }
-                                                }
-                                                .untinted()
-                                            }
+                        // The panel carries the sidebar button at its top
+                        // right, in a bar of its own so it is level with the
+                        // list's (owner request, 2026-10-30).
+                        NavigationStack {
+                            sidebarList(isPanel: true)
+                                .toolbar {
+                                    ToolbarItem(placement: .topBarTrailing) {
+                                        Button("Hide Sidebar", systemImage: "sidebar.leading") {
+                                            withAnimation(.smooth) { sidebarPanelShown = false }
                                         }
-                                        .navigationBarTitleDisplayMode(.inline)
-                                        .containerBackground(.clear, for: .navigation)
+                                        .untinted()
+                                    }
                                 }
-                            }
+                                .navigationBarTitleDisplayMode(.inline)
+                                .containerBackground(.clear, for: .navigation)
                         }
                         .frame(width: sidebarPanelWidth)
                         // Glass washed with the playing album's colour, as
@@ -214,8 +205,8 @@ struct SplitAppShell: View {
         .environment(\.listHeaderArtworkWidth, isStackedAtFold ? (showsSidebarPanel ? 0.75 : 0.5) : nil)
         .environment(\.sidebarPanelToggle, usesSidebarPanel ? SidebarPanelToggle(
             isShown: sidebarPanelShown,
-            // Stacked, the panel carries the button while it shows.
-            showsButton: sidebarPanelIsColumn || !sidebarPanelShown
+            // The panel carries the button while it shows.
+            showsButton: !sidebarPanelShown
         ) {
             withAnimation(.smooth) { sidebarPanelShown.toggle() }
         } : nil)
