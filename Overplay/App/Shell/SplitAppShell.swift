@@ -29,23 +29,6 @@ struct SplitAppShell: View {
     @State private var narrowSidebarShown = false
     @State private var wideVisibility: NavigationSplitViewVisibility = .all
     @State private var detailPath = NavigationPath()
-    /// A sidebar choice starts a new detail stack already holding its
-    /// screen: replacing the screen in the old stack popped to the
-    /// dashboard and pushed, flashing the dashboard, and could drop the new
-    /// screen on the way.
-    @State private var detailStackID = 0
-
-    /// The path for the current stack only: the stack being replaced clears
-    /// its path as it goes, which emptied the new one's.
-    private var detailPathBinding: Binding<NavigationPath> {
-        let stackID = detailStackID
-        return Binding {
-            detailPath
-        } set: { newPath in
-            guard stackID == detailStackID else { return }
-            detailPath = newPath
-        }
-    }
 
     init(settings: OverplaySettings, place: AppShellDestination?) {
         self.settings = settings
@@ -167,15 +150,15 @@ struct SplitAppShell: View {
             // The dashboard is always the root; a sidebar choice is pushed
             // on it, so Back leads home as when the dashboard opened it, with
             // the sidebar shown or hidden.
-            NavigationStack(path: detailPathBinding) {
+            NavigationStack(path: $detailPath) {
                 destinationView(.dashboard)
                     .navigationDestination(for: AppShellDestination.self) { destination in
                         destinationView(destination)
                     }
             }
-            .id(detailStackID)
-            // Swapped at once: a fade showed the new stack's dashboard.
-            .transition(.identity)
+            // Hidden while a sidebar choice replaces the screen, so no
+            // navigation is seen (owner request, 2026-10-30).
+            .opacity(isDetailFaded ? 0 : 1)
             .background { SplitViewSwipeSwitch(presentsWithGesture: !usesSidebarPanel) }
         }
         .onChange(of: shellNavigator?.request) { _, request in
@@ -202,6 +185,9 @@ struct SplitAppShell: View {
         // On the split view, not the detail stack: pushed screens take their
         // environment from here.
         .environment(\.nowPlayingColumnToggle, columnToggle)
+        // The home button is the compact shell's: this dashboard leaving as
+        // the phone folds marked the compact one, just shown, as away.
+        .environment(\.compactHome, nil)
         .environment(\.listHeaderArtworkWidth, isStackedAtFold ? (showsSidebarPanel ? 0.75 : 0.5) : nil)
         .environment(\.sidebarPanelToggle, usesSidebarPanel ? SidebarPanelToggle(
             isShown: sidebarPanelShown,
@@ -216,7 +202,10 @@ struct SplitAppShell: View {
     /// The sidebar's choices: the split view's own sidebar, or the panel
     /// beside the list in halves.
     private func sidebarList(isPanel: Bool = false) -> some View {
-        List(selection: selection) {
+        // While the panel stands in for it, the split view's hidden sidebar
+        // doesn't follow the choice: a change in its selection made the split
+        // view pop the list to the dashboard, which slid out in view.
+        List(selection: isPanel || !usesSidebarPanel ? selection : .constant(nil)) {
             Section {
                 Label("Dashboard", systemImage: "rectangle.grid.2x2")
                     .tag(AppShellDestination.dashboard)
@@ -293,6 +282,21 @@ struct SplitAppShell: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("detail-\(destination.storageValue)")
+        // On appearing, and when a sidebar choice replaces the screen in
+        // place.
+        .task(id: destination) {
+            guard let pending = pendingSwitch, pending.generation == switchGeneration else { return }
+            if destination == pending.destination {
+                // The stack has reached the chosen screen.
+                pendingSwitch = nil
+                try? await Task.sleep(for: .milliseconds(50))
+                revealDetail(generation: pending.generation)
+            } else if destination == .dashboard, detailPath.isEmpty {
+                // The stack dropped the new path on the way, which a screen
+                // pushed by view, not by value, can make it do: push again.
+                withTransaction(Self.unanimated) { detailPath = NavigationPath([pending.destination]) }
+            }
+        }
         .nowPlayingColumnToggle()
     }
 
@@ -348,6 +352,12 @@ struct SplitAppShell: View {
             }
     }
     @State private var isSwitchingDestination = false
+    @State private var isDetailFaded = false
+    /// The latest sidebar choice; an earlier one still fading gives way.
+    @State private var switchGeneration = 0
+    /// The screen a sidebar choice is on its way to, revealed when it
+    /// arrives (`destinationView`).
+    @State private var pendingSwitch: (destination: AppShellDestination, generation: Int)?
     @State private var sidebarLabelWidth: CGFloat = 0
     private var showsSidebarPanel: Bool { usesSidebarPanel && sidebarPanelShown }
 
@@ -521,25 +531,51 @@ struct SplitAppShell: View {
 
     private func showSelectedDestination() {
         let destination = selectedDestination
-        isSwitchingDestination = true
-        // Swapped in place, as a split view's sidebar does, in a new stack
-        // (`detailStackID`).
-        var swap = Transaction()
-        swap.disablesAnimations = true
-        withTransaction(swap) {
-            if !detailPath.isEmpty || destination != .dashboard { detailStackID += 1 }
-            detailPath = destination == .dashboard ? NavigationPath() : NavigationPath([destination])
+        // Already home: nothing to replace.
+        guard !detailPath.isEmpty || destination != .dashboard else {
+            shellPlace?.destination = destination
+            return
         }
-        shellPlace?.destination = destination
-        // A screen pushed by view, not by value, can make the stack drop the
-        // new path on the way; put it back once the stack has settled.
+        isSwitchingDestination = true
+        switchGeneration += 1
+        let generation = switchGeneration
+        // The list fades out, its screen is replaced unseen and without
+        // animation, and it fades back in once the new screen has arrived. A
+        // new stack per choice showed the old one's dashboard as it went, and
+        // pushed the new screen in view, animated, up to a second later.
+        withAnimation(.easeOut(duration: Self.detailFadeOut)) { isDetailFaded = true }
         Task { @MainActor in
-            if detailPath.isEmpty, destination != .dashboard {
-                withTransaction(swap) { detailPath = NavigationPath([destination]) }
+            try? await Task.sleep(for: .seconds(Self.detailFadeOut))
+            guard generation == switchGeneration else { return }
+            pendingSwitch = (destination, generation)
+            withTransaction(Self.unanimated) {
+                detailPath = destination == .dashboard ? NavigationPath() : NavigationPath([destination])
             }
-            isSwitchingDestination = false
+            shellPlace?.destination = destination
+            // Shown anyway if the screen never reports in.
+            try? await Task.sleep(for: Self.detailRevealTimeout)
+            revealDetail(generation: generation)
         }
     }
+
+    /// The chosen screen is in place: the list fades in. Only for the latest
+    /// choice.
+    private func revealDetail(generation: Int) {
+        guard generation == switchGeneration, isDetailFaded else { return }
+        pendingSwitch = nil
+        isSwitchingDestination = false
+        withAnimation(.easeIn(duration: Self.detailFadeIn)) { isDetailFaded = false }
+    }
+
+    private static var unanimated: Transaction {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        return transaction
+    }
+
+    private static let detailFadeOut = 0.12
+    private static let detailRevealTimeout = Duration.seconds(1.5)
+    private static let detailFadeIn = 0.2
 
     private var selection: Binding<AppShellDestination?> {
         Binding {

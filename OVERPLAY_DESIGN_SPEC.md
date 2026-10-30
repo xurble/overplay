@@ -2272,8 +2272,8 @@ open after a choice. Open or closed is one setting for both layouts, kept
 between launches, open at first. In either layout its own sidebar button sits at its top right, in a bar of its own so it is
 level with the toolbar's, which hides while it shows. The split view's own
 edge swipe is off while the panel stands in for its sidebar. A leftward swipe on it closes it in either layout. Choosing another
-section from deep inside one opens that section, swapped in place without the
-stack's pop and push. While a song's colour tints a
+section from deep inside one opens that section: the list fades out, the screen is swapped unseen, and the list fades back in, with no
+pop or push. While a song's colour tints a
 sidebar (the panel, or the split view's own on iPad and the Mac, where the
 wash is stronger), its icons take the text colour rather than the app's
 purple, and a Mac's selection is grey, so neither loses contrast against the
