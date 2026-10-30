@@ -23,7 +23,9 @@ struct LibraryCollectionView: View {
             groupKey: collection.groupKey,
             reservedPlaylistID: collection.reservedPlaylistID,
             songs: songs,
-            placeholder: placeholder
+            placeholder: placeholder,
+            filterFields: filterFields,
+            showsRowArtwork: item.kind != .album
         ) {
             // Sized by the header, as Library's artwork in Overplay's cache.
             ArtworkView(urlString: item.artworkURL, pixelSize: 512,
@@ -50,6 +52,14 @@ struct LibraryCollectionView: View {
     }
 
     private var savedSongs: [PlaybackCollectionSong] { entries.map(\.song) }
+
+    private var filterFields: ListFilter.SongFields {
+        switch item.kind {
+        case .playlist: .titleOrArtist
+        case .album: .title
+        case .artist: .titleOrAlbum
+        }
+    }
 
     /// Reloads when the songs or anyone's counts change.
     private var reloadKey: String {

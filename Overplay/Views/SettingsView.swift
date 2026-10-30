@@ -1,3 +1,4 @@
+import MusicKit
 import SwiftData
 import SwiftUI
 
@@ -30,10 +31,11 @@ struct SettingsView: View {
     @State private var showRebuildConfirmation = false
     @State private var tab = Pane.general
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @AppStorage(AppearancePreference.storageKey) private var appearance = AppearancePreference.automatic
+    @AppStorage(AppearancePreference.storageKey) private var appearance = AppearancePreference.defaultValue
     @AppStorage(PlayerBackgroundPreference.storageKey) private var playerBackground = PlayerBackgroundPreference.art
     @State private var viewModel = SettingsViewModel()
     @AppStorage(SystemNowPlayingBridge.mirrorDefaultsKey) private var mirrorsNowPlaying = false
+    @State private var appleMusicURL: URL?
 
     var body: some View {
         Group {
@@ -56,6 +58,9 @@ struct SettingsView: View {
             } else {
                 macPane
             }
+        }
+        .task(id: settings.selectedPlaylistID) {
+            appleMusicURL = await Self.appleMusicURL(forPlaylistID: settings.selectedPlaylistID)
         }
         // The Mac window's tabs already name the pane.
         .navigationTitle(pane == .all ? pane.title : "")
@@ -121,29 +126,29 @@ struct SettingsView: View {
 
     @ViewBuilder private func tabButton(_ pane: Pane) -> some View {
         let isSelected = tab == pane
-        Button {
+        let button = Button {
             tab = pane
         } label: {
             Text(pane.title)
                 .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.glass)
-        .tint(isSelected ? .accentColor : nil)
         .fontWeight(isSelected ? .semibold : .regular)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        // The selected tab is filled: purple text on glass is illegible on a
+        // dark background.
+        if isSelected {
+            button.buttonStyle(.glassProminent)
+        } else {
+            button.buttonStyle(.glass).untinted()
+        }
     }
 
     @ViewBuilder private var generalSections: some View {
         Section {
             LabeledContent {
-                Text(oneTruePlaylistStatus.title)
+                oneTruePlaylistTitle
             } label: {
                 Label("One True Playlist", systemImage: "arrow.up.circle")
-            }
-            if let url = appleMusicURL {
-                Link(destination: url) {
-                    Label("Open in Apple Music", systemImage: "arrow.up.forward.app")
-                }
             }
             NavigationLink {
                 TriageSourcesView()
@@ -189,9 +194,6 @@ struct SettingsView: View {
             .untinted()
         } header: {
             Text("Display")
-        } footer: {
-            Text("Automatic follows your device’s Light or Dark setting. The player shows the playing song’s album art blurred behind its controls, or just the colour picked from that art. Both apply to this device only.")
-                .font(.caption)
         }
 
         SiriShortcutsSectionView()
@@ -229,7 +231,7 @@ struct SettingsView: View {
         } header: {
             Text("Counting Plays and Skips")
         } footer: {
-            Text("Plays show the higher of Overplay’s count and Apple Music’s, which includes listening outside Overplay; when Apple’s is higher, Overplay’s count rises to match. Apple’s count may update late. These thresholds apply only to Overplay.")
+            Text("Playthrough counts are also affected by plays in Apple Music and other music players")
                 .font(.caption)
         }
     }
@@ -252,6 +254,47 @@ struct SettingsView: View {
             }
         }
 
+        Section {
+            SettingsLabeledToggle(
+                title: "CarPlay MiniPlayer Controls",
+                subtitle: "This device only. Adds play/pause and skip to CarPlay's MiniPlayer on iOS 27 by having Overplay publish Now Playing itself instead of Apple Music. Turn it off if CarPlay's Now Playing misbehaves.",
+                isOn: $mirrorsNowPlaying
+            )
+            .onChange(of: mirrorsNowPlaying) { _, isOn in
+                AppRuntime.shared.nowPlayingBridge.isMirrorEnabled = isOn
+            }
+        } header: {
+            Text("CarPlay")
+        }
+
+        Section {
+            Button(role: .destructive) {
+                showResetConfirmation = true
+            } label: {
+                SettingsActionLabel(
+                    title: "Reset All Local Overplay Stats",
+                    subtitle: "Resets both displayed play counts, skips, and retired state without changing Apple Music’s own counts or playlists.",
+                    systemImage: "arrow.counterclockwise"
+                )
+            }
+
+            Button(role: .destructive) {
+                showNukeConfirmation = true
+            } label: {
+                SettingsActionLabel(
+                    title: "Nuke Database",
+                    subtitle: "Deletes all Overplay records locally and syncs those deletions through iCloud.",
+                    systemImage: "trash"
+                )
+            }
+        } header: {
+            Text("Start Over")
+        } footer: {
+            Text("Both ask first, and neither can be undone. Your Apple Music playlists are never deleted.")
+                .font(.caption)
+        }
+
+#if DEBUG
         Section {
             if let musicKitActivityReport = viewModel.musicKitActivityReport {
                 MusicKitActivityReportView(summary: musicKitActivityReport)
@@ -304,52 +347,31 @@ struct SettingsView: View {
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
             }
-
-            SettingsLabeledToggle(
-                title: "Mirror Now Playing from Overplay",
-                subtitle: "Diagnostic only, this device. Use it to check CarPlay on a new iOS release; normally Apple Music publishes Now Playing itself.",
-                isOn: $mirrorsNowPlaying
-            )
-            .onChange(of: mirrorsNowPlaying) { _, isOn in
-                AppRuntime.shared.nowPlayingBridge.isMirrorEnabled = isOn
-            }
         } header: {
             Text("Diagnostics")
         }
-
-        Section {
-            Button(role: .destructive) {
-                showResetConfirmation = true
-            } label: {
-                SettingsActionLabel(
-                    title: "Reset All Local Overplay Stats",
-                    subtitle: "Resets both displayed play counts, skips, and retired state without changing Apple Music’s own counts or playlists.",
-                    systemImage: "arrow.counterclockwise"
-                )
-            }
-
-            Button(role: .destructive) {
-                showNukeConfirmation = true
-            } label: {
-                SettingsActionLabel(
-                    title: "Nuke Database",
-                    subtitle: "Deletes all Overplay records locally and syncs those deletions through iCloud.",
-                    systemImage: "trash"
-                )
-            }
-        } header: {
-            Text("Start Over")
-        } footer: {
-            Text("Both ask first, and neither can be undone. Your Apple Music playlists are never deleted.")
-                .font(.caption)
-        }
+#endif
     }
 
     private var oneTruePlaylistStatus: OneTruePlaylistStatus { .make(settings) }
 
-    /// The One True Playlist in the Music app's library.
-    private var appleMusicURL: URL? {
-        settings.selectedPlaylistID.flatMap { URL(string: "https://music.apple.com/library/playlist/\($0)") }
+    /// The playlist's name opens it in Apple Music.
+    @ViewBuilder private var oneTruePlaylistTitle: some View {
+        if let url = appleMusicURL {
+            Link(oneTruePlaylistStatus.title, destination: url)
+                .accessibilityHint("Opens in Apple Music")
+        } else {
+            Text(oneTruePlaylistStatus.title)
+        }
+    }
+
+    /// The One True Playlist's own link, as MusicKit gives it. The Music app
+    /// says "Item not available" for a library link built from its ID.
+    private static func appleMusicURL(forPlaylistID playlistID: String?) async -> URL? {
+        guard let playlistID else { return nil }
+        var request = MusicLibraryRequest<Playlist>()
+        request.filter(matching: \.id, equalTo: MusicItemID(playlistID))
+        return try? await request.response().items.first?.url
     }
 
     private var oneTruePlaylist: PlaylistRecord? {
@@ -571,13 +593,7 @@ extension SettingsView {
         GridRow {
             MacSettingsLabel("One True Playlist:")
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 10) {
-                    Text(oneTruePlaylistStatus.title)
-                    if let url = appleMusicURL {
-                        Link("Open in Apple Music", destination: url)
-                            .buttonStyle(.bordered)
-                    }
-                }
+                oneTruePlaylistTitle
                 MacSettingsNote(oneTruePlaylistStatus.note)
             }
         }
@@ -619,7 +635,6 @@ extension SettingsView {
                 .labelsHidden()
                 .pickerStyle(.segmented)
                 .fixedSize()
-                MacSettingsNote("The playing song’s album art blurred behind the player, or just the colour picked from it.")
             }
         }
         GridRow {
@@ -639,11 +654,32 @@ extension SettingsView {
         }
         GridRow {
             Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
-            MacSettingsNote("Plays show the higher of Overplay’s count and Apple Music’s, which includes listening outside Overplay; when Apple’s is higher, Overplay’s count rises to match. Apple’s count may update late. These thresholds apply only to Overplay.")
+            MacSettingsNote("Playthrough counts are also affected by plays in Apple Music and other music players")
         }
     }
 
     @ViewBuilder private var macTroubleshootingRows: some View {
+        GridRow {
+            MacSettingsLabel("Stats:")
+            VStack(alignment: .leading, spacing: 6) {
+                Button("Reset All Local Stats…", role: .destructive) { showResetConfirmation = true }
+                    .buttonStyle(.bordered)
+                MacSettingsNote("Resets both displayed play counts, skips, and retired state without changing Apple Music’s own counts or playlists.")
+            }
+        }
+        GridRow {
+            MacSettingsLabel("Database:")
+            VStack(alignment: .leading, spacing: 6) {
+                Button("Nuke Database…", role: .destructive) { showNukeConfirmation = true }
+                    .buttonStyle(.bordered)
+                MacSettingsNote("Deletes all Overplay records locally and syncs those deletions through iCloud.")
+            }
+        }
+        GridRow {
+            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+            MacSettingsNote("Both ask first, and neither can be undone. Your Apple Music playlists are never deleted.")
+        }
+#if DEBUG
         GridRow {
             MacSettingsLabel("Apple Music calls:")
             VStack(alignment: .leading, spacing: 10) {
@@ -684,34 +720,9 @@ extension SettingsView {
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
                 }
-                Toggle("Mirror Now Playing from Overplay", isOn: $mirrorsNowPlaying)
-                    .fixedSize()
-                    .onChange(of: mirrorsNowPlaying) { _, isOn in
-                        AppRuntime.shared.nowPlayingBridge.isMirrorEnabled = isOn
-                    }
-                MacSettingsNote("Diagnostic only, this device. Use it to check CarPlay on a new iOS release; normally Apple Music publishes Now Playing itself.")
             }
         }
-        GridRow {
-            MacSettingsLabel("Stats:")
-            VStack(alignment: .leading, spacing: 6) {
-                Button("Reset All Local Stats…", role: .destructive) { showResetConfirmation = true }
-                    .buttonStyle(.bordered)
-                MacSettingsNote("Resets both displayed play counts, skips, and retired state without changing Apple Music’s own counts or playlists.")
-            }
-        }
-        GridRow {
-            MacSettingsLabel("Database:")
-            VStack(alignment: .leading, spacing: 6) {
-                Button("Nuke Database…", role: .destructive) { showNukeConfirmation = true }
-                    .buttonStyle(.bordered)
-                MacSettingsNote("Deletes all Overplay records locally and syncs those deletions through iCloud.")
-            }
-        }
-        GridRow {
-            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
-            MacSettingsNote("Both ask first, and neither can be undone. Your Apple Music playlists are never deleted.")
-        }
+#endif
     }
 }
 

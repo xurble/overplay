@@ -250,7 +250,7 @@ final class CarPlayCoordinator: NSObject {
                 // The inbox icon, not artwork, as on the phone dashboard: a
                 // green play symbol while Triage plays, as Retired.
                 triageRow.artwork = triageRow.isPlaying
-                    ? .symbol("play.fill", tint: .systemGreen) : .symbol("tray.fill", tint: .systemTeal)
+                    ? .symbol("play.fill", tint: .systemGreen) : .symbol("tray", tint: .systemTeal)
                 playlistRows.append(triageRow)
             }
             if let retired = summaries.first(where: { $0.playbackScope == .retired }) {
@@ -258,7 +258,7 @@ final class CarPlayCoordinator: NSObject {
                 retiredRow.detail = nil
                 // As on the phone dashboard: a green play symbol while Retired plays.
                 retiredRow.artwork = retiredRow.isPlaying
-                    ? .symbol("play.fill", tint: .systemGreen) : .symbol("archivebox.fill", tint: .systemGray)
+                    ? .symbol("play.fill", tint: .systemGreen) : .symbol("archivebox", tint: .systemGray)
                 playlistRows.append(retiredRow)
             }
             if !playlistRows.isEmpty { sections.append(Section(id: "playlists", rows: playlistRows)) }
@@ -1098,7 +1098,7 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func makeRestoreButton() -> CPNowPlayingImageButton {
-        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "tray")) { [weak self] _ in
+        let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "tray.and.arrow.down")) { [weak self] _ in
             Task { @MainActor in
                 self?.restoreCurrentTrack()
             }

@@ -4,22 +4,33 @@ struct PlaylistTrackRowView: View {
     var summary: TrackSummaryPresentation
     var playlistID: String
     var isCurrent: Bool
+    /// Off for an album's songs, which all share the album's artwork: the
+    /// playing badge keeps a slot of its own at the leading edge.
+    var showsArtwork = true
 
     var body: some View {
         HStack(spacing: 12) {
-            ZStack(alignment: .bottomTrailing) {
-                ArtworkView(
-                    urlString: summary.artworkURLString,
-                    pixelSize: 128,
-                    playlistID: playlistID,
-                    cornerRadius: 0
-                )
-                .frame(width: 72, height: 72)
+            if showsArtwork {
+                ZStack(alignment: .bottomTrailing) {
+                    ArtworkView(
+                        urlString: summary.artworkURLString,
+                        pixelSize: 128,
+                        playlistID: playlistID,
+                        cornerRadius: 0
+                    )
+                    .frame(width: 72, height: 72)
 
-                if isCurrent {
-                    NowPlayingBadgeView()
-                        .padding(3)
+                    if isCurrent {
+                        NowPlayingBadgeView()
+                            .padding(3)
+                    }
                 }
+            } else {
+                ZStack {
+                    if isCurrent { NowPlayingBadgeView() }
+                }
+                .frame(width: 24)
+                .padding(.leading, 12)
             }
 
             VStack(alignment: .leading, spacing: 4) {

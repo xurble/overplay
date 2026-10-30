@@ -13,11 +13,11 @@ struct PlaylistSummaryPresentation: Equatable, Identifiable, Sendable {
             case .oneTruePlaylist:
                 "arrow.up.circle"
             case .triageBucket:
-                "tray.fill"
+                "tray"
             case .triageSource:
                 "music.note.list"
             case .retired:
-                "archivebox.fill"
+                "archivebox"
             case .currentPlayback:
                 "arrow.right.circle.fill"
             }

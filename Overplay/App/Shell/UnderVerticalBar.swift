@@ -45,3 +45,36 @@ struct UnderVerticalBar: ViewModifier {
     }
 #endif
 }
+
+/// Reports whether the toolbar is a vertical bar (iPhone Duo), whose items
+/// run top to bottom from the leading ones.
+struct VerticalBarReader: ViewModifier {
+    @Binding var hasVerticalBar: Bool
+
+    func body(content: Content) -> some View {
+#if targetEnvironment(macCatalyst)
+        content
+#else
+        if #available(iOS 27.1, *) {
+            content.background { Reader(hasVerticalBar: $hasVerticalBar) }
+        } else {
+            content
+        }
+#endif
+    }
+
+#if !targetEnvironment(macCatalyst)
+    @available(iOS 27.1, *)
+    private struct Reader: View {
+        @Environment(\.toolbarVerticalEdge) private var verticalBarEdge
+        @Binding var hasVerticalBar: Bool
+
+        var body: some View {
+            Color.clear
+                .onChange(of: verticalBarEdge != nil, initial: true) { _, hasBar in
+                    hasVerticalBar = hasBar
+                }
+        }
+    }
+#endif
+}

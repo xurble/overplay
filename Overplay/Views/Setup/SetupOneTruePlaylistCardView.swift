@@ -76,7 +76,8 @@ struct SetupOneTruePlaylistCardView: View {
                 Label("Copy a Playlist", systemImage: "doc.on.doc")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.glass)
+            // Filled: purple text on glass is illegible on a dark background.
+            .buttonStyle(.glassProminent)
             .controlSize(.large)
 
             Button {
@@ -85,7 +86,8 @@ struct SetupOneTruePlaylistCardView: View {
                 Label("Start Empty", systemImage: "plus")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.glass)
+            // Filled: purple text on glass is illegible on a dark background.
+            .buttonStyle(.glassProminent)
             .controlSize(.large)
         }
     }

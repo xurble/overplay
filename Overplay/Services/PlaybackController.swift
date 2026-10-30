@@ -2361,6 +2361,25 @@ final class PlaybackController {
         }
     }
 
+    /// An active One True Playlist song back to the Inbox: one shared entry
+    /// point, removed from the Apple Music playlist as a retirement is.
+    func moveTrackToInbox(_ item: PlaylistItemRecord, playlist: PlaylistRecord, context: ModelContext) throws {
+        guard playlist.role == .oneTruePlaylist, item.evictedAt == nil else { return }
+        settleSessionBeforeMoving(item)
+        let itemID = item.id
+        try TrackActionService.moveToInbox(item, from: playlist, in: context)
+        reconcileTrackMembership(context: context)
+        let playlistID = playlist.id
+        let container = context.container
+        Task {
+            let remoteContext = ModelContext(container)
+            guard let liveItem = try? PlaylistItemRepository.item(id: itemID, in: remoteContext),
+                  let livePlaylist = try? PlaylistRepository.playlist(id: playlistID, in: remoteContext) else { return }
+            await self.removeFromOneTruePlaylist(liveItem, playlist: livePlaylist, done: "Moved to the Inbox",
+                                                 context: remoteContext)
+        }
+    }
+
     func restoreTrack(_ item: PlaylistItemRecord, playlist: PlaylistRecord?, context: ModelContext) throws {
         settleSessionBeforeMoving(item)
         try TrackActionService.restoreTrack(item, playlist: playlist, in: context)
@@ -2523,8 +2542,14 @@ final class PlaybackController {
     /// whatever happens remotely.
     private func removeEvictedItemFromPlaylist(_ item: PlaylistItemRecord, playlist: PlaylistRecord, context: ModelContext) async {
         guard item.evictedAt != nil else { return }
-        guard PlaylistRemoteMutationPolicy.shouldDeleteRemotelyAfterEviction(item: item, playlist: playlist) else {
-            statusMessage = "Retired locally. \(playlist.name) is incoming only, so Apple Music was not changed."
+        await removeFromOneTruePlaylist(item, playlist: playlist, done: "Retired", context: context)
+    }
+
+    /// `done` says what happened locally: "Retired" or "Moved to the Inbox".
+    private func removeFromOneTruePlaylist(_ item: PlaylistItemRecord, playlist: PlaylistRecord, done: String,
+                                           context: ModelContext) async {
+        guard PlaylistRemoteMutationPolicy.shouldDeleteRemotelyAfterLeaving(playlist) else {
+            statusMessage = "\(done) locally. \(playlist.name) is incoming only, so Apple Music was not changed."
             return
         }
         let itemID = item.id
@@ -2534,14 +2559,14 @@ final class PlaybackController {
             if outcome.removedItemIDs.contains(itemID) {
                 statusMessage = "Removed \(title) from the Apple Music playlist."
             } else if outcome.deferredItemIDs.contains(itemID) {
-                statusMessage = "Retired. Apple Music will be updated after the next sync."
+                statusMessage = "\(done). Apple Music will be updated after the next sync."
             } else if outcome.refusedItemIDs.contains(itemID) {
                 statusMessage = Self.editsRefusedMessage
             } else if outcome.notEditableHereItemIDs.contains(itemID) {
                 statusMessage = Self.notEditableHereMessage
             }
         } catch {
-            statusMessage = "Retired locally, but Apple Music playlist removal failed: \(UserFacingError.message(for: error))"
+            statusMessage = "\(done) locally, but Apple Music playlist removal failed: \(UserFacingError.message(for: error))"
         }
         reconcileTrackMembership(context: context)
     }

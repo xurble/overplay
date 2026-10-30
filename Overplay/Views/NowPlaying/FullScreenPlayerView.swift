@@ -250,30 +250,96 @@ struct PlayerCardTransform: ViewModifier, Animatable {
     @Environment(\.playerVerticalBarEdge) private var verticalBarEdge
     @Environment(\.layoutDirection) private var layoutDirection
     @State private var hasSeenVerticalBar = false
+    /// Nil while the window fills its screen.
+    @State private var windowCorners: WindowCorners?
+
+    /// A split window on a Duo's inner screen has a vertical bar too, but
+    /// none of the front screen's square edge.
+    static func fillsScreen(_ size: CGSize) -> Bool {
+        let window = [size.width, size.height].sorted()
+        return UIApplication.shared.connectedScenes.contains { scene in
+            guard let bounds = (scene as? UIWindowScene)?.screen.bounds.size else { return false }
+            let screen = [bounds.width, bounds.height].sorted()
+            return abs(screen[0] - window[0]) < 1 && abs(screen[1] - window[1]) < 1
+        }
+    }
 
     static func minimumCornerRadius(progress: CGFloat, targetHeight: CGFloat, scale: CGFloat, startsSquare: Bool) -> CGFloat {
+        cornerRadius(progress: progress, targetHeight: targetHeight, scale: scale, startingRadius: startsSquare ? 0 : 50)
+    }
+
+    static func cornerRadius(progress: CGFloat, targetHeight: CGFloat, scale: CGFloat, startingRadius: CGFloat) -> CGFloat {
         let t = min(max(progress, 0), 1)
-        let startingRadius: CGFloat = startsSquare ? 0 : 50
         return (startingRadius * (1 - t) + targetHeight / 2 * t) / scale
+    }
+
+    /// A corner of the card's mask: a fixed radius, or concentric with the
+    /// screen's corner and no tighter than the radius.
+    enum Corner: Equatable {
+        case fixed(CGFloat)
+        case concentric(minimum: CGFloat)
+
+        var style: Edge.Corner.Style {
+            switch self {
+            case .fixed(let radius): .fixed(radius)
+            case .concentric(let minimum): .concentric(minimum: .fixed(minimum))
+            }
+        }
+    }
+
+    struct Corners: Equatable {
+        var topLeading: Corner
+        var topTrailing: Corner
+        var bottomLeading: Corner
+        var bottomTrailing: Corner
+    }
+
+    static func maskShape(progress: CGFloat, targetHeight: CGFloat, scale: CGFloat, verticalBarEdge: HorizontalEdge?, hasSeenVerticalBar: Bool, windowCorners: WindowCorners?, isLandscape: Bool, isClockwise: Bool, layoutDirection: LayoutDirection) -> ConcentricRectangle {
+        let corners = maskCorners(progress: progress, targetHeight: targetHeight, scale: scale, verticalBarEdge: verticalBarEdge, hasSeenVerticalBar: hasSeenVerticalBar, windowCorners: windowCorners, isLandscape: isLandscape, isClockwise: isClockwise, layoutDirection: layoutDirection)
+        return ConcentricRectangle(
+            topLeadingCorner: corners.topLeading.style,
+            topTrailingCorner: corners.topTrailing.style,
+            bottomLeadingCorner: corners.bottomLeading.style,
+            bottomTrailingCorner: corners.bottomTrailing.style
+        )
     }
 
     /// The Duo's square portrait-left edge moves to the top on a clockwise
     /// turn and to the bottom on a counterclockwise turn.
-    static func maskShape(progress: CGFloat, targetHeight: CGFloat, scale: CGFloat, verticalBarEdge: HorizontalEdge?, hasSeenVerticalBar: Bool, isLandscape: Bool, isClockwise: Bool, layoutDirection: LayoutDirection) -> ConcentricRectangle {
+    static func maskCorners(progress: CGFloat, targetHeight: CGFloat, scale: CGFloat, verticalBarEdge: HorizontalEdge?, hasSeenVerticalBar: Bool, windowCorners: WindowCorners?, isLandscape: Bool, isClockwise: Bool, layoutDirection: LayoutDirection) -> Corners {
+        if let windowCorners {
+            // Each corner starts as the window's own: tighter at the hinge.
+            func corner(_ radius: CGFloat) -> Corner {
+                .fixed(cornerRadius(progress: progress, targetHeight: targetHeight, scale: scale, startingRadius: radius))
+            }
+            return corners(
+                topLeft: corner(windowCorners.topLeft),
+                topRight: corner(windowCorners.topRight),
+                bottomLeft: corner(windowCorners.bottomLeft),
+                bottomRight: corner(windowCorners.bottomRight),
+                layoutDirection: layoutDirection
+            )
+        }
         let isDuoFront = verticalBarEdge != nil || hasSeenVerticalBar
         let roundedRadius = minimumCornerRadius(progress: progress, targetHeight: targetHeight, scale: scale, startsSquare: false)
-        let rounded: Edge.Corner.Style = isDuoFront ? .fixed(roundedRadius) : .concentric(minimum: .fixed(roundedRadius))
-        let squared: Edge.Corner.Style = .fixed(minimumCornerRadius(progress: progress, targetHeight: targetHeight, scale: scale, startsSquare: true))
-        let topLeft = isDuoFront && (!isLandscape || isClockwise) ? squared : rounded
-        let topRight = isDuoFront && isLandscape && isClockwise ? squared : rounded
-        let bottomLeft = isDuoFront && (!isLandscape || !isClockwise) ? squared : rounded
-        let bottomRight = isDuoFront && isLandscape && !isClockwise ? squared : rounded
+        let rounded: Corner = isDuoFront ? .fixed(roundedRadius) : .concentric(minimum: roundedRadius)
+        let squared: Corner = .fixed(minimumCornerRadius(progress: progress, targetHeight: targetHeight, scale: scale, startsSquare: true))
+        return corners(
+            topLeft: isDuoFront && (!isLandscape || isClockwise) ? squared : rounded,
+            topRight: isDuoFront && isLandscape && isClockwise ? squared : rounded,
+            bottomLeft: isDuoFront && (!isLandscape || !isClockwise) ? squared : rounded,
+            bottomRight: isDuoFront && isLandscape && !isClockwise ? squared : rounded,
+            layoutDirection: layoutDirection
+        )
+    }
+
+    private static func corners(topLeft: Corner, topRight: Corner, bottomLeft: Corner, bottomRight: Corner, layoutDirection: LayoutDirection) -> Corners {
         let isLeftToRight = layoutDirection == .leftToRight
-        return ConcentricRectangle(
-            topLeadingCorner: isLeftToRight ? topLeft : topRight,
-            topTrailingCorner: isLeftToRight ? topRight : topLeft,
-            bottomLeadingCorner: isLeftToRight ? bottomLeft : bottomRight,
-            bottomTrailingCorner: isLeftToRight ? bottomRight : bottomLeft
+        return Corners(
+            topLeading: isLeftToRight ? topLeft : topRight,
+            topTrailing: isLeftToRight ? topRight : topLeft,
+            bottomLeading: isLeftToRight ? bottomLeft : bottomRight,
+            bottomTrailing: isLeftToRight ? bottomRight : bottomLeft
         )
     }
 
@@ -288,6 +354,9 @@ struct PlayerCardTransform: ViewModifier, Animatable {
         }
         .onChange(of: verticalBarEdge, initial: true) { _, edge in
             if edge != nil { hasSeenVerticalBar = true }
+        }
+        .onChange(of: screenSize, initial: true) { _, size in
+            windowCorners = Self.fillsScreen(size) ? nil : WindowCorners.measure()
         }
     }
 
@@ -318,6 +387,7 @@ struct PlayerCardTransform: ViewModifier, Animatable {
                     scale: scale,
                     verticalBarEdge: verticalBarEdge,
                     hasSeenVerticalBar: hasSeenVerticalBar,
+                    windowCorners: windowCorners,
                     isLandscape: screenSize.width > screenSize.height,
                     isClockwise: PhoneTurn.shared.isClockwise,
                     layoutDirection: layoutDirection

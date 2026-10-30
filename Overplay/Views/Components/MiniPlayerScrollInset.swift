@@ -1,5 +1,10 @@
 import SwiftUI
 
+extension EnvironmentValues {
+    /// The mini player's top edge, in global coordinates, while it shows.
+    @Entry var miniPlayerTop: CGFloat? = nil
+}
+
 enum MiniPlayerLayout {
     static let collapsedHeight: CGFloat = 96
     static let scrollContentBottomPadding: CGFloat = collapsedHeight + 24

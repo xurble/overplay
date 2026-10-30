@@ -8,6 +8,6 @@ struct TrackStateBadgePresentation: Equatable, Sendable {
     }
 
     var systemImage: String {
-        isEvicted ? "archivebox.fill" : "music.note"
+        isEvicted ? "archivebox" : "music.note"
     }
 }

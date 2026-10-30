@@ -65,7 +65,7 @@ struct SetupCardView<Content: View>: View {
 
 #Preview {
     SetupFeatureCardView(
-        feature: SetupFeature(symbol: "tray.fill", tint: .teal, title: "The Inbox",
+        feature: SetupFeature(symbol: "tray", tint: .teal, title: "The Inbox",
             text: "New music lands here from playlists you choose."),
         footnote: "Already use Overplay on another device?"
     )

@@ -68,6 +68,7 @@ struct AppRouter: View {
         }
         #endif
         .environment(artworkPresentation)
+        .environment(\.miniPlayerTop, showsPlayer && miniPlayerFrame.height > 0 ? miniPlayerFrame.minY : nil)
         .overlay(alignment: .bottom) {
             // The layer, not the lozenge, ignores the keyboard: the overlay's
             // frame ends at the keyboard, so the lozenge would ride above it.

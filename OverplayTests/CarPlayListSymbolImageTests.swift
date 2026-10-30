@@ -9,7 +9,7 @@ import UIKit
 @Suite("CarPlay list symbols")
 struct CarPlayListSymbolImageTests {
     @Test func aLabelSymbolIsLightOnDarkCarPlayAndDarkOnLight() throws {
-        let image = try #require(CarPlayListSymbolImage.image(systemName: "tray.fill", color: .label))
+        let image = try #require(CarPlayListSymbolImage.image(systemName: "tray", color: .label))
         let dark = try #require(image.imageAsset?.image(with: UITraitCollection(userInterfaceStyle: .dark)))
         let light = try #require(image.imageAsset?.image(with: UITraitCollection(userInterfaceStyle: .light)))
 
@@ -19,7 +19,7 @@ struct CarPlayListSymbolImageTests {
     }
 
     @Test func aColouredSymbolKeepsItsColour() throws {
-        let image = try #require(CarPlayListSymbolImage.image(systemName: "tray.fill", color: .systemTeal))
+        let image = try #require(CarPlayListSymbolImage.image(systemName: "tray", color: .systemTeal))
         let dark = try #require(image.imageAsset?.image(with: UITraitCollection(userInterfaceStyle: .dark)))
 
         let (red, green, blue) = try averageColour(of: dark)
@@ -27,7 +27,7 @@ struct CarPlayListSymbolImageTests {
     }
 
     @Test func theSymbolFitsCarPlaysImageSlotSharply() throws {
-        let image = try #require(CarPlayListSymbolImage.image(systemName: "archivebox.fill", color: .systemGray))
+        let image = try #require(CarPlayListSymbolImage.image(systemName: "archivebox", color: .systemGray))
 
         #expect(image.scale == CarPlayListSymbolImage.scale)
         #expect(image.size.width <= CPListItem.maximumImageSize.width)

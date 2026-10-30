@@ -400,7 +400,7 @@ struct TrackActionControlsView: View {
                 Button {
                     Task { await playbackController.addCurrentToTriage(context: modelContext) }
                 } label: {
-                    Label("Inbox", systemImage: "tray.and.arrow.down.fill")
+                    Label("Inbox", systemImage: "tray.and.arrow.down")
                         .frame(maxWidth: .infinity)
                 }
                 .accessibilityLabel("Add to the Inbox")
@@ -420,7 +420,7 @@ struct TrackActionControlsView: View {
                 Button {
                     Task { playbackController.restoreCurrent(context: modelContext) }
                 } label: {
-                    Label("Inbox", systemImage: "tray.fill")
+                    Label("Inbox", systemImage: "tray.and.arrow.down")
                         .frame(maxWidth: .infinity)
                 }
                 .accessibilityLabel("Move to the Inbox")
@@ -464,7 +464,7 @@ struct TrackActionControlsView: View {
                 Button {
                     Task { await playbackController.evictCurrent(settings: settings, context: modelContext) }
                 } label: {
-                    Label("Retire", systemImage: "archivebox.fill")
+                    Label("Retire", systemImage: "archivebox")
                         .frame(maxWidth: .infinity)
                 }
                 .disabled(playbackController.currentMember == nil)

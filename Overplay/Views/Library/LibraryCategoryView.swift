@@ -7,15 +7,26 @@ struct LibraryCategoryView: View {
     var category: LibraryBrowser.Category
 
     private let cache = LibraryCache.shared
+    @State private var filterText = ""
+    @State private var isFiltering = false
 
     var body: some View {
         let items = cache.items[category] ?? []
+        let shownItems = items.filter { item in
+            // An album matches its artist too.
+            category == .albums
+                ? ListFilter.matches(filterText, item.title, item.subtitle)
+                : ListFilter.matches(filterText, item.title)
+        }
         List {
             if items.isEmpty, let message {
                 Text(message)
                     .foregroundStyle(.secondary)
             }
-            ForEach(items) { item in
+            if shownItems.isEmpty, !items.isEmpty {
+                ListFilterNoMatchesView()
+            }
+            ForEach(shownItems) { item in
                 NavigationLink {
                     LibraryCollectionView(item: item)
                         .nowPlayingColumnToggle()
@@ -26,6 +37,7 @@ struct LibraryCategoryView: View {
             }
         }
         .listStyle(.plain)
+        .listFilter(text: $filterText, isPresented: $isFiltering, prompt: category == .albums ? "Albums or artists" : category.rawValue)
         .miniPlayerScrollContentInset()
         .navigationTitle(category.rawValue)
         .task { await cache.prepare(category) }

@@ -15,32 +15,28 @@ struct PlaylistCollageView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            Group {
-                if let image {
-                    Image(decorative: image, scale: 1).resizable().scaledToFit()
-                } else {
-                    Rectangle().fill(.quaternary)
-                        .overlay {
-                            Image(systemName: "music.note.list")
-                                .font(.system(size: 64)).foregroundStyle(.secondary)
-                        }
-                }
-            }
-            .aspectRatio(1, contentMode: .fit)
-            .frame(maxWidth: 420)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
+            artwork
             .overlay { if isLoading { ProgressView().padding(12).background(.regularMaterial, in: Capsule()) } }
             .contentShape(Rectangle())
+            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16))
             .accessibilityLabel("Artwork for \(playlist.name)")
-            .accessibilityHint("Touch and hold for artwork settings or to regenerate")
+            .accessibilityHint("Touch and hold for artwork settings, to regenerate or to save to Photos")
             .accessibilityAction(named: "Settings") { showSettings() }
             .accessibilityAction(named: "Regenerate") { regenerate() }
+            .accessibilityAction(named: "Save to Photos") { saveToPhotos() }
             .contextMenu {
                 Group {
                     Button("Settings", systemImage: "slider.horizontal.3") { showSettings() }
                     Button("Regenerate", systemImage: "arrow.clockwise") { regenerate() }
+                    Button("Save to Photos", systemImage: "square.and.arrow.down") { saveToPhotos() }
+                        .disabled(image == nil)
                 }
                 .untinted()
+            } preview: {
+                // Drawn from the loaded image: the system's own preview of
+                // the artwork came up empty.
+                artwork
+                    .frame(width: 320, height: 320)
             }
             if let errorMessage { Text(errorMessage).font(.caption).foregroundStyle(.secondary) }
         }
@@ -52,6 +48,23 @@ struct PlaylistCollageView: View {
         .onChange(of: scenePhase) { _, phase in if phase == .active { refreshID = UUID() } }
     }
 
+    private var artwork: some View {
+        Group {
+            if let image {
+                Image(decorative: image, scale: 1).resizable().scaledToFit()
+            } else {
+                Rectangle().fill(.quaternary)
+                    .overlay {
+                        Image(systemName: "music.note.list")
+                            .font(.system(size: 64)).foregroundStyle(.secondary)
+                    }
+            }
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .frame(maxWidth: 420)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
     private func showSettings() {
         artworkPresentation.request = PlaylistArtworkPresentation.Request(
             layout: playlist.collageLayout(for: scope), stroke: playlist.collageStroke(for: scope)
@@ -60,6 +73,21 @@ struct PlaylistCollageView: View {
                 || playlist.collageStroke(for: scope) != stroke else { return }
             playlist.setCollageTemplate(layout: layout, stroke: stroke, for: scope)
             regenerate()
+        }
+    }
+
+    /// The collage as shown: saving never regenerates it (#73).
+    private func saveToPhotos() {
+        guard let image else { return }
+        Task {
+            do {
+                try await CollagePhotoSaver.save(image)
+                StatusToast.shared.show("Saved to Photos. Choose it as the playlist's artwork in the Music app.")
+            } catch let error as CollagePhotoSaver.SaveError {
+                StatusToast.shared.show(error.localizedDescription)
+            } catch {
+                StatusToast.shared.show("Couldn't save to Photos. Try again.")
+            }
         }
     }
 
