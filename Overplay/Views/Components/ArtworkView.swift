@@ -55,19 +55,24 @@ struct ArtworkView: View {
         }
     }
 
+    /// The Overplay logo on the app icon's purple.
     private var gradientPlaceholder: some View {
         ZStack {
             LinearGradient(
-                colors: [.indigo, .teal, .pink],
+                colors: [Color.overplayIcon, Self.deepPurple],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
-            Image(systemName: "music.note")
-                .font(.system(size: 44, weight: .semibold))
+            Image("OverplayLogo")
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(.white.opacity(0.85))
+                .scaleEffect(0.45)
                 .accessibilityHidden(true)
-                .foregroundStyle(.white.opacity(0.82))
         }
     }
+
+    private static let deepPurple = Color(.displayP3, red: 0.30, green: 0.07, blue: 0.42)
 
     private var cacheIdentity: String {
         "\(urlString ?? "")|\(ArtworkCacheService.sizeBucket(pixelSize))"

@@ -18,7 +18,9 @@ struct RecentCollectionView: View {
             systemImage: recent.collection.kind == .album ? "square.stack" : "music.mic",
             groupKey: recent.groupKey,
             reservedPlaylistID: recent.collection.reservedPlaylistID,
-            songs: songs
+            songs: songs,
+            filterFields: recent.collection.kind == .album ? .title : .titleOrAlbum,
+            showsRowArtwork: recent.collection.kind != .album
         ) {
             ArtworkView(urlString: recent.artworkURLTemplate, pixelSize: 512,
                         playlistID: recent.collection.reservedPlaylistID, cornerRadius: 16)

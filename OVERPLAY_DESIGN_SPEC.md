@@ -89,7 +89,7 @@ Music's global play count or skip count.
 | `SETUP-003` | When the One True Playlist's Apple Music playlist is no longer in the library (deleted in the Music app), an iPhone or iPad asks ("Overplay Playlist Missing") after a sync cannot find it or after a quiet launch/foreground presence check, confirmed by a complete, validated enumeration of iCloud's web library playlists that omits its ID (this device's library can lag iCloud, and direct web resource retrieval can still return a deleted playlist), before making it again with the active songs through the shared rebuild (`PLAYLIST-009`). The quiet check waits at least a minute after launch, runs only when playback is stopped, not starting or failing, and is independent of the 30-minute sync freshness interval. Nothing is made without the user's yes; a failed or incomplete enumeration never asks. At the yes it enumerates once more: if the One True Playlist now has another ID (another device made it again) or Apple Music's library includes it, nothing is made, and if enumeration fails, nothing is made and the alert can come back. Two devices answering yes before either hears of the other through iCloud can each make one, as in `SETUP-002`. A "Not Now" holds until the next launch, even for a lookup already running. Making a playlist a Mac asked for (`SETUP-002`) runs once at a time: the alert and the dashboard's card share the one in flight, and no alert asks while it runs. | `Overplay/Services/OneTruePlaylistPromptController.swift`, `Overplay/Services/OneTruePlaylistPresenceService.swift`, `OverplayTests/OneTruePlaylistPromptControllerTests.swift`, `OverplayTests/OneTruePlaylistPresenceServiceTests.swift` |
 | `SYNC-001` | Automatic sync starts no sooner than a minute after launch (and 10 seconds after authorization), runs every 30 minutes, skips fresh successful playlists, retries failed playlists, prioritizes the playing and selected playlists, and pauses while a playback failure is active. | `Overplay/Services/PeriodicPlaylistSyncService.swift`, `OverplayTests/PeriodicPlaylistSyncServiceTests.swift` |
 | `SYNC-002` | Sync is idempotent, collapses duplicate identities, preserves history, and leaves remotely missing tracks locally playable unless retired. Sync never mutates the live playback queue. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/PlaylistSyncReconciliationTests.swift` |
-| `MUT-001` | Successful promotion moves the existing item into OTP with its statistics and history; no source copy remains. Retired offers Move to the Inbox (explicit keep) and Move to One True Playlist. | `Overplay/Services/PlaylistMutationService.swift`, `OverplayTests/PlaylistMutationServiceTests.swift` |
+| `MUT-001` | Successful promotion moves the existing item into OTP with its statistics and history; no source copy remains. Retired offers Move to the Inbox (explicit keep) and Move to One True Playlist. An OTP song also offers Move to the Inbox, which removes it from the Apple Music playlist as a retirement does. | `Overplay/Services/PlaylistMutationService.swift`, `OverplayTests/PlaylistMutationServiceTests.swift` |
 | `MUT-002` | Search adds a song to the One True Playlist or the Inbox through the shared song action (`PLAY-018`), or to another Apple Music library playlist through a MusicKit add; the One True Playlist is never offered as an "other" playlist. | `Overplay/ViewModels/SearchMusicViewModel.swift`, `OverplayTests/SearchMusicViewModelTests.swift` |
 | `MUT-003` | Undo reverses this device's latest promote or retire, from any surface, within 10 minutes and while nothing has moved the song since. The song goes back where it was; Apple Music follows as for an ordinary promotion or retirement. One level; playback is untouched. | `Overplay/Services/PlaybackController.swift`, `OverplayTests/VoiceActionTests.swift` |
 | `MUT-004` | Promoting the current song keeps it playing, from any intent (playlist, album, artist or Recents) and any surface; its listen counts as usual. Adds and moves from Now Playing, Recents and the Library never skip. Retire is the only curation that skips. | `Overplay/Services/PlaybackController.swift`, `OverplayTests/VoiceActionTests.swift` |
@@ -102,7 +102,7 @@ Music's global play count or skip count.
 | `PLAY-013` | Every transport command is one direct MusicKit call: no confirmation loop, no rejection of overlapping commands, no automatic queue replacement or retry. Displayed state changes only through observation. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-014` | Failures are shared across surfaces and recovered by a user Play press, or once when the network returns after dropping, through a bounded ladder (play; prepare and play; resubmit the intent at the current member and position, looking that member's track up again). A play the player accepted but never delivered (reported playing without progress, then paused) is a failure too. A queue whose last prepare failed or has not answered recovers from rung 3, never a bare play; if it plays anyway (a system Play Overplay never sees), it is rebuilt once at the next track change. A rung counts once called, so a press while one hangs escalates. A call unanswered for 8 seconds, with no other answer meanwhile, makes the player stuck: advice to turn mobile data off and on, or else relaunch; one rung-3 attempt, then no more calls from Play until the player answers or the network returns. A rung that answers late ends its press. Pause is never disabled. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-015` | Membership changes never mutate the live queue. Retiring the current track issues Next; a member that left the scope is skipped when reached; additions appear at the next start. | `Overplay/Services/PlaybackController.swift` |
-| `PLAY-016` | Overplay does not write `MPNowPlayingInfoCenter` or register transport `MPRemoteCommandCenter` handlers; the `ApplicationMusicPlayer` host owns system Now Playing. A default-off diagnostic mirror exists only for device verification. | `Overplay/Services/SystemNowPlayingBridge.swift` |
+| `PLAY-016` | Overplay does not write `MPNowPlayingInfoCenter` or register transport `MPRemoteCommandCenter` handlers; the `ApplicationMusicPlayer` host owns system Now Playing. A default-off, device-local option, **CarPlay MiniPlayer Controls**, mirrors Now Playing so iOS 27's CarPlay MiniPlayer shows play/pause and skip. | `Overplay/Services/SystemNowPlayingBridge.swift` |
 | `PLAY-017` | Native `Track` objects needed for playback are cached on disk per device; cold launches do not need to re-resolve the whole playlist, a cached track is reused only while it is the song its record names (its library or catalog ID), a library ID that no longer exists in the account library falls back to the record's catalog ID, and unresolvable songs are omitted rather than failing playback, with each omission recorded in the activity log. The cache is emptied only when the Apple Music account or storefront it was filled under changes, never on a relaunch or a failed or offline account check, and a playback lookup gives up after 15 seconds. | `Overplay/Services/DevicePlaybackCache.swift` |
 | `COUNT-001` | Counting observes playback and never commands, delays or vetoes it. Skips require witnessed listening; playthroughs are position-based; suspended spans never produce skips. | `Overplay/Playback/ListeningSessionTracker.swift`, `Overplay/UseCases/PlaybackSessionEvaluationService.swift` |
 | `COUNT-002` | Counted outcomes are immutable ledger events with idempotent session IDs. Displayed counts are derived from the ledger, including absorbed track identities; merges and resets never edit counts. Apple's calculated play count, when higher, is recorded as a floor event that plays never fall below. | `Overplay/Services/ListenLedger.swift`, `Overplay/Models/ListenEvent.swift` |
@@ -116,8 +116,8 @@ Music's global play count or skip count.
 | `SIRI-001` | Siri, Shortcuts, Spotlight and the Action button offer Play One True Playlist, Play the Inbox, Promote, Retire and Undo, each a thin adapter over the shared action the app and CarPlay use. They run in the background with the phone locked, speak the result of Promote, Retire and Undo, and speak only failures for Play. | `Overplay/Intents/OverplayIntents.swift`, `Overplay/Intents/VoiceActions.swift`, `OverplayTests/VoiceActionTests.swift` |
 | `SIRI-002` | An intent that launches Overplay with no window starts the same startup as CarPlay and waits up to 8 seconds for the library; if it is not ready, the intent says so and changes nothing. | `Overplay/App/AppRuntime.swift` |
 | `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
-| `HISTORY-001` | History is filterable and paged. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. History is never the source of counts. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
-| `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, the One True Playlist shown with a link to Apple Music, Inbox Sources, display options, Siri phrases, MusicKit diagnostics (including whether the One True Playlist is still editable), and the diagnostic Now Playing mirror. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
+| `HISTORY-001` | History is paged. Debug builds add an event filter and the suspended-playback recovery summary above the events; release builds show only the events. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. History is never the source of counts. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
+| `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, the One True Playlist shown with a link to Apple Music, Inbox Sources, display options, Siri phrases, MusicKit diagnostics (including whether the One True Playlist is still editable), and CarPlay MiniPlayer Controls. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
 | `SURFACE-001` | Every playback action exposed by SwiftUI or CarPlay runs through the shared playback controller with identical semantics. System transport controls act on the player directly and their effects are processed through the same observation path. A surface may expose fewer actions but never a different version of one. | Confirmed product requirement (2026-08-31, revised 2026-10-04); `Overplay/Services/PlaybackController.swift`, `Overplay/CarPlaySupport/CarPlayCoordinator.swift` |
 | `SURFACE-002` | Every observed player change is published as one snapshot to every Overplay surface within one observation cycle; system surfaces read the same player. Current track, playlist context, play state, position, outgoing-session evaluation and active-playlist projection must not diverge. | Confirmed product requirement (2026-08-31, revised 2026-10-04); `Overplay/Services/PlaybackController.swift` |
 | `SURFACE-003` | Equivalent iOS/iPadOS and CarPlay actions use one controller decision, including in-intent jump versus new intent, resume versus restart, and failure handling. | Confirmed product requirement (2026-09-25); `Overplay/Services/PlaybackController.swift` |
@@ -320,7 +320,7 @@ and deferred deletions that missed their trigger (`PLAYLIST-011`); each deletion
 is recorded in history. It never deletes active Inbox rows. Nonzero
 counts and necessary stale-OTP suppression protect rows. Active OTP is never
 deleted by the Inbox cleanup. Deleted songs may return on later intake; independent
-history remains but offers no broken Restore action.
+history remains. History rows are a record only: they offer no actions.
 
 Deliberate source link/re-link revives older retirements into the Inbox without
 resetting counts. Normal sync, including the Sync button, does not. The durable
@@ -1346,7 +1346,8 @@ in CarPlay without Songs.
 - **Song lists:** a playlist, album or artist opens the same song list as a
   Recent Deep Dive, with Shuffle and Play at the top and the same swipes.
   Untracked songs offer Add to the Inbox and Add to One True Playlist and are not
-  counted (`PLAY-018`).
+  counted (`PLAY-018`). Songs is a plain list like the other categories, with
+  no header and no Shuffle and Play; tapping a song plays from it.
 - **Playback:** through the shared collection start, as a deep dive, but never
   added to Recent Deep Dives. The queue uses this device's own library copies
   of the songs, because a Mac cannot play a web library song, and gives the
@@ -1857,6 +1858,23 @@ controller action:
 - **Otherwise:** start a new intent for the selected playlist and scope,
   starting at the selected track.
 
+### Filtering a list
+
+Every list screen in the app (playlists, Retired, deep dives, Deep Dives,
+and Library's playlists, albums, artists and songs) has a Filter button that
+shows a small search field above the list. It narrows what the list shows,
+ignoring case and accents, and closing it clears it. It is visual only:
+selecting a row plays exactly as it would in the whole list, and Shuffle and
+Play always plays the whole list. What matches:
+
+- Songs in a playlist or Library's Songs: song title or artist.
+- Songs of an album: song title.
+- Songs of an artist: song title or album title.
+- Library's Albums, and albums on the Deep Dives screen: album title or
+  artist.
+- Library's Playlists and Artists, and artists on the Deep Dives screen: the
+  name.
+
 ### Transport commands (`PLAY-013`)
 
 Play, Pause, Next, Previous, Select, Shuffle and Repeat each make one MusicKit
@@ -2110,12 +2128,17 @@ Overplay therefore:
 - observes every resulting change through the same observation path as its own
   commands.
 
-A device-local diagnostic setting, **Mirror Now Playing from Overplay**
-(default off), exists only to verify CarPlay behaviour on new iOS releases.
-When it is on, Overplay publishes metadata derived solely from the observed
-player state and registers transport handlers that call the player directly,
-with no gating. Shipping it on requires an explicit spec change backed by
-device evidence.
+A device-local option, **CarPlay MiniPlayer Controls** (default off, iPhone
+and iPad only), exists because iOS 27's CarPlay MiniPlayer shows play/pause
+and skip only for an app's own Now Playing; without it, Overplay's MiniPlayer
+has only the button that opens Now Playing (owner request, 2026-10-30). When
+it is on, Overplay publishes only what MusicKit would show (title, artist,
+album, artwork, duration, position and rate), derived solely from the
+observed player state, and registers play, pause, play/pause, next and
+previous handlers that call the player directly, with no gating. It brings
+back a second Now Playing client (History H-7), so it stays off by default;
+turning it on by default requires an explicit spec change backed by device
+evidence.
 
 ### Active playlist projection
 
@@ -2230,14 +2253,14 @@ Show, as swipeable glass cards with page dots and a Continue button:
 - On a Mac, Copy a Playlist and Start Empty save the choice for the next
   iPhone or iPad (`SETUP-002`), and the card reads Finish on iPhone.
 
-Continue is disabled, and swiping stops, on the One True Playlist and the Inbox
+The page dots show every step from the start. Continue is disabled, and a
+swipe forward springs back, on the One True Playlist and the Inbox
 cards until each has its choice. A new playlist is found by its ID, because
 Apple Music's library list can lag it.
 
 ### Inbox Sources screen
 
-Purpose: manage the playlists that feed the Inbox. Opened from Settings and from
-the Inbox's page.
+Purpose: manage the playlists that feed the Inbox. Opened from Settings.
 
 Required capabilities:
 
@@ -2272,7 +2295,9 @@ Show:
 - For each row: representative artwork, role/current-playback icon, total
   tracked count, source, last-sync status, and write policy.
 - Link to the Inbox sources screen, labelled with the contributing count.
-- Settings action.
+- Toolbar: Settings and History together on the leading side (a Mac reaches
+  History from its Go menu), and Search on the trailing side as the screen's
+  prominent button.
 
 Platform notes:
 
@@ -2298,10 +2323,19 @@ Show:
 - Promote action for Inbox tracks.
 - Manual retire/remove action for active tracks.
 - Move to the Inbox and Move to One True Playlist for retired tracks.
-- Search/add action scoped to that playlist.
+- Toolbar: Sync for the One True Playlist and the Inbox; Retired has none.
+  History, Search and the Inbox's contributing playlists are reached from the
+  dashboard and Settings, not from here.
 - Row swipes: swiping left retires an active track, or moves a retired track
-  to the Inbox; swiping right promotes an Inbox or retired track to the One True
-  Playlist. One True Playlist rows have no right swipe.
+  to the Inbox; a One True Playlist track also offers Move to the Inbox there.
+  Swiping right promotes an Inbox or retired track to the One True Playlist.
+  One True Playlist rows have no right swipe. Swipe icons are outlines, and
+  every action that sends a song to the Inbox uses the tray with a down arrow.
+- Move to the Inbox from the One True Playlist keeps the song active in the
+  Inbox with explicit keep, and removes it from the Apple Music playlist as a
+  retirement does: it is suppressed there until a complete sync proves it
+  gone, so a sync cannot promote it back first. It is one shared controller
+  action (`moveTrackToInbox`); Siri's undo does not cover it.
 
 Playlist-row taps follow the shared **Action routing and playlist-selection
 parity** contract, including live-queue reuse and resume without restart.
@@ -2450,9 +2484,9 @@ Show:
 
 Platform notes:
 
-- iPhone reaches Search from the dashboard's top-right button and the menu on
-  a playlist screen. iPad and the Mac have a sidebar entry, and the Mac also
-  has Go → Search (⌘F).
+- iPhone reaches Search only from the dashboard's top-right button; no menu
+  offers it. iPad and the Mac have a sidebar entry, and the Mac also has
+  Go → Search (⌘F).
 - The Mac has no MusicKit playlist writes, so adding to the One True Playlist
   or another playlist fails there; the Inbox and Play Now work.
 
@@ -2506,7 +2540,7 @@ General:
   it says so. **Inbox Sources** opens the
   contributing-playlist list.
 - **Library:** Find Duplicates.
-- **Display**, per device: **Appearance** Automatic (default), Light or Dark,
+- **Display**, per device: **Appearance** Automatic, Light or Dark (default),
   for the whole app (CarPlay follows the car); **Player Background** Album Art
   (default) or Theme Colour, the colour alone behind the full player.
 - **Siri & Shortcuts:** the five phrases (`SIRI-001`) and Apple's Shortcuts
@@ -2517,15 +2551,16 @@ General:
 Troubleshooting, in this order:
 
 - Rebuild the One True Playlist's Apple Music playlist (`PLAYLIST-009`).
-- Apple Music call activity.
-- Run MusicKit authorization, playlist-access, and playback-readiness
-  diagnostics. Diagnostic, device-local: **Mirror Now Playing from Overplay**
+- **CarPlay:** device-local, iPhone and iPad: **CarPlay MiniPlayer Controls**
   (default off, `PLAY-016`).
-- **Start Over**, last: reset all Overplay skip counts, playthrough counts,
+- **Start Over:** reset all Overplay skip counts, playthrough counts,
   retirement state, and legacy state without changing Apple Music playlist
   contents; and nuke all Overplay SwiftData records locally and save those
   deletions for iCloud propagation, then recreate default settings and clear
   local playback state. Apple Music playlists are not deleted.
+- Debug builds only, after Start Over: Apple Music call activity, then
+  MusicKit authorization, playlist-access, and playback-readiness diagnostics.
+  Release builds leave both out.
 
 There is no separate reset-local-playback-state control. On the Mac,
 Settings opens in its own window from the standard Settings command, with
@@ -2617,9 +2652,10 @@ Now Playing publication. It depends on MusicKit only through the small
 
 - By default, does nothing: the `ApplicationMusicPlayer` host owns system Now
   Playing and transport commands (`PLAY-016`).
-- With the diagnostic mirror enabled, publishes metadata derived only from the
-  controller's observed player state, and registers transport handlers that
-  call the player directly with no gating.
+- With **CarPlay MiniPlayer Controls** on, publishes what MusicKit would show,
+  artwork included, derived only from the controller's observed player state,
+  and registers transport handlers that call the player directly with no
+  gating.
 
 ### PlatformShell
 
@@ -2848,7 +2884,7 @@ The following are not requirements of the current product:
   forum thread 847151) says CarPlay's `CPNowPlayingTemplate` on iOS 27 reads
   only the app's own Now Playing client and does not follow
   `ApplicationMusicPlayer`'s host. If CarPlay shows stale or empty Now Playing
-  on the user's iOS version, verify with the diagnostic mirror (`PLAY-016`)
+  on the user's iOS version, verify with **CarPlay MiniPlayer Controls** (`PLAY-016`)
   before changing the default.
 - **Siri (unverified on device).** `SIRI-001` and `SIRI-002` are covered by
   unit tests at the shared actions only. Still to check by voice: every
@@ -2892,7 +2928,7 @@ The following are not requirements of the current product:
   cause is inferred from one incident; Overplay cannot read system Now
   Playing, so it detects the cause (an unprepared queue playing), not the
   empty CarPlay screen. If CarPlay goes blank with a prepared queue, turn on
-  Settings → Mirror Now Playing from Overplay and record whether CarPlay
+  Settings → CarPlay MiniPlayer Controls and record whether CarPlay
   recovers, then start a song from a CarPlay list or relaunch Overplay.
 - **Manual adds saved with a Mac's local ID.** Two Inbox songs added before
   2026-10-18 were saved with a Mac's local persistent ID as their catalog ID,
@@ -2962,9 +2998,9 @@ CarPlay supports:
 - Return to the root menu from Now Playing.
 
 CarPlay keeps iOS 27's MiniPlayer on (the system default; `allowsMiniPlayer`
-is left alone): it shows what is playing with play/pause and skip, and opens
-the full Now Playing, where Overplay's custom buttons are (owner request,
-2026-10-24).
+is left alone): it opens the full Now Playing, where Overplay's custom buttons
+are (owner request, 2026-10-24). It shows play/pause and skip only while
+**CarPlay MiniPlayer Controls** is on (`PLAY-016`); unverified in the car.
 
 CarPlay does not provide a separate skip-history browser. Now Playing metadata
 and artwork come from the `ApplicationMusicPlayer` host. Custom buttons are
@@ -3120,9 +3156,11 @@ Linked-playlist artwork remains 72 × 72 points, matching track-row artwork.
 Long-press offers Settings and Regenerate; Settings saves layout and border choices.
 
 Covers are grouped by artwork URL. Active Overplay/One True Playlist artwork
-ranks by summed Overplay playthrough counts across songs sharing a cover.
+ranks by summed Overplay playthrough counts across songs sharing a cover, and
+equal counts by the latest play of any of those songs.
 The Inbox and other playlists rank by newest addition/movement time; Retired always
-ranks by newest retirement time. Equal ranks are randomized during generation.
+ranks by newest retirement time. Ranks still equal are randomized during
+generation.
 Grids select the highest-ranked 9 or 64 distinct covers, repeat only to fill
 empty cells, and shuffle the cell order. Pile draws from lowest to highest rank,
 placing the most-played OTP cover or newest the Inbox/Retired cover on top, over a
@@ -3130,6 +3168,9 @@ repeating lower-ranked background that fills the canvas and extends past its edg
 This artwork ranking does not change track-list or unshuffled playback order.
 Foreground covers have random side lengths of 30–60% of the canvas, rotations of
 −3° to +3°, and random positions whose rotated corners stay inside the canvas.
+The four covers ranked just below the top one are drawn last under it, one in
+each quarter (NW, NE, SW, SE, dealt at random), centred near the quarter's
+middle at 36–44% of the canvas, so they show past the top cover.
 The top cover is always 50%, centred, and slightly rotated. Borderless Pile covers
 have a subtle black drop shadow (24% opacity, blur 1.2% of the cover side, downward
 offset 0.6%). Grids and covers with black or white borders have no drop shadow.

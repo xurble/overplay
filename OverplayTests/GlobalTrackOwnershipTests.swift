@@ -154,6 +154,27 @@ struct GlobalTrackOwnershipTests {
         #expect(events.contains { $0.eventType == .promoted && $0.source == .sync })
     }
 
+    @Test("Moving a One True Playlist song to the Inbox keeps it active and stops a stale sync promoting it back")
+    func oneTruePlaylistSongMovesToInbox() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let otp = PlaylistRecord(musicPlaylistID: "otp", name: "OTP", role: .oneTruePlaylist)
+        let track = TrackRecord(catalogID: "song", title: "Song", artistName: "Artist")
+        let item = PlaylistItemRecord(playlistID: otp.id, trackID: track.id, skipCount: 1)
+        context.insert(otp)
+        context.insert(track)
+        context.insert(item)
+        try TrackActionService.moveToInbox(item, from: otp, in: context)
+        #expect(item.playlistID == bucket.id && item.evictedAt == nil && item.isExplicitlyKept)
+        #expect(item.suppressedOTPMusicPlaylistIDs == ["otp"] && item.skipCount == 1)
+        let sync = PlaylistSyncService()
+        _ = try await sync.reconcile(snapshots: [snapshot("song")], playlistRecord: otp, syncedAt: .now, in: context)
+        #expect(item.playlistID == bucket.id)
+        let events = try context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(events.contains { $0.eventType == .restored && $0.playlistID == bucket.id })
+    }
+
     @Test("Historical cleanup merges first, forgets legacy resets, and never repeats against new rows")
     func migrationIsOrderedAndIdempotent() throws {
         let container = try OverplayTestSupport.makeModelContainer()

@@ -15,8 +15,9 @@ struct SetupView: View {
 
     var body: some View {
         VStack(spacing: 16) {
+            // Every page from the start, so the dots show the whole setup.
             TabView(selection: $page) {
-                ForEach(viewModel.reachablePages) { page in
+                ForEach(SetupPage.allCases) { page in
                     card(for: page)
                         .padding(.horizontal, 20)
                         .padding(.bottom, 44)
@@ -25,6 +26,11 @@ struct SetupView: View {
             }
             .tabViewStyle(.page(indexDisplayMode: .always))
             .indexViewStyle(.page(backgroundDisplayMode: .always))
+            // A swipe past a card that still needs its choice springs back.
+            .onChange(of: page) { _, newPage in
+                guard let limit = viewModel.reachablePages.last, newPage.rawValue > limit.rawValue else { return }
+                withAnimation(.smooth) { page = limit }
+            }
 
             nextButton
                 .padding(.horizontal, 20)
@@ -124,10 +130,10 @@ enum SetupPage: Int, CaseIterable, Identifiable {
             SetupFeature(symbol: "arrow.up.circle.fill", tint: .pink, title: "One True Playlist",
                 text: "Your main playlist, the one you play most. Overplay counts every play and skip, so you can see which songs have earned their place.")
         case .triageIntro:
-            SetupFeature(symbol: "tray.fill", tint: .teal, title: "The Inbox",
+            SetupFeature(symbol: "tray", tint: .teal, title: "The Inbox",
                 text: "New music lands here from playlists you choose. Promote the songs you love to your One True Playlist and retire the rest.")
         case .retired:
-            SetupFeature(symbol: "archivebox.fill", tint: .gray, title: "Retired",
+            SetupFeature(symbol: "archivebox", tint: .gray, title: "Retired",
                 text: "Retiring a song takes it out of rotation without losing it. Its history stays, and you can play it or bring it back at any time.")
         case .carPlay:
             SetupFeature(symbol: "car.fill", tint: .blue, title: "CarPlay and Siri",

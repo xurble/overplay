@@ -12,7 +12,6 @@ struct HistoryView: View {
     @State private var hasMoreEvents = false
     @State private var eventLimit = EventRepository.historyPageSize
     @State private var recoveredEvents: [HistoryEvent] = []
-    @State private var reloadToken = 0
     @State private var playlists: [PlaylistRecord] = []
     @State private var playlistItems: [PlaylistItemRecord] = []
     @State private var tracks: [TrackRecord] = []
@@ -21,6 +20,8 @@ struct HistoryView: View {
 
     var body: some View {
         List {
+#if DEBUG
+            // Development builds only: release shows just the events.
             Section {
                 Picker("History Filter", selection: $viewModel.selectedFilter) {
                     ForEach(HistoryEventFilter.allCases) { filter in
@@ -30,15 +31,34 @@ struct HistoryView: View {
                 }
                 .pickerStyle(.menu)
                 .untinted()
+                .listRowSeparator(.hidden)
+                .listRowInsets(Self.textInsets)
             }
 
+            // Headings and notes are rows with the same margins as the
+            // events' text, rather than plain-list headers and footers with
+            // the system's own.
             Section {
-                ReconciliationEffectivenessView(summary: reconciliationSummary)
-            } header: {
                 Text("Suspended Playback Recovery")
-            } footer: {
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 14, leading: 16, bottom: 6, trailing: 16))
+                ReconciliationEffectivenessView(summary: reconciliationSummary)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(Self.textInsets)
                 Text("These are playthroughs completed while Overplay was suspended and written when reconciliation next ran. Each playthrough is attributed to the evidence that made the recovery possible.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 14, trailing: 16))
             }
+
+            Text("Events")
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 14, leading: 16, bottom: 6, trailing: 16))
+#endif
 
             if rows.isEmpty {
                 ContentUnavailableView(
@@ -46,19 +66,11 @@ struct HistoryView: View {
                     systemImage: "clock.arrow.circlepath",
                     description: Text("Playback, Overplay, removal, restore, and remote mutation events will appear here.")
                 )
+                .listRowInsets(Self.textInsets)
             }
 
             ForEach(rows) { row in
-                HistoryEventRowView(row: row, canRestore: restorableItem(for: row) != nil) {
-                    viewModel.restore(
-                        row,
-                        playlistItems: playlistItems,
-                        playlists: playlists,
-                        context: modelContext,
-                        dependencies: dependencies
-                    )
-                    reloadToken += 1
-                }
+                HistoryEventRowView(row: row)
                 .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
             }
 
@@ -66,6 +78,7 @@ struct HistoryView: View {
                 Button("Show More") {
                     eventLimit += EventRepository.historyPageSize
                 }
+                .listRowInsets(Self.textInsets)
             }
 
         }
@@ -85,8 +98,10 @@ struct HistoryView: View {
         }
     }
 
+    private static let textInsets = EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16)
+
     private var historyDataKey: String {
-        "\(viewModel.selectedFilter.rawValue)-\(eventLimit)-\(reloadToken)-\(playbackController.playbackItemMetadataVersion)"
+        "\(viewModel.selectedFilter.rawValue)-\(eventLimit)-\(playbackController.playbackItemMetadataVersion)"
     }
 
     private var rows: [HistoryEventRowModel] {
@@ -103,10 +118,6 @@ struct HistoryView: View {
 
     private var emptyTitle: String {
         viewModel.emptyTitle
-    }
-
-    private func restorableItem(for row: HistoryEventRowModel) -> PlaylistItemRecord? {
-        viewModel.restorableItem(for: row, playlistItems: playlistItems)
     }
 
     private func reloadHistoryData() {
@@ -128,16 +139,10 @@ struct HistoryView: View {
         }
         tracks = (try? TrackRecordRepository.tracks(ids: trackIDs, in: modelContext)) ?? []
     }
-
-    private var dependencies: HistoryViewModel.Dependencies {
-        .live(playbackController: playbackController)
-    }
 }
 
 private struct HistoryEventRowView: View {
     var row: HistoryEventRowModel
-    var canRestore: Bool
-    var restore: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -155,7 +160,8 @@ private struct HistoryEventRowView: View {
                         .foregroundStyle(.tertiary)
                 }
 
-                Text(row.trackTitle)
+                // Shortened as a playlist's titles are.
+                TrackRowText(candidates: TrackTextVariants.candidates(for: row.trackTitle))
                     .font(.headline)
 
                 Text(row.subtitle)
@@ -170,13 +176,9 @@ private struct HistoryEventRowView: View {
                         .foregroundStyle(.tertiary)
                 }
             }
+            .padding(.vertical, 8)
 
             Spacer()
-
-            if canRestore {
-                Button("Move to the Inbox", action: restore)
-                    .buttonStyle(.bordered)
-            }
         }
     }
 }
@@ -198,14 +200,8 @@ private struct HistoryEventBadgesView: View {
 
     @ViewBuilder
     private var badges: some View {
-        HistoryBadgeView(text: row.sourceTitle)
-
         if let reconciliationMechanismTitle = row.reconciliationMechanismTitle {
             HistoryBadgeView(text: reconciliationMechanismTitle)
-        }
-
-        if let skipCountText = row.skipCountText {
-            HistoryBadgeView(text: skipCountText)
         }
 
         if let remoteMutationStatusText = row.remoteMutationStatusText {

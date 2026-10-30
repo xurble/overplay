@@ -11,11 +11,13 @@ import UIKit
 ///
 /// By default this does nothing: Lock Screen, Control Center, headset and
 /// CarPlay transport act on the player directly, and the controller observes
-/// the result. The device-local diagnostic mirror exists only to verify CarPlay
-/// behaviour on new iOS releases. It publishes metadata derived solely from the
-/// controller's observed player state, and forwards transport commands to the
-/// controller's single-call actions with no gating. See History H-7 in the spec
-/// before enabling it by default.
+/// the result. The device-local, opt-in mirror exists for iOS 27's CarPlay
+/// MiniPlayer, which shows play/pause and skip only for an app's own Now
+/// Playing. It publishes what MusicKit would (title, artist, album, artwork,
+/// duration, position and rate) derived solely from the controller's observed
+/// player state, and forwards transport commands to the controller's
+/// single-call actions with no gating. See History H-7 in the spec before
+/// enabling it by default.
 @MainActor
 final class SystemNowPlayingBridge {
     static let mirrorDefaultsKey = "overplay.diagnostics.mirrorNowPlaying"
@@ -115,9 +117,34 @@ final class SystemNowPlayingBridge {
                 self.publish(from: controller, generation: generation)
             }
         }
-        MPNowPlayingInfoCenter.default().nowPlayingInfo = Self.info(
-            track: track, elapsed: controller.elapsedSeconds, isPlaying: isPlaying
-        )
+        write(track: track, isPlaying: isPlaying, from: controller)
+        if let track, let url = track.artworkURLTemplate,
+           ArtworkImagePipeline.shared.cachedImage(for: url, size: Self.artworkSize) == nil {
+            // Written without art first, then again once it loads, if the
+            // track is still current.
+            Task { @MainActor [weak self, weak controller] in
+                guard await ArtworkImagePipeline.shared.image(for: url, size: Self.artworkSize, playlistID: nil) != nil,
+                      let self, let controller, self.isMirroring, generation == self.observationGeneration,
+                      controller.currentTrack?.id == track.id else { return }
+                self.write(track: controller.currentTrack, isPlaying: controller.isPlaying, from: controller)
+            }
+        }
+    }
+
+    private func write(track: CurrentPlaybackTrack?, isPlaying: Bool, from controller: PlaybackController) {
+        var info = Self.info(track: track, elapsed: controller.elapsedSeconds, isPlaying: isPlaying)
+        if let image = ArtworkImagePipeline.shared.cachedImage(for: track?.artworkURLTemplate, size: Self.artworkSize) {
+            info?[MPMediaItemPropertyArtwork] = Self.artwork(UIImage(cgImage: image))
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private static let artworkSize = 512
+
+    /// The system asks for the image off the main thread: built here, the
+    /// handler is not main-actor isolated.
+    nonisolated private static func artwork(_ image: UIImage) -> MPMediaItemArtwork {
+        MPMediaItemArtwork(boundsSize: image.size) { @Sendable _ in image }
     }
 
     static func info(track: CurrentPlaybackTrack?, elapsed: Double, isPlaying: Bool) -> [String: Any]? {

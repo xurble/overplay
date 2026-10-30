@@ -293,7 +293,7 @@ extension HistoryEventType {
         case .playthrough:
             "checkmark.circle.fill"
         case .evicted:
-            "archivebox.fill"
+            "archivebox"
         case .restored:
             "arrow.uturn.backward.circle.fill"
         case .promoted:

@@ -322,7 +322,7 @@ struct CarPlayListRendererTests {
             CarPlayListPresentation(sections: [.init(id: "list", rows: [
                 Row(id: "card", title: "Card", isPlaying: playing == "card", artwork: art("card"), style: .card),
                 Row(id: "row", title: "Row", isPlaying: playing == "row", artwork: art("row")),
-                Row(id: "symbol", title: "Triage", isPlaying: playing == "symbol", artwork: .symbol("tray.fill")),
+                Row(id: "symbol", title: "Triage", isPlaying: playing == "symbol", artwork: .symbol("tray")),
                 Row(id: "strip", title: "Strip", style: .strip([
                     .init(id: "tile", title: "Tile", artwork: art("tile"), isPlaying: playing == "tile"),
                 ])),
@@ -342,7 +342,7 @@ struct CarPlayListRendererTests {
         renderer.update(state(playing: "row"), on: template, actions: [:])
         await settle(loads: 4)
         // The loader is asked for the art itself; the badge is drawn over it.
-        #expect(loaded.map { "\($0)" }.sorted() == [art("card"), art("row"), .symbol("tray.fill"), art("tile")].map { "\($0)" }.sorted())
+        #expect(loaded.map { "\($0)" }.sorted() == [art("card"), art("row"), .symbol("tray"), art("tile")].map { "\($0)" }.sorted())
         let item = try #require(renderer.items["row"])
         #expect(try badged(item.image))
 

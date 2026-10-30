@@ -119,23 +119,16 @@ struct PlayerCardCornerTests {
 
     @Test("The Duo's physical left corners start square for either toolbar side", arguments: [HorizontalEdge.leading, .trailing])
     func duoMask(toolbarEdge: HorizontalEdge) {
-        let shape = PlayerCardTransform.maskShape(progress: 0, targetHeight: 68, scale: 1, verticalBarEdge: toolbarEdge, hasSeenVerticalBar: false, isLandscape: false, isClockwise: true, layoutDirection: .leftToRight)
-        let path = shape.path(in: CGRect(x: 0, y: 0, width: 400, height: 800))
-
-        #expect(path.contains(CGPoint(x: 1, y: 1)))
-        #expect(path.contains(CGPoint(x: 1, y: 799)))
-        #expect(!path.contains(CGPoint(x: 399, y: 1)))
-        #expect(!path.contains(CGPoint(x: 399, y: 799)))
+        let corners = PlayerCardTransform.maskCorners(progress: 0, targetHeight: 68, scale: 1, verticalBarEdge: toolbarEdge, hasSeenVerticalBar: false, windowCorners: nil, isLandscape: false, isClockwise: true, layoutDirection: .leftToRight)
+        #expect(corners == .init(topLeading: .fixed(0), topTrailing: .fixed(50), bottomLeading: .fixed(0), bottomTrailing: .fixed(50)))
     }
 
     @Test("The physical left stays square in right-to-left layout")
     func duoMaskRightToLeft() {
-        let shape = PlayerCardTransform.maskShape(progress: 0, targetHeight: 68, scale: 1, verticalBarEdge: .trailing, hasSeenVerticalBar: false, isLandscape: false, isClockwise: true, layoutDirection: .rightToLeft)
-        let path = shape.path(in: CGRect(x: 0, y: 0, width: 400, height: 800))
-        #expect(!path.contains(CGPoint(x: 1, y: 1)))
-        #expect(path.contains(CGPoint(x: 399, y: 1)))
-        // A bare Shape.path has no layout environment; RTL rendering swaps
-        // leading and trailing, making this the physical left square edge.
+        let corners = PlayerCardTransform.maskCorners(progress: 0, targetHeight: 68, scale: 1, verticalBarEdge: .trailing, hasSeenVerticalBar: false, windowCorners: nil, isLandscape: false, isClockwise: true, layoutDirection: .rightToLeft)
+        // Right-to-left rendering swaps leading and trailing, so the physical
+        // left is the trailing edge.
+        #expect(corners == .init(topLeading: .fixed(50), topTrailing: .fixed(0), bottomLeading: .fixed(50), bottomTrailing: .fixed(0)))
     }
 
     @Test("In landscape the square edge rotates to the top or bottom", arguments: [
@@ -144,13 +137,11 @@ struct PlayerCardCornerTests {
     ])
     func rotatedDuoMask(clockwise: Bool, squareTop: Bool) {
         let contexts: [(HorizontalEdge?, Bool)] = [(nil, true), (.leading, false), (.trailing, false)]
+        let top: PlayerCardTransform.Corner = squareTop ? .fixed(0) : .fixed(50)
+        let bottom: PlayerCardTransform.Corner = squareTop ? .fixed(50) : .fixed(0)
         for (toolbarEdge, hasSeenBar) in contexts {
-            let shape = PlayerCardTransform.maskShape(progress: 0, targetHeight: 68, scale: 1, verticalBarEdge: toolbarEdge, hasSeenVerticalBar: hasSeenBar, isLandscape: true, isClockwise: clockwise, layoutDirection: .leftToRight)
-            let path = shape.path(in: CGRect(x: 0, y: 0, width: 800, height: 400))
-            #expect(path.contains(CGPoint(x: 1, y: 1)) == squareTop)
-            #expect(path.contains(CGPoint(x: 799, y: 1)) == squareTop)
-            #expect(path.contains(CGPoint(x: 1, y: 399)) != squareTop)
-            #expect(path.contains(CGPoint(x: 799, y: 399)) != squareTop)
+            let corners = PlayerCardTransform.maskCorners(progress: 0, targetHeight: 68, scale: 1, verticalBarEdge: toolbarEdge, hasSeenVerticalBar: hasSeenBar, windowCorners: nil, isLandscape: true, isClockwise: clockwise, layoutDirection: .leftToRight)
+            #expect(corners == .init(topLeading: top, topTrailing: top, bottomLeading: bottom, bottomTrailing: bottom))
         }
     }
 
@@ -159,16 +150,24 @@ struct PlayerCardCornerTests {
         #expect(PlayerCardTransform.minimumCornerRadius(progress: 0, targetHeight: 68, scale: 1, startsSquare: true) == 0)
         #expect(PlayerCardTransform.minimumCornerRadius(progress: 0.5, targetHeight: 68, scale: 0.5, startsSquare: true) == 34)
         #expect(PlayerCardTransform.minimumCornerRadius(progress: 1, targetHeight: 68, scale: 0.5, startsSquare: true) == 68)
-        let middle = PlayerCardTransform.maskShape(progress: 0.5, targetHeight: 68, scale: 1, verticalBarEdge: .leading, hasSeenVerticalBar: false, isLandscape: false, isClockwise: true, layoutDirection: .leftToRight)
-        let path = middle.path(in: CGRect(x: 0, y: 0, width: 400, height: 800))
-        #expect(!path.contains(CGPoint(x: 1, y: 1)))
+        let middle = PlayerCardTransform.maskCorners(progress: 0.5, targetHeight: 68, scale: 1, verticalBarEdge: .leading, hasSeenVerticalBar: false, windowCorners: nil, isLandscape: false, isClockwise: true, layoutDirection: .leftToRight)
+        #expect(middle.topLeading == .fixed(17))
+    }
+
+    @Test("A split window's corners start at its own radii, not the front screen's square edge")
+    func splitWindowMask() {
+        // Left of the hinge: tight on the right, the screen's radius on the left.
+        let corners = WindowCorners(topLeft: 60, topRight: 4, bottomLeft: 60, bottomRight: 4)
+        let mask = PlayerCardTransform.maskCorners(progress: 0, targetHeight: 68, scale: 1, verticalBarEdge: .leading, hasSeenVerticalBar: true, windowCorners: corners, isLandscape: false, isClockwise: true, layoutDirection: .leftToRight)
+        #expect(mask == .init(topLeading: .fixed(60), topTrailing: .fixed(4), bottomLeading: .fixed(60), bottomTrailing: .fixed(4)))
+        #expect(PlayerCardTransform.cornerRadius(progress: 1, targetHeight: 68, scale: 0.5, startingRadius: 4) == 68)
     }
 
     @Test("Without a vertical bar, corners stay rounded and progress is clamped")
     func ordinaryMaskAndClamp() {
-        let shape = PlayerCardTransform.maskShape(progress: 0, targetHeight: 68, scale: 1, verticalBarEdge: nil, hasSeenVerticalBar: false, isLandscape: false, isClockwise: true, layoutDirection: .leftToRight)
-        let path = shape.path(in: CGRect(x: 0, y: 0, width: 400, height: 800))
-        #expect(!path.contains(CGPoint(x: 1, y: 1)))
+        let corners = PlayerCardTransform.maskCorners(progress: 0, targetHeight: 68, scale: 1, verticalBarEdge: nil, hasSeenVerticalBar: false, windowCorners: nil, isLandscape: false, isClockwise: true, layoutDirection: .leftToRight)
+        #expect(corners.topLeading == .concentric(minimum: 50))
+        #expect(corners.bottomTrailing == .concentric(minimum: 50))
         #expect(PlayerCardTransform.minimumCornerRadius(progress: -0.2, targetHeight: 68, scale: 1, startsSquare: false) == 50)
         #expect(PlayerCardTransform.minimumCornerRadius(progress: 2, targetHeight: 68, scale: 0.5, startsSquare: false) == 68)
     }

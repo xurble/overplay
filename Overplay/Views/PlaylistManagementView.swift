@@ -48,6 +48,8 @@ private struct PlaylistManagementContentView: View {
     // model per pass was measurable churn. detailPresentationKey names
     // every input the rows depend on.
     @State private var cachedDetail: PlaylistManagementViewModel.DetailPresentation?
+    @State private var filterText = ""
+    @State private var isFiltering = false
 
     init(settings: OverplaySettings, playlist: PlaylistRecord, scope: PlaylistPlaybackScope) {
         self.settings = settings
@@ -69,37 +71,41 @@ private struct PlaylistManagementContentView: View {
         let detail = cachedDetail ?? detailPresentation
 
         List {
-            Section {
-                VStack(alignment: .leading, spacing: 14) {
-                    PlaylistCollageView(playlist: playlist, scope: selectedScope)
+            if !isFiltering {
+                Section {
+                    VStack(alignment: .leading, spacing: 14) {
+                        PlaylistCollageView(playlist: playlist, scope: selectedScope)
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label(detail.playlist.roleTitle, systemImage: detail.playlist.iconIntent.systemImage)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(roleTint(for: detail.playlist))
-                            .accessibilityValue(detail.playlist.isCurrentPlaybackPlaylist ? "Now playing" : "")
-                        Text(detail.playlist.title)
-                            .font(.title2.bold())
-                            .accessibilityAddTraits(.isHeader)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(detail.playlist.roleTitle, systemImage: detail.playlist.iconIntent.systemImage)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(roleTint(for: detail.playlist))
+                                .accessibilityValue(detail.playlist.isCurrentPlaybackPlaylist ? "Now playing" : "")
+                            Text(detail.playlist.title)
+                                .font(.title2.bold())
+                                .accessibilityAddTraits(.isHeader)
+                        }
+
+                        Button {
+                            Task { await playPlaylist() }
+                        } label: {
+                            Label(
+                                viewModel.playButtonTitle,
+                                systemImage: "shuffle"
+                            )
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 4)
+                        }
+                        // Filled: purple text on glass is illegible on a dark background.
+                        .buttonStyle(.glassProminent)
+                        .controlSize(.large)
+                        .disabled(!detail.rows.contains { $0.isPlayable })
+
                     }
-
-                    Button {
-                        Task { await playPlaylist() }
-                    } label: {
-                        Label(
-                            viewModel.playButtonTitle,
-                            systemImage: "shuffle"
-                        )
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 4)
-                    }
-                    .buttonStyle(.glass)
-                    .controlSize(.large)
-                    .disabled(!detail.rows.contains { $0.isPlayable })
-
+                    .padding(.vertical, 4)
+                    .id(ListFilter.headerID)
                 }
-                .padding(.vertical, 4)
             }
 
             Section(selectedScope.title) {
@@ -111,7 +117,11 @@ private struct PlaylistManagementContentView: View {
                     )
                 }
 
-                ForEach(detail.rows) { row in
+                let rows = detail.rows.filter { ListFilter.SongFields.titleOrArtist.matches(filterText, $0.summary) }
+                if rows.isEmpty, !detail.rows.isEmpty {
+                    ListFilterNoMatchesView()
+                }
+                ForEach(rows) { row in
                     playlistTrackButton(for: row)
                         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
                         // Right promotes to the One True Playlist; left
@@ -121,7 +131,7 @@ private struct PlaylistManagementContentView: View {
                                 Button {
                                     Task { await promote(row) }
                                 } label: {
-                                    Label("Overplay", systemImage: "arrow.up.circle")
+                                    SwipeLabel(title: "Overplay", systemImage: "arrow.up.circle")
                                 }
                                 .accessibilityLabel("Promote to One True Playlist")
                                 .tint(.pink)
@@ -133,7 +143,7 @@ private struct PlaylistManagementContentView: View {
                                 Button {
                                     Task { await restore(row) }
                                 } label: {
-                                    Label("Move to the Inbox", systemImage: "tray.fill")
+                                    SwipeLabel(title: "Move to the Inbox", systemImage: "tray.and.arrow.down")
                                 }
                                 .tint(.green)
                                 .disabled(viewModel.restoringItemIDs.contains(row.id))
@@ -141,9 +151,19 @@ private struct PlaylistManagementContentView: View {
                                 Button(role: .destructive) {
                                     Task { await evict(row) }
                                 } label: {
-                                    Label("Retire", systemImage: "archivebox.fill")
+                                    SwipeLabel(title: "Retire", systemImage: "archivebox")
                                 }
                                 .disabled(viewModel.evictingItemIDs.contains(row.id))
+                                // A One True Playlist song can also go back to the Inbox.
+                                if playlist.role == .oneTruePlaylist {
+                                    Button {
+                                        Task { await moveToInbox(row) }
+                                    } label: {
+                                        SwipeLabel(title: "Move to the Inbox", systemImage: "tray.and.arrow.down")
+                                    }
+                                    .tint(.green)
+                                    .disabled(viewModel.restoringItemIDs.contains(row.id))
+                                }
                             }
                         }
                 }
@@ -151,6 +171,7 @@ private struct PlaylistManagementContentView: View {
 
         }
         .listStyle(.plain)
+        .listFilter(text: $filterText, isPresented: $isFiltering, prompt: "Songs or artists")
         .miniPlayerScrollContentInset()
         .onChange(of: viewModel.message) { _, message in
             guard let message else { return }
@@ -170,56 +191,17 @@ private struct PlaylistManagementContentView: View {
             if cachedDetail != next { cachedDetail = next }
         }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
+            // Retired has nothing to sync.
+            if selectedScope == .active {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        Task { await playPlaylist() }
+                        Task { await syncPlaylist() }
                     } label: {
-                        Label(
-                            viewModel.playButtonTitle,
-                            systemImage: "shuffle"
-                        )
+                        Label(viewModel.isSyncing ? "Syncing" : "Sync", systemImage: "arrow.triangle.2.circlepath")
                     }
-                    .disabled(!detail.rows.contains { $0.isPlayable })
-
-                    if selectedScope == .active {
-                        Button {
-                            Task { await syncPlaylist() }
-                        } label: {
-                            Label(viewModel.isSyncing ? "Syncing" : "Sync", systemImage: "arrow.triangle.2.circlepath")
-                        }
-                        .disabled(viewModel.isSyncing)
-                    }
-
-                    if playlist.role == .triageBucket, selectedScope == .active {
-                        NavigationLink {
-                            TriageSourcesView()
-                                .nowPlayingColumnToggle()
-                        } label: {
-                            Label("Contributing Playlists", systemImage: "slider.horizontal.3")
-                        }
-                    }
-
-                    Divider()
-
-                    NavigationLink {
-                        SearchMusicView()
-                            .nowPlayingColumnToggle()
-                    } label: {
-                        Label("Search Apple Music", systemImage: "magnifyingglass")
-                    }
-
-                    NavigationLink {
-                        HistoryView()
-                            .nowPlayingColumnToggle()
-                    } label: {
-                        Label("History", systemImage: "clock.arrow.circlepath")
-                    }
-
-                } label: {
-                    Label("Playlist Controls", systemImage: "ellipsis.circle")
+                    .disabled(viewModel.isSyncing)
+                    .untinted()
                 }
-                .untinted()
             }
         }
     }
@@ -396,6 +378,17 @@ private struct PlaylistManagementContentView: View {
         await viewModel.evict(
             item,
             track: track,
+            playlist: playlist,
+            context: modelContext,
+            dependencies: dependencies
+        )
+    }
+
+    private func moveToInbox(_ row: PlaylistManagementViewModel.TrackRowPresentation) async {
+        guard let resolved = resolvedItemAndTrack(for: row) else { return }
+        await viewModel.moveToInbox(
+            resolved.item,
+            track: resolved.track,
             playlist: playlist,
             context: modelContext,
             dependencies: dependencies

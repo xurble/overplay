@@ -13,7 +13,7 @@ struct SetupTriageCardView: View {
     var body: some View {
         SetupCardView {
             VStack(spacing: 12) {
-                Image(systemName: "tray.fill")
+                Image(systemName: "tray")
                     .font(.system(size: 44, weight: .semibold))
                     .foregroundStyle(.teal)
                     .accessibilityHidden(true)
@@ -28,7 +28,8 @@ struct SetupTriageCardView: View {
                 playlistList
                 if viewModel.triageSourceIDs.isEmpty {
                     Button("Add Sources Later", action: onSkip)
-                        .buttonStyle(.glass)
+                        // Filled: purple text on glass is illegible on a dark background.
+                        .buttonStyle(.glassProminent)
                         .controlSize(.large)
                 }
             }

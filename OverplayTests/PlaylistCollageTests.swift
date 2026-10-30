@@ -129,12 +129,39 @@ struct PlaylistCollageTests {
         var random = SystemRandomNumberGenerator()
         let all = covers(10)
         let collage = PlaylistCollage.make(covers: all, layout: .pile, stroke: .none, using: &random)
-        #expect(collage.placements.count == 26)
+        // 25 underlay, the 4 runners-up again in the corners, then the featured.
+        #expect(collage.placements.count == 30)
         let underlay = collage.placements.prefix(25)
         // The nine earlier covers fill the underlay; the newest stays featured.
         #expect(Set(underlay.map(\.url)) == Set(all.prefix(9).map(\.url)))
         #expect(collage.placements.last?.url == all.last?.url)
         #expect(collage.placements.filter { $0.url == all.last?.url }.count == 1)
+    }
+
+    /// Owner request, 2026-10-30: the next four show past the centred top cover.
+    @Test func pilePutsTheFourRunnersUpOneInEachQuarter() {
+        var random = SystemRandomNumberGenerator()
+        let all = covers(100)
+        let collage = PlaylistCollage.make(covers: all, layout: .pile, stroke: .none, using: &random)
+        let corners = Array(collage.placements.dropLast().suffix(4))
+        #expect(Set(corners.map(\.url)) == Set(all.dropLast().suffix(4).map(\.url)))
+        let quarters = Set(corners.map { ($0.y < 0.5 ? "N" : "S") + ($0.x < 0.5 ? "W" : "E") })
+        #expect(quarters == ["NW", "NE", "SW", "SE"])
+        for cover in corners { #expect((0.36...0.44).contains(cover.side)) }
+    }
+
+    @Test func playCountTiesGoToTheMostRecentlyPlayed() {
+        var random = SystemRandomNumberGenerator()
+        let tied = (0..<4).map {
+            PlaylistCollage.Cover(url: "tied-\($0)", latestDate: .distantPast, plays: 14,
+                                  lastPlayed: Date(timeIntervalSince1970: Double($0)))
+        }
+        let fewer = PlaylistCollage.Cover(url: "fewer", latestDate: .now, plays: 13, lastPlayed: .now)
+        for _ in 0..<20 {
+            let collage = PlaylistCollage.make(covers: tied + [fewer], layout: .pile, stroke: .none,
+                                               rankByPlayCount: true, using: &random)
+            #expect(collage.placements.last?.url == "tied-3")
+        }
     }
 
     @Test func underlayCoversCanvasEvenWithOneAlbum() {

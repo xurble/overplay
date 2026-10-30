@@ -292,7 +292,7 @@ struct SplitAppShell: View {
     }
 
     private var retiredIcon: String {
-        isRetiredPlaying ? "arrow.right.circle.fill" : "archivebox.fill"
+        isRetiredPlaying ? "arrow.right.circle.fill" : "archivebox"
     }
 
     private func playlistIcon(for playlist: PlaylistRecord) -> String {
@@ -304,7 +304,7 @@ struct SplitAppShell: View {
         case .oneTruePlaylist:
             return "arrow.up.circle"
         case .triageBucket:
-            return "tray.fill"
+            return "tray"
         case .triageSource:
             return "music.note.list"
         }

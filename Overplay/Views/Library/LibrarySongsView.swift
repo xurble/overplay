@@ -4,7 +4,8 @@ import SwiftUI
 
 /// Every song in the library by title. Tapping one plays the library from
 /// there, as the Music app does, in a window of `windowSize` songs so a large
-/// library is never queued whole; Shuffle and Play shuffles a random window.
+/// library is never queued whole. A plain list, like Library's other
+/// categories: no header and no Shuffle and Play.
 /// Not added to Recents.
 struct LibrarySongsView: View {
     @Environment(\.modelContext) private var modelContext
@@ -24,14 +25,10 @@ struct LibrarySongsView: View {
             groupKey: collection.groupKey,
             reservedPlaylistID: collection.reservedPlaylistID,
             songs: songs,
-            placeholder: placeholder
+            placeholder: placeholder,
+            showsHeader: false
         ) {
-            Image(systemName: "music.note")
-                .font(.system(size: 120))
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.quaternary, in: .rect(cornerRadius: 16))
+            EmptyView()
         } onPlay: { song in
             let window = window(from: song?.catalogID)
             let windowIDs = Set(window.map(\.catalogID))

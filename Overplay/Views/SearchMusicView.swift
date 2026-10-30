@@ -109,7 +109,7 @@ struct SearchMusicView: View {
                             Button {
                                 Task { await move(result, toOneTruePlaylist: true) }
                             } label: {
-                                Label("Overplay", systemImage: "arrow.up.circle")
+                                SwipeLabel(title: "Overplay", systemImage: "arrow.up.circle")
                             }
                             .accessibilityLabel("Add to One True Playlist")
                             .tint(.pink)
@@ -120,7 +120,7 @@ struct SearchMusicView: View {
                             Button {
                                 Task { await move(result, toOneTruePlaylist: false) }
                             } label: {
-                                Label("Inbox", systemImage: "tray.fill")
+                                SwipeLabel(title: "Inbox", systemImage: "tray.and.arrow.down")
                             }
                             .accessibilityLabel("Add to the Inbox")
                             .tint(.green)
@@ -128,7 +128,7 @@ struct SearchMusicView: View {
                         Button {
                             moreResult = result
                         } label: {
-                            Label("More", systemImage: "ellipsis.circle")
+                            SwipeLabel(title: "More", systemImage: "ellipsis.circle")
                         }
                         .tint(.gray)
                     }
@@ -140,7 +140,7 @@ struct SearchMusicView: View {
                                 }
                             }
                             if song.canMoveToTriage {
-                                Button("Add to the Inbox", systemImage: "tray.fill") {
+                                Button("Add to the Inbox", systemImage: "tray.and.arrow.down") {
                                     Task { await move(result, toOneTruePlaylist: false) }
                                 }
                             }

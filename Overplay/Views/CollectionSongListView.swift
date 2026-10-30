@@ -17,42 +17,55 @@ struct CollectionSongListView<Artwork: View>: View {
     var songs: [RecentCollectionPresentation.Song]
     /// Shown in place of the songs while they load or when none could be.
     var placeholder: String? = nil
+    var filterFields: ListFilter.SongFields = .titleOrArtist
+    /// Off for Library's Songs, a plain list like Library's other categories.
+    var showsHeader = true
+    /// Off for an album, whose songs share its artwork.
+    var showsRowArtwork = true
     @ViewBuilder var artwork: () -> Artwork
     /// Shuffle and Play when the song is nil.
     var onPlay: (RecentCollectionPresentation.Song?) async -> Void
     var onMove: (RecentCollectionPresentation.Song, _ toOneTruePlaylist: Bool) async -> Void
 
+    @State private var filterText = ""
+    @State private var isFiltering = false
+
     var body: some View {
+        let shownSongs = songs.filter { filterFields.matches(filterText, $0.summary) }
         List {
-            Section {
-                VStack(alignment: .leading, spacing: 14) {
-                    artwork()
-                        .aspectRatio(1, contentMode: .fit)
-                        .frame(maxWidth: 420)
+            if showsHeader, !isFiltering {
+                Section {
+                    VStack(alignment: .leading, spacing: 14) {
+                        artwork()
+                            .aspectRatio(1, contentMode: .fit)
+                            .frame(maxWidth: 420)
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label(subtitle, systemImage: systemImage)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Text(title)
-                            .font(.title2.bold())
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(subtitle, systemImage: systemImage)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Text(title)
+                                .font(.title2.bold())
+                        }
+
+                        Button {
+                            Task { await onPlay(nil) }
+                        } label: {
+                            Label("Shuffle and Play", systemImage: "shuffle")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 4)
+                        }
+                        // Filled: purple text on glass is illegible on a dark background.
+                        .buttonStyle(.glassProminent)
+                        .controlSize(.large)
+                        .disabled(songs.isEmpty)
+                        .accessibilityIdentifier("recent-shuffle-and-play")
+
                     }
-
-                    Button {
-                        Task { await onPlay(nil) }
-                    } label: {
-                        Label("Shuffle and Play", systemImage: "shuffle")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 4)
-                    }
-                    .buttonStyle(.glass)
-                    .controlSize(.large)
-                    .disabled(songs.isEmpty)
-                    .accessibilityIdentifier("recent-shuffle-and-play")
-
+                    .padding(.vertical, 4)
+                    .id(ListFilter.headerID)
                 }
-                .padding(.vertical, 4)
             }
 
             Section("Songs") {
@@ -60,15 +73,20 @@ struct CollectionSongListView<Artwork: View>: View {
                     Text(placeholder)
                         .foregroundStyle(.secondary)
                 }
-                ForEach(songs) { song in
+                if shownSongs.isEmpty, !songs.isEmpty {
+                    ListFilterNoMatchesView()
+                }
+                ForEach(shownSongs) { song in
                     Button {
                         Task { await onPlay(song) }
                     } label: {
                         PlaylistTrackRowView(
                             summary: song.summary,
                             playlistID: reservedPlaylistID,
-                            isCurrent: RecentCollectionPresentation.isCurrent(song, groupKey: groupKey, controller: playbackController)
+                            isCurrent: RecentCollectionPresentation.isCurrent(song, groupKey: groupKey, controller: playbackController),
+                            showsArtwork: showsRowArtwork
                         )
+                        .padding(.vertical, showsRowArtwork ? 0 : 10)
                     }
                     .buttonStyle(.plain)
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
@@ -77,7 +95,7 @@ struct CollectionSongListView<Artwork: View>: View {
                             Button {
                                 Task { await onMove(song, true) }
                             } label: {
-                                Label("Overplay", systemImage: "arrow.up.circle")
+                                SwipeLabel(title: "Overplay", systemImage: "arrow.up.circle")
                             }
                             .accessibilityLabel("Add to One True Playlist")
                             .tint(.pink)
@@ -88,7 +106,7 @@ struct CollectionSongListView<Artwork: View>: View {
                             Button {
                                 Task { await onMove(song, false) }
                             } label: {
-                                Label("Inbox", systemImage: "tray.fill")
+                                SwipeLabel(title: "Inbox", systemImage: "tray.and.arrow.down")
                             }
                             .accessibilityLabel("Add to the Inbox")
                             .tint(.green)
@@ -98,6 +116,7 @@ struct CollectionSongListView<Artwork: View>: View {
             }
         }
         .listStyle(.plain)
+        .listFilter(text: $filterText, isPresented: $isFiltering, prompt: filterFields.prompt)
         .miniPlayerScrollContentInset()
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)

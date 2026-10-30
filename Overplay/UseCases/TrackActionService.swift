@@ -70,4 +70,22 @@ enum TrackActionService {
             "manual restore saved playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item))"
         )
     }
+
+    /// An active One True Playlist song back to the Inbox, kept. Like a
+    /// retirement it is suppressed in the Apple Music playlist, so a sync
+    /// before the removal lands cannot promote it back.
+    static func moveToInbox(
+        _ item: PlaylistItemRecord,
+        from playlist: PlaylistRecord,
+        in context: ModelContext
+    ) throws {
+        if !item.suppressedOTPMusicPlaylistIDs.contains(playlist.musicPlaylistID) {
+            item.suppressedOTPMusicPlaylistIDs.append(playlist.musicPlaylistID)
+        }
+        try TrackLocationService.moveToTriage(item, explicitKeep: true, in: context)
+        try context.save()
+        TrackMetadataDiagnostics.log(
+            "manual move to the Inbox saved playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item))"
+        )
+    }
 }

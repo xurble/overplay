@@ -34,6 +34,7 @@ final class PlaylistManagementViewModel {
         var promote: (PlaylistItemRecord, PlaylistRecord, ModelContext) async throws -> Void
         var evict: (PlaylistItemRecord, PlaylistRecord, ModelContext) throws -> Void
         var restore: (PlaylistItemRecord, PlaylistRecord, ModelContext) throws -> Void
+        var moveToInbox: (PlaylistItemRecord, PlaylistRecord, ModelContext) throws -> Void = { _, _, _ in }
 
         static func live(playbackController: PlaybackController) -> Self {
             Self(
@@ -62,6 +63,9 @@ final class PlaylistManagementViewModel {
                 },
                 restore: { item, playlist, context in
                     try playbackController.restoreTrack(item, playlist: playlist, context: context)
+                },
+                moveToInbox: { item, playlist, context in
+                    try playbackController.moveTrackToInbox(item, playlist: playlist, context: context)
                 }
             )
         }
@@ -365,6 +369,27 @@ final class PlaylistManagementViewModel {
             try dependencies.restore(item, playlist, context)
             dependencies.reconcileStoredOrder(playlist, context)
             message = "Restored \(track.title)."
+        } catch {
+            message = UserFacingError.message(for: error)
+        }
+    }
+
+    func moveToInbox(
+        _ item: PlaylistItemRecord,
+        track: TrackRecord,
+        playlist: PlaylistRecord,
+        context: ModelContext,
+        dependencies: Dependencies
+    ) async {
+        guard item.evictedAt == nil, playlist.role == .oneTruePlaylist else { return }
+        let itemID = item.id
+        restoringItemIDs.insert(itemID)
+        defer { restoringItemIDs.remove(itemID) }
+
+        do {
+            try dependencies.moveToInbox(item, playlist, context)
+            dependencies.reconcileStoredOrder(playlist, context)
+            message = "Moved \(track.title) to the Inbox."
         } catch {
             message = UserFacingError.message(for: error)
         }

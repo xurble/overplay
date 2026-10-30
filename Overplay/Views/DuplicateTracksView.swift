@@ -47,6 +47,7 @@ struct DuplicateTracksView: View {
                 }
             }
         }
+        .miniPlayerScrollContentInset()
         .navigationTitle("Find Duplicates")
         .sheet(item: $mergeRequest) { request in
             DuplicateMergeConfirmationView(request: request) { destination in

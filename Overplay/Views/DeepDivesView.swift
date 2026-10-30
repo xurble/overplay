@@ -5,12 +5,19 @@ import SwiftUI
 /// way to the albums and artists the dashboard shows as one row.
 struct DeepDivesView: View {
     @Query(sort: \RecentCollectionRecord.lastPlayedAt, order: .reverse) private var recentRecords: [RecentCollectionRecord]
+    @State private var filterText = ""
+    @State private var isFiltering = false
 
     var body: some View {
         let recents = RecentCollectionRepository.distinct(recentRecords)
+        let shownRecents = recents.filter(matchesFilter)
         ScrollView {
+            if shownRecents.isEmpty, !recents.isEmpty {
+                ListFilterNoMatchesView()
+                    .padding()
+            }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: RecentTileView.side), spacing: 18)], alignment: .leading, spacing: 22) {
-                ForEach(recents) { recent in
+                ForEach(shownRecents) { recent in
                     NavigationLink {
                         RecentCollectionView(recent: recent)
                             .nowPlayingColumnToggle()
@@ -28,9 +35,19 @@ struct DeepDivesView: View {
                     description: Text("Albums and artists you play from Now Playing appear here."))
             }
         }
+        .listFilter(text: $filterText, isPresented: $isFiltering, prompt: "Albums or artists")
         .miniPlayerScrollContentInset()
         .navigationTitle("Deep Dives")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// An album matches its title or artist, as Library's Albums do; an
+    /// artist matches its name.
+    private func matchesFilter(_ recent: RecentCollectionRecord) -> Bool {
+        guard !filterText.isEmpty else { return true }
+        return recent.collection.kind == .album
+            ? ListFilter.matches(filterText, recent.title, recent.songs.first?.artistName)
+            : ListFilter.matches(filterText, recent.title)
     }
 }
 

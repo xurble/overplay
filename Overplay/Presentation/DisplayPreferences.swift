@@ -5,6 +5,8 @@ enum AppearancePreference: String, CaseIterable, Identifiable {
     case automatic, light, dark
 
     static let storageKey = "overplay.appearance"
+    /// Until someone chooses otherwise, including on a new installation.
+    static let defaultValue = AppearancePreference.dark
 
     var id: String { rawValue }
 
@@ -40,14 +42,14 @@ enum PlayerBackgroundPreference: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .art: "Album Art"
-        case .themeColour: "Theme Colour"
+        case .themeColour: "Album Theme"
         }
     }
 }
 
 /// Applies the chosen appearance to a window's content.
 struct AppearancePreferenceModifier: ViewModifier {
-    @AppStorage(AppearancePreference.storageKey) private var appearance = AppearancePreference.automatic
+    @AppStorage(AppearancePreference.storageKey) private var appearance = AppearancePreference.defaultValue
 
     func body(content: Content) -> some View {
         content.preferredColorScheme(appearance.colorScheme)

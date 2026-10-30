@@ -11,6 +11,16 @@ struct DashboardView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.shellPlace) private var shellPlace
+    @Environment(\.miniPlayerTop) private var miniPlayerTop
+
+    /// The lead artwork's side, fitted so the first heading under it shows
+    /// above the mini player; nil until measured.
+    @State private var fittedLeadArtworkSide: CGFloat?
+    @State private var listFrame: CGRect = .zero
+    @State private var listSafeBottom: CGFloat = 0
+    @State private var isScrolledToTop = true
+    @State private var firstHeadingBottom: CGFloat?
+    @State private var hasVerticalBar = false
 
     var settings: OverplaySettings
 
@@ -84,6 +94,10 @@ struct DashboardView: View {
                 Section {
                     Text("Recent Deep Dives")
                         .font(.headline)
+                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: {
+                            firstHeadingBottom = $0
+                            fitLeadArtwork()
+                        }
                         .accessibilityAddTraits(.isHeader)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: DashboardLayout.blockSpacing, leading: 16, bottom: 6, trailing: 16))
@@ -98,6 +112,11 @@ struct DashboardView: View {
             Section {
                 Text("Library")
                     .font(.headline)
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { bottom in
+                        guard RecentCollectionRepository.distinct(recentRecords).isEmpty else { return }
+                        firstHeadingBottom = bottom
+                        fitLeadArtwork()
+                    }
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: DashboardLayout.blockSpacing, leading: 16, bottom: 6, trailing: 16))
                 ForEach(LibraryBrowser.Category.allCases) { category in
@@ -122,11 +141,31 @@ struct DashboardView: View {
             }
         }
         .listStyle(.plain)
+        .onGeometryChange(for: [CGFloat].self) { proxy in
+            let frame = proxy.frame(in: .global)
+            return [frame.minX, frame.minY, frame.width, frame.height, frame.maxY - proxy.safeAreaInsets.bottom]
+        } action: { values in
+            listFrame = CGRect(x: values[0], y: values[1], width: values[2], height: values[3])
+            listSafeBottom = values[4]
+            fitLeadArtwork()
+        }
+        // Measured only at rest: scrolled, the heading has moved up.
+        .onScrollGeometryChange(for: Bool.self) { abs($0.contentOffset.y + $0.contentInsets.top) < 1 } action: { _, atTop in
+            isScrolledToTop = atTop
+            fitLeadArtwork()
+        }
+        .onChange(of: miniPlayerTop) { fitLeadArtwork() }
         .miniPlayerScrollContentInset()
         .onAppear { shellPlace?.destination = .dashboard }
         .navigationTitle("Overplay")
         .navigationBarTitleDisplayMode(.inline)
+        .modifier(VerticalBarReader(hasVerticalBar: $hasVerticalBar))
         .toolbar {
+            // Search heads a vertical bar (iPhone Duo), whose items run from
+            // the leading ones; otherwise it is the trailing button.
+            if hasVerticalBar {
+                ToolbarItem(placement: .topBarLeading) { searchButton }
+            }
             ToolbarItem(placement: .topBarLeading) {
                 // A title as well as a symbol: a vertical bar's overflow menu
                 // (iPhone Duo) lists items by title. A Mac opens its own window.
@@ -147,25 +186,53 @@ struct DashboardView: View {
                     .untinted()
                 }
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                NavigationLink {
-                    SearchMusicView()
-                        .nowPlayingColumnToggle()
-                } label: {
-                    Label("Search", systemImage: "magnifyingglass")
+            // A Mac reaches History from its Go menu.
+            if !ProcessInfo.processInfo.isMacCatalystApp {
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink {
+                        HistoryView()
+                            .nowPlayingColumnToggle()
+                    } label: {
+                        Label("History", systemImage: "clock.arrow.circlepath")
+                    }
+                    .untinted()
                 }
-                .accessibilityIdentifier("dashboard-search")
-                .untinted()
+            }
+            if !hasVerticalBar {
+                ToolbarItem(placement: .topBarTrailing) { searchButton }
             }
         }
     }
 
+    private var searchButton: some View {
+        NavigationLink {
+            SearchMusicView()
+                .nowPlayingColumnToggle()
+        } label: {
+            Label("Search", systemImage: "magnifyingglass")
+        }
+        .accessibilityIdentifier("dashboard-search")
+        .buttonStyle(.glassProminent)
+    }
+
     /// The One True Playlist leads the screen as artwork over its track count,
-    /// at a fixed size.
+    /// as large as leaves the first heading under it readable above the mini
+    /// player (or the screen's bottom), up to a collection's artwork size.
     private var leadArtworkSide: CGFloat {
-        PlayerPlacement(horizontalSizeClass, verticalSizeClass) == .sheet
+        fittedLeadArtworkSide ?? (PlayerPlacement(horizontalSizeClass, verticalSizeClass) == .sheet
             ? DashboardLayout.compactLeadArtworkSide
-            : DashboardLayout.regularLeadArtworkSide
+            : DashboardLayout.regularLeadArtworkSide)
+    }
+
+    /// The heading moves with the artwork point for point, so one
+    /// measurement finds the side that puts it at the limit.
+    private func fitLeadArtwork() {
+        guard isScrolledToTop, let firstHeadingBottom, listFrame.width > 0 else { return }
+        let bottom = (miniPlayerTop ?? listSafeBottom) - DashboardLayout.headingMargin
+        let widest = min(DashboardLayout.maxLeadArtworkSide, listFrame.width - 32)
+        let side = min(max(leadArtworkSide + bottom - firstHeadingBottom, DashboardLayout.minLeadArtworkSide), widest).rounded(.down)
+        guard abs(side - leadArtworkSide) >= 1 else { return }
+        fittedLeadArtworkSide = side
     }
 
     private func oneTruePlaylistArtwork(for playlist: PlaylistRecord, summary: PlaylistSummaryPresentation) -> some View {
@@ -276,6 +343,12 @@ private enum DashboardLayout {
     /// everywhere else.
     static let compactLeadArtworkSide: CGFloat = 180
     static let regularLeadArtworkSide: CGFloat = 288
+    /// A collection's own artwork is no larger.
+    static let maxLeadArtworkSide: CGFloat = 420
+    static let minLeadArtworkSide: CGFloat = 120
+    /// The gap between the first heading under the artwork and the mini
+    /// player.
+    static let headingMargin: CGFloat = 8
 }
 
 private enum DashboardBadge {
@@ -330,7 +403,7 @@ private struct TriageHomeRowView: View {
         } icon: {
             // The inbox, not the collage; the green play arrow while Triage
             // plays, as Retired.
-            Image(systemName: summary.isCurrentPlaybackPlaylist ? summary.iconIntent.systemImage : "tray.fill")
+            Image(systemName: summary.isCurrentPlaybackPlaylist ? summary.iconIntent.systemImage : "tray")
                 .foregroundStyle(summary.isCurrentPlaybackPlaylist ? .green : .teal)
         }
         .accessibilityValue(summary.isCurrentPlaybackPlaylist ? "Now playing" : "")
