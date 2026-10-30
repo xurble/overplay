@@ -13,6 +13,10 @@ enum AppShellDestination: Hashable {
     case search
     case history
     case settings
+    /// A Made For You mix, by catalog playlist ID (`MFY-001`).
+    case madeForYou(String)
+    /// Every Made For You mix, as a grid like Deep Dives.
+    case madeForYouAll
 
     init?(storageValue: String) {
         if storageValue.hasPrefix("playlist:") {
@@ -24,6 +28,10 @@ enum AppShellDestination: Hashable {
         if storageValue.hasPrefix("library:") {
             guard let category = LibraryBrowser.Category(rawValue: String(storageValue.dropFirst("library:".count))) else { return nil }
             self = .library(category)
+            return
+        }
+        if storageValue.hasPrefix("madeForYou:") {
+            self = .madeForYou(String(storageValue.dropFirst("madeForYou:".count)))
             return
         }
         if storageValue.hasPrefix("recent:") {
@@ -45,6 +53,8 @@ enum AppShellDestination: Hashable {
             self = .deepDives
         case Self.settings.storageValue:
             self = .settings
+        case Self.madeForYouAll.storageValue:
+            self = .madeForYouAll
         default:
             return nil
         }
@@ -70,6 +80,10 @@ enum AppShellDestination: Hashable {
             "history"
         case .settings:
             "settings"
+        case let .madeForYou(id):
+            "madeForYou:\(id)"
+        case .madeForYouAll:
+            "made-for-you"
         }
     }
 }

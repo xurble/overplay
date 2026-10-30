@@ -55,6 +55,13 @@ struct OverplayCommands: Commands {
             go("Overplay", shell?.oneTruePlaylist, key: "2")
             go("Inbox", shell?.triage, key: "3")
             go("Retired", .retired, key: "4")
+            go("Deep Dives", .deepDives, key: "5")
+            go("Made For You", .madeForYouAll, key: "6")
+            Divider()
+            // The library by category, as in the sidebar (`LIB-001`).
+            ForEach(LibraryBrowser.Category.allCases) { category in
+                go(category.rawValue, .library(category))
+            }
             Divider()
             go("Search", .search, key: "f")
             go("History", .history, key: "y")
@@ -72,11 +79,12 @@ struct OverplayCommands: Commands {
         }
     }
 
-    private func go(_ title: String, _ destination: AppShellDestination?, key: KeyEquivalent) -> some View {
-        Button(title) {
+    @ViewBuilder
+    private func go(_ title: String, _ destination: AppShellDestination?, key: KeyEquivalent? = nil) -> some View {
+        let button = Button(title) {
             if let destination { shell?.navigate(destination) }
         }
-        .keyboardShortcut(key)
         .disabled(shell == nil || destination == nil)
+        if let key { button.keyboardShortcut(key) } else { button }
     }
 }

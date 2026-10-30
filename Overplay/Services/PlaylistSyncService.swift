@@ -632,6 +632,26 @@ struct PlaylistSyncService {
                 }
             }
         }
+        // A song gone from a complete read of a source leaves that source; an
+        // active Inbox song with no other source, no plays, no skips and no
+        // explicit keep then leaves the Inbox, as on unlink (`PLAYLIST-012`).
+        if isComplete, playlistRecord.role == .triageSource,
+           let bucket = try PlaylistRepository.existingTriageBucket(in: context) {
+            let sourceID = playlistRecord.musicPlaylistID
+            for item in try PlaylistItemRepository.items(forPlaylistID: bucket.id, in: context)
+            where item.evictedAt == nil && item.sourceMusicPlaylistIDs.contains(sourceID)
+                && !processedTrackIDs.contains(item.trackID) {
+                item.sourceMusicPlaylistIDs.removeAll { $0 == sourceID }
+                item.updatedAt = syncedAt
+                let trackID = item.trackID
+                if try TrackRetentionPolicy.deleteIfUnowned(item, in: context) {
+                    EventRepository.logHistory(
+                        playlistID: bucket.id, trackID: trackID, eventType: .trackRemoved, source: .sync,
+                        skipCountAtEvent: 0, message: "Left \(playlistRecord.name) unplayed", in: context
+                    )
+                }
+            }
+        }
         playlistRecord.lastSyncedAt = syncedAt
         playlistRecord.lastSyncError = nil
         playlistRecord.updatedAt = syncedAt

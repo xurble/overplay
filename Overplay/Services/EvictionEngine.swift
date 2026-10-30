@@ -59,12 +59,21 @@ enum EvictionEngine {
         session: TrackPlaySession,
         transitionWasNaturalCompletion: Bool,
         observationIsStale: Bool = false,
+        skipIgnoredReason: String? = nil,
         settings: OverplaySettings,
         context: ModelContext
     ) {
         guard !session.hasEvaluated else { return }
         if transitionWasNaturalCompletion {
             countPlaythrough(item, playlist: playlist, session: session, settings: settings, context: context)
+            return
+        }
+        if let skipIgnoredReason {
+            // Not a judgement on the song (`COUNT-003`): something else was
+            // started, or it had been set aside.
+            TrackMetadataDiagnostics.log(
+                "ignored skip (\(skipIgnoredReason)) playlist=\(TrackMetadataDiagnostics.describe(playlist)) item=\(TrackMetadataDiagnostics.describe(item)) elapsed=\(String(format: "%.1f", session.lastObservedPlaybackTime))"
+            )
             return
         }
         if observationIsStale {

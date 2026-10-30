@@ -15,6 +15,7 @@ struct NowPlayingColumnView: View {
     var isSideBySide = false
     /// Side by side, the art on the trailing side instead of the leading.
     var artworkOnTrailing = false
+    var isBesideSidebar = false
 
     var body: some View {
         ThemedPlayerHost { artworkTheme, applyRefreshedTheme in
@@ -25,7 +26,8 @@ struct NowPlayingColumnView: View {
                     onArtworkThemeUpdated: applyRefreshedTheme,
                     onArtworkTopChange: onArtworkTopChange,
                     isSideBySide: isSideBySide,
-                    artworkOnTrailing: artworkOnTrailing
+                    artworkOnTrailing: artworkOnTrailing,
+                    isBesideSidebar: isBesideSidebar
                 )
                 if !isSideBySide {
                     PlaybackControlsView(

@@ -7,6 +7,8 @@ struct PlaylistCollageView: View {
     @Environment(PlaylistArtworkPresentation.self) private var artworkPresentation
     @Bindable var playlist: PlaylistRecord
     var scope: PlaylistPlaybackScope = .active
+    /// A list header's fitting (`HeaderArtworkFit`); nil keeps the full size.
+    var artworkFit: HeaderArtworkFit? = nil
     @State private var image: CGImage?
     @State private var errorMessage: String?
     @State private var refreshID = UUID()
@@ -16,6 +18,8 @@ struct PlaylistCollageView: View {
     var body: some View {
         VStack(spacing: 8) {
             artwork
+            .frame(maxWidth: artworkFit?.maxSide ?? HeaderArtworkFit.maxSide)
+            .modifier(OptionalArtworkFitSide(fit: artworkFit))
             .overlay { if isLoading { ProgressView().padding(12).background(.regularMaterial, in: Capsule()) } }
             .contentShape(Rectangle())
             .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16))
@@ -156,4 +160,13 @@ struct PlaylistCollageSettingsView: View {
 
 #Preview("Artwork Settings") {
     PlaylistCollageSettingsView(layout: .pile, stroke: .none) { _, _ in }
+}
+
+/// Reports the drawn side to a list header's fitting, when there is one.
+private struct OptionalArtworkFitSide: ViewModifier {
+    var fit: HeaderArtworkFit?
+
+    func body(content: Content) -> some View {
+        if let fit { content.headerArtworkFitSide(fit) } else { content }
+    }
 }

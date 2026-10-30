@@ -12,6 +12,14 @@ struct MiniPlayerLozengeView: View {
     /// A swipe up, as it moves (upward distance) and on release.
     var onOpenDragChanged: (CGFloat) -> Void = { _ in }
     var onOpenDragEnded: (DragGesture.Value) -> Void = { _ in }
+    /// Away from the root page, a home button beside the bar returns there.
+    var showsHomeButton = false
+    var onHome: () -> Void = {}
+    /// The bar's own frame, without the home button: the full-screen player
+    /// grows from and shrinks into it.
+    var onLozengeFrameChange: (CGRect) -> Void = { _ in }
+
+    @Namespace private var glassNamespace
 
     static let height: CGFloat = 68
     private static let progressLineHeight: CGFloat = 3
@@ -30,8 +38,37 @@ struct MiniPlayerLozengeView: View {
 
     var body: some View {
         ThemedPlayerHost { artworkTheme, _ in
-            lozenge(theme: artworkTheme.isFallback ? nil : artworkTheme)
+            let theme = artworkTheme.isFallback ? nil : artworkTheme
+            // One container, so the home button emerges from the bar's glass
+            // and merges back into it.
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 8) {
+                    lozenge(theme: theme)
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onLozengeFrameChange($0) }
+                    if showsHomeButton {
+                        homeButton(theme: theme)
+                    }
+                }
+            }
+            .animation(.smooth(duration: 0.4), value: showsHomeButton)
         }
+    }
+
+    /// A circle as tall as the bar, tinted as it is.
+    private func homeButton(theme: AlbumArtworkTheme?) -> some View {
+        Button(action: onHome) {
+            Image(systemName: "house")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(theme?.trackTitle ?? .primary)
+                .frame(width: Self.height, height: Self.height)
+                .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        // Tinted more lightly than the bar, so it reads as glass.
+        .glassEffect(.regular.tint(theme?.background.opacity(0.35)).interactive(), in: .circle)
+        .glassEffectID("home", in: glassNamespace)
+        .accessibilityLabel("Home")
+        .accessibilityIdentifier("mini-player-home")
     }
 
     /// Plain glass until the track's colours are known, then glass tinted
@@ -86,6 +123,7 @@ struct MiniPlayerLozengeView: View {
         // Not interactive: its press bulge would leave the player, which
         // grows from and shrinks into this frame, a size out of step.
         .glassEffect(.regular.tint(theme?.background.opacity(Self.tintOpacity)), in: .capsule)
+        .glassEffectID("bar", in: glassNamespace)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("mini-player")
         // A fixed-height bar: past this its text would be cut off, so the

@@ -61,6 +61,9 @@ struct SetupPlaylistRowView: View {
     var details: LibraryBrowser.Item?
     /// Nil where the row is not a toggle.
     var isSelected: Bool?
+    /// Artwork for a playlist that is not in the library, such as a Made For
+    /// You mix.
+    var artworkURL: String? = nil
 
     private static let artworkSide: CGFloat = 52
 
@@ -93,6 +96,9 @@ struct SetupPlaylistRowView: View {
     @ViewBuilder private var artwork: some View {
         if let artwork = details?.artwork {
             LibraryArtworkView(artwork: artwork, side: Self.artworkSide, cornerRadius: 10)
+        } else if let artworkURL {
+            ArtworkView(urlString: artworkURL, pixelSize: 128, cornerRadius: 10)
+                .frame(width: Self.artworkSide, height: Self.artworkSide)
         } else {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(.quaternary)

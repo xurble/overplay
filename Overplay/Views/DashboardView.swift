@@ -12,6 +12,8 @@ struct DashboardView: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.shellPlace) private var shellPlace
     @Environment(\.miniPlayerTop) private var miniPlayerTop
+    @Environment(\.compactHome) private var compactHome
+    @Environment(\.shellNavigator) private var shellNavigator
 
     /// The lead artwork's side, fitted so the first heading under it shows
     /// above the mini player; nil until measured.
@@ -29,10 +31,9 @@ struct DashboardView: View {
         List {
             Section {
                 if let oneTruePlaylist {
-                    NavigationLink {
-                        PlaylistManagementView(settings: settings, playlist: oneTruePlaylist)
-                            .nowPlayingColumnToggle()
-                    } label: {
+                    // By value, as every link here: the home button clears the
+                    // path, which pops to this page with the stack's animation.
+                    NavigationLink(value: AppShellDestination.playlist(oneTruePlaylist.id)) {
                         oneTruePlaylistArtwork(for: oneTruePlaylist, summary: builder.summary(for: oneTruePlaylist))
                     }
                     .navigationLinkIndicatorVisibility(.hidden)
@@ -60,19 +61,13 @@ struct DashboardView: View {
             if let triageBucket {
                 let retiredSummary = builder.summary(for: triageBucket, scope: .retired)
                 Section {
-                    NavigationLink {
-                        PlaylistManagementView(settings: settings, playlist: triageBucket)
-                            .nowPlayingColumnToggle()
-                    } label: {
+                    NavigationLink(value: AppShellDestination.playlist(triageBucket.id)) {
                         TriageHomeRowView(bucket: triageBucket, summary: builder.summary(for: triageBucket),
                                           sourceCount: triageSourceCount)
                     }
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
 
-                    NavigationLink {
-                        PlaylistManagementView(settings: settings, playlist: triageBucket, scope: .retired)
-                            .nowPlayingColumnToggle()
-                    } label: {
+                    NavigationLink(value: AppShellDestination.retired) {
                         Label {
                             Text("Retired")
                         } icon: {
@@ -107,29 +102,41 @@ struct DashboardView: View {
                 }
             }
 
+            // Apple Music's mixes for this account (`MFY-001`).
+            let madeForYou = MadeForYouLibrary.shared.items
+            if !madeForYou.isEmpty {
+                Section {
+                    Text("Made For You")
+                        .font(.headline)
+                        .accessibilityAddTraits(.isHeader)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: DashboardLayout.blockSpacing, leading: 16, bottom: 6, trailing: 16))
+                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { bottom in
+                            guard recents.isEmpty else { return }
+                            firstHeadingBottom = bottom
+                            fitLeadArtwork()
+                        }
+                    MadeForYouRowView(items: madeForYou)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 0, trailing: 0))
+                }
+            }
+
             // The library by category, as the Music app shows it: played like
             // a deep dive, never added to Recent Deep Dives.
             Section {
                 Text("Library")
                     .font(.headline)
                     .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { bottom in
-                        guard RecentCollectionRepository.distinct(recentRecords).isEmpty else { return }
+                        guard RecentCollectionRepository.distinct(recentRecords).isEmpty,
+                              MadeForYouLibrary.shared.items.isEmpty else { return }
                         firstHeadingBottom = bottom
                         fitLeadArtwork()
                     }
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: DashboardLayout.blockSpacing, leading: 16, bottom: 6, trailing: 16))
                 ForEach(LibraryBrowser.Category.allCases) { category in
-                    NavigationLink {
-                        Group {
-                            if category == .songs {
-                                LibrarySongsView()
-                            } else {
-                                LibraryCategoryView(category: category)
-                            }
-                        }
-                        .nowPlayingColumnToggle()
-                    } label: {
+                    NavigationLink(value: AppShellDestination.library(category)) {
                         Label(category.rawValue, systemImage: category.systemImage)
                     }
                     .accessibilityIdentifier("library-\(category.rawValue)")
@@ -155,8 +162,13 @@ struct DashboardView: View {
             fitLeadArtwork()
         }
         .onChange(of: miniPlayerTop) { fitLeadArtwork() }
+        .task { await MadeForYouLibrary.shared.refresh() }
         .miniPlayerScrollContentInset()
-        .onAppear { shellPlace?.destination = .dashboard }
+        .onAppear {
+            shellPlace?.destination = .dashboard
+            compactHome?.isAway = false
+        }
+        .onDisappear { compactHome?.isAway = true }
         .navigationTitle("Overplay")
         .navigationBarTitleDisplayMode(.inline)
         .modifier(VerticalBarReader(hasVerticalBar: $hasVerticalBar))
@@ -177,10 +189,10 @@ struct DashboardView: View {
                     }
                     .untinted()
                 } else {
-                    NavigationLink {
-                        SettingsView(settings: settings)
-                            .nowPlayingColumnToggle()
-                    } label: {
+                    // Buttons, not value links: in a toolbar a value link
+                    // fired as the stack's path was replaced, so a Mac
+                    // sidebar choice passed through Search.
+                    Button { shellNavigator?.show(.settings) } label: {
                         Label("Settings", systemImage: "gearshape")
                     }
                     .untinted()
@@ -189,10 +201,7 @@ struct DashboardView: View {
             // A Mac reaches History from its Go menu.
             if !ProcessInfo.processInfo.isMacCatalystApp {
                 ToolbarItem(placement: .topBarLeading) {
-                    NavigationLink {
-                        HistoryView()
-                            .nowPlayingColumnToggle()
-                    } label: {
+                    Button { shellNavigator?.show(.history) } label: {
                         Label("History", systemImage: "clock.arrow.circlepath")
                     }
                     .untinted()
@@ -205,10 +214,7 @@ struct DashboardView: View {
     }
 
     private var searchButton: some View {
-        NavigationLink {
-            SearchMusicView()
-                .nowPlayingColumnToggle()
-        } label: {
+        Button { shellNavigator?.show(.search) } label: {
             Label("Search", systemImage: "magnifyingglass")
         }
         .accessibilityIdentifier("dashboard-search")

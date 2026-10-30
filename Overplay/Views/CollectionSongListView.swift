@@ -29,6 +29,7 @@ struct CollectionSongListView<Artwork: View>: View {
 
     @State private var filterText = ""
     @State private var isFiltering = false
+    @State private var artworkFit = HeaderArtworkFit()
 
     var body: some View {
         let shownSongs = songs.filter { filterFields.matches(filterText, $0.summary) }
@@ -38,7 +39,7 @@ struct CollectionSongListView<Artwork: View>: View {
                     VStack(alignment: .leading, spacing: 14) {
                         artwork()
                             .aspectRatio(1, contentMode: .fit)
-                            .frame(maxWidth: 420)
+                            .headerArtworkFitArtwork(artworkFit)
 
                         VStack(alignment: .leading, spacing: 8) {
                             Label(subtitle, systemImage: systemImage)
@@ -64,6 +65,7 @@ struct CollectionSongListView<Artwork: View>: View {
 
                     }
                     .padding(.vertical, 4)
+                    .headerArtworkFitHeader(artworkFit)
                     .id(ListFilter.headerID)
                 }
             }
@@ -89,6 +91,7 @@ struct CollectionSongListView<Artwork: View>: View {
                         .padding(.vertical, showsRowArtwork ? 0 : 10)
                     }
                     .buttonStyle(.plain)
+                    .headerArtworkFitFirstRow(artworkFit, isFirst: song.id == shownSongs.first?.id)
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
                     .swipeActions(edge: .leading) {
                         if song.canMoveToOneTruePlaylist {
@@ -116,6 +119,7 @@ struct CollectionSongListView<Artwork: View>: View {
             }
         }
         .listStyle(.plain)
+        .headerArtworkFit(artworkFit)
         .listFilter(text: $filterText, isPresented: $isFiltering, prompt: filterFields.prompt)
         .miniPlayerScrollContentInset()
         .navigationTitle(title)

@@ -32,6 +32,17 @@ struct TriageSourcesView: View {
                 .onDelete(perform: removeTriageSources)
             }
 
+            let mixes = madeForYouCandidates
+            if !mixes.isEmpty {
+                Section {
+                    ForEach(mixes) { availablePlaylistRow($0.sourcePlaylist) }
+                } header: {
+                    Text("Made For You")
+                } footer: {
+                    Text("Mixes stay live: each sync brings in Apple Music's latest songs.")
+                }
+            }
+
             Section("Apple Music Playlists") {
                 if viewModel.isLoading {
                     ProgressView("Loading playlists")
@@ -60,10 +71,27 @@ struct TriageSourcesView: View {
         .task {
             await viewModel.loadPlaylists(dependencies: dependencies)
         }
+        .task { await MadeForYouLibrary.shared.refresh() }
+        .task { await LibraryCache.shared.prepare(.playlists) }
     }
+
+    /// A library playlist's artwork from Library's cache, or a Made For You
+    /// mix's; the no-artwork image otherwise.
+    @ViewBuilder private func artwork(forPlaylistID playlistID: String) -> some View {
+        if let item = LibraryCache.shared.items[.playlists]?.first(where: { $0.libraryID == playlistID }) {
+            LibraryArtworkView(artwork: item.artwork, side: Self.artworkSide, cornerRadius: 8)
+        } else {
+            ArtworkView(urlString: MadeForYouLibrary.shared.items.first { $0.id == playlistID }?.artworkURL,
+                        pixelSize: 128, cornerRadius: 8)
+                .frame(width: Self.artworkSide, height: Self.artworkSide)
+        }
+    }
+
+    private static let artworkSide: CGFloat = 44
 
     private func triageSourceRow(_ playlist: PlaylistRecord) -> some View {
         HStack(spacing: 12) {
+            artwork(forPlaylistID: playlist.musicPlaylistID)
             VStack(alignment: .leading, spacing: 4) {
                 Text(playlist.name)
                     .font(.headline)
@@ -92,6 +120,7 @@ struct TriageSourcesView: View {
 
     private func availablePlaylistRow(_ playlist: AppleMusicPlaylist) -> some View {
         HStack(spacing: 12) {
+            artwork(forPlaylistID: playlist.id)
             VStack(alignment: .leading, spacing: 4) {
                 Text(playlist.name)
                     .font(.headline)
@@ -114,6 +143,14 @@ struct TriageSourcesView: View {
             .accessibilityLabel("Add \(playlist.name) to the Inbox")
         }
         .padding(.vertical, 4)
+    }
+
+    private var madeForYouCandidates: [MadeForYouLibrary.Item] {
+        let mixes = MadeForYouLibrary.shared.sourceCandidates(
+            excludingIDs: Set(linkedPlaylists.filter(\.isActive).map(\.musicPlaylistID))
+        )
+        guard !viewModel.searchText.isEmpty else { return mixes }
+        return mixes.filter { $0.name.localizedCaseInsensitiveContains(viewModel.searchText) }
     }
 
     private func syncDetail(for playlist: PlaylistRecord) -> String {

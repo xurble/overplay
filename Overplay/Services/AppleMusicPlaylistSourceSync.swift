@@ -93,6 +93,36 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
             )
         }
 
+        // A Made For You mix is a live catalog playlist, read as it is now
+        // rather than through a library copy, which would stop updating
+        // (`MFY-001`).
+        if Self.isCatalogPlaylistID(playlistID) {
+            let tracks = try await AppleMusicPlaylistTrackLoader.loadCatalogTracks(for: playlist)
+            let resolved = try await AppleMusicPlaylistTrackLoader.resolveSongs(
+                from: tracks, playlistID: playlistID, resolveAll: songResolver
+            )
+            guard Self.allowsSkipping(resolved.unresolvedIDs.count, of: resolved.distinctSongCount) else {
+                throw MusicLibrarySongResolver.ResolutionError.unresolved(resolved.unresolvedIDs[0])
+            }
+            var snapshots: [TrackSnapshot] = []
+            for (position, snapshot) in resolved.snapshots.enumerated() {
+                guard var snapshot else { continue }
+                snapshot.remotePosition = position
+                snapshots.append(snapshot)
+            }
+            snapshots = try await identityResolver.enrich(snapshots, includeCandidates: false)
+            return PlaylistSourceFetchResult(
+                snapshots: snapshots,
+                skippedCount: tracks.count - snapshots.count,
+                skippedReason: !resolved.unresolvedIDs.isEmpty ? "unresolvedSongs"
+                    : tracks.count == snapshots.count ? nil : "nonSongEntries",
+                remoteLastModifiedAt: playlist.lastModifiedDate,
+                didFetchTracks: true,
+                videoMusicItemIDs: AppleMusicPlaylistTrackLoader.videoMusicItemIDs(from: tracks),
+                unresolvedSongIDs: resolved.unresolvedIDs
+            )
+        }
+
         let entries = try await entryLoader(playlist)
         let items = entries.map(entryItem)
         let tracks = try AppleMusicPlaylistTrackLoader.completeTracks(from: items)
@@ -139,10 +169,23 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
         playlistRecord: PlaylistRecord? = nil,
         in context: ModelContext? = nil
     ) async throws -> Playlist {
+        if Self.isCatalogPlaylistID(playlistID) {
+            let request = MusicCatalogResourceRequest<Playlist>(matching: \.id, equalTo: MusicItemID(playlistID))
+            guard let playlist = try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, detail: "catalog source playlist", {
+                try await request.response().items.first
+            }) else { throw PlaylistSyncError.playlistNotFound }
+            return playlist
+        }
         guard let playlist = try await playlistFetcher.fetchPlaylist(id: playlistID) else {
             throw PlaylistSyncError.playlistNotFound
         }
         return playlist
+    }
+
+    /// Catalog playlist IDs start "pl." (a Made For You mix is "pl.pm-");
+    /// library playlists are "p.".
+    nonisolated static func isCatalogPlaylistID(_ id: String) -> Bool {
+        id.hasPrefix("pl.")
     }
 
     func applyHealedMusicPlaylistID(
@@ -275,6 +318,24 @@ enum AppleMusicPlaylistTrackLoader {
             collection = batch
             return batch.map { (entries: Array($0), hasNextBatch: $0.hasNextBatch) }
         }
+    }
+
+    /// A catalog playlist's tracks, every page: a partial read would look
+    /// like songs leaving the source.
+    static func loadCatalogTracks(for playlist: Playlist) async throws -> [Track] {
+        let detailed = try await MusicKitActivityLog.shared.measure(.playlistTrackFetch, detail: "catalog source tracks") {
+            try await playlist.with(.tracks)
+        }
+        guard var batch = detailed.tracks else { throw PlaylistSyncError.incompletePlaylist }
+        var tracks = Array(batch)
+        while batch.hasNextBatch {
+            guard let next = try await MusicKitActivityLog.shared.measure(.playlistTrackFetch, detail: "catalog source tracks page", {
+                try await batch.nextBatch(limit: AppleMusicPlaylistSourceSync.entryPageLimit)
+            }), !next.isEmpty else { throw PlaylistSyncError.incompletePlaylist }
+            batch = next
+            tracks += next
+        }
+        return tracks
     }
 
     static func loadTracks(for playlist: Playlist) async throws -> [Track] {

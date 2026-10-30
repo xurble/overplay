@@ -20,10 +20,13 @@ struct NowPlayingView: View {
                         .aspectRatio(1, contentMode: .fit)
                         .shadow(color: .black.opacity(0.35), radius: 24, y: 18)
 
-                    PlaybackCollectionContextView()
                     NowPlayingTrackTextView(presentation: nowPlayingPresentation, offersCollectionMenu: true)
                     NowPlayingProgressView(presentation: nowPlayingPresentation)
                     TrackPlaybackFactsView(presentation: nowPlayingPresentation)
+                        .overlay(alignment: .top) {
+                            PlayingFromView()
+                                .alignmentGuide(.top) { $0[.bottom] - 8 }
+                        }
                     PlaybackControlsView(settings: settings)
                     secondaryControls(settings: settings)
 
@@ -48,10 +51,7 @@ struct NowPlayingView: View {
     }
 
     private func secondaryControls(settings: OverplaySettings) -> some View {
-        VStack(spacing: 12) {
-            PlaybackModeControlsView()
-            TrackActionControlsView(settings: settings)
-        }
+        NowPlayingActionButtonsView(settings: settings)
     }
 
     private var nowPlayingPresentation: NowPlayingPresentation {

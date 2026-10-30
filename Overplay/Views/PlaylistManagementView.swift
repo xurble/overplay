@@ -50,6 +50,7 @@ private struct PlaylistManagementContentView: View {
     @State private var cachedDetail: PlaylistManagementViewModel.DetailPresentation?
     @State private var filterText = ""
     @State private var isFiltering = false
+    @State private var artworkFit = HeaderArtworkFit()
 
     init(settings: OverplaySettings, playlist: PlaylistRecord, scope: PlaylistPlaybackScope) {
         self.settings = settings
@@ -74,7 +75,7 @@ private struct PlaylistManagementContentView: View {
             if !isFiltering {
                 Section {
                     VStack(alignment: .leading, spacing: 14) {
-                        PlaylistCollageView(playlist: playlist, scope: selectedScope)
+                        PlaylistCollageView(playlist: playlist, scope: selectedScope, artworkFit: artworkFit)
 
                         VStack(alignment: .leading, spacing: 8) {
                             Label(detail.playlist.roleTitle, systemImage: detail.playlist.iconIntent.systemImage)
@@ -104,6 +105,7 @@ private struct PlaylistManagementContentView: View {
 
                     }
                     .padding(.vertical, 4)
+                    .headerArtworkFitHeader(artworkFit)
                     .id(ListFilter.headerID)
                 }
             }
@@ -123,6 +125,7 @@ private struct PlaylistManagementContentView: View {
                 }
                 ForEach(rows) { row in
                     playlistTrackButton(for: row)
+                        .headerArtworkFitFirstRow(artworkFit, isFirst: row.id == rows.first?.id)
                         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
                         // Right promotes to the One True Playlist; left
                         // retires, or moves a retired track to Triage.
@@ -171,6 +174,7 @@ private struct PlaylistManagementContentView: View {
 
         }
         .listStyle(.plain)
+        .headerArtworkFit(artworkFit)
         .listFilter(text: $filterText, isPresented: $isFiltering, prompt: "Songs or artists")
         .miniPlayerScrollContentInset()
         .onChange(of: viewModel.message) { _, message in

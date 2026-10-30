@@ -75,7 +75,16 @@ final class PlaybackController {
         /// unconfirmed limit stops attributing it, so a later hydration as a
         /// different song still splits the session.
         var carriedLocalTrackID: String?
+        /// When the song was last seen paused, while it still is.
+        var pausedSince: Date?
+        /// It sat paused for `longPauseSeconds` or more at some point.
+        var hadLongPause = false
         var isAttributed: Bool { play.localTrackID != nil }
+
+        /// Paused long enough, now or earlier, that ending it is not a skip.
+        func hasLongPause(at now: Date) -> Bool {
+            hadLongPause || pausedSince.map { now.timeIntervalSince($0) >= PlaybackController.longPauseSeconds } ?? false
+        }
         /// Attributed to a song Overplay tracks. An album or artist intent
         /// also plays songs it does not, which are never counted (`PLAY-018`).
         var isTracked: Bool { play.localTrackID.flatMap(UUID.init(uuidString:)) != nil }
@@ -314,6 +323,8 @@ final class PlaybackController {
     var currentPlaylistContext: PlaylistPlaybackContext? { intent?.playlistContext }
     /// The playback context of an album or artist intent (`PLAY-018`).
     var playbackCollectionTitle: String? { intent?.collection?.contextTitle }
+    /// The album, artist, mix or other collection playing, if not a playlist.
+    var playbackCollection: PlaybackCollection? { intent?.collection }
     /// Whether the current song is one Overplay tracks, so it has counts to
     /// show. False while it is unattributed, and for an album or artist song
     /// Overplay does not track.
@@ -528,6 +539,7 @@ final class PlaybackController {
             await queueBecameEmpty(status: status)
         }
         noteObservedStatus(status, position: player.playbackTime, now: .now)
+        notePause(status: status, now: .now)
         ensureSampling()
         if nowPlayingRepairPending {
             nowPlayingRepairPending = false
@@ -560,6 +572,7 @@ final class PlaybackController {
         elapsedSeconds = position
         updateSessionProgress(position: position, now: now)
         noteObservedStatus(status, position: position, now: now)
+        notePause(status: status, now: now)
         detectStall(status: status, position: position)
         saveResumePoint(force: false, now: now)
     }
@@ -891,6 +904,25 @@ final class PlaybackController {
         }
     }
 
+    /// A pause this long means the song was set aside, not listened to:
+    /// ending it afterwards is not a skip (`COUNT-003`).
+    nonisolated static let longPauseSeconds: TimeInterval = 60
+
+    /// Times the current song's pauses. Only a pause counts: a stall or a
+    /// start in progress is not one.
+    private func notePause(status: MusicPlayer.PlaybackStatus, now: Date) {
+        guard var current = session else { return }
+        if status == .paused {
+            if current.pausedSince == nil { current.pausedSince = now } else { return }
+        } else if let pausedSince = current.pausedSince {
+            current.hadLongPause = current.hadLongPause || now.timeIntervalSince(pausedSince) >= Self.longPauseSeconds
+            current.pausedSince = nil
+        } else {
+            return
+        }
+        session = current
+    }
+
     /// Evaluates a session that has ended, exactly once. A failure here is a
     /// lost count, never a playback change.
     private func finish(_ ended: ObservedSession, end: SessionEnd) {
@@ -907,6 +939,15 @@ final class PlaybackController {
             return
         }
         guard !alreadyCreditedThisPlay(ended, in: context) else { return }
+        // Starting something else, or ending a song set aside by a long
+        // pause, is not a skip; a playthrough still counts (`COUNT-003`).
+        let skipIgnoredReason: String? = if case .replaced = end {
+            "another queue started"
+        } else if ended.hasLongPause(at: .now) {
+            "after a long pause"
+        } else {
+            nil
+        }
         do {
             let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
                 activeSession: ended.play,
@@ -920,6 +961,7 @@ final class PlaybackController {
                     if case .queueEnded = end { return true }
                     return false
                 }(),
+                skipIgnoredReason: skipIgnoredReason,
                 context: context,
                 fallbackLocalTrackID: ended.play.localTrackID
             )

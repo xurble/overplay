@@ -12,8 +12,11 @@ import SwiftData
 struct ContentView: View {
     let runtime: AppRuntime
 
+    @State private var shellNavigator = ShellNavigator()
+
     var body: some View {
         AppRouter()
+            .environment(\.shellNavigator, shellNavigator)
             .environment(runtime)
             .environment(runtime.authorizationService)
             .environment(runtime.playbackController)

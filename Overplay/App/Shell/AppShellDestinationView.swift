@@ -56,6 +56,14 @@ struct AppShellDestinationView: View {
             HistoryView()
         case .settings:
             SettingsView(settings: settings)
+        case .madeForYouAll:
+            MadeForYouGridView()
+        case let .madeForYou(id):
+            if let item = MadeForYouLibrary.shared.items.first(where: { $0.id == id }) {
+                MadeForYouPlaylistView(item: item)
+            } else {
+                ContentUnavailableView("Mix Unavailable", systemImage: "person.crop.square")
+            }
         }
     }
 
