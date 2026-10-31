@@ -102,6 +102,45 @@ struct GlobalTrackOwnershipTests {
         #expect(try PlaylistItemRepository.allItems(in: context).isEmpty)
     }
 
+    /// Owner request, 2026-10-30 (`PLAYLIST-012`): a song gone from a complete
+    /// read of a source leaves the Inbox unless played, skipped, kept or still
+    /// in another source.
+    @Test("A song that leaves its source leaves the Inbox only if untouched")
+    func songLeavingSourceLeavesInboxOnlyIfUntouched() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let source = try PlaylistRepository.addTriageSource(AppleMusicPlaylist(id: "a", name: "A", trackCount: nil), in: context)
+        let other = try PlaylistRepository.addTriageSource(AppleMusicPlaylist(id: "b", name: "B", trackCount: nil), in: context)
+        let sync = PlaylistSyncService()
+        let ids = ["untouched", "played", "skipped", "kept", "shared", "stays"]
+        _ = try await sync.reconcile(snapshots: ids.map(snapshot), playlistRecord: source, syncedAt: .now, in: context)
+        _ = try await sync.reconcile(snapshots: [snapshot("shared")], playlistRecord: other, syncedAt: .now, in: context)
+        func item(_ id: String) throws -> PlaylistItemRecord? {
+            guard let track = try TrackRecordRepository.track(catalogID: id, libraryID: nil, in: context) else { return nil }
+            return try PlaylistItemRepository.item(playlistID: bucket.id, trackID: track.id, in: context)
+        }
+        try #require(try item("played")).playthroughCount = 1
+        try #require(try item("skipped")).skipCount = 1
+        try #require(try item("kept")).isExplicitlyKept = true
+
+        // A partial read removes nothing.
+        _ = try await sync.reconcile(snapshots: [snapshot("stays")], playlistRecord: source, syncedAt: .now,
+                                     isComplete: false, in: context)
+        #expect(try item("untouched") != nil)
+
+        _ = try await sync.reconcile(snapshots: [snapshot("stays")], playlistRecord: source, syncedAt: .now, in: context)
+        #expect(try item("untouched") == nil)
+        for id in ["played", "skipped", "kept"] {
+            let survivor = try #require(try item(id))
+            #expect(survivor.sourceMusicPlaylistIDs.isEmpty)
+        }
+        #expect(try item("shared")?.sourceMusicPlaylistIDs == ["b"])
+        #expect(try item("stays")?.sourceMusicPlaylistIDs == ["a"])
+        let events = try context.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(events.contains { $0.eventType == .trackRemoved && $0.message == "Left A unplayed" })
+    }
+
     @Test("A source link revives only retirements older than that explicit link")
     func linkRevivalAndOrdinarySync() async throws {
         let container = try OverplayTestSupport.makeModelContainer()

@@ -18,6 +18,7 @@ struct FullScreenPlayerView: View {
     /// Removes the player once it has shrunk into the mini player.
     var onClose: () -> Void
 
+    @Environment(\.shellNavigator) private var shellNavigator
     @State private var artworkTop: CGFloat?
     @State private var screenSize: CGSize = .zero
     /// 0 open, 1 shrunk into the mini player. It starts there: opening
@@ -67,6 +68,8 @@ struct FullScreenPlayerView: View {
             .ignoresSafeArea()
         }
         .accessibilityAction(.escape) { close() }
+        // Something was opened from here: shrink back into the mini player.
+        .onChange(of: shellNavigator?.request) { close() }
     }
 
     private func card(screenInsets: EdgeInsets, screenSize: CGSize) -> some View {

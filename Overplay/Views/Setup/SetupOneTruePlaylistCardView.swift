@@ -14,12 +14,19 @@ struct SetupOneTruePlaylistCardView: View {
         SetupCardView {
             VStack(spacing: 20) {
                 Spacer(minLength: 0)
-                Image(systemName: symbol)
-                    .font(.system(size: 72, weight: .semibold))
-                    .foregroundStyle(viewModel.hasChosenOneTruePlaylist ? .green : .pink)
-                    .symbolRenderingMode(.hierarchical)
-                    .contentTransition(.symbolEffect(.replace))
-                    .accessibilityHidden(true)
+                // Every state's symbol, faded between: the symbol replace
+                // morphed the arrow into the tick outside its circle.
+                ZStack {
+                    ForEach(Self.symbols, id: \.self) { name in
+                        Image(systemName: name)
+                            .font(.system(size: 72, weight: .semibold))
+                            .foregroundStyle(name == Self.doneSymbol ? .green : .pink)
+                            .symbolRenderingMode(.hierarchical)
+                            .opacity(name == symbol ? 1 : 0)
+                    }
+                }
+                .animation(.easeInOut(duration: 0.45), value: symbol)
+                .accessibilityHidden(true)
                 Text(title)
                     .font(.title.bold())
                     .accessibilityAddTraits(.isHeader)
@@ -30,11 +37,18 @@ struct SetupOneTruePlaylistCardView: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
-                if viewModel.isCreatingOneTruePlaylist {
-                    ProgressView("Creating Overplay")
-                } else if !viewModel.hasChosenOneTruePlaylist {
-                    actions
-                }
+                // The buttons keep their space once used, so the tick and its
+                // text stay put rather than dropping into the gap.
+                let showsActions = !viewModel.isCreatingOneTruePlaylist && !viewModel.hasChosenOneTruePlaylist
+                actions
+                    .opacity(showsActions ? 1 : 0)
+                    .allowsHitTesting(showsActions)
+                    .accessibilityHidden(!showsActions)
+                    .overlay {
+                        if viewModel.isCreatingOneTruePlaylist {
+                            ProgressView("Creating Overplay")
+                        }
+                    }
             }
         }
         .sheet(isPresented: $isChoosingSource) {
@@ -44,9 +58,14 @@ struct SetupOneTruePlaylistCardView: View {
         }
     }
 
+    private static let startSymbol = "arrow.up.circle.fill"
+    private static let doneSymbol = "checkmark.circle.fill"
+    private static let requestedSymbol = "iphone.and.arrow.forward"
+    private static let symbols = [startSymbol, doneSymbol, requestedSymbol]
+
     private var symbol: String {
-        if viewModel.isOneTruePlaylistRequested { return "iphone.and.arrow.forward" }
-        return viewModel.hasOneTruePlaylist ? "checkmark.circle.fill" : "arrow.up.circle.fill"
+        if viewModel.isOneTruePlaylistRequested { return Self.requestedSymbol }
+        return viewModel.hasOneTruePlaylist ? Self.doneSymbol : Self.startSymbol
     }
 
     private var title: String {

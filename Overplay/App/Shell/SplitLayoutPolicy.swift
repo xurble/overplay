@@ -25,7 +25,7 @@ enum SplitLayoutPolicy {
         return (width / 2).rounded()
     }
 
-    /// Where the player (above) and list (below) divide: a horizontal fold
+    /// Where the list (above) and player (below) divide: a horizontal fold
     /// or, without a fold, the middle of a window taller than wide.
     static func dividingY(width: CGFloat, height: CGFloat, foldX: CGFloat?, foldY: CGFloat?, keepsColumns: Bool) -> CGFloat? {
         if let foldY { return foldY }

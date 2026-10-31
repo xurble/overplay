@@ -45,6 +45,15 @@ struct SetupTriageCardView: View {
                     Label("Suggested", systemImage: "sparkles")
                 }
             }
+            // Linked live by catalog ID, so they keep updating (`MFY-001`).
+            let mixes = MadeForYouLibrary.shared.sourceCandidates()
+            if !mixes.isEmpty {
+                Section {
+                    ForEach(mixes) { row(for: $0.sourcePlaylist) }
+                } header: {
+                    Text("Made For You")
+                }
+            }
             if !viewModel.otherSources.isEmpty {
                 Section {
                     ForEach(viewModel.otherSources) { row(for: $0) }
@@ -73,7 +82,8 @@ struct SetupTriageCardView: View {
                 viewModel.setTriageSource(playlist, isOn: !isOn, context: modelContext, dependencies: dependencies)
             }
         } label: {
-            SetupPlaylistRowView(playlist: playlist, details: viewModel.playlistDetails[playlist.id], isSelected: isOn)
+            SetupPlaylistRowView(playlist: playlist, details: viewModel.playlistDetails[playlist.id], isSelected: isOn,
+                                 artworkURL: MadeForYouLibrary.shared.items.first { $0.id == playlist.id }?.artworkURL)
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)

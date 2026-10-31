@@ -15,6 +15,10 @@ struct NowPlayingPaneView: View {
     var isSideBySide = false
     /// Side by side, the art on the trailing side instead of the leading.
     var artworkOnTrailing = false
+    /// Beside the open sidebar panel: half the leading margin moves to the
+    /// trailing side, so the art clears the screen's edge (owner request,
+    /// 2026-10-30).
+    var isBesideSidebar = false
 
     @State private var isShowingThemeDiagnostics = false
     @State private var isThemeDiagnosticsLoading = false
@@ -95,7 +99,8 @@ struct NowPlayingPaneView: View {
                 controlsColumn
             }
         }
-        .padding(.horizontal, 24)
+        .padding(.leading, isBesideSidebar ? 12 : 24)
+        .padding(.trailing, isBesideSidebar ? 36 : 24)
         .padding(.vertical, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
@@ -115,7 +120,6 @@ struct NowPlayingPaneView: View {
             onArtworkTopChange?(top)
         }
 
-        PlaybackCollectionContextView(foreground: artworkTheme?.albumName ?? .secondary)
         NowPlayingTrackTextView(
             presentation: presentation,
             titleLineLimit: 2,
@@ -134,8 +138,14 @@ struct NowPlayingPaneView: View {
             foregroundRGB: artworkTheme?.artistNameRGB
         )
         TrackPlaybackFactsView(presentation: presentation, artworkTheme: artworkTheme)
-        PlaybackModeControlsView(artworkTheme: artworkTheme)
-        TrackActionControlsView(settings: settings, artworkTheme: artworkTheme)
+            // In the gap above the facts, so nothing moves.
+            .overlay(alignment: .top) {
+                PlayingFromView(foreground: artworkTheme?.artistName ?? .secondary)
+                    .alignmentGuide(.top) { $0[.bottom] - 8 }
+            }
+        NowPlayingActionButtonsView(settings: settings, artworkTheme: artworkTheme)
+            // Clear of the transport below (owner request, 2026-10-30).
+            .padding(.bottom, 16)
         if showsArtworkThemeDebugButton {
             AlbumArtworkThemeDebugButton(
                 artworkTheme: artworkTheme,

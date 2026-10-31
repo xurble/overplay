@@ -51,6 +51,9 @@ struct SetupView: View {
             viewModel.restoreProgress(context: modelContext, dependencies: dependencies)
             await viewModel.loadPlaylists(dependencies: dependencies)
         }
+        // The Inbox card offers the mixes too (`MFY-001`): loaded as soon as
+        // the first card shows, so they are ready by the Inbox card.
+        .task { await MadeForYouLibrary.shared.refresh(waitsForLaunchQuiet: false) }
         // Startup restores a library that arrived from iCloud meanwhile.
         .onChange(of: viewModel.foundExistingLibrary) { _, found in
             if found { onFinish() }

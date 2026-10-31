@@ -10,10 +10,7 @@ struct RecentsRowView: View {
         ScrollView(.horizontal) {
             LazyHStack(alignment: .top, spacing: 14) {
                 ForEach(recents) { recent in
-                    NavigationLink {
-                        RecentCollectionView(recent: recent)
-                            .nowPlayingColumnToggle()
-                    } label: {
+                    NavigationLink(value: AppShellDestination.recent(recent.id)) {
                         RecentTileView(recent: recent)
                     }
                     .buttonStyle(.plain)

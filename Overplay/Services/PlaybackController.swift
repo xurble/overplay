@@ -75,7 +75,16 @@ final class PlaybackController {
         /// unconfirmed limit stops attributing it, so a later hydration as a
         /// different song still splits the session.
         var carriedLocalTrackID: String?
+        /// When the song was last seen paused, while it still is.
+        var pausedSince: Date?
+        /// It sat paused for `longPauseSeconds` or more at some point.
+        var hadLongPause = false
         var isAttributed: Bool { play.localTrackID != nil }
+
+        /// Paused long enough, now or earlier, that ending it is not a skip.
+        func hasLongPause(at now: Date) -> Bool {
+            hadLongPause || pausedSince.map { now.timeIntervalSince($0) >= PlaybackController.longPauseSeconds } ?? false
+        }
         /// Attributed to a song Overplay tracks. An album or artist intent
         /// also plays songs it does not, which are never counted (`PLAY-018`).
         var isTracked: Bool { play.localTrackID.flatMap(UUID.init(uuidString:)) != nil }
@@ -84,7 +93,10 @@ final class PlaybackController {
     private enum SessionEnd {
         case changedTrack(backward: Bool)
         case queueEnded
-        case replaced
+        /// Overplay submitted a queue. Only a song chosen within the same
+        /// playlist, scope or collection (one the live queue could not take)
+        /// is still a skip; any other start, restart or recovery is not.
+        case replaced(selectsSongInSameQueue: Bool)
     }
 
     // MARK: - Observed state
@@ -314,6 +326,8 @@ final class PlaybackController {
     var currentPlaylistContext: PlaylistPlaybackContext? { intent?.playlistContext }
     /// The playback context of an album or artist intent (`PLAY-018`).
     var playbackCollectionTitle: String? { intent?.collection?.contextTitle }
+    /// The album, artist, mix or other collection playing, if not a playlist.
+    var playbackCollection: PlaybackCollection? { intent?.collection }
     /// Whether the current song is one Overplay tracks, so it has counts to
     /// show. False while it is unattributed, and for an album or artist song
     /// Overplay does not track.
@@ -528,6 +542,7 @@ final class PlaybackController {
             await queueBecameEmpty(status: status)
         }
         noteObservedStatus(status, position: player.playbackTime, now: .now)
+        notePause(status: status, now: .now)
         ensureSampling()
         if nowPlayingRepairPending {
             nowPlayingRepairPending = false
@@ -560,6 +575,7 @@ final class PlaybackController {
         elapsedSeconds = position
         updateSessionProgress(position: position, now: now)
         noteObservedStatus(status, position: position, now: now)
+        notePause(status: status, now: now)
         detectStall(status: status, position: position)
         saveResumePoint(force: false, now: now)
     }
@@ -891,6 +907,25 @@ final class PlaybackController {
         }
     }
 
+    /// A pause this long means the song was set aside, not listened to:
+    /// ending it afterwards is not a skip (`COUNT-003`).
+    nonisolated static let longPauseSeconds: TimeInterval = 60
+
+    /// Times the current song's pauses. Only a pause counts: a stall or a
+    /// start in progress is not one.
+    private func notePause(status: MusicPlayer.PlaybackStatus, now: Date) {
+        guard var current = session else { return }
+        if status == .paused {
+            if current.pausedSince == nil { current.pausedSince = now } else { return }
+        } else if let pausedSince = current.pausedSince {
+            current.hadLongPause = current.hadLongPause || now.timeIntervalSince(pausedSince) >= Self.longPauseSeconds
+            current.pausedSince = nil
+        } else {
+            return
+        }
+        session = current
+    }
+
     /// Evaluates a session that has ended, exactly once. A failure here is a
     /// lost count, never a playback change.
     private func finish(_ ended: ObservedSession, end: SessionEnd) {
@@ -907,6 +942,15 @@ final class PlaybackController {
             return
         }
         guard !alreadyCreditedThisPlay(ended, in: context) else { return }
+        // Starting something else, or ending a song set aside by a long
+        // pause, is not a skip; a playthrough still counts (`COUNT-003`).
+        let skipIgnoredReason: String? = if case .replaced(selectsSongInSameQueue: false) = end {
+            "another queue started"
+        } else if ended.hasLongPause(at: .now) {
+            "after a long pause"
+        } else {
+            nil
+        }
         do {
             let outcome = try PlaybackSessionEvaluationService.evaluateActiveSession(
                 activeSession: ended.play,
@@ -920,6 +964,7 @@ final class PlaybackController {
                     if case .queueEnded = end { return true }
                     return false
                 }(),
+                skipIgnoredReason: skipIgnoredReason,
                 context: context,
                 fallbackLocalTrackID: ended.play.localTrackID
             )
@@ -1140,7 +1185,8 @@ final class PlaybackController {
         guard let intent, intent.musicPlaylistID == playlist.musicPlaylistID, intent.scope == scope,
               let member = intent.member(localTrackID: localTrackID) else {
             activityLog.record(.playbackSelectionPath, detail: "newIntent")
-            await startPlayback(playlist, scope: scope, startingTrackID: localTrackID, shuffle: false, context: context)
+            await startPlayback(playlist, scope: scope, startingTrackID: localTrackID, shuffle: false, selectsSong: true,
+                                context: context)
             return
         }
         await select(member, in: intent)
@@ -1177,7 +1223,7 @@ final class PlaybackController {
             }
         }
         activityLog.record(.playbackSelectionPath, detail: "resubmitFromMember")
-        await resubmit(intent, from: member, position: 0)
+        await resubmit(intent, from: member, position: 0, selectsSong: true)
         await observePlayer()
     }
 
@@ -1206,6 +1252,7 @@ final class PlaybackController {
         scope: PlaylistPlaybackScope,
         startingTrackID: String?,
         shuffle: Bool,
+        selectsSong: Bool = false,
         context: ModelContext
     ) async {
         let startToken = beginStart()
@@ -1260,7 +1307,7 @@ final class PlaybackController {
             startingLocalTrackID: shuffle ? nil : playable[startIndex].0.localTrackID
         )
         await submit(intent, tracks: playable.map(\.1), startIndex: startIndex, position: 0, shuffle: shuffle,
-                     generation: generation)
+                     generation: generation, selectsSong: selectsSong)
         if omitted > 0, playbackFailure == nil, generation == startGeneration {
             statusMessage = omitted == 1
                 ? "1 track couldn't be prepared and was left out."
@@ -1273,7 +1320,8 @@ final class PlaybackController {
     /// Resubmits an existing intent from a member, for resume, recovery and
     /// selection when the entry cannot be found in the live queue.
     private func resubmit(
-        _ intent: PlaybackIntent, from member: PlaybackIntent.Member?, position: Double, refreshingStart: Bool = false
+        _ intent: PlaybackIntent, from member: PlaybackIntent.Member?, position: Double, refreshingStart: Bool = false,
+        selectsSong: Bool = false
     ) async {
         let startToken = beginStart()
         defer { endStart(startToken) }
@@ -1316,7 +1364,8 @@ final class PlaybackController {
         // The same intent keeps its shuffle, including across a relaunch.
         let keepsShuffle = shuffleEnabled || resumesShuffled
         await submit(resubmitted, tracks: playable.map(\.1), startIndex: startIndex, position: startPosition, shuffle: false,
-                     keepsShuffle: keepsShuffle, generation: generation, continuesSession: continuesSession)
+                     keepsShuffle: keepsShuffle, generation: generation, continuesSession: continuesSession,
+                     selectsSong: selectsSong)
     }
 
     /// Records the intent, then hands MusicKit the queue in single calls.
@@ -1328,11 +1377,17 @@ final class PlaybackController {
         shuffle: Bool,
         keepsShuffle: Bool = false,
         generation: Int,
-        continuesSession: Bool = false
+        continuesSession: Bool = false,
+        selectsSong: Bool = false
     ) async {
         resumesShuffled = false
         let carried = continuesSession ? session : nil
-        if carried == nil, let outgoing = session { finish(outgoing, end: .replaced) }
+        if carried == nil, let outgoing = session {
+            // A song chosen within the same queue still skips, whichever path
+            // MusicKit's loaded queue sends it down (`COUNT-003`).
+            let selectsSongInSameQueue = selectsSong && (self.intent?.playsSameQueue(as: intent) ?? false)
+            finish(outgoing, end: .replaced(selectsSongInSameQueue: selectsSongInSameQueue))
+        }
         install(intent, persist: true)
         pendingCarriedSession = carried
         awaitingFirstEntryOfSubmission = intent.startingLocalTrackID
@@ -1626,13 +1681,15 @@ final class PlaybackController {
             }
             startIndex = index
         }
-        let started = await startCollection(collection, playable: playable, startIndex: startIndex, shuffle: shuffle)
+        let started = await startCollection(collection, playable: playable, startIndex: startIndex, shuffle: shuffle,
+                                            selectsSong: catalogSongID != nil)
         if started, recordsRecent { recordRecent(collection, songs: songs, artworkURLTemplate: nil) }
         return started
     }
 
     private func startCollection(
-        _ collection: PlaybackCollection, playable: [(PlaybackIntent.Member, Track)], startIndex: Int, shuffle: Bool
+        _ collection: PlaybackCollection, playable: [(PlaybackIntent.Member, Track)], startIndex: Int, shuffle: Bool,
+        selectsSong: Bool = false
     ) async -> Bool {
         startGeneration &+= 1
         let generation = startGeneration
@@ -1649,7 +1706,7 @@ final class PlaybackController {
         // only Shuffle and Play shuffles it.
         if !shuffle { player.setShuffleMode(.off) }
         await submit(intent, tracks: playable.map(\.1), startIndex: startIndex, position: 0, shuffle: shuffle,
-                     generation: generation)
+                     generation: generation, selectsSong: selectsSong)
         await observePlayer()
         return generation == startGeneration && playbackFailure == nil
     }

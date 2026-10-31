@@ -12,14 +12,12 @@ struct DashboardView: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.shellPlace) private var shellPlace
     @Environment(\.miniPlayerTop) private var miniPlayerTop
+    @Environment(\.compactHome) private var compactHome
+    @Environment(\.shellNavigator) private var shellNavigator
 
-    /// The lead artwork's side, fitted so the first heading under it shows
-    /// above the mini player; nil until measured.
-    @State private var fittedLeadArtworkSide: CGFloat?
-    @State private var listFrame: CGRect = .zero
-    @State private var listSafeBottom: CGFloat = 0
-    @State private var isScrolledToTop = true
-    @State private var firstHeadingBottom: CGFloat?
+    /// The lead artwork's size, worked out once from the list's height
+    /// (`HeaderArtworkFit`).
+    @State private var leadArtworkFit = HeaderArtworkFit()
     @State private var hasVerticalBar = false
 
     var settings: OverplaySettings
@@ -29,10 +27,9 @@ struct DashboardView: View {
         List {
             Section {
                 if let oneTruePlaylist {
-                    NavigationLink {
-                        PlaylistManagementView(settings: settings, playlist: oneTruePlaylist)
-                            .nowPlayingColumnToggle()
-                    } label: {
+                    // By value, as every link here: the home button clears the
+                    // path, which pops to this page with the stack's animation.
+                    NavigationLink(value: AppShellDestination.playlist(oneTruePlaylist.id)) {
                         oneTruePlaylistArtwork(for: oneTruePlaylist, summary: builder.summary(for: oneTruePlaylist))
                     }
                     .navigationLinkIndicatorVisibility(.hidden)
@@ -60,19 +57,13 @@ struct DashboardView: View {
             if let triageBucket {
                 let retiredSummary = builder.summary(for: triageBucket, scope: .retired)
                 Section {
-                    NavigationLink {
-                        PlaylistManagementView(settings: settings, playlist: triageBucket)
-                            .nowPlayingColumnToggle()
-                    } label: {
+                    NavigationLink(value: AppShellDestination.playlist(triageBucket.id)) {
                         TriageHomeRowView(bucket: triageBucket, summary: builder.summary(for: triageBucket),
                                           sourceCount: triageSourceCount)
                     }
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
 
-                    NavigationLink {
-                        PlaylistManagementView(settings: settings, playlist: triageBucket, scope: .retired)
-                            .nowPlayingColumnToggle()
-                    } label: {
+                    NavigationLink(value: AppShellDestination.retired) {
                         Label {
                             Text("Retired")
                         } icon: {
@@ -94,14 +85,25 @@ struct DashboardView: View {
                 Section {
                     Text("Recent Deep Dives")
                         .font(.headline)
-                        .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: {
-                            firstHeadingBottom = $0
-                            fitLeadArtwork()
-                        }
                         .accessibilityAddTraits(.isHeader)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: DashboardLayout.blockSpacing, leading: 16, bottom: 6, trailing: 16))
                     RecentsRowView(recents: recents)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 0, trailing: 0))
+                }
+            }
+
+            // Apple Music's mixes for this account (`MFY-001`).
+            let madeForYou = MadeForYouLibrary.shared.items
+            if !madeForYou.isEmpty {
+                Section {
+                    Text("Made For You")
+                        .font(.headline)
+                        .accessibilityAddTraits(.isHeader)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: DashboardLayout.blockSpacing, leading: 16, bottom: 6, trailing: 16))
+                    MadeForYouRowView(items: madeForYou)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 0, trailing: 0))
                 }
@@ -112,24 +114,10 @@ struct DashboardView: View {
             Section {
                 Text("Library")
                     .font(.headline)
-                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { bottom in
-                        guard RecentCollectionRepository.distinct(recentRecords).isEmpty else { return }
-                        firstHeadingBottom = bottom
-                        fitLeadArtwork()
-                    }
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: DashboardLayout.blockSpacing, leading: 16, bottom: 6, trailing: 16))
                 ForEach(LibraryBrowser.Category.allCases) { category in
-                    NavigationLink {
-                        Group {
-                            if category == .songs {
-                                LibrarySongsView()
-                            } else {
-                                LibraryCategoryView(category: category)
-                            }
-                        }
-                        .nowPlayingColumnToggle()
-                    } label: {
+                    NavigationLink(value: AppShellDestination.library(category)) {
                         Label(category.rawValue, systemImage: category.systemImage)
                     }
                     .accessibilityIdentifier("library-\(category.rawValue)")
@@ -141,22 +129,14 @@ struct DashboardView: View {
             }
         }
         .listStyle(.plain)
-        .onGeometryChange(for: [CGFloat].self) { proxy in
-            let frame = proxy.frame(in: .global)
-            return [frame.minX, frame.minY, frame.width, frame.height, frame.maxY - proxy.safeAreaInsets.bottom]
-        } action: { values in
-            listFrame = CGRect(x: values[0], y: values[1], width: values[2], height: values[3])
-            listSafeBottom = values[4]
-            fitLeadArtwork()
-        }
-        // Measured only at rest: scrolled, the heading has moved up.
-        .onScrollGeometryChange(for: Bool.self) { abs($0.contentOffset.y + $0.contentInsets.top) < 1 } action: { _, atTop in
-            isScrolledToTop = atTop
-            fitLeadArtwork()
-        }
-        .onChange(of: miniPlayerTop) { fitLeadArtwork() }
+        .headerArtworkFit(leadArtworkFit, below: leadArtworkBelow)
+        .task { await MadeForYouLibrary.shared.refresh() }
         .miniPlayerScrollContentInset()
-        .onAppear { shellPlace?.destination = .dashboard }
+        .onAppear {
+            shellPlace?.destination = .dashboard
+            compactHome?.isAway = false
+        }
+        .onDisappear { compactHome?.isAway = true }
         .navigationTitle("Overplay")
         .navigationBarTitleDisplayMode(.inline)
         .modifier(VerticalBarReader(hasVerticalBar: $hasVerticalBar))
@@ -177,10 +157,10 @@ struct DashboardView: View {
                     }
                     .untinted()
                 } else {
-                    NavigationLink {
-                        SettingsView(settings: settings)
-                            .nowPlayingColumnToggle()
-                    } label: {
+                    // Buttons, not value links: in a toolbar a value link
+                    // fired as the stack's path was replaced, so a Mac
+                    // sidebar choice passed through Search.
+                    Button { shellNavigator?.show(.settings) } label: {
                         Label("Settings", systemImage: "gearshape")
                     }
                     .untinted()
@@ -189,10 +169,7 @@ struct DashboardView: View {
             // A Mac reaches History from its Go menu.
             if !ProcessInfo.processInfo.isMacCatalystApp {
                 ToolbarItem(placement: .topBarLeading) {
-                    NavigationLink {
-                        HistoryView()
-                            .nowPlayingColumnToggle()
-                    } label: {
+                    Button { shellNavigator?.show(.history) } label: {
                         Label("History", systemImage: "clock.arrow.circlepath")
                     }
                     .untinted()
@@ -205,10 +182,7 @@ struct DashboardView: View {
     }
 
     private var searchButton: some View {
-        NavigationLink {
-            SearchMusicView()
-                .nowPlayingColumnToggle()
-        } label: {
+        Button { shellNavigator?.show(.search) } label: {
             Label("Search", systemImage: "magnifyingglass")
         }
         .accessibilityIdentifier("dashboard-search")
@@ -217,22 +191,17 @@ struct DashboardView: View {
 
     /// The One True Playlist leads the screen as artwork over its track count,
     /// as large as leaves the first heading under it readable above the mini
-    /// player (or the screen's bottom), up to a collection's artwork size.
+    /// player (or the screen's bottom), up to a collection's artwork size;
+    /// worked out once from the list's height (`HeaderArtworkFit`).
     private var leadArtworkSide: CGFloat {
-        fittedLeadArtworkSide ?? (PlayerPlacement(horizontalSizeClass, verticalSizeClass) == .sheet
-            ? DashboardLayout.compactLeadArtworkSide
-            : DashboardLayout.regularLeadArtworkSide)
+        leadArtworkFit.side ?? HeaderArtworkFit.minSide
     }
 
-    /// The heading moves with the artwork point for point, so one
-    /// measurement finds the side that puts it at the limit.
-    private func fitLeadArtwork() {
-        guard isScrolledToTop, let firstHeadingBottom, listFrame.width > 0 else { return }
-        let bottom = (miniPlayerTop ?? listSafeBottom) - DashboardLayout.headingMargin
-        let widest = min(DashboardLayout.maxLeadArtworkSide, listFrame.width - 32)
-        let side = min(max(leadArtworkSide + bottom - firstHeadingBottom, DashboardLayout.minLeadArtworkSide), widest).rounded(.down)
-        guard abs(side - leadArtworkSide) >= 1 else { return }
-        fittedLeadArtworkSide = side
+    /// Under the artwork: the track count, the gap, the Inbox and Retired
+    /// rows, and the first heading with a margin.
+    private var leadArtworkBelow: CGFloat {
+        23 + DashboardLayout.blockSpacing
+            + (triageBucket == nil ? 0 : 104) + 36 + DashboardLayout.headingMargin
     }
 
     private func oneTruePlaylistArtwork(for playlist: PlaylistRecord, summary: PlaylistSummaryPresentation) -> some View {
@@ -240,6 +209,8 @@ struct DashboardView: View {
             ZStack(alignment: .bottomTrailing) {
                 PlaylistCollageThumbnailView(playlist: playlist)
                     .frame(width: leadArtworkSide, height: leadArtworkSide)
+                    .headerArtworkFitTop(leadArtworkFit)
+                    .opacity(leadArtworkFit.isSettled ? 1 : 0)
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
                 if isPlaying(summary) {
@@ -339,13 +310,6 @@ private enum DashboardLayout {
     /// the last row and the mini player.
     static let blockSpacing: CGFloat = 14
     static let leadArtworkTopInset: CGFloat = 8
-    /// The lead artwork's side where the player is a sheet (iPhone), and
-    /// everywhere else.
-    static let compactLeadArtworkSide: CGFloat = 180
-    static let regularLeadArtworkSide: CGFloat = 288
-    /// A collection's own artwork is no larger.
-    static let maxLeadArtworkSide: CGFloat = 420
-    static let minLeadArtworkSide: CGFloat = 120
     /// The gap between the first heading under the artwork and the mini
     /// player.
     static let headingMargin: CGFloat = 8

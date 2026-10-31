@@ -18,6 +18,9 @@ nonisolated struct PlaybackCollection: Codable, Equatable, Sendable {
         /// One song played from search, outside any playlist. Never
         /// recorded in Recents.
         case searchSong
+        /// One of Apple Music's Made For You playlists (`MFY-001`), played
+        /// like a deep dive, never recorded in Recents.
+        case madeForYou
     }
 
     /// What the user asked for. Which artist collection plays is the
@@ -45,6 +48,7 @@ nonisolated struct PlaybackCollection: Codable, Equatable, Sendable {
         case .libraryArtist: title
         case .librarySongs: "Songs"
         case .searchSong: "Search"
+        case .madeForYou: title
         }
     }
 
@@ -54,7 +58,8 @@ nonisolated struct PlaybackCollection: Codable, Equatable, Sendable {
         switch kind {
         case .album: "album:\(catalogID)"
         case .artistEssentials, .artistTopSongs: "artist:\(catalogID)"
-        case .libraryPlaylist, .libraryAlbum, .libraryArtist, .librarySongs, .searchSong: "\(kind.rawValue):\(catalogID)"
+        case .libraryPlaylist, .libraryAlbum, .libraryArtist, .librarySongs, .searchSong, .madeForYou:
+            "\(kind.rawValue):\(catalogID)"
         }
     }
 

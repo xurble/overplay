@@ -79,6 +79,7 @@ Music's global play count or skip count.
 | `PLAYLIST-008` | Every retire or duplicate merge out of a managed One True Playlist removes the song from the Apple Music playlist, retried after each sync. A rewrite runs only when the device's copy matches iCloud's; removed or absent songs release suppression and get the retention rule. Promotion does not add a song iCloud already holds. | `Overplay/Services/OneTruePlaylistRemoteMembership.swift`, `OverplayTests/OneTruePlaylistRemoteMembershipTests.swift` |
 | `PLAYLIST-009` | From iPhone or iPad, the user can rebuild the One True Playlist's Apple Music playlist: Overplay creates a new playlist of the active songs in Overplay's order and relinks the same One True Playlist to it, keeping counts, retirements and history. Nothing is deleted from Apple Music. | `Overplay/Services/OneTruePlaylistRebuildService.swift`, `OverplayTests/OneTruePlaylistRebuildTests.swift` |
 | `PLAYLIST-010` | Ordinary sync skips a song no lookup can identify: the rest syncs; the skipped row is untouched; absence-dependent steps are skipped; the playlist keeps an error and retries. More than a fifth unidentifiable, or any in a copy, still stops the fetch. | `Overplay/Services/AppleMusicPlaylistSourceSync.swift`, `OverplayTests/MusicLibraryIdentityImportTests.swift` |
+| `PLAYLIST-012` | A song absent from a complete read of an Inbox source loses that source's attachment; an active Inbox song left with no source, no plays or skips (ever, including before a reset) and no explicit keep is deleted, with a history event. A partial read changes nothing; retired and One True Playlist songs are untouched. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
 | `PLAYLIST-011` | The retention rule is re-applied by a sweep at startup and after each background sync cycle, to retired rows and deferred deletions only, with every deletion recorded in history. | `Overplay/Persistence/TrackRetentionPolicy.swift`, `OverplayTests/SyncCleanupTests.swift` |
 | `LOC-001` | A retirement or restore survives another device's stale CloudKit write. After each import and at startup, a song's newest `evicted`/`restored` history event re-applies its decision when it is newer than the row's `locationChangedAt`; promotions are left to the next One True Playlist sync. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/TrackLocationRepairTests.swift` |
 | `LOC-002` | A membership of a track a merge absorbed and deleted (delivered after the merge, or written again by a device that had not heard of it) joins the surviving track. After each import and at startup, before `LOC-001`, it is moved to the track that survives the merge, following chained merges through lineage events; the one-row-per-track collapse then keeps the newer location decision with its playlist. History events for the deleted track move too, with or without a membership, so `LOC-001` re-applies a decision only they carry. A track merged into two (two devices at once) joins the nearer survivor that is here, then the earlier merge, so every device chooses the same one. Nothing is deleted: a leftover whose survivor is not here waits for a later import. Restoration does not wait for a merged-away track once its survivor is here; the leftover's playlist and sources are still checked. Video cleanup also removes memberships and history events of tracks a removed video had absorbed, unless another merge kept them. | `Overplay/Persistence/PlaylistItemRepository.swift`, `Overplay/Services/TrackLocationService.swift`, `OverplayTests/MergeLeftoverRepairTests.swift` |
@@ -105,12 +106,14 @@ Music's global play count or skip count.
 | `PLAY-016` | Overplay does not write `MPNowPlayingInfoCenter` or register transport `MPRemoteCommandCenter` handlers; the `ApplicationMusicPlayer` host owns system Now Playing. A default-off, device-local option, **CarPlay MiniPlayer Controls**, mirrors Now Playing so iOS 27's CarPlay MiniPlayer shows play/pause and skip. | `Overplay/Services/SystemNowPlayingBridge.swift` |
 | `PLAY-017` | Native `Track` objects needed for playback are cached on disk per device; cold launches do not need to re-resolve the whole playlist, a cached track is reused only while it is the song its record names (its library or catalog ID), a library ID that no longer exists in the account library falls back to the record's catalog ID, and unresolvable songs are omitted rather than failing playback, with each omission recorded in the activity log. The cache is emptied only when the Apple Music account or storefront it was filled under changes, never on a relaunch or a failed or offline account check, and a playback lookup gives up after 15 seconds. | `Overplay/Services/DevicePlaybackCache.swift` |
 | `COUNT-001` | Counting observes playback and never commands, delays or vetoes it. Skips require witnessed listening; playthroughs are position-based; suspended spans never produce skips. | `Overplay/Playback/ListeningSessionTracker.swift`, `Overplay/UseCases/PlaybackSessionEvaluationService.swift` |
+| `COUNT-003` | Ending a song is not a skip when Overplay starts another queue (another playlist or scope, a Search song, an album, artist, deep dive, Made For You mix, Library collection or Siri request), or when the song was paused for a minute or more at any point, including a pause it ends in. Restarting what is playing (Shuffle and Play, Play Album or Play Artist for the album or artist playing) and recovery are not skips either. Skipping within the same queue (Next, a remote or CarPlay skip, selecting another song of the playing playlist, album or other collection, however MusicKit's loaded queue takes it) still counts. A playthrough counts as usual. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/EvictionEngine.swift`, `OverplayTests/PlaybackSkipExceptionTests.swift` |
 | `COUNT-002` | Counted outcomes are immutable ledger events with idempotent session IDs. Displayed counts are derived from the ledger, including absorbed track identities; merges and resets never edit counts. Apple's calculated play count, when higher, is recorded as a floor event that plays never fall below. | `Overplay/Services/ListenLedger.swift`, `Overplay/Models/ListenEvent.swift` |
 | `LOAD-001` | Overplay adds no avoidable Apple Music load during playback: no automatic sync, play-count, artwork or Library work in the first minute after launch (a Library screen restored at launch shows its saved copy and refreshes after the minute; one with no saved copy loads at once, as if opened), an old Library list opened in CarPlay refreshing only once playback is quiet, no steady-state queue enumeration, bulk Apple play-count refresh at most every 15 minutes and never while playing, library discovery scans at most every 6 hours, and no background MusicKit work while a playback failure is active. | `Overplay/Services/ApplePlayCountSyncService.swift`, `Overplay/Services/PeriodicPlaylistSyncService.swift` |
 | `CAR-002` | Presented menus retain row and artwork identity. Only changed visible values are published; section replacement requires structural change. Presentation reads never mutate playback or persistence. | `Overplay/CarPlaySupport/CarPlayListRenderer.swift` |
 | `PLAY-018` | Now Playing in the app and CarPlay plays the current song's album from track 1, or its artist's Essentials playlist, else its Top Songs with versions collapsed, through one shared start. Tracked songs are counted and curated as usual; untracked songs offer Add to the Inbox and Add to One True Playlist. A failed lookup changes nothing. | `Overplay/Playback/PlaybackCollection.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/PlaybackCollectionTests.swift` |
 | `PLAY-019` | Recents keeps the 10 most recently played albums and artists, synced through iCloud, one per album or artist, newest first. The main screen shows them as one scrolling row of artwork and CarPlay as a Recents menu; each opens its saved songs with Shuffle and Play, played through the shared selection action and from this device's saved tracks. | `Overplay/Persistence/RecentCollectionRepository.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/RecentsTests.swift` |
 | `PLAY-020` | Shuffle and Play of the playlist and scope already in the intent does not restart it: shuffle is turned on if it is off, then playing carries on, otherwise it is Play. Every surface, Siri included. | `Overplay/Services/PlaybackController.swift`, `OverplayTests/VoiceActionTests.swift` |
+| `MFY-001` | The dashboard's Made For You section lists Apple Music's personal mixes and Replay from the personal recommendations (Friends Mix is not offered by any public API), played like a deep dive and never added to Recent Deep Dives. Mixes are offered as Inbox sources in setup and Inbox Sources, linked by catalog ID and read live from the catalog at each sync; a library copy would stop updating. | `Overplay/Services/MadeForYouLibrary.swift`, `Overplay/Services/AppleMusicPlaylistSourceSync.swift`, `OverplayTests/MadeForYouTests.swift` |
 | `LIB-001` | The Library section browses the user's Apple Music library (Playlists, Albums, Artists, Songs; CarPlay has all but Songs) from the web library, so Overplay's tracks match and show their counts on every device. A collection plays through the shared collection start with this device's own library copies; Songs plays a 100-song window; nothing from Library is added to Recent Deep Dives. Lists are cached per device, never synced. | `Overplay/Services/LibraryBrowser.swift`, `Overplay/Services/LibraryCache.swift`, `Overplay/Views/Library/` |
 | `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing; Play Album and Play Artist add one action list above it (`PLAY-018`), and Recents and each Library category add one level under the root (`PLAY-019`, `LIB-001`). | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
 | `SIRI-001` | Siri, Shortcuts, Spotlight and the Action button offer Play One True Playlist, Play the Inbox, Promote, Retire and Undo, each a thin adapter over the shared action the app and CarPlay use. They run in the background with the phone locked, speak the result of Promote, Retire and Undo, and speak only failures for Play. | `Overplay/Intents/OverplayIntents.swift`, `Overplay/Intents/VoiceActions.swift`, `OverplayTests/VoiceActionTests.swift` |
@@ -214,8 +217,9 @@ that it needs an iPhone or iPad.
 
 The Mac build has its own menus and windows:
 
-- **Go** opens Dashboard, Overplay, the Inbox, Retired, Search (⌘F) and History,
-  with shortcuts; **Controls** has Play/Pause, Next and Previous, which step
+- **Go** opens Dashboard, Overplay, the Inbox, Retired, Deep Dives (⌘5),
+  Made For You (⌘6), the Library categories, Search (⌘F) and History, the
+  first six and the last two with shortcuts; **Controls** has Play/Pause, Next and Previous, which step
   aside while a text field is focused; **View** shows or hides the sidebar and
   Now Playing. Document and New Window items are removed.
 - Search is in the Mac sidebar, under Dashboard; History and Settings are
@@ -306,9 +310,19 @@ UI can add and remove contributing
 playlists from the Inbox sources screen; it does not rename linked playlists
 or delete their Apple Music source playlists.
 
-Source attachments record every playlist that contributed a song until that
-source is explicitly unlinked. Remote song removal does not detach it. Multiple
-sources protect a row until the last is removed. Source-free is a normal state.
+Source attachments record every playlist that contributed a song. A song
+absent from a complete read of a source loses that attachment (`PLAYLIST-012`),
+and unlinking the source removes it too. Multiple sources protect a row until
+the last is removed. Source-free is a normal state.
+
+When a sync leaves an active Inbox song with no source, it is deleted under the
+same rule as an unlink: unless it has ever been played or skipped (even before a
+reset) or is explicitly kept (added by hand, moved back from Retired or down from
+the One True Playlist). Only a complete read removes anything; a failed or
+partial one (`PLAYLIST-010`) leaves every row alone. Retired and One True
+Playlist songs are untouched. Each deletion is recorded in history. A Made For
+You mix (`MFY-001`) relies on this: last week's untouched songs leave the Inbox
+as the new ones arrive.
 
 After last-source removal, the active Inbox retains explicit manual/restore intent
 or any recorded play/skip history, even if counters were reset. Untouched active
@@ -1331,6 +1345,34 @@ the library. On a device that has restored its library before this is
 immediate. If the library is not ready in time, the intent says Overplay is
 still restoring and changes nothing.
 
+## Made For You
+
+The dashboard's Made For You section, between Recent Deep Dives and Library,
+lists Apple Music's mixes for this account (`MFY-001`) as a row of artwork tiles
+like Recent Deep Dives, each titled with the mix's name.
+
+- **Source:** MusicKit's personal recommendations, keeping playlists Apple marks
+  as a personal mix or Replay, once each in Apple's order. For the owner's
+  account (2026-10-30) these are New Music, Heavy Rotation, Your Essentials,
+  Get Up! and Chill. Friends Mix appears in the Music app but in no public
+  API, MusicKit or web, so it is not offered.
+- **Loading:** read at most once an hour and kept on the device between
+  launches. The dashboard waits for the launch quiet period (`LOAD-001`);
+  setup starts as soon as its first card shows, since nothing plays then.
+- **Playing:** a tile opens the mix's songs as a deep dive's song list, with the
+  filter and swipes, played through the shared collection start and never
+  added to Recent Deep Dives.
+- **As Inbox sources:** setup's Inbox card and Inbox Sources list the mixes not
+  already linked. A mix is linked by its catalog ID and each sync reads its
+  current songs from the catalog, so it stays live; a library copy would stop
+  updating. Songs that leave the mix leave the Inbox if untouched
+  (`PLAYLIST-012`). This works on a Mac too, since nothing is written.
+- **CarPlay:** a "Made For You" strip of artwork tiles below Recent Deep Dives
+  on the root (hidden when there are no mixes). A tile opens the mix as a
+  Library item opens: "Loading…" until its songs arrive, under a header with
+  its art and Shuffle and Play, playing through the same shared action. The
+  playing mix's subtitle reads "Now Playing"; the strip's title opens nothing.
+
 ## Library
 
 The dashboard's Library section browses the user's Apple Music library as the
@@ -1344,7 +1386,9 @@ in CarPlay without Songs.
   on-device library reports only local persistent IDs, which nothing can
   match.
 - **Song lists:** a playlist, album or artist opens the same song list as a
-  Recent Deep Dive, with Shuffle and Play at the top and the same swipes.
+  Recent Deep Dive, with Shuffle and Play at the top and the same swipes. An
+  album's rows, there and in an album deep dive, show no artwork, since every
+  song shares it; a leading slot keeps the playing badge.
   Untracked songs offer Add to the Inbox and Add to One True Playlist and are not
   counted (`PLAY-018`). Songs is a plain list like the other categories, with
   no header and no Shuffle and Play; tapping a song plays from it.
@@ -1352,7 +1396,7 @@ in CarPlay without Songs.
   added to Recent Deep Dives. The queue uses this device's own library copies
   of the songs, because a Mac cannot play a web library song, and gives the
   player the web artwork. Songs plays a window of 100 songs.
-- **CarPlay:** a section headed "Library" under Recent Deep Dives lists
+- **CarPlay:** a section headed "Library" under Made For You lists
   Playlists, Artists and Albums (owner request, 2026-10-24); Songs is left
   out. A category lists its items from the same cache, up to CarPlay's list
   limit, with thumbnail artwork as the phone's rows use. An item opens at
@@ -2215,9 +2259,40 @@ Switching between the two (folding or unfolding an iPhone Duo, resizing a
 window) opens the new layout on the same screen: the dashboard, a playlist,
 Retired, a Recent Deep Dive, Search, History or Settings. Playback is not
 affected. On an open iPhone Duo held as a book, the Now Playing column starts
-at the fold, so the list and the player each take one half. The player column
+at the fold, so the list and the player each take one half; the same halves
+apply on an iPad wider than tall. There, and in the stacked portrait layout,
+the sidebar is a panel of Overplay's own rather than the split view's sidebar
+(owner request, 2026-10-30). A sidebar button in every screen's toolbar slides
+it in and out, replacing the system's; it is just wide enough for its longest
+choice, and glass washed with the playing song's artwork colour. Side by side
+it is a column: the player takes a third of the width, the list the rest, and
+it stays open after a choice until closed. Stacked, it runs the full height
+and pushes the list and the player aside together; it also stays
+open after a choice. Open or closed is one setting for both layouts, kept
+between launches, open at first. In either layout its own sidebar button sits at its top right, in a bar of its own so it is
+level with the toolbar's, which hides while it shows. The split view's own
+edge swipe is off while the panel stands in for its sidebar. A leftward swipe on it closes it in either layout. Choosing another
+section from deep inside one opens that section: the list fades out, the screen is swapped unseen, and the list fades back in, with no
+pop or push. While a song's colour tints a
+sidebar (the panel, or the split view's own on iPad and the Mac, where the
+wash is stronger), its icons take the text colour rather than the app's
+purple, and a Mac's selection is grey, so neither loses contrast against the
+song's colour. Directly beneath Deep Dives,
+the sidebar has a Made For You item that opens every mix as a grid of artwork,
+as Deep Dives does (`MFY-001`). On a Mac the
+sidebar is unchanged. Held in portrait,
+or on an iPad taller than wide, the halves stack instead: the list on top and
+the player below, divided at the horizontal fold or the middle, less 15% of
+the player's height given to the list (owner request, 2026-10-30); the keyboard covers the player rather than changing the layout. The player column
 stays clear of the vertical bar, and toolbar items carry a title as well as a
 symbol for the vertical bar's overflow menu.
+
+The full-screen player grows from and shrinks into the mini player with its
+corners animating continuously. On a closed iPhone Duo filling its screen, the
+corners along the screen's square edge start square (and follow it to the top
+or bottom in landscape); the rest start at the screen's radius. A split window
+on the open Duo starts from the window's own corner radii, which UIKit measures
+per corner, so the tighter corners at the hinge match.
 
 ### Permission screen
 
@@ -2268,6 +2343,13 @@ Required capabilities:
 - Search/filter Apple Music library playlists.
 - Show track count and sync status.
 - Manually sync one linked playlist.
+- Each row leads with the playlist's artwork (44 points): a library playlist's
+  from Library's cached list, a Made For You mix's from Apple Music, the
+  no-artwork image otherwise.
+- A Made For You section, between the linked playlists and the library
+  playlists, lists the mixes not yet linked (`MFY-001`); its footer says that
+  mixes stay live. Setup's Inbox card lists the mixes the same way, with their
+  artwork.
 
 The One True Playlist is not chosen here or anywhere else (`PLAYLIST-002`).
 When a library has none, the dashboard offers **Make Your One True Playlist**,
@@ -2286,15 +2368,27 @@ followed by Recent Deep Dives and the Library.
 
 Show:
 
-- One True Playlist artwork card, or a link to configure it when absent.
+- One True Playlist artwork card, or a link to configure it when absent. The
+  artwork is as large as leaves the first heading under it (Recent Deep Dives,
+  Made For You or Library) readable 8 points above the mini player, or the
+  screen's bottom where there is none, up to 420 points (a collection's own
+  artwork size) and the row's width. It is measured only while the list is at
+  rest at the top. The size is worked out from the list's height and where
+  the artwork starts, not by measuring the rows (which the list does not draw
+  until on screen); the artwork stays hidden until the list stops moving,
+  about a quarter of a second, then shows at that size and keeps it for as
+  long as the screen is open (`HeaderArtworkFit`; owner request,
+  2026-10-30). The glass Play over it keeps its size.
 - Inbox row, including on a fresh install and after its last
   contributing playlist is removed.
 - Global Retired row, including when empty.
 - Recent Deep Dives, when there are any (`PLAY-019`).
+- Made For You, when Apple Music returns any mixes (`MFY-001`).
 - Library: Playlists, Albums, Artists and Songs (`LIB-001`).
-- For each row: representative artwork, role/current-playback icon, total
-  tracked count, source, last-sync status, and write policy.
-- Link to the Inbox sources screen, labelled with the contributing count.
+- The Inbox row shows its active track count and how many playlists feed it,
+  with the current-playback icon while it plays; Retired shows its icon. Sync
+  status and write policy are not shown here, and Inbox Sources opens from
+  Settings (owner decision, 2026-10-30).
 - Toolbar: Settings and History together on the leading side (a Mac reaches
   History from its Go menu), and Search on the trailing side as the screen's
   prominent button.
@@ -2303,8 +2397,9 @@ Platform notes:
 
 - iPhone uses the compact stacked dashboard.
 - iPad uses the same dashboard content within its split-view detail.
-- Rich summary counts, Inbox queues, and direct play/sync/search/history
-  actions remain roadmap work.
+- Search and History are in the dashboard's toolbar, and the One True
+  Playlist plays from the glass Play over its artwork. Rich summary counts
+  and Inbox queues remain roadmap work.
 - **Planned Mac:** favor dense, sortable, scan-friendly summaries.
 
 ### Playlist detail
@@ -2323,6 +2418,28 @@ Show:
 - Promote action for Inbox tracks.
 - Manual retire/remove action for active tracks.
 - Move to the Inbox and Move to One True Playlist for retired tracks.
+- Header: a details line (the coloured caption with its symbol and the track
+  count for the One True Playlist, the Inbox and Retired; a collection's kind
+  and song count) with Shuffle and Play on the right, a small round filled button
+  showing only the shuffle symbol (`ShuffleAndPlayButton`), then the artwork
+  at the column's full width with a small margin under it, then the songs
+  with no heading and no lines
+  around the header. The title is the screen's own, not repeated; nothing is
+  fitted (owner request, 2026-10-30). Deep dive, Made For You and Library
+  collection headers are the same. Where the list sits above the player (an open phone
+  held in portrait), the artwork is aligned to the leading edge at half the
+  column's width, or three quarters while the sidebar is shown
+  (`ListHeaderView`).
+- Row titles never show a remaster note, with or without a year ("(2025
+  Remaster)", "[Remastered 2009]", " - 2015 Remaster"); when a title is still
+  too long, its trailing bracketed and then parenthesised groups go
+  (`TrackTextVariants`; owner request, 2026-10-30). History rows do the same.
+- A tapped song takes the playing badge at once, and no other row shows it,
+  until its start ends; a slow start still answers the tap. This is the
+  list's own drawing: Now Playing, CarPlay and the system surfaces show only
+  what the player reports, and a failed start puts the badge back. Search
+  results and deep dive, Made For You and Library song lists do the same
+  (`RowStartFeedback`; owner request, 2026-10-30).
 - Toolbar: Sync for the One True Playlist and the Inbox; Retired has none.
   History, Search and the Inbox's contributing playlists are reached from the
   dashboard and Settings, not from here.
@@ -2361,6 +2478,12 @@ Show:
 - Manual retire action for active tracks.
 - Move to the Inbox and Move to One True Playlist for retired tracks.
 - Promote action when playing from the Inbox.
+- Shuffle, repeat and these track actions as one centred, evenly spaced row of
+  round icon buttons, in the order and for the states CarPlay's Now Playing
+  shows them (`CarPlayNowPlayingActionPolicy`): shuffle, repeat, then promote
+  and retire, or promote and Move to the Inbox for a retired track, or Inbox
+  and Overplay for an untracked song. Some states have only two or three, with a clear gap above the transport
+  (owner request, 2026-10-30).
 - Audio output: a pill below the playback controls naming the current output
   (iPhone Speaker, AirPods, an AirPlay device), filled to the system volume. Dragging across it sets the
   volume; tapping it opens the system route picker, where AirPlay devices are
@@ -2385,12 +2508,23 @@ phone.
 Platform notes:
 
 - iPhone should keep Now Playing immersive and touch-first.
+- Now Playing shows, in the space between the progress bar and the plays and
+  skips, what is playing: the playlist, the Inbox, Retired, or the album,
+  artist, mix, Library songs or search it came from, in small, faded text,
+  replacing the album or artist line above the title. Tapping it opens that
+  screen, unless it is already showing or has no screen (a Library playlist,
+  album or artist, or a search); a full-screen player first shrinks back into
+  the mini player.
 - Compact width (iPhone, a closed iPhone Duo, a narrow iPad window) shows a
   mini player: a glass bar over the bottom of the screen, its top edge a
   progress line coloured as Now Playing's progress bar. Once the playing
   track's theme is known, the glass takes its background colour, with the
-  title, artist and controls in the theme's colours. Tapping it or
-  swiping it up slides Now Playing up full screen. A downward swipe starting
+  title, artist and controls in the theme's colours. Away from the root
+  page, a circular home button as tall as the bar sits to its right, tinted
+  the same; it returns to the root page. It emerges from and merges back into
+  the bar's glass, and the bar narrows to make room; Now Playing grows from
+  and shrinks into the bar alone (owner request, 2026-10-30). Tapping the bar
+  or swiping it up slides Now Playing up full screen. A downward swipe starting
   anywhere on it, controls and margins included, moves it with the finger and
   closes it past the threshold; a sideways drag (the volume pill) does not.
   The swipe is a UIKit pan that begins only for a drag more down than
@@ -2499,18 +2633,19 @@ to add.
 
 Purpose: show historic retirements, removals, and promotions.
 
-Show:
+Show, on each event row (a record only, with no actions):
 
-- Track.
-- Playlist.
-- Event type.
-- Manual source where applicable.
-- Triggering skip count or manual source.
-- Date.
-- Remote Apple Music mutation status.
-- Suspended-playback recovery totals and proof-mechanism breakdown.
-- Reconciliation proof mechanism on each recovered playthrough.
-- Restore/reactivate action where appropriate.
+- Track artwork, flush to the leading edge as a playlist's rows.
+- Event type and date.
+- The track's title, shortened as a playlist's titles are, and its subtitle.
+- Badges only for a recovered playthrough's proof mechanism and a remote Apple
+  Music mutation's status (no source or skip-count badges).
+- The event's message, where it has one.
+
+Debug builds add, above the events, an event-type filter, the suspended-playback
+recovery totals with their proof-mechanism breakdown, and an "Events" heading.
+Release builds show only the events. Headings and notes are rows with the same
+16-point margins as the events' text.
 
 History survives sync, relaunch, and iCloud sync within its retention policy.
 The view loads predicate-filtered pages of 100 events with an explicit Show
@@ -2519,7 +2654,7 @@ after 365 days. Startup cleanup deletes at most 500 expired events per run.
 
 Platform notes:
 
-- iPhone and iPad expose the same menu filter without hiding the event list.
+- The debug filter is a menu above the events on iPhone and iPad.
 - **Planned Mac:** use a sortable, filterable table when practical.
 
 ### Settings
@@ -2535,8 +2670,10 @@ Shortcuts section.
 General:
 
 - **Playlists:** the One True Playlist, shown, never chosen: Overplay makes
-  it at the first chance (`SETUP-001`) and keeps it up to date, with **Open
-  in Apple Music**. While a Mac waits for an iPhone to make it (`SETUP-002`),
+  it at the first chance (`SETUP-001`) and keeps it up to date. Its name is
+  a link that opens it in the Music app, using the playlist's own URL from
+  MusicKit; a library link built from its ID shows "Item not available"
+  there. With no URL the name is plain text. While a Mac waits for an iPhone to make it (`SETUP-002`),
   it says so. **Inbox Sources** opens the
   contributing-playlist list.
 - **Library:** Find Duplicates.
@@ -3149,11 +3286,15 @@ playback.
 Each playlist saves its own artwork template: Pile (default), 3 × 3 grid, or
 8 × 8 grid, with None (default), Black, or White borders. Border width is 1.5%
 of the individual cover side length. The square artwork appears above playback
-controls in playlist detail, as a thumbnail in the root playlist menu, and beside
-that playlist in the CarPlay playlist list. Root playlist-row artwork is 96 × 96
-points with square corners and no vertical row insets, filling the row height.
+controls in playlist detail, as the One True Playlist's lead artwork on the
+dashboard, and beside that playlist in the CarPlay playlist list.
 Linked-playlist artwork remains 72 × 72 points, matching track-row artwork.
-Long-press offers Settings and Regenerate; Settings saves layout and border choices.
+Long-press offers Settings, Regenerate and Save to Photos; Settings saves layout
+and border choices. The long-press preview is drawn from the loaded image.
+Save to Photos (#73) saves the collage as shown, full size as a PNG, with
+add-only Photos access, never regenerating it; it is disabled until the image
+has loaded, and says where to choose it in the Music app. A Mac needs the
+sandbox's Photos entitlement for it.
 
 Covers are grouped by artwork URL. Active Overplay/One True Playlist artwork
 ranks by summed Overplay playthrough counts across songs sharing a cover, and
@@ -3317,7 +3458,8 @@ match is not a prerequisite for a cover. Persist only portable artwork URLs;
 MusicKit-native artwork handles remain device-local. Missing artwork can be
 refreshed separately from playlist contents without resetting identities,
 memberships or activity. A library upload with no supplied artwork keeps the
-normal placeholder. A lookup that succeeds without usable artwork is
+normal placeholder: the Overplay logo in white on the app icon's purple,
+shading to a deeper purple. A lookup that succeeds without usable artwork is
 remembered on that device, so the repair stops asking each cycle (#60). It is
 asked again after 30 days, which is how artwork added later is found, or as
 soon as the track's library or catalog ID changes. A failed lookup is never

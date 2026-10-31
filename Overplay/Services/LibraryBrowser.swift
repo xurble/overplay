@@ -168,7 +168,7 @@ enum LibraryBrowser {
         return tracks
     }
 
-    private static func entry(_ track: Track) -> Entry? {
+    static func entry(_ track: Track) -> Entry? {
         guard VideoTrackPolicy.isSong(track) else { return nil }
         let identity = MusicTrackIdentity.ids(for: track)
         return Entry(song: PlaybackCollectionSong(
@@ -179,7 +179,7 @@ enum LibraryBrowser {
     }
 
     /// A song listed twice plays once.
-    private static func unique(_ entries: [Entry]) -> [Entry] {
+    static func unique(_ entries: [Entry]) -> [Entry] {
         var seen: Set<String> = []
         return entries.filter { seen.insert($0.song.catalogID).inserted }
     }

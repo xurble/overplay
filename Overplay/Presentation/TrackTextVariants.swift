@@ -7,6 +7,9 @@ enum TrackTextVariants {
     }
 
     static func candidates(for components: [String], separator: String) -> [String] {
+        // Remaster notes never show, even when there is room (owner request,
+        // 2026-10-30).
+        let components = components.map { removingRemasterNotes(from: $0) }
         let withoutBrackets = components.map { removingTrailingGroups(from: $0, opening: "[", closing: "]") }
         let withoutParentheses = withoutBrackets.map { removingTrailingGroups(from: $0, opening: "(", closing: ")") }
         return [components, withoutBrackets, withoutParentheses]
@@ -14,6 +17,20 @@ enum TrackTextVariants {
             .reduce(into: []) { result, candidate in
                 if result.last != candidate { result.append(candidate) }
             }
+    }
+
+    /// "(2025 Remaster)", "[Remastered 2009]", "(2011 Remastered Version)",
+    /// " - 2015 Remaster", " - Remastered": any group or dash suffix naming a
+    /// remaster, with or without a year.
+    static func removingRemasterNotes(from text: String) -> String {
+        let removed = text
+            .replacing(/\s*[\(\[][^\(\)\[\]]*\bremaster(?:ed)?\b[^\(\)\[\]]*[\)\]]/.ignoresCase(), with: "")
+            .replacing(/\s+[-–—]\s+[^-–—]*\bremaster(?:ed)?\b.*$/.ignoresCase(), with: "")
+        // Text without a note is left exactly as it was.
+        guard removed != text else { return text }
+        let cleaned = removed.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A name that is nothing but the note stays as it was.
+        return cleaned.isEmpty ? text : cleaned
     }
 
     private static func removingTrailingGroups(from text: String, opening: Character, closing: Character) -> String {

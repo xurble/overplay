@@ -18,6 +18,8 @@ struct SearchMusicView: View {
     @State private var songs: [String: RecentCollectionPresentation.Song] = [:]
     @State private var moreResult: SearchSongResult?
     @State private var playlistResult: SearchSongResult?
+    /// The result tapped while its start runs (`RowStartFeedback`).
+    @State private var startingResultID: SearchSongResult.ID?
     @FocusState private var isSearchFocused: Bool
 
     var body: some View {
@@ -90,13 +92,20 @@ struct SearchMusicView: View {
                 if let song = songs[result.id] {
                     // A tap plays the song, as Play Now does.
                     Button {
-                        Task { await play(result) }
+                        startingResultID = result.id
+                        Task {
+                            await play(result)
+                            startingResultID = nil
+                        }
                     } label: {
                         PlaylistTrackRowView(
                             summary: song.summary,
                             playlistID: Self.collection(for: result).reservedPlaylistID,
-                            isCurrent: RecentCollectionPresentation.isCurrent(
-                                song, groupKey: Self.collection(for: result).groupKey, controller: playbackController
+                            isCurrent: RowStartFeedback.isCurrent(
+                                result.id, starting: startingResultID,
+                                playing: RecentCollectionPresentation.isCurrent(
+                                    song, groupKey: Self.collection(for: result).groupKey, controller: playbackController
+                                )
                             )
                         )
                         .contentShape(.rect)

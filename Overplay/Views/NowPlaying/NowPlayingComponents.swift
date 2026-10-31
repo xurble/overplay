@@ -308,12 +308,7 @@ struct TrackPlaybackFactsView: View {
                 // kept so the controls do not move between songs.
                 .opacity(presentation.isTracked ? 1 : 0)
                 .accessibilityHidden(!presentation.isTracked)
-
-            if presentation.isEvicted {
-                let badge = TrackStateBadgePresentation(isEvicted: true)
-                Label(badge.title, systemImage: badge.systemImage)
-                    .foregroundStyle(.red)
-            }
+            // No Retired badge: the playing-from line above says so.
         }
         .font(.subheadline.weight(.semibold))
         // Plain text, not a capsule: it is not a button.
@@ -331,162 +326,120 @@ struct TrackPlaybackFactsView: View {
     }
 }
 
-struct PlaybackModeControlsView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Environment(PlaybackController.self) private var playbackController
-
-    var artworkTheme: AlbumArtworkTheme? = nil
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Button {
-                Task {
-                    await playbackController.toggleShuffle(context: modelContext)
-                }
-            } label: {
-                Label(controlsPresentation.shuffleTitle, systemImage: controlsPresentation.shuffleSystemImage)
-                    .frame(maxWidth: .infinity)
-            }
-            .accessibilityValue(controlsPresentation.isShuffling ? "On" : "Off")
-            .fullScreenPlayerControlStyle(
-                palette: controlPalette,
-                prominence: controlsPresentation.isShuffling ? .selected : .secondary,
-                fallbackTint: controlsPresentation.isShuffling ? .accentColor : .secondary,
-                fallbackStyle: controlsPresentation.isShuffling ? .borderedProminent : .bordered
-            )
-
-            Button {
-                Task {
-                    await playbackController.toggleRepeatAll(context: modelContext)
-                }
-            } label: {
-                Label(
-                    controlsPresentation.repeatAllTitle,
-                    systemImage: controlsPresentation.repeatAllSystemImage
-                )
-                .frame(maxWidth: .infinity)
-            }
-            .accessibilityValue(controlsPresentation.isRepeatingAll ? "On" : "Off")
-            .fullScreenPlayerControlStyle(
-                palette: controlPalette,
-                prominence: controlsPresentation.isRepeatingAll ? .selected : .secondary,
-                fallbackTint: controlsPresentation.isRepeatingAll ? .accentColor : .secondary,
-                fallbackStyle: controlsPresentation.isRepeatingAll ? .borderedProminent : .bordered
-            )
-        }
-        .disabled(!playbackController.hasLiveQueue)
-    }
-
-    private var controlPalette: FullScreenPlayerControlPalette? {
-        artworkTheme.flatMap(FullScreenPlayerControlPalette.init(theme:))
-    }
-
-    private var controlsPresentation: PlaybackControlsPresentation {
-        NowPlayingPresentationFactory.playbackControlsPresentation(playbackController: playbackController)
-    }
-}
-
-struct TrackActionControlsView: View {
+/// Shuffle, repeat and the current track's actions as one centred row of
+/// round icon buttons, in the order and for the states CarPlay shows them
+/// (`CarPlayNowPlayingActionPolicy`; owner request, 2026-10-30).
+struct NowPlayingActionButtonsView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackController.self) private var playbackController
 
     var settings: OverplaySettings
     var artworkTheme: AlbumArtworkTheme? = nil
 
-    var body: some View {
-        HStack(spacing: 12) {
-            if playbackController.canAddCurrentToOverplay {
-                // A song Overplay does not track, from an album or artist (`PLAY-018`).
-                Button {
-                    Task { await playbackController.addCurrentToTriage(context: modelContext) }
-                } label: {
-                    Label("Inbox", systemImage: "tray.and.arrow.down")
-                        .frame(maxWidth: .infinity)
-                }
-                .accessibilityLabel("Add to the Inbox")
-                .accessibilityInputLabels(["Inbox", "Add to the Inbox"])
-                .fullScreenPlayerControlStyle(palette: controlPalette, prominence: .secondary, fallbackStyle: .bordered)
-                Button {
-                    Task { await playbackController.addCurrentToOneTruePlaylist(context: modelContext) }
-                } label: {
-                    Label("Overplay", systemImage: "arrow.up.circle")
-                        .frame(maxWidth: .infinity)
-                }
-                .accessibilityLabel("Add to One True Playlist")
-                .accessibilityInputLabels(["Overplay", "Add to One True Playlist"])
-                .disabled(!playbackController.canAddCurrentToOneTruePlaylist(context: modelContext))
-                .fullScreenPlayerControlStyle(palette: controlPalette, prominence: .secondary, fallbackStyle: .bordered)
-            } else if isCurrentTrackRetired {
-                Button {
-                    Task { playbackController.restoreCurrent(context: modelContext) }
-                } label: {
-                    Label("Inbox", systemImage: "tray.and.arrow.down")
-                        .frame(maxWidth: .infinity)
-                }
-                .accessibilityLabel("Move to the Inbox")
-                .accessibilityInputLabels(["Inbox", "Move to the Inbox"])
-                .disabled(playbackController.currentMember == nil)
-                .fullScreenPlayerControlStyle(
-                    palette: controlPalette,
-                    prominence: .secondary,
-                    fallbackStyle: .bordered
-                )
-                Button {
-                    Task { await playbackController.promoteCurrent(settings: settings, context: modelContext) }
-                } label: {
-                    Label("Overplay", systemImage: "arrow.up.circle")
-                        .frame(maxWidth: .infinity)
-                }
-                .accessibilityLabel("Promote to One True Playlist")
-                .accessibilityInputLabels(["Overplay", "Promote"])
-                .disabled(playbackController.currentMember == nil)
-                .fullScreenPlayerControlStyle(
-                    palette: controlPalette, prominence: .secondary, fallbackStyle: .bordered
-                )
-            } else {
-                if currentPlaylistRole == .triageBucket {
-                    Button {
-                        Task { await playbackController.promoteCurrent(settings: settings, context: modelContext) }
-                    } label: {
-                        Label("Overplay", systemImage: "arrow.up.circle")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .accessibilityLabel("Promote to One True Playlist")
-                    .accessibilityInputLabels(["Overplay", "Promote"])
-                    .disabled(playbackController.currentMember == nil)
-                    .fullScreenPlayerControlStyle(
-                        palette: controlPalette,
-                        prominence: .secondary,
-                        fallbackStyle: .bordered
-                    )
-                }
+    @State private var width: CGFloat = 0
 
-                Button {
-                    Task { await playbackController.evictCurrent(settings: settings, context: modelContext) }
-                } label: {
-                    Label("Retire", systemImage: "archivebox")
-                        .frame(maxWidth: .infinity)
-                }
-                .disabled(playbackController.currentMember == nil)
-                .fullScreenPlayerControlStyle(
-                    palette: controlPalette,
-                    prominence: .destructive,
-                    fallbackStyle: .bordered
-                )
+    var body: some View {
+        // Evenly spaced, closing up and then shrinking smoothly as the column
+        // narrows, so the row never widens the column it sits in (that pushed
+        // the art off the screen) and nothing jumps while the sidebar moves
+        // the player.
+        HStack(spacing: 0) {
+            ForEach(Array(actions.enumerated()), id: \.element) { index, action in
+                if index > 0 { Spacer(minLength: 8).frame(maxWidth: 20) }
+                button(for: action)
             }
         }
+        .frame(maxWidth: .infinity)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    }
+
+    /// As large as the row allows, up to the full size.
+    private var circleSide: CGFloat {
+        let count = CGFloat(max(actions.count, 1))
+        guard width > 0 else { return FullScreenPlayerGlassButtonStyle.circleSide }
+        return min(FullScreenPlayerGlassButtonStyle.circleSide, max(32, ((width - 8 * (count - 1)) / count).rounded(.down)))
+    }
+
+    private var actions: [CarPlayNowPlayingAction] {
+        CarPlayNowPlayingActionPolicy.actions(
+            playlistRole: playbackController.currentPlaylistRole(context: modelContext),
+            isRetired: playbackController.displayedIsEvicted(context: modelContext),
+            canAddToOverplay: playbackController.canAddCurrentToOverplay
+        )
+    }
+
+    @ViewBuilder
+    private func button(for action: CarPlayNowPlayingAction) -> some View {
+        let controls = NowPlayingPresentationFactory.playbackControlsPresentation(playbackController: playbackController)
+        switch action {
+        case .shuffle:
+            circle(controls.shuffleTitle, systemImage: controls.shuffleSystemImage, isOn: controls.isShuffling) {
+                await playbackController.toggleShuffle(context: modelContext)
+            }
+            .accessibilityValue(controls.isShuffling ? "On" : "Off")
+            .disabled(!playbackController.hasLiveQueue)
+        case .repeatMode:
+            circle(controls.repeatAllTitle, systemImage: controls.repeatAllSystemImage, isOn: controls.isRepeatingAll) {
+                await playbackController.toggleRepeatAll(context: modelContext)
+            }
+            .accessibilityValue(controls.isRepeatingAll ? "On" : "Off")
+            .disabled(!playbackController.hasLiveQueue)
+        case .promote:
+            circle("Promote to One True Playlist", systemImage: "arrow.up.circle") {
+                await playbackController.promoteCurrent(settings: settings, context: modelContext)
+            }
+            .accessibilityInputLabels(["Overplay", "Promote"])
+            .disabled(playbackController.currentMember == nil)
+        case .retire:
+            circle("Retire", systemImage: "archivebox", prominence: .destructive) {
+                await playbackController.evictCurrent(settings: settings, context: modelContext)
+            }
+            .disabled(playbackController.currentMember == nil)
+        case .restore:
+            circle("Move to the Inbox", systemImage: "tray.and.arrow.down") {
+                _ = playbackController.restoreCurrent(context: modelContext)
+            }
+            .accessibilityInputLabels(["Inbox", "Move to the Inbox"])
+            .disabled(playbackController.currentMember == nil)
+        case .addToTriage:
+            // A song Overplay does not track, from an album or artist (`PLAY-018`).
+            circle("Add to the Inbox", systemImage: "tray.and.arrow.down") {
+                await playbackController.addCurrentToTriage(context: modelContext)
+            }
+            .accessibilityInputLabels(["Inbox", "Add to the Inbox"])
+        case .addToOneTruePlaylist:
+            circle("Add to One True Playlist", systemImage: "arrow.up.circle") {
+                await playbackController.addCurrentToOneTruePlaylist(context: modelContext)
+            }
+            .accessibilityInputLabels(["Overplay", "Add to One True Playlist"])
+            .disabled(!playbackController.canAddCurrentToOneTruePlaylist(context: modelContext))
+        }
+    }
+
+    private func circle(
+        _ title: String, systemImage: String, isOn: Bool = false,
+        prominence: FullScreenPlayerControlProminence = .secondary,
+        action: @escaping () async -> Void
+    ) -> some View {
+        Button {
+            Task { await action() }
+        } label: {
+            Label(title, systemImage: systemImage)
+                .labelStyle(.iconOnly)
+                .font(circleSide < FullScreenPlayerGlassButtonStyle.circleSide ? .body : .title3)
+        }
+        .help(title)
+        .fullScreenPlayerControlStyle(
+            palette: controlPalette,
+            prominence: isOn ? .selected : prominence,
+            fallbackTint: isOn ? .accentColor : .secondary,
+            fallbackStyle: isOn ? .borderedProminent : .bordered,
+            circleSide: circleSide
+        )
     }
 
     private var controlPalette: FullScreenPlayerControlPalette? {
         artworkTheme.flatMap(FullScreenPlayerControlPalette.init(theme:))
-    }
-
-    private var currentPlaylistRole: PlaylistRole? {
-        playbackController.currentPlaylistRole(context: modelContext)
-    }
-
-    private var isCurrentTrackRetired: Bool {
-        playbackController.displayedIsEvicted(context: modelContext)
     }
 }
 
@@ -679,6 +632,9 @@ struct FullScreenPlayerGlassButtonStyle: ButtonStyle {
 
     var palette: FullScreenPlayerControlPalette
     var prominence: FullScreenPlayerControlProminence = .secondary
+    /// An icon in a circle this wide: a capsule around a square.
+    var circleSide: CGFloat? = nil
+    static let circleSide: CGFloat = 52
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -692,8 +648,9 @@ struct FullScreenPlayerGlassButtonStyle: ButtonStyle {
             // Dim the label, not the glass: opacity around glass hides what
             // is behind it.
             .opacity(isEnabled ? 1 : 0.46)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
+            .padding(.horizontal, circleSide == nil ? 14 : 0)
+            .padding(.vertical, circleSide == nil ? 11 : 0)
+            .frame(width: circleSide, height: circleSide)
             .contentShape(Capsule())
             .fullScreenPlayerGlassBackdrop(
                 palette,
@@ -725,21 +682,39 @@ private struct FullScreenPlayerControlStyleModifier: ViewModifier {
     var prominence: FullScreenPlayerControlProminence
     var fallbackTint: Color
     var fallbackStyle: FullScreenPlayerFallbackButtonStyle
+    var circleSide: CGFloat? = nil
 
     func body(content: Content) -> some View {
         if let palette {
-            content.buttonStyle(FullScreenPlayerGlassButtonStyle(palette: palette, prominence: prominence))
+            content.buttonStyle(FullScreenPlayerGlassButtonStyle(palette: palette, prominence: prominence, circleSide: circleSide))
         } else {
             switch fallbackStyle {
             case .bordered:
                 content
                     .buttonStyle(.bordered)
                     .tint(fallbackTint)
+                    .modifier(FallbackCircle(side: circleSide))
             case .borderedProminent:
                 content
                     .buttonStyle(.borderedProminent)
                     .tint(fallbackTint)
+                    .modifier(FallbackCircle(side: circleSide))
             }
+        }
+    }
+}
+
+/// A system bordered button drawn as a circle the glass one's size.
+private struct FallbackCircle: ViewModifier {
+    var side: CGFloat?
+
+    func body(content: Content) -> some View {
+        if let side {
+            content
+                .buttonBorderShape(.circle)
+                .controlSize(side < FullScreenPlayerGlassButtonStyle.circleSide ? .regular : .large)
+        } else {
+            content
         }
     }
 }
@@ -824,13 +799,15 @@ extension View {
         palette: FullScreenPlayerControlPalette?,
         prominence: FullScreenPlayerControlProminence = .secondary,
         fallbackTint: Color = .secondary.opacity(0.24),
-        fallbackStyle: FullScreenPlayerFallbackButtonStyle = .borderedProminent
+        fallbackStyle: FullScreenPlayerFallbackButtonStyle = .borderedProminent,
+        circleSide: CGFloat? = nil
     ) -> some View {
         modifier(FullScreenPlayerControlStyleModifier(
             palette: palette,
             prominence: prominence,
             fallbackTint: fallbackTint,
-            fallbackStyle: fallbackStyle
+            fallbackStyle: fallbackStyle,
+            circleSide: circleSide
         ))
     }
 

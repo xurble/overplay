@@ -101,7 +101,7 @@ final class CarPlayCoordinator: NSObject {
     private weak var libraryCategoryTemplate: CPListTemplate?
     private var visibleLibraryCategory: LibraryBrowser.Category?
     private weak var libraryItemTemplate: CPListTemplate?
-    private var visibleLibraryItem: LibraryBrowser.Item?
+    private var visibleLibraryItem: OpenCollection?
     private var visibleLibraryEntries: [LibraryBrowser.Entry] = []
     private var libraryItemPlaceholder: String?
     /// The failure kind last alerted in this episode; nil when none is active.
@@ -152,6 +152,11 @@ final class CarPlayCoordinator: NSObject {
                 )
                 await runtime.startupViewModel.authorizedServicesTask?.value
             }
+            guard !Task.isCancelled else { return }
+            self?.refreshVisibleTemplate()
+            // Made For You is read after the launch quiet; the root shows
+            // the mixes kept from last time until then.
+            await MadeForYouLibrary.shared.refresh()
             guard !Task.isCancelled else { return }
             self?.refreshVisibleTemplate()
         }
@@ -283,6 +288,24 @@ final class CarPlayCoordinator: NSObject {
                     id: "recents", title: "Recent Deep Dives", style: .strip(tiles)
                 )]))
             }
+            // Made For You (`MFY-001`): Apple Music's mixes, a strip below
+            // Recent Deep Dives as on the phone. A tile opens the mix.
+            if let playbackController, !MadeForYouLibrary.shared.items.isEmpty {
+                let tiles = MadeForYouLibrary.shared.items.map { item -> Row.Tile in
+                    let tileID = "made-for-you-tile-\(item.id)"
+                    actions[tileID] = { [weak self] in await self?.showLibraryItem(.init(item)) }
+                    let isPlaying = playbackController.currentTrack != nil
+                        && playbackController.playingCollectionGroupKey == item.collection.groupKey
+                    return Row.Tile(
+                        id: tileID, title: item.name, subtitle: isPlaying ? "Now Playing" : nil,
+                        artwork: .track(url: item.artworkURL, playlistID: item.collection.reservedPlaylistID),
+                        isPlaying: isPlaying
+                    )
+                }
+                sections.append(Section(id: "made-for-you", rows: [Row(
+                    id: "made-for-you", title: "Made For You", style: .strip(tiles)
+                )]))
+            }
             if sections.isEmpty {
                 sections = [Section(id: "empty", rows: [Row(id: "empty", title: "No linked playlists",
                     detail: "Open Overplay on iPhone to choose playlists.", isEnabled: false)])]
@@ -358,7 +381,7 @@ final class CarPlayCoordinator: NSObject {
         var actions: [String: @MainActor () async -> Void] = [:]
         let items = cache.items[category] ?? []
         let rows = items.prefix(CPListTemplate.maximumItemCount).map { item -> Row in
-            actions[item.id] = { [weak self] in await self?.showLibraryItem(item) }
+            actions[item.id] = { [weak self] in await self?.showLibraryItem(.init(item)) }
             return Row(id: item.id, title: item.title, detail: item.subtitle,
                 isPlaying: playbackController.currentTrack != nil
                     && playbackController.playingCollectionGroupKey == item.collection.groupKey,
@@ -379,7 +402,7 @@ final class CarPlayCoordinator: NSObject {
     /// Opens at once, as on the phone, and fills when the songs arrive: a
     /// slow load must never push the list later over whatever the driver
     /// has moved on to.
-    private func showLibraryItem(_ item: LibraryBrowser.Item) async {
+    private func showLibraryItem(_ item: OpenCollection) async {
         guard runtime?.libraryRestoration.isReady == true else { return }
         libraryItemRenderer.stop()
         libraryItemRenderer = CarPlayListRenderer()
@@ -393,7 +416,7 @@ final class CarPlayCoordinator: NSObject {
             var entries: [LibraryBrowser.Entry] = []
             var placeholder: String?
             do {
-                entries = try await LibraryBrowser.songs(in: item)
+                entries = try await item.songs()
                 placeholder = entries.isEmpty ? "No songs Overplay can play." : nil
             } catch {
                 placeholder = "Couldn't load the songs: \(UserFacingError.message(for: error))"
@@ -452,14 +475,43 @@ final class CarPlayCoordinator: NSObject {
         guard let item = visibleLibraryItem, let playbackController, let modelContext else { return }
         let entries = visibleLibraryEntries
         let started = await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-            await LibraryBrowser.play(item, entries: entries, startingAt: catalogSongID,
-                                      controller: playbackController, context: modelContext)
+            await item.play(entries, catalogSongID, playbackController, modelContext)
         }
         refreshAfterTrackAction()
         if started {
             showNowPlaying()
         } else if playbackController.playbackFailure == nil {
             showPlaybackFailure(title: "Playback failed")
+        }
+    }
+
+    /// A Library collection or a Made For You mix, open from the root: its
+    /// songs load once and play through that source's shared action.
+    private struct OpenCollection {
+        var title: String
+        var kindName: String
+        var artworkURL: String?
+        var collection: PlaybackCollection
+        var songs: () async throws -> [LibraryBrowser.Entry]
+        var play: (_ entries: [LibraryBrowser.Entry], _ startingAt: String?,
+                   _ controller: PlaybackController, _ context: ModelContext) async -> Bool
+
+        init(_ item: LibraryBrowser.Item) {
+            title = item.title
+            kindName = item.kindName
+            artworkURL = item.artworkURL
+            collection = item.collection
+            songs = { try await LibraryBrowser.songs(in: item) }
+            play = { await LibraryBrowser.play(item, entries: $0, startingAt: $1, controller: $2, context: $3) }
+        }
+
+        init(_ item: MadeForYouLibrary.Item) {
+            title = item.name
+            kindName = "Made For You"
+            artworkURL = item.artworkURL
+            collection = item.collection
+            songs = { try await MadeForYouLibrary.songs(in: item) }
+            play = { await MadeForYouLibrary.play(item, entries: $0, startingAt: $1, controller: $2, context: $3) }
         }
     }
 

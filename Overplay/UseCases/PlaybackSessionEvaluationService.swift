@@ -117,6 +117,7 @@ enum PlaybackSessionEvaluationService {
         playlist: PlaylistRecord?,
         settings: OverplaySettings,
         naturalCompletion: Bool,
+        skipIgnoredReason: String? = nil,
         context: ModelContext,
         fallbackLocalTrackID: String? = nil,
         now: Date = .now
@@ -188,6 +189,7 @@ enum PlaybackSessionEvaluationService {
                 session: session,
                 transitionWasNaturalCompletion: completedNaturally,
                 observationIsStale: observationIsStale,
+                skipIgnoredReason: skipIgnoredReason,
                 settings: settings,
                 context: context
             )

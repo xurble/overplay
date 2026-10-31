@@ -61,7 +61,6 @@ struct PlaylistCollageView: View {
             }
         }
         .aspectRatio(1, contentMode: .fit)
-        .frame(maxWidth: 420)
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 

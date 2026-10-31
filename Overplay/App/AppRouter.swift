@@ -18,6 +18,7 @@ struct AppRouter: View {
     /// back already open, as the screen activates.
     @State private var playerReturnsInPlace = false
     @State private var miniPlayerFrame: CGRect = .zero
+    @State private var compactHome = CompactHome()
     @State private var openDrag = PlayerOpenDrag()
     @State private var artworkPresentation = PlaylistArtworkPresentation()
     private var startupViewModel: AppStartupViewModel { runtime.startupViewModel }
@@ -68,6 +69,7 @@ struct AppRouter: View {
         }
         #endif
         .environment(artworkPresentation)
+        .environment(\.compactHome, compactHome)
         .environment(\.miniPlayerTop, showsPlayer && miniPlayerFrame.height > 0 ? miniPlayerFrame.minY : nil)
         .overlay(alignment: .bottom) {
             // The layer, not the lozenge, ignores the keyboard: the overlay's
@@ -77,19 +79,26 @@ struct AppRouter: View {
                 Color.clear
                     .allowsHitTesting(false)
                 if showsPlayer, let settings {
-                    MiniPlayerLozengeView(settings: settings, onOpen: openPlayer) { distance in
-                        guard distance > 0 || openDrag.progress != nil else { return }
-                        openDrag.outcome = nil
-                        openDrag.progress = PlayerOpenDrag.progress(draggedUp: distance, miniPlayerTop: miniPlayerFrame.minY)
-                        if !isPlayerExpanded { openPlayer() }
-                    } onOpenDragEnded: { value in
-                        guard openDrag.progress != nil else { return }
-                        let up = CGSize(width: value.translation.width, height: -value.translation.height)
-                        let predictedUp = CGSize(width: value.predictedEndTranslation.width, height: -value.predictedEndTranslation.height)
-                        openDrag.outcome = FullScreenPlayerView.closesPlayer(translation: up, predictedEnd: predictedUp) ? .open : .cancel
-                        openDrag.progress = nil
-                    }
-                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { miniPlayerFrame = $0 }
+                    MiniPlayerLozengeView(
+                        settings: settings,
+                        onOpen: openPlayer,
+                        onOpenDragChanged: { distance in
+                            guard distance > 0 || openDrag.progress != nil else { return }
+                            openDrag.outcome = nil
+                            openDrag.progress = PlayerOpenDrag.progress(draggedUp: distance, miniPlayerTop: miniPlayerFrame.minY)
+                            if !isPlayerExpanded { openPlayer() }
+                        },
+                        onOpenDragEnded: { value in
+                            guard openDrag.progress != nil else { return }
+                            let up = CGSize(width: value.translation.width, height: -value.translation.height)
+                            let predictedUp = CGSize(width: value.predictedEndTranslation.width, height: -value.predictedEndTranslation.height)
+                            openDrag.outcome = FullScreenPlayerView.closesPlayer(translation: up, predictedEnd: predictedUp) ? .open : .cancel
+                            openDrag.progress = nil
+                        },
+                        showsHomeButton: compactHome.isAway,
+                        onHome: { compactHome.goHome() },
+                        onLozengeFrameChange: { miniPlayerFrame = $0 }
+                    )
                         .padding(.horizontal, 12)
                         .padding(.bottom, 4)
                         .modifier(UnderVerticalBar())
