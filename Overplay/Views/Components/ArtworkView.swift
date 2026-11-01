@@ -9,6 +9,8 @@ struct ArtworkView: View {
     var showsPlaceholder = true
 
     @State private var image: CGImage?
+    /// The art `image` holds, which can be the last song's while this
+    /// one's loads.
     @State private var loadedCacheIdentity: String?
     /// The artwork's background colour, cached when its theme was first
     /// worked out: a solid fill until the image itself appears.
@@ -82,14 +84,15 @@ struct ArtworkView: View {
         if loadedCacheIdentity == cacheIdentity, let image { return image }
         return ArtworkImagePipeline.shared.cachedImage(for: urlString, size: pixelSize)
             ?? ArtworkImagePipeline.shared.cachedImage(for: urlString, size: 128)
+            // The last art stays until this one's arrives: a skip showed the
+            // placeholder in between (owner request, 2026-10-31).
+            ?? (urlString == nil ? nil : image)
     }
 
     private func loadArtwork() async {
         let identity = cacheIdentity
         if loadedCacheIdentity != identity {
-            image = nil
             placeholderColor = nil
-            loadedCacheIdentity = identity
         }
         if displayedImage == nil,
            let theme = await AlbumArtworkThemeProvider.shared.cachedTheme(forArtworkURLTemplate: urlString, requiresIncreasedContrast: false),
@@ -105,12 +108,19 @@ struct ArtworkView: View {
             // Keep a useful thumbnail visible throughout the large-image request.
             let thumbnail = await pipeline.image(for: urlString, size: 128, playlistID: playlistID)
             guard !Task.isCancelled, identity == cacheIdentity else { return }
-            image = thumbnail
-            loadedCacheIdentity = identity
+            if let thumbnail {
+                image = thumbnail
+                loadedCacheIdentity = identity
+            }
         }
         let result = await pipeline.image(for: urlString, size: pixelSize, playlistID: playlistID)
         guard !Task.isCancelled, identity == cacheIdentity else { return }
-        if let result { image = result }
+        if let result {
+            image = result
+        } else if loadedCacheIdentity != identity {
+            // This song has no art: the last song's goes.
+            image = nil
+        }
         loadedCacheIdentity = identity
     }
 
