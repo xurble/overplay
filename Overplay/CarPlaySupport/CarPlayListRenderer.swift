@@ -50,14 +50,13 @@ struct CarPlayListPresentation: Equatable {
         var style: Style = .standard
     }
 
-    /// The art, title and shuffle button above a track list.
+    /// The art and title above a track list. No button: CarPlay dropped
+    /// most taps on a header's Shuffle button, even on a header assigned
+    /// once, while every row tap arrived (2026-11-01). Shuffle is a row.
     struct Header: Equatable {
         var title: String
         var subtitle: String? = nil
         var artwork: Row.Artwork? = nil
-        /// The action run by the header's shuffle button (Shuffle and Play).
-        var shuffleActionID: String
-        var canShuffle: Bool
     }
 
     var header: Header? = nil
@@ -89,6 +88,7 @@ final class CarPlayListRenderer {
     /// changes wait while a push runs.
     private var holdsHeader = false
     private var headerPending = false
+    private var detailsHeader: CPListTemplateDetailsHeader?
     private weak var template: CPListTemplate?
     private static let headerSlotID = "listHeader"
     private let loadArtwork: @MainActor (Row.Artwork) async -> UIImage?
@@ -159,7 +159,13 @@ final class CarPlayListRenderer {
     }
 
     /// Holds header changes from the start of a push until it has finished.
+    /// A header still waiting for its art is assigned first, so the list is
+    /// pushed with it.
     func holdHeaderChanges() {
+        if headerPending, detailsHeader == nil, let template {
+            headerPending = false
+            applyHeader(on: template)
+        }
         holdsHeader = true
     }
 
@@ -346,35 +352,43 @@ final class CarPlayListRenderer {
 
     private static let placeholder = UIImage(systemName: "music.note") ?? UIImage()
 
+    /// The first header waits for its art (or the push), so a list gets one
+    /// header; later changes wait while a push runs.
     private func applyHeaderUnlessHeld(on template: CPListTemplate) {
-        guard !holdsHeader else {
+        let awaitsArt = detailsHeader == nil
+            && presentation.header.map { $0.artwork != nil && $0.artwork != settledHeaderArtwork } == true
+        guard !holdsHeader, !awaitsArt else {
             headerPending = true
             return
         }
         applyHeader(on: template)
     }
 
-    /// Builds the list header afresh: CarPlay updates it on assignment.
+    /// Assigns a list its header once, then changes it in place: the header
+    /// goes to the car as a copy, and a replaced one could stay on screen.
     private func applyHeader(on template: CPListTemplate) {
         guard let header = presentation.header else {
+            detailsHeader = nil
             if template.listHeader != nil {
                 template.listHeader = nil
                 record(.carPlayListMutation, "header cleared")
             }
             return
         }
-        let actionID = header.shuffleActionID
-        // Icon only: a title squeezes the button beside the art.
-        let shuffle = CPButton(image: UIImage(systemName: "shuffle") ?? UIImage()) { [weak self] _ in
-            Task { @MainActor in await self?.actions[actionID]?() }
+        let thumbnail = CPThumbnailImage(image: images[Self.headerSlotID] ?? Self.placeholder)
+        if let details = detailsHeader, template.listHeader === details {
+            details.thumbnail = thumbnail
+            details.title = header.title
+            details.subtitle = header.subtitle
+            record(.carPlayListMutation, "header fields")
+            return
         }
-        shuffle.isEnabled = header.canShuffle
         let details = CPListTemplateDetailsHeader(
-            thumbnail: CPThumbnailImage(image: images[Self.headerSlotID] ?? Self.placeholder),
-            title: header.title, subtitle: header.subtitle, actionButtons: [shuffle]
+            thumbnail: thumbnail, title: header.title, subtitle: header.subtitle, actionButtons: []
         )
         details.wantsAdaptiveBackgroundStyle = true
         template.listHeader = details
+        detailsHeader = details
         record(.carPlayListMutation, "header")
     }
 
@@ -434,11 +448,16 @@ final class CarPlayListRenderer {
                 guard current.first(where: { $0.id == slot.id })?.artwork == slot.artwork else { continue }
                 if let plain { self.plainImages[slot.id] = (slot.artwork.plain, plain) }
                 // Keep the previous image through loading and failures.
-                if slot.id == Self.headerSlotID { self.settledHeaderArtwork = slot.artwork }
-                if let image, slot.id == Self.headerSlotID {
-                    self.images[slot.id] = image
-                    self.loadedArtwork[slot.id] = slot.artwork
-                    if let template = self.template { self.applyHeaderUnlessHeld(on: template) }
+                if slot.id == Self.headerSlotID {
+                    self.settledHeaderArtwork = slot.artwork
+                    if let image {
+                        self.images[slot.id] = image
+                        self.loadedArtwork[slot.id] = slot.artwork
+                    }
+                    // A failed load still lets a waiting first header go up.
+                    if let template = self.template, image != nil || self.detailsHeader == nil {
+                        self.applyHeaderUnlessHeld(on: template)
+                    }
                 } else if let image {
                     self.items[slot.id]?.setImage(image)
                     self.elements[slot.id]?.image = image

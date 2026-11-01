@@ -69,6 +69,43 @@ enum CarPlayNowPlayingButtonImageFactory {
     }
 }
 
+/// The Shuffle and Play row above a track list, run by its "shuffle" action.
+/// A row, not a header button: CarPlay dropped most taps on a header's
+/// button while every row tap arrived (2026-11-01). On a list whose songs
+/// are still loading the row is enabled, and a tap plays once they arrive.
+struct CarPlayShuffleRow {
+    private(set) var isLoading = false
+    private var tapWaiting = false
+
+    static func section(enabled: Bool) -> CarPlayListPresentation.Section {
+        .init(id: "actions", rows: [.init(id: "shuffle", title: "Shuffle and Play", isEnabled: enabled,
+                                          artwork: .symbol("shuffle"))])
+    }
+
+    func section(hasSongs: Bool) -> CarPlayListPresentation.Section {
+        Self.section(enabled: hasSongs || isLoading)
+    }
+
+    /// A new list's songs start loading; a tap on an earlier list is dropped.
+    mutating func beginLoading() {
+        isLoading = true
+        tapWaiting = false
+    }
+
+    /// Whether a tap plays now. While the songs load it waits for them.
+    mutating func tap() -> Bool {
+        guard isLoading else { return true }
+        tapWaiting = true
+        return false
+    }
+
+    /// The songs arrived: whether a waiting tap plays now.
+    mutating func finishLoading(hasSongs: Bool) -> Bool {
+        defer { isLoading = false; tapWaiting = false }
+        return tapWaiting && hasSongs
+    }
+}
+
 @MainActor
 final class CarPlayCoordinator: NSObject {
     private weak var interfaceController: CPInterfaceController?
@@ -104,6 +141,7 @@ final class CarPlayCoordinator: NSObject {
     private var visibleLibraryItem: OpenCollection?
     private var visibleLibraryEntries: [LibraryBrowser.Entry] = []
     private var libraryItemPlaceholder: String?
+    private var libraryItemShuffle = CarPlayShuffleRow()
     /// The failure kind last alerted in this episode; nil when none is active.
     private var alertedFailureKind: PlaybackFailure.Kind?
     private weak var failureAlert: CPAlertTemplate?
@@ -411,6 +449,7 @@ final class CarPlayCoordinator: NSObject {
         visibleLibraryItem = item
         visibleLibraryEntries = []
         libraryItemPlaceholder = "Loading…"
+        libraryItemShuffle.beginLoading()
         updateLibraryItemList(template)
         Task { [weak self, weak template] in
             var entries: [LibraryBrowser.Entry] = []
@@ -424,7 +463,9 @@ final class CarPlayCoordinator: NSObject {
             guard let self, let template, self.libraryItemTemplate === template else { return }
             self.visibleLibraryEntries = entries
             self.libraryItemPlaceholder = placeholder
+            let playsWaitingTap = self.libraryItemShuffle.finishLoading(hasSongs: !entries.isEmpty)
             self.updateLibraryItemList(template)
+            if playsWaitingTap { await self.playLibraryItem(startingAt: nil) }
         }
         await pushList(template, renderer: libraryItemRenderer) { [weak self] in self?.libraryItemTemplate === template }
     }
@@ -439,6 +480,7 @@ final class CarPlayCoordinator: NSObject {
         visibleLibraryItem = nil
         visibleLibraryEntries = []
         libraryItemPlaceholder = nil
+        libraryItemShuffle = CarPlayShuffleRow()
     }
 
     /// Shuffle and Play, then the songs, like a Recent Deep Dive.
@@ -447,7 +489,7 @@ final class CarPlayCoordinator: NSObject {
         typealias Row = CarPlayListPresentation.Row
         let groupKey = item.collection.groupKey
         var actions: [String: @MainActor () async -> Void] = [
-            "shuffle": { [weak self] in await self?.playLibraryItem(startingAt: nil) }
+            "shuffle": { [weak self] in await self?.shuffleLibraryItem() }
         ]
         let songs = RecentCollectionPresentation.songs(visibleLibraryEntries.map(\.song), rowID: Self.libraryRowID, in: modelContext)
         let rows: [Row] = songs.prefix(max(0, CPListTemplate.maximumItemCount - 1)).map { song in
@@ -459,14 +501,22 @@ final class CarPlayCoordinator: NSObject {
         let header = CarPlayListPresentation.Header(
             title: item.title,
             subtitle: "\(item.kindName) · \(PlaylistSummaryPresentation.trackCountLabel(songs.count))",
-            artwork: .track(url: item.artworkURL, playlistID: ArtworkCacheService.libraryPlaylistID, size: 512),
-            shuffleActionID: "shuffle",
-            canShuffle: !rows.isEmpty
+            artwork: .track(url: item.artworkURL, playlistID: ArtworkCacheService.libraryPlaylistID, size: 512)
         )
         libraryItemRenderer.update(.init(header: header, sections: [
+            libraryItemShuffle.section(hasSongs: !rows.isEmpty),
             .init(id: "tracks", rows: rows.isEmpty
                 ? [Row(id: "empty", title: libraryItemPlaceholder ?? "No songs Overplay can play.", isEnabled: false)] : rows)
         ]), on: template, actions: actions)
+    }
+
+    /// Shuffle and Play, or, while the songs load, once they arrive.
+    private func shuffleLibraryItem() async {
+        guard libraryItemShuffle.tap() else {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "CarPlay shuffle waits for the songs")
+            return
+        }
+        await playLibraryItem(startingAt: nil)
     }
 
     /// The shared Library action (`LIB-001`, `SURFACE-003`); CarPlay only
@@ -604,11 +654,10 @@ final class CarPlayCoordinator: NSObject {
         let header = CarPlayListPresentation.Header(
             title: recent.title,
             subtitle: PlaylistSummaryPresentation.trackCountLabel(songs.count),
-            artwork: .track(url: recent.artworkURLTemplate, playlistID: playlistID, size: 512),
-            shuffleActionID: "shuffle",
-            canShuffle: !rows.isEmpty
+            artwork: .track(url: recent.artworkURLTemplate, playlistID: playlistID, size: 512)
         )
         recentRenderer.update(.init(header: header, sections: [
+            CarPlayShuffleRow.section(enabled: !rows.isEmpty),
             .init(id: "tracks", rows: rows.isEmpty
                 ? [Row(id: "empty", title: "No songs saved", isEnabled: false)] : rows)
         ]), on: template, actions: actions)
@@ -806,17 +855,15 @@ final class CarPlayCoordinator: NSObject {
                 isPlaying: isCurrentTrack(summary, in: playlist), isEnabled: summary.isPlayable,
                 artwork: .track(url: summary.artworkURLString, playlistID: playlist.musicPlaylistID))
         }
-        // The playlist's art over its tracks, as on the phone, with a shuffle
-        // button in the header.
+        // The playlist's art over Shuffle and Play and its tracks, as on the phone.
         let header = CarPlayListPresentation.Header(
             title: template.title ?? playlist.name,
             subtitle: PlaylistSummaryPresentation.trackCountLabel(tracks.count),
             artwork: PlaylistCollageService.snapshot(for: playlist, scope: scope)
-                .map { .collage($0, playlistID: playlist.musicPlaylistID, scope: scope) },
-            shuffleActionID: "shuffle",
-            canShuffle: !rows.isEmpty
+                .map { .collage($0, playlistID: playlist.musicPlaylistID, scope: scope) }
         )
         playlistRenderer.update(.init(header: header, sections: [
+            CarPlayShuffleRow.section(enabled: !rows.isEmpty),
             .init(id: "tracks", rows: rows.isEmpty
                 ? [Row(id: "empty", title: "No playable tracks", detail: "Sync this playlist in Overplay.", isEnabled: false)] : rows)
         ]), on: template, actions: actions)
@@ -874,7 +921,10 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func shuffleAndPlay(_ playlist: PlaylistRecord, scope: PlaylistPlaybackScope) async {
-        guard runtime?.libraryRestoration.isReady == true, let playbackController, let modelContext else { return }
+        guard runtime?.libraryRestoration.isReady == true, let playbackController, let modelContext else {
+            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "CarPlay shuffle ignored: library not ready")
+            return
+        }
         do {
             let settings = try SettingsRepository.settings(in: modelContext)
             await MusicKitActivityLog.shared.withOrigin(.carPlay) {

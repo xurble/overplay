@@ -1252,7 +1252,7 @@ CloudKit schema.
   left on an active one) is not offered. Playback goes on.
 - **CarPlay:** a "Recent Deep Dives" strip of artwork tiles under the
   playlists on the root (hidden when empty). A tile opens that entry's songs
-  under a header with its art and Shuffle and Play, and then Now Playing; the strip's title
+  under a header with its art, Shuffle and Play first, and then Now Playing; the strip's title
   opens the list of up to 10 entries. Strip tiles have no system playing
   indicator, so the playing entry's subtitle reads "Now Playing".
 - **CarPlay Back:** while an entry plays, Back from Now Playing goes to that
@@ -1370,7 +1370,7 @@ like Recent Deep Dives, each titled with the mix's name.
 - **CarPlay:** a "Made For You" strip of artwork tiles below Recent Deep Dives
   on the root (hidden when there are no mixes). A tile opens the mix as a
   Library item opens: "Loading…" until its songs arrive, under a header with
-  its art and Shuffle and Play, playing through the same shared action. The
+  its art, Shuffle and Play first, playing through the same shared action. The
   playing mix's subtitle reads "Now Playing"; the strip's title opens nothing.
 
 ## Library

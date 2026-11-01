@@ -96,7 +96,7 @@ struct CarPlayListRendererTests {
         #expect(renderer.items["main"]?.image != nil)
     }
 
-    @Test("a track list's header carries the list's art, title, count and an icon-only shuffle button")
+    @Test("a track list gets one header, with its art and title and no button, changed in place after")
     func headerIsApplied() async throws {
         var details: [String] = []
         var loaded: [CarPlayListPresentation.Row.Artwork] = []
@@ -108,39 +108,36 @@ struct CarPlayListRendererTests {
         let template = CPListTemplate(title: "Overplay", sections: [])
         let art = CarPlayListPresentation.Row.Artwork.track(url: "https://example.com/{w}x{h}.jpg", playlistID: "p", size: 512)
         var state = CarPlayListPresentation(
-            header: .init(title: "Overplay", subtitle: "2 tracks", artwork: art, shuffleActionID: "shuffle", canShuffle: true),
+            header: .init(title: "Overplay", subtitle: "2 tracks", artwork: art),
             sections: [.init(id: "tracks", rows: [
                 .init(id: "one", title: "One", artwork: .symbol("music.note")),
                 .init(id: "two", title: "Two")
             ])]
         )
         renderer.update(state, on: template, actions: ["shuffle": {}])
+        #expect(template.sections.map { $0.items.count } == [2])
 
+        // The header waits for its art, then goes up once.
+        #expect(template.listHeader == nil)
+        let deadline = ContinuousClock.now + .seconds(2)
+        while template.listHeader == nil, ContinuousClock.now < deadline { await Task.yield() }
+        #expect(loaded.first == art)
         let header = try #require(template.listHeader as? CPListTemplateDetailsHeader)
         #expect(header.title == "Overplay")
         #expect(header.subtitle == "2 tracks")
         #expect(header.wantsAdaptiveBackgroundStyle)
-        let button = try #require(header.actionButtons.first)
-        #expect(header.actionButtons.count == 1)
-        #expect(button.title == nil)
-        #expect(button.isEnabled)
-        #expect(template.sections.map { $0.items.count } == [2])
+        #expect(header.actionButtons.isEmpty)
+        #expect(details.filter { $0 == "header" }.count == 1)
 
-        // The header's art loads first, then is applied to a new header.
-        let deadline = ContinuousClock.now + .seconds(2)
-        while loaded.count < 2, ContinuousClock.now < deadline { await Task.yield() }
-        #expect(loaded.first == art)
-        #expect(template.listHeader !== header)
-
-        // An unchanged refresh leaves the header alone; an empty list disables Shuffle.
+        // An unchanged refresh leaves the header alone; a change edits the same header.
         details.removeAll()
         renderer.update(state, on: template, actions: ["shuffle": {}])
-        #expect(!details.contains("header"))
-        state.header?.canShuffle = false
+        #expect(!details.contains { $0.hasPrefix("header") })
+        state.header?.subtitle = "3 tracks"
         renderer.update(state, on: template, actions: ["shuffle": {}])
-        #expect(details.contains("header"))
-        let disabled = try #require((template.listHeader as? CPListTemplateDetailsHeader)?.actionButtons.first)
-        #expect(!disabled.isEnabled)
+        #expect(details == ["header fields"])
+        #expect(template.listHeader === header)
+        #expect(header.subtitle == "3 tracks")
 
         state.header = nil
         renderer.update(state, on: template, actions: [:])
@@ -148,7 +145,7 @@ struct CarPlayListRendererTests {
         #expect(details.last == "header cleared")
     }
 
-    @Test("a list waits for its header art before a push, and a header arriving mid-push waits for the push to end")
+    @Test("a list is pushed with its header, and art arriving mid-push changes it in place once the push ends")
     func headerIsNotReplacedDuringAPush() async throws {
         var details: [String] = []
         var release: CheckedContinuation<Void, Never>?
@@ -160,25 +157,29 @@ struct CarPlayListRendererTests {
         let template = CPListTemplate(title: "Overplay", sections: [])
         let art = CarPlayListPresentation.Row.Artwork.track(url: "https://example.com/{w}x{h}.jpg", playlistID: "p", size: 512)
         renderer.update(CarPlayListPresentation(
-            header: .init(title: "Overplay", subtitle: "2 tracks", artwork: art, shuffleActionID: "shuffle", canShuffle: true),
+            header: .init(title: "Overplay", subtitle: "2 tracks", artwork: art),
             sections: [.init(id: "tracks", rows: [.init(id: "one", title: "One")])]
         ), on: template, actions: [:])
-        let placeholder = try #require(template.listHeader)
+        #expect(template.listHeader == nil)
 
         // The art never arrives in time: the wait ends at its limit.
         let started = ContinuousClock.now
         await renderer.headerArtwork(within: .milliseconds(100))
         #expect(ContinuousClock.now - started >= .milliseconds(100))
 
-        // The push starts; the art lands mid-push and is held until it ends.
+        // The push starts with the placeholder header; the art lands mid-push
+        // and waits until the push ends, then fills the same header.
         renderer.holdHeaderChanges()
+        let header = try #require(template.listHeader as? CPListTemplateDetailsHeader)
+        let placeholder = header.thumbnail
         details.removeAll()
         try #require(release).resume()
         try await Task.sleep(for: .milliseconds(100))
-        #expect(template.listHeader === placeholder)
+        #expect(header.thumbnail === placeholder)
         renderer.releaseHeaderChanges()
-        #expect(template.listHeader !== placeholder)
-        #expect(details == ["header"])
+        #expect(template.listHeader === header)
+        #expect(header.thumbnail !== placeholder)
+        #expect(details == ["header fields"])
 
         // Settled art ends the wait at once.
         let again = ContinuousClock.now

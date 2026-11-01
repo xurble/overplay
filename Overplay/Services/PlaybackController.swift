@@ -1169,6 +1169,7 @@ final class PlaybackController {
             await play(context: context)
             return
         }
+        activityLog.record(.playbackSelectionPath, detail: "shuffleNewIntent")
         await startPlayback(playlist, scope: scope, startingTrackID: nil, shuffle: true, context: context)
     }
 

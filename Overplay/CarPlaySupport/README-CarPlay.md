@@ -36,15 +36,17 @@ The root template has no navigation-bar actions. It shows:
 
 Each of these three track lists, and each Recent Deep Dive's songs, opens under
 a list header (iOS 26.4): the list's art, its title and track count, a background
-tinted from the art, and a **Shuffle and Play** button (the shuffle symbol
-alone: a title squeezes it beside the art), above the
-tracks in display order (newest-added first; Retired newest-retired first). The action uses the shared controller's
+tinted from the art. Below it a **Shuffle and Play** row (the shuffle symbol),
+then the tracks in display order (newest-added first; Retired newest-retired first). The action uses the shared controller's
 playlist playback path, stops existing playback, selects a random starting track,
 and enables MusicKit shuffle without changing the displayed playlist order. It
 preserves the displayed Active or Retired scope and opens Now Playing on success.
 It remains available when that playlist is already playing, matching the phone's
-Shuffle and Play button. Empty lists show the button
-disabled. Row symbols are left to CarPlay's default colours: tinting them was
+Shuffle and Play button. Empty lists show the row
+disabled; a Library item's row is enabled while its songs load, and a tap then
+plays when they arrive. It is a row, not a header button: CarPlay dropped most
+taps on a header's Shuffle button while every row tap arrived (2026-11-01). The
+header is assigned once per list and then changed in place. Row symbols are left to CarPlay's default colours: tinting them was
 tried and did not show in the car. The playing track's indicator sits over its
 artwork, as in Music. Shuffle and repeat also remain available as Now Playing controls.
 
