@@ -88,7 +88,7 @@ struct CollectionSongListView<Artwork: View>: View {
                     }
                     .buttonStyle(.plain)
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
-                    .swipeActions(edge: .leading) {
+                    .songRowActions {
                         if song.canMoveToOneTruePlaylist {
                             Button {
                                 Task { await onMove(song, true) }
@@ -98,8 +98,7 @@ struct CollectionSongListView<Artwork: View>: View {
                             .accessibilityLabel("Add to One True Playlist")
                             .tint(.pink)
                         }
-                    }
-                    .swipeActions(edge: .trailing) {
+                    } trailing: {
                         if song.canMoveToTriage {
                             Button {
                                 Task { await onMove(song, false) }

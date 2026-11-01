@@ -11,6 +11,11 @@ struct ShellCommands {
     var playPause: () -> Void
     var next: () -> Void
     var previous: () -> Void
+    /// The playing song's moves, as Now Playing offers them; nil where it
+    /// doesn't, or with no song.
+    var promote: (() -> Void)?
+    var retire: (() -> Void)?
+    var moveToInbox: (() -> Void)?
 }
 
 extension FocusedValues {
@@ -67,7 +72,10 @@ struct OverplayCommands: Commands {
             go("History", .history, key: "y")
         }
 
-        CommandMenu("Controls") {
+        // ⌘P is Promote: Overplay has nothing to print.
+        CommandGroup(replacing: .printItem) {}
+
+        CommandMenu("Songs") {
             Button("Play/Pause") { shell?.playPause() }
                 .disabled(shell == nil)
             Button("Next") { shell?.next() }
@@ -76,7 +84,17 @@ struct OverplayCommands: Commands {
             Button("Previous") { shell?.previous() }
                 .keyboardShortcut(.leftArrow)
                 .disabled(shell == nil || isEditingText == true)
+            Divider()
+            songMove("Promote", shell?.promote, key: "p")
+            songMove("Retire", shell?.retire, key: "r")
+            songMove("Move To Inbox", shell?.moveToInbox, key: "i")
         }
+    }
+
+    private func songMove(_ title: String, _ action: (() -> Void)?, key: KeyEquivalent) -> some View {
+        Button(title) { action?() }
+            .keyboardShortcut(key)
+            .disabled(action == nil || isEditingText == true)
     }
 
     @ViewBuilder

@@ -124,7 +124,7 @@ private struct PlaylistManagementContentView: View {
                         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
                         // Right promotes to the One True Playlist; left
                         // retires, or moves a retired track to Triage.
-                        .swipeActions(edge: .leading) {
+                        .songRowActions {
                             if row.isRetired || (row.isPlayable && playlist.role == .triageBucket) {
                                 Button {
                                     Task { await promote(row) }
@@ -135,8 +135,7 @@ private struct PlaylistManagementContentView: View {
                                 .tint(.pink)
                                 .disabled(viewModel.promotingItemIDs.contains(row.id))
                             }
-                        }
-                        .swipeActions(edge: .trailing) {
+                        } trailing: {
                             if row.isRetired {
                                 Button {
                                     Task { await restore(row) }

@@ -2375,6 +2375,28 @@ final class PlaybackController {
         return true
     }
 
+    /// A One True Playlist song back to the Inbox, as its row offers. The Mac
+    /// menu bar's Move To Inbox; Now Playing doesn't offer it.
+    @discardableResult
+    func moveCurrentToInbox(context: ModelContext) -> Bool {
+        adopt(context)
+        guard let item = displayedPlaylistItem(context: context),
+              let playlist = try? PlaylistRepository.playlist(id: item.playlistID, in: context),
+              playlist.role == .oneTruePlaylist, item.evictedAt == nil else {
+            statusMessage = "Choose a One True Playlist song to move to the Inbox."
+            return false
+        }
+        do {
+            try moveTrackToInbox(item, playlist: playlist, context: context)
+            reconcileStoredOrder(for: playlist, context: context)
+        } catch {
+            statusMessage = UserFacingError.message(for: error)
+            return false
+        }
+        statusMessage = "Moved to the Inbox."
+        return true
+    }
+
     @discardableResult
     func resetCurrentSkipCount(context: ModelContext, message: String = "Skip count reset by user") -> Bool {
         guard let item = displayedPlaylistItem(context: context),

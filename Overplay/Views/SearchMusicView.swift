@@ -113,7 +113,7 @@ struct SearchMusicView: View {
                     .buttonStyle(.plain)
                     .accessibilityHint("Plays this song")
                     .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 16))
-                    .swipeActions(edge: .leading) {
+                    .songRowActions(showsMenu: false) {
                         if song.canMoveToOneTruePlaylist {
                             Button {
                                 Task { await move(result, toOneTruePlaylist: true) }
@@ -123,8 +123,7 @@ struct SearchMusicView: View {
                             .accessibilityLabel("Add to One True Playlist")
                             .tint(.pink)
                         }
-                    }
-                    .swipeActions(edge: .trailing) {
+                    } trailing: {
                         if song.canMoveToTriage {
                             Button {
                                 Task { await move(result, toOneTruePlaylist: false) }
