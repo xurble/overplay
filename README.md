@@ -1,19 +1,45 @@
 # Overplay
 
-Overplay is an Apple Music player for iPhone, iPad, CarPlay and the Mac that
-keeps a main playlist fresh. Its priorities, in order, decide every trade-off (see
-**Product priorities** in [the spec](docs/OVERPLAY_DESIGN_SPEC.md)):
+Overplay is the Apple Music player I'm building for myself, for iPhone, iPad,
+CarPlay and the Mac. It keeps one main playlist fresh: new finds wait in an
+Inbox, I promote the ones I love, and I retire the ones I'm tired of, mostly
+from the car with the phone in my pocket.
+
+These priorities, in order, decide every trade-off (see **Product priorities**
+in [the spec](docs/OVERPLAY_DESIGN_SPEC.md)):
 
 1. **A stable, fast, reliable music player.**
 2. **CarPlay and Siri first:** playlist management with the phone in a pocket.
-   Siri support is planned for v1, not yet built.
+   A minimal Siri is built; checking it by voice on a device is still to do.
 3. **Reliable playlist management:** a One True Playlist, a single Inbox
    bucket and Retired, with each logical track in exactly one of them.
 4. **Statistics:** play and skip counts that inform curation, kept additive and
    best-effort.
 
 The Mac runs a Mac Catalyst build of the iPad app, which cannot write Apple
-Music playlists. A native Mac target is planned.
+Music playlists. I plan to add a native Mac target.
+
+## Screenshots
+
+On the iPhone: the dashboard, the Inbox and Now Playing.
+
+<p>
+  <img src="docs/images/iphone-dashboard.jpg" width="250" alt="The iPhone dashboard: the One True Playlist's art, the Inbox and Retired, Recent Deep Dives and the mini player">
+  <img src="docs/images/iphone-inbox.jpg" width="250" alt="The Inbox on iPhone: songs with their play and skip counts and the playlist each came from">
+  <img src="docs/images/iphone-now-playing.jpg" width="250" alt="Now Playing on iPhone, with shuffle, repeat, promote and retire above the transport controls">
+</p>
+
+On an open iPhone Duo: the sidebar, the list and Now Playing side by side.
+
+<img src="docs/images/iphone-duo-open.jpg" width="760" alt="An open iPhone Duo showing the sidebar, the Inbox and Now Playing in three columns">
+
+In CarPlay: the root list and Now Playing, where promote and retire sit beside
+shuffle and repeat.
+
+<p>
+  <img src="docs/images/carplay-home.jpg" width="376" alt="CarPlay root list: Overplay, the Inbox, Retired and Recent Deep Dives">
+  <img src="docs/images/carplay-now-playing.jpg" width="376" alt="CarPlay Now Playing with shuffle, repeat, promote and retire buttons">
+</p>
 
 ## How It Works
 
@@ -251,7 +277,7 @@ relaunching clears what it would show. Now Playing lists the steps.
 
 ## Current Status
 
-Overplay is the owner's daily music player and is working toward release. The
+Overplay is my daily music player, and I'm working toward a release. The
 core loop is in place: linked playlist management with sync and
 reconciliation, complete queue hand-off with MusicKit-owned shuffle and
 repeat, skip and playthrough tracking, manual retirement and promotion,
@@ -259,8 +285,10 @@ history, Play Album and Play Artist, Recent Deep Dives, Library browsing,
 search and manual add, CarPlay, and adaptive iPhone, iPhone Duo, iPad and Mac
 layouts.
 
-The playback rewrite passed acceptance on iPhone; its CarPlay hardware pass is
-outstanding. Siri is not built, and search needs reworking. The release plan
+The playback rewrite passed acceptance on my iPhone; its CarPlay hardware pass
+is outstanding. A minimal Siri (play the One True Playlist or the Inbox,
+promote, retire and undo) is built but not yet checked by voice, and search
+needs reworking. The release plan
 (internal TestFlight, device acceptance, v1 features, then external TestFlight
 and the App Store) is in `docs/TODO.md`. The schema may still reset until the data
 preservation decision there is made (see the pre-release data policy in
