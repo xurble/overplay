@@ -2,7 +2,6 @@ import SwiftData
 import SwiftUI
 
 struct DashboardView: View {
-    @Environment(\.openWindow) private var openWindow
     @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackController.self) private var playbackController
 
@@ -146,20 +145,15 @@ struct DashboardView: View {
             if hasVerticalBar {
                 ToolbarItem(placement: .topBarLeading) { searchButton }
             }
-            ToolbarItem(placement: .topBarLeading) {
-                // A title as well as a symbol: a vertical bar's overflow menu
-                // (iPhone Duo) lists items by title. A Mac opens its own window.
-                if ProcessInfo.processInfo.isMacCatalystApp {
-                    Button {
-                        SettingsWindowView.open(with: openWindow)
-                    } label: {
-                        Label("Settings", systemImage: "gearshape")
-                    }
-                    .untinted()
-                } else {
-                    // Buttons, not value links: in a toolbar a value link
-                    // fired as the stack's path was replaced, so a Mac
-                    // sidebar choice passed through Search.
+            // A Mac reaches Settings from its app menu (owner request,
+            // 2026-10-31).
+            if !ProcessInfo.processInfo.isMacCatalystApp {
+                ToolbarItem(placement: .topBarLeading) {
+                    // A title as well as a symbol: a vertical bar's overflow
+                    // menu (iPhone Duo) lists items by title. Buttons, not
+                    // value links: in a toolbar a value link fired as the
+                    // stack's path was replaced, so a Mac sidebar choice
+                    // passed through Search.
                     Button { shellNavigator?.show(.settings) } label: {
                         Label("Settings", systemImage: "gearshape")
                     }

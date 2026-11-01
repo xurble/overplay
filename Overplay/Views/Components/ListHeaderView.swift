@@ -36,9 +36,16 @@ struct ListHeaderView<Details: View, Artwork: View>: View {
                     .containerRelativeFrame(.horizontal) { length, _ in (length * artworkWidth).rounded(.down) }
             } else {
                 artwork()
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: Self.maxArtworkSide)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    /// On a Mac the artwork grows no larger than it is in the smallest
+    /// window, whatever the window's size (owner request, 2026-10-31).
+    private static var maxArtworkSide: CGFloat {
+        ProcessInfo.processInfo.isMacCatalystApp ? 450 * SplitLayoutPolicy.macScale : .infinity
     }
 }
 

@@ -40,6 +40,7 @@ struct SplitAppShell: View {
         // needs; it is inset by the player's width and the player is drawn in
         // that space, beside the sidebar and list, never over them.
         splitView
+            .environment(\.macMiniPlayerInset, showsMacMiniPlayer ? MiniPlayerToolbarView.height + 2 * Self.macMiniPlayerMargin : 0)
             .padding(.leading, sidebarPanelIsColumn ? sidebarPanelInset : 0)
             .padding(.trailing, showsPlayerColumn && !isStackedAtFold ? nowPlayingWidth + 1 : 0)
             .padding(.bottom, isStackedAtFold ? stackedPlayerHeight + 1 : 0)
@@ -155,6 +156,7 @@ struct SplitAppShell: View {
     private var splitView: some View {
         NavigationSplitView(columnVisibility: columnVisibility) {
             sidebarList()
+                .modifier(MacSidebarWidth())
                 // The panel has its own button (`SidebarPanelToggle`).
                 .toolbar(removing: usesSidebarPanel ? .sidebarToggle : nil)
         } detail: {
@@ -166,10 +168,12 @@ struct SplitAppShell: View {
                     .navigationDestination(for: AppShellDestination.self) { destination in
                         destinationView(destination)
                     }
+                    .macStaticNavigation()
             }
             // Hidden while a sidebar choice replaces the screen, so no
             // navigation is seen (owner request, 2026-10-30).
             .opacity(isDetailFaded ? 0 : 1)
+            .overlay(alignment: .bottomLeading) { macMiniPlayer }
             .background { SplitViewSwipeSwitch(presentsWithGesture: !usesSidebarPanel) }
         }
         .onChange(of: shellNavigator?.request) { _, request in
@@ -200,15 +204,19 @@ struct SplitAppShell: View {
         // the phone folds marked the compact one, just shown, as away.
         .environment(\.compactHome, nil)
         .environment(\.listHeaderArtworkWidth, isStackedAtFold ? (showsSidebarPanel ? 0.75 : 0.5) : nil)
-        .environment(\.sidebarPanelToggle, usesSidebarPanel ? SidebarPanelToggle(
-            isShown: sidebarPanelShown,
-            // The panel carries the button while it shows.
-            showsButton: !sidebarPanelShown
-        ) {
-            withAnimation(.smooth) { sidebarPanelShown.toggle() }
-        } : nil)
+        .environment(\.sidebarPanelToggle, sidebarToggle)
         .focusedSceneValue(\.shellCommands, shellCommands)
     }
+
+    /// The panel's button on the list, which replaces the split view's.
+    private var sidebarToggle: SidebarPanelToggle? {
+        guard usesSidebarPanel else { return nil }
+        // The panel carries the button while it shows.
+        return SidebarPanelToggle(isShown: sidebarPanelShown, showsButton: !sidebarPanelShown) {
+            withAnimation(.smooth) { sidebarPanelShown.toggle() }
+        }
+    }
+
 
     /// The sidebar's choices: the split view's own sidebar, or the panel
     /// beside the list in halves.
@@ -216,75 +224,82 @@ struct SplitAppShell: View {
         // While the panel stands in for it, the split view's hidden sidebar
         // doesn't follow the choice: a change in its selection made the split
         // view pop the list to the dashboard, which slid out in view.
-        List(selection: isPanel || !usesSidebarPanel ? selection : .constant(nil)) {
+        // A Mac's sidebar is never hidden but drives the list the same way,
+        // so its rows choose by button and draw their own highlight.
+        List(selection: isPanel || !(usesSidebarPanel || SplitLayoutPolicy.keepsColumns) ? selection : .constant(nil)) {
             Section {
                 Label("Dashboard", systemImage: "rectangle.grid.2x2")
-                    .tag(AppShellDestination.dashboard)
-                    .listRowBackground(isPanel ? Color.clear : nil)
+                    .modifier(sidebarRow(.dashboard, isPanel: isPanel))
                     .accessibilityIdentifier("sidebar-dashboard")
                 Label("Search", systemImage: "magnifyingglass")
-                    .tag(AppShellDestination.search)
-                    .listRowBackground(isPanel ? Color.clear : nil)
+                    .modifier(sidebarRow(.search, isPanel: isPanel))
                     .accessibilityIdentifier("sidebar-search")
                 // A Mac reaches these from its menus (`OverplayCommands`)
                 // and its Settings window.
                 if !SplitLayoutPolicy.keepsColumns {
                     Label("History", systemImage: "clock.arrow.circlepath")
-                        .tag(AppShellDestination.history)
-                        .listRowBackground(isPanel ? Color.clear : nil)
+                        .modifier(sidebarRow(.history, isPanel: isPanel))
                         .accessibilityIdentifier("sidebar-history")
                     Label("Settings", systemImage: "gearshape")
-                        .tag(AppShellDestination.settings)
-                        .listRowBackground(isPanel ? Color.clear : nil)
+                        .modifier(sidebarRow(.settings, isPanel: isPanel))
                         .accessibilityIdentifier("sidebar-settings")
                 }
             }
 
-            Section("Overplaying") {
+            Section {
                 ForEach(activePlaylists) { playlist in
                     Label(playlist.name, systemImage: playlistIcon(for: playlist))
                         .accessibilityValue(playbackController.isPlaying(playlist.playbackContext()) ? "Now playing" : "")
-                        .tag(AppShellDestination.playlist(playlist.id))
-                        .listRowBackground(isPanel ? Color.clear : nil)
+                        .modifier(sidebarRow(.playlist(playlist.id), isPanel: isPanel))
                         .accessibilityIdentifier("sidebar-playlist-\(playlist.name)")
                 }
 
                 Label("Retired", systemImage: retiredIcon)
                     .accessibilityValue(isRetiredPlaying ? "Now playing" : "")
-                    .tag(AppShellDestination.retired)
-                    .listRowBackground(isPanel ? Color.clear : nil)
+                    .modifier(sidebarRow(.retired, isPanel: isPanel))
                     .accessibilityIdentifier("sidebar-retired")
 
                 Label("Deep Dives", systemImage: "square.stack.3d.up")
-                    .tag(AppShellDestination.deepDives)
-                    .listRowBackground(isPanel ? Color.clear : nil)
+                    .modifier(sidebarRow(.deepDives, isPanel: isPanel))
                     .accessibilityIdentifier("sidebar-deep-dives")
 
                 // Apple Music's mixes for this account (`MFY-001`), as a grid.
                 Label("Made For You", systemImage: "person.crop.square")
-                    .tag(AppShellDestination.madeForYouAll)
-                    .listRowBackground(isPanel ? Color.clear : nil)
+                    .modifier(sidebarRow(.madeForYouAll, isPanel: isPanel))
                     .accessibilityIdentifier("sidebar-made-for-you")
+            } header: {
+                sidebarHeader("Overplaying", isPanel: isPanel)
             }
 
             // The Apple Music library by category, as on the phone's
             // dashboard (`LIB-001`).
-            Section("Library") {
+            Section {
                 ForEach(LibraryBrowser.Category.allCases) { category in
                     Label(category.rawValue, systemImage: category.systemImage)
-                        .tag(AppShellDestination.library(category))
-                        .listRowBackground(isPanel ? Color.clear : nil)
+                        .modifier(sidebarRow(.library(category), isPanel: isPanel))
                         .accessibilityIdentifier("sidebar-library-\(category.rawValue)")
                 }
+            } header: {
+                sidebarHeader("Library", isPanel: isPanel)
             }
         }
         .miniPlayerScrollContentInset()
         // The panel's list is plain: as a sidebar list outside the split
         // view it drew each section as a card with rounded ends.
         .modifier(SidebarListStyle(isPanel: isPanel))
+        // A Mac sidebar's sizes follow Notes' (`SidebarRow`).
+        .contentMargins(.horizontal, SplitLayoutPolicy.keepsColumns && !isPanel ? 2 : nil, for: .scrollContent)
+        .transformEnvironment(\.defaultMinListRowHeight) { height in
+            if SplitLayoutPolicy.keepsColumns, !isPanel { height = 0 }
+        }
         .modifier(SidebarArtworkTint())
             // The Mac window has no title bar to fill; its sidebar shows none.
         .navigationTitle(SplitLayoutPolicy.keepsColumns ? "" : "Overplay")
+    }
+
+    /// In from the edge as far as a Mac sidebar's icons, as in Notes.
+    private func sidebarHeader(_ title: LocalizedStringKey, isPanel: Bool) -> some View {
+        Text(title).padding(.leading, SplitLayoutPolicy.keepsColumns && !isPanel ? 8 : 0)
     }
 
     private func destinationView(_ destination: AppShellDestination) -> some View {
@@ -426,6 +441,21 @@ struct SplitAppShell: View {
 
     private var showsPlayerColumn: Bool { showsNowPlaying || isPinnedAtFold }
 
+    /// A Mac with Now Playing hidden shows a mini player instead.
+    private var showsMacMiniPlayer: Bool { SplitLayoutPolicy.keepsColumns && columnToggle?.isShown == false }
+
+    private static let macMiniPlayerMargin: CGFloat = 16
+
+    /// At the bottom of the list, beside the sidebar, as wide as it needs
+    /// (owner request, 2026-10-31).
+    @ViewBuilder private var macMiniPlayer: some View {
+        if showsMacMiniPlayer, let columnToggle {
+            MiniPlayerToolbarView(settings: settings, onOpen: columnToggle.toggle)
+                .padding(Self.macMiniPlayerMargin)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
     /// The menu bar's view of this window.
     private var shellCommands: ShellCommands {
         ShellCommands(
@@ -435,8 +465,47 @@ struct SplitAppShell: View {
             nowPlaying: columnToggle,
             playPause: { Task { await playbackController.performPrimaryPlaybackAction(settings: settings, context: modelContext) } },
             next: { Task { await playbackController.next(settings: settings, context: modelContext) } },
-            previous: { Task { await playbackController.previous(context: modelContext) } }
+            previous: { Task { await playbackController.previous(context: modelContext) } },
+            promote: currentSongMoves.promote,
+            retire: currentSongMoves.retire,
+            moveToInbox: currentSongMoves.moveToInbox
         )
+    }
+
+    /// The playing song's moves for the menu bar, offered and disabled as
+    /// Now Playing's buttons are (`NowPlayingActionButtonsView`), and Move
+    /// To Inbox for a One True Playlist song, as its row offers.
+    private var currentSongMoves: (promote: (() -> Void)?, retire: (() -> Void)?, moveToInbox: (() -> Void)?) {
+        let controller = playbackController
+        let context = modelContext
+        let role = controller.currentPlaylistRole(context: context)
+        let isRetired = controller.displayedIsEvicted(context: context)
+        let actions = CarPlayNowPlayingActionPolicy.actions(
+            playlistRole: role,
+            isRetired: isRetired,
+            canAddToOverplay: controller.canAddCurrentToOverplay
+        )
+        let isMember = controller.currentMember != nil
+        let settings = settings
+        func run(_ action: @escaping () async -> Void) -> () -> Void { { Task { await action() } } }
+
+        var promote: (() -> Void)?
+        if actions.contains(.promote), isMember {
+            promote = run { await controller.promoteCurrent(settings: settings, context: context) }
+        } else if actions.contains(.addToOneTruePlaylist), controller.canAddCurrentToOneTruePlaylist(context: context) {
+            promote = run { await controller.addCurrentToOneTruePlaylist(context: context) }
+        }
+        let retire: (() -> Void)? = actions.contains(.retire) && isMember
+            ? run { await controller.evictCurrent(settings: settings, context: context) } : nil
+        var moveToInbox: (() -> Void)?
+        if actions.contains(.restore), isMember {
+            moveToInbox = run { _ = controller.restoreCurrent(context: context) }
+        } else if actions.contains(.addToTriage) {
+            moveToInbox = run { await controller.addCurrentToTriage(context: context) }
+        } else if role == .oneTruePlaylist, !isRetired, isMember {
+            moveToInbox = run { _ = controller.moveCurrentToInbox(context: context) }
+        }
+        return (promote, retire, moveToInbox)
     }
 
     /// Divided in halves the player cannot be hidden, so there is no toggle.
@@ -609,6 +678,17 @@ struct SplitAppShell: View {
     private static let detailRevealTimeout = Duration.seconds(1.5)
     private static let detailFadeIn = 0.2
 
+    /// On a Mac the row chooses by button; elsewhere the list's selection
+    /// chooses.
+    private func sidebarRow(_ destination: AppShellDestination, isPanel: Bool) -> SidebarRow {
+        SidebarRow(
+            destination: destination,
+            isPanel: isPanel,
+            isSelected: destination == selectedDestination,
+            choose: SplitLayoutPolicy.keepsColumns ? { selection.wrappedValue = $0 } : nil
+        )
+    }
+
     private var selection: Binding<AppShellDestination?> {
         Binding {
             selectedDestination
@@ -647,6 +727,70 @@ struct SidebarArtworkTint: ViewModifier {
                 // Over a song's colour the app's purple can lose contrast:
                 // icons take the text colour, and a Mac's selection grey.
                 .tint(artworkTheme.isFallback ? nil : (ProcessInfo.processInfo.isMacCatalystApp ? Color.gray : Color.primary))
+        }
+    }
+}
+
+/// A sidebar choice. In the split view's sidebar on a Mac it is a button
+/// with a highlight of its own: a selection in that list made the split view
+/// pop the list to the dashboard, seen before the fade covered it.
+/// Its sizes follow the Mac's Notes sidebar, measured 2026-10-31: rows 32 pt
+/// apart, a 31 pt highlight 10 pt in from each edge, icons 16.5 pt in.
+private struct SidebarRow: ViewModifier {
+    var destination: AppShellDestination
+    var isPanel: Bool
+    var isSelected: Bool
+    var choose: ((AppShellDestination) -> Void)?
+
+    func body(content: Content) -> some View {
+        if let choose, !isPanel {
+            Button { choose(destination) } label: {
+                content
+                    // A Mac draws a plain button's icon in the accent colour,
+                    // not the tint a song's colour sets (`SidebarArtworkTint`).
+                    .labelStyle(TintedIconLabelStyle())
+                    // Clear of the highlight's rounded end.
+                    .padding(.leading, 8)
+                    .frame(maxWidth: .infinity, minHeight: 31, maxHeight: 31, alignment: .leading)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .listRowInsets(.vertical, 0)
+            .listRowBackground(isSelected ? highlight : nil)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
+        } else {
+            content
+                .tag(destination)
+                .listRowBackground(isPanel ? Color.clear : nil)
+        }
+    }
+
+    private var highlight: some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(.tint.opacity(0.22))
+            .padding(.horizontal, 8)
+    }
+}
+
+/// A Mac sidebar starts as wide as Notes' and drags between 155 and 325 pt.
+/// The Mac remembers a dragged width.
+private struct MacSidebarWidth: ViewModifier {
+    func body(content: Content) -> some View {
+        if SplitLayoutPolicy.keepsColumns {
+            content.navigationSplitViewColumnWidth(min: 155, ideal: 248, max: 325)
+        } else {
+            content
+        }
+    }
+}
+
+/// A label whose icon takes the tint.
+private struct TintedIconLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Label {
+            configuration.title
+        } icon: {
+            configuration.icon.foregroundStyle(.tint)
         }
     }
 }

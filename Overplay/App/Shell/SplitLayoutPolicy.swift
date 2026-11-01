@@ -35,7 +35,17 @@ enum SplitLayoutPolicy {
 
     /// Below this width (portrait on any iPad, a narrower window, likely an
     /// unfolded phone) three side-by-side columns are too narrow to use.
-    static let narrowWidth: CGFloat = 1100
+    static let narrowWidth: CGFloat = 1100 * macScale
+
+    /// A Mac draws at its own size (the Mac idiom); its sizes were chosen
+    /// when Catalyst showed the iPad's points at 77%. 1 elsewhere.
+    static var macScale: CGFloat {
+#if targetEnvironment(macCatalyst)
+        0.77
+#else
+        1
+#endif
+    }
 
     static func isNarrow(_ width: CGFloat) -> Bool {
         width > 0 && width < narrowWidth
@@ -48,7 +58,7 @@ enum SplitLayoutPolicy {
     /// would have less than 640, never below 280.
     static func playerWidth(for width: CGFloat, foldX: CGFloat? = nil) -> CGFloat {
         if let foldX, splitsAtFold(width, foldX: foldX) { return (width - foldX).rounded() }
-        guard isNarrow(width) else { return min(380, max(280, width - 640)) }
+        guard isNarrow(width) else { return (min(380, max(280, width / macScale - 640)) * macScale).rounded() }
         return (width * 0.4).rounded()
     }
 

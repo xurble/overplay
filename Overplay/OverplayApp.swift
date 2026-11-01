@@ -73,6 +73,10 @@ struct OverplayApp: App {
         WindowGroup {
             ContentView(runtime: .shared)
                 .hidesMacTitlebar()
+                .macSinglePlayerWindow()
+                // The window as the owner sized it (owner request,
+                // 2026-10-31).
+                .macMinimumWindowSize(CGSize(width: 619, height: 576))
                 .appliesAppearancePreference()
         }
         .modelContainer(modelContainer)

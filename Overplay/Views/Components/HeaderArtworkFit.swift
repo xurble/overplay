@@ -3,14 +3,14 @@ import SwiftUI
 /// Sizes the dashboard's lead artwork from the list's height and where the
 /// artwork starts, before anything is drawn: as large as leaves what must
 /// show under it on screen above the mini player (or the screen's bottom),
-/// between 120 and 420 points. Worked out while the list settles, hidden,
+/// between 120 and 420 points (less on a Mac, `SplitLayoutPolicy.macScale`). Worked out while the list settles, hidden,
 /// and shown and kept once it has: so it never comes in small and grows
 /// (owner request, 2026-10-30).
 @MainActor
 @Observable
 final class HeaderArtworkFit {
-    static let maxSide: CGFloat = 420
-    static let minSide: CGFloat = 120
+    static let maxSide: CGFloat = 420 * SplitLayoutPolicy.macScale
+    static let minSide: CGFloat = 120 * SplitLayoutPolicy.macScale
 
 
     /// The list moves while a screen opens (its first frames put its top

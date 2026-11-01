@@ -335,10 +335,23 @@ struct NowPlayingActionButtonsView: View {
 
     var settings: OverplaySettings
     var artworkTheme: AlbumArtworkTheme? = nil
+    /// Transport-sized buttons at a fixed spacing, as beside the Mac mini
+    /// player's skip buttons; nil: the player's circles.
+    var compactSize: PlaybackControlSize? = nil
 
     @State private var width: CGFloat = 0
 
     var body: some View {
+        if let compactSize {
+            HStack(spacing: compactSize.spacing) {
+                ForEach(actions, id: \.self) { button(for: $0) }
+            }
+        } else {
+            circlesRow
+        }
+    }
+
+    private var circlesRow: some View {
         // Evenly spaced, closing up and then shrinking smoothly as the column
         // narrows, so the row never widens the column it sits in (that pushed
         // the art off the screen) and nothing jumps while the sidebar moves
@@ -416,9 +429,32 @@ struct NowPlayingActionButtonsView: View {
         }
     }
 
+    @ViewBuilder
     private func circle(
         _ title: String, systemImage: String, isOn: Bool = false,
         prominence: FullScreenPlayerControlProminence = .secondary,
+        action: @escaping () async -> Void
+    ) -> some View {
+        if let compactSize {
+            Button {
+                Task { await action() }
+            } label: {
+                Image(systemName: systemImage)
+            }
+            .accessibilityLabel(title)
+            .help(title)
+            .buttonStyle(PlaybackControlButtonStyle(
+                controlSize: compactSize, prominence: .secondary, artworkTheme: nil,
+                usesSystemGlass: true, isSelected: isOn
+            ))
+        } else {
+            fullSizeCircle(title, systemImage: systemImage, isOn: isOn, prominence: prominence, action: action)
+        }
+    }
+
+    private func fullSizeCircle(
+        _ title: String, systemImage: String, isOn: Bool,
+        prominence: FullScreenPlayerControlProminence,
         action: @escaping () async -> Void
     ) -> some View {
         Button {
@@ -634,7 +670,7 @@ struct FullScreenPlayerGlassButtonStyle: ButtonStyle {
     var prominence: FullScreenPlayerControlProminence = .secondary
     /// An icon in a circle this wide: a capsule around a square.
     var circleSide: CGFloat? = nil
-    static let circleSide: CGFloat = 52
+    static let circleSide: CGFloat = 52 * SplitLayoutPolicy.macScale
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

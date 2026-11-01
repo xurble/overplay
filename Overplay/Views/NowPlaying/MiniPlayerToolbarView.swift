@@ -1,24 +1,20 @@
 import SwiftData
 import SwiftUI
 
-/// The Mac's mini player in the title bar while the Now Playing column is
-/// hidden. Tapping the song opens the column. Taller than the bar: it keeps
-/// the bar's bottom and right edges and rises towards the window's top. Its
-/// background is the sidebar's: plain glass under the same faint wash of the
-/// artwork's colour, so it fades with the window as the sidebar does, with the
-/// iOS mini player's progress line along the top. Where the window has less
-/// room above the bar (full screen), it moves down over the content rather
-/// than past the window's top.
+/// The Mac's mini player at the bottom of the window while the Now Playing
+/// column is hidden (owner request, 2026-10-31). Tapping the song opens the
+/// column; the toolbar keeps the column's button. Its background is the
+/// sidebar's: plain glass under the same faint wash of the artwork's colour,
+/// so it fades with the window as the sidebar does, with the iOS mini
+/// player's progress line along the top.
 struct MiniPlayerToolbarView: View {
     var settings: OverplaySettings
     var onOpen: () -> Void
 
-    static let height: CGFloat = 68
-    static let barHeight: CGFloat = 32
-    /// Level with the bottom of the bar's other glass.
-    private static let drop: CGFloat = 5
-    /// Full screen has no room above the bar: it moves down this far.
-    private static let fullScreenPushDown: CGFloat = 18
+    // Chosen when the Mac drew at 77% (`SplitLayoutPolicy.macScale`).
+    static let height: CGFloat = 76 * SplitLayoutPolicy.macScale
+    /// The art and buttons keep their size as the pill's padding grows.
+    static let artworkSide: CGFloat = 56 * SplitLayoutPolicy.macScale
 
     var body: some View {
         ThemedPlayerHost { artworkTheme, _ in
@@ -29,10 +25,6 @@ struct MiniPlayerToolbarView: View {
                 onOpen: onOpen
             )
         }
-        // The bar lays it out at its own height, bottom-aligned, so the extra
-        // height rises above the bar instead of pushing it down.
-        .frame(height: Self.barHeight, alignment: .bottom)
-        .offset(y: Self.drop + (MacWindowState.shared.isFullScreen ? Self.fullScreenPushDown : 0))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("toolbar-mini-player")
     }
@@ -68,7 +60,7 @@ private struct MiniPlayerToolbarPill: View {
                         cornerRadius: 14,
                         pixelSize: 128
                     )
-                    .frame(width: height - 12, height: height - 12)
+                    .frame(width: MiniPlayerToolbarView.artworkSide, height: MiniPlayerToolbarView.artworkSide)
 
                     VStack(alignment: .leading, spacing: 2) {
                         Text(playbackController.nowPlayingDisplayTrack?.title ?? "Nothing playing")
@@ -78,7 +70,7 @@ private struct MiniPlayerToolbarPill: View {
                             .foregroundStyle(.secondary)
                     }
                     .lineLimit(1)
-                    .frame(width: 210, alignment: .leading)
+                    .frame(width: 210 * SplitLayoutPolicy.macScale, alignment: .leading)
                 }
                 .contentShape(.rect)
             }
@@ -86,21 +78,16 @@ private struct MiniPlayerToolbarPill: View {
             .help("Show Now Playing")
             .accessibilityHint("Opens Now Playing")
 
-            HStack(spacing: 20) {
+            HStack(spacing: 0) {
                 PlaybackControlsView(settings: settings, controlSize: .compact, usesSystemGlass: true)
-                // The Now Playing toggle, which lives here while the column is
-                // hidden, drawn as the skip buttons are.
-                Button(action: onOpen) {
-                    Image(systemName: "sidebar.trailing")
-                }
-                .buttonStyle(PlaybackControlButtonStyle(controlSize: .compact, prominence: .secondary,
-                                                        artworkTheme: nil, usesSystemGlass: true))
-                .accessibilityLabel("Show Now Playing")
-                .help("Show Now Playing")
+                // Three buttons' room, then shuffle, repeat and the song's
+                // moves as Now Playing has them, the size of the skip buttons
+                // (owner request, 2026-10-31).
+                Color.clear.frame(width: 3 * PlaybackControlSize.compact.secondaryButtonSize, height: 1)
+                NowPlayingActionButtonsView(settings: settings, compactSize: .compact)
             }
         }
-        .padding(.leading, 14)
-        .padding(.trailing, 10)
+        .padding(.horizontal, 18 * SplitLayoutPolicy.macScale)
         .frame(height: height)
         .overlay(alignment: .top) { progressLine }
         // The tint is drawn, not the glass's: a glass tint drops out when the

@@ -85,7 +85,14 @@ enum PlaybackControlSize {
     /// In a Mac title bar.
     case toolbar
 
-    var spacing: CGFloat {
+    // Smaller on a Mac, which draws at its own size (`SplitLayoutPolicy.macScale`).
+    var spacing: CGFloat { baseSpacing * SplitLayoutPolicy.macScale }
+    var primaryButtonSize: CGFloat { basePrimaryButtonSize * SplitLayoutPolicy.macScale }
+    var primaryIconSize: CGFloat { basePrimaryIconSize * SplitLayoutPolicy.macScale }
+    var secondaryIconSize: CGFloat { baseSecondaryIconSize * SplitLayoutPolicy.macScale }
+    var secondaryButtonSize: CGFloat { baseSecondaryButtonSize * SplitLayoutPolicy.macScale }
+
+    private var baseSpacing: CGFloat {
         switch self {
         case .compact:
             14
@@ -96,7 +103,7 @@ enum PlaybackControlSize {
         }
     }
 
-    var primaryButtonSize: CGFloat {
+    private var basePrimaryButtonSize: CGFloat {
         switch self {
         case .compact:
             42
@@ -107,7 +114,7 @@ enum PlaybackControlSize {
         }
     }
 
-    var primaryIconSize: CGFloat {
+    private var basePrimaryIconSize: CGFloat {
         switch self {
         case .compact:
             18
@@ -118,7 +125,7 @@ enum PlaybackControlSize {
         }
     }
 
-    var secondaryIconSize: CGFloat {
+    private var baseSecondaryIconSize: CGFloat {
         switch self {
         case .compact:
             16
@@ -129,7 +136,7 @@ enum PlaybackControlSize {
         }
     }
 
-    var secondaryButtonSize: CGFloat {
+    private var baseSecondaryButtonSize: CGFloat {
         switch self {
         case .compact:
             34
@@ -142,7 +149,7 @@ enum PlaybackControlSize {
 }
 
 /// A transport button's look, also used for buttons that sit with the
-/// transport (the Mac mini player's Now Playing toggle).
+/// transport (the Mac mini player's shuffle, repeat and song moves).
 struct PlaybackControlButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
 
@@ -155,6 +162,9 @@ struct PlaybackControlButtonStyle: ButtonStyle {
     var prominence: Prominence
     var artworkTheme: AlbumArtworkTheme?
     var usesSystemGlass = false
+    /// A mode that is on (shuffle, repeat): system glass tinted the accent
+    /// colour.
+    var isSelected = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -175,7 +185,7 @@ struct PlaybackControlButtonStyle: ButtonStyle {
                 usesSystemGlass: usesSystemGlass,
                 // Untinted glass over the surface's own glass reads as a
                 // white disc, so secondary buttons take the surface colour.
-                tint: prominence == .primary ? palette?.surface : palette?.backgroundRGB.color,
+                tint: isSelected ? .accentColor : prominence == .primary ? palette?.surface : palette?.backgroundRGB.color,
                 palette: palette,
                 prominence: glassProminence,
                 isPressed: configuration.isPressed,

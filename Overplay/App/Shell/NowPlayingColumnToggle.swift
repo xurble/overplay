@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Shows and hides the Now Playing column where it can be hidden (a Mac),
-/// with a mini player in the title bar while it is hidden. A toolbar item
+/// with a mini player at the bottom of the window while it is hidden
+/// (`SplitAppShell`). A toolbar item
 /// belongs to the screen on top of the stack, so every screen the detail
 /// column can show or push carries `.nowPlayingColumnToggle()`; without the
 /// environment value (iPhone, iPad) it adds nothing.
@@ -33,6 +34,7 @@ extension View {
 }
 
 private struct NowPlayingColumnToggleToolbar: ViewModifier {
+
     @Environment(\.nowPlayingColumnToggle) private var columnToggle
     @Environment(\.sidebarPanelToggle) private var sidebarPanelToggle
 
@@ -48,15 +50,8 @@ private struct NowPlayingColumnToggleToolbar: ViewModifier {
                     .untinted()
                 }
             }
-            if let columnToggle, !columnToggle.isShown {
-                ToolbarItem(placement: .primaryAction) {
-                    MiniPlayerToolbarView(settings: columnToggle.settings, onOpen: columnToggle.toggle)
-                }
-                // Its own glass, taller than the bar's.
-                .sharedBackgroundVisibility(.hidden)
-            }
-            // While hidden, the toggle sits inside the mini player.
-            if let columnToggle, columnToggle.isShown {
+            // Top right whether shown or hidden (owner request, 2026-10-31).
+            if let columnToggle {
                 ToolbarItem(placement: .primaryAction) {
                     let title = columnToggle.isShown ? "Hide Now Playing" : "Show Now Playing"
                     Button(action: columnToggle.toggle) {

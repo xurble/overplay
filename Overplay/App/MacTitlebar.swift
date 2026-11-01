@@ -2,36 +2,93 @@ import SwiftUI
 import UIKit
 
 extension View {
-    /// On a Mac the window has no separate title bar: the app's own bars
-    /// reach the top beside the window controls, so the title-bar mini
-    /// player can use that height. Does nothing elsewhere.
+    /// On a Mac the window shows no title: in the Mac idiom each screen's bar
+    /// sits in the window's toolbar, beside the window controls. Does nothing
+    /// elsewhere.
     func hidesMacTitlebar() -> some View {
         onAppear {
 #if targetEnvironment(macCatalyst)
             for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
                 scene.titlebar?.titleVisibility = .hidden
-                scene.titlebar?.toolbar = nil
-                MacWindowState.shared.watch(scene)
             }
 #endif
         }
     }
 }
 
-/// Whether the Mac window is full screen, read when the scene's geometry
-/// settles: window coordinates move as the hidden menu bar slides in, so
-/// they cannot tell. Always false elsewhere.
-@MainActor
-@Observable
-final class MacWindowState {
-    static let shared = MacWindowState()
+extension View {
+    /// On a Mac the window can't be made smaller than `size`, in the app's
+    /// own points. Set on this view's own window, so other windows keep
+    /// their limits. Does nothing elsewhere.
+    func macMinimumWindowSize(_ size: CGSize) -> some View {
+        background { MacMinimumWindowSize(size: size).frame(width: 0, height: 0) }
+    }
+}
 
-    private(set) var isFullScreen = false
-    @ObservationIgnored private var observation: NSKeyValueObservation?
+private struct MacMinimumWindowSize: UIViewRepresentable {
+    var size: CGSize
 
-    func watch(_ scene: UIWindowScene) {
-        observation = scene.observe(\.effectiveGeometry, options: [.initial, .new]) { scene, _ in
-            Task { @MainActor in MacWindowState.shared.isFullScreen = scene.isFullScreen }
+    func makeUIView(context: Context) -> SizeView {
+        let view = SizeView()
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ uiView: SizeView, context: Context) {
+        uiView.size = size
+    }
+
+    final class SizeView: UIView {
+        var size: CGSize = .zero {
+            didSet { apply() }
+        }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            apply()
+        }
+
+        private func apply() {
+#if targetEnvironment(macCatalyst)
+            window?.windowScene?.sizeRestrictions?.minimumSize = size
+#endif
+        }
+    }
+}
+
+extension View {
+    /// On a Mac only one player window: another, restored or opened from the
+    /// Dock, closes and the first comes forward (owner request, 2026-10-31).
+    /// Does nothing elsewhere.
+    func macSinglePlayerWindow() -> some View {
+        background { MacSinglePlayerWindow().frame(width: 0, height: 0) }
+    }
+}
+
+private struct MacSinglePlayerWindow: UIViewRepresentable {
+    func makeUIView(context: Context) -> ClaimView {
+        let view = ClaimView()
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ uiView: ClaimView, context: Context) {}
+
+    final class ClaimView: UIView {
+        /// The player window's scene, the first to appear.
+        private static weak var playerScene: UIWindowScene?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+#if targetEnvironment(macCatalyst)
+            guard let scene = window?.windowScene else { return }
+            if let existing = Self.playerScene, existing !== scene, existing.activationState != .unattached {
+                UIApplication.shared.requestSceneSessionDestruction(scene.session, options: nil)
+                UIApplication.shared.requestSceneSessionActivation(existing.session, userActivity: nil, options: nil)
+            } else {
+                Self.playerScene = scene
+            }
+#endif
         }
     }
 }
