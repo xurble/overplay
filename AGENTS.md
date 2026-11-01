@@ -14,7 +14,7 @@ to implement a change.
 ## Product priorities
 
 When a choice trades one goal against another, the higher priority wins
-(details: **Product priorities** in `OVERPLAY_DESIGN_SPEC.md`):
+(details: **Product priorities** in `docs/OVERPLAY_DESIGN_SPEC.md`):
 
 1.  A stable, fast, reliable music player.
 2.  CarPlay and Siri first: playlist management with the phone in a pocket.
@@ -122,7 +122,7 @@ Prefer adaptive SwiftUI structure across targets:
 
 **Overplay is a reliable music player first.** Before changing playback, read
 the Playback Engine, Cross-Surface Playback Consistency and **History:
-Abandoned Playback Approaches** sections of `OVERPLAY_DESIGN_SPEC.md`. Do not
+Abandoned Playback Approaches** sections of `docs/OVERPLAY_DESIGN_SPEC.md`. Do not
 reintroduce an abandoned approach (queue-entry-ID correlation,
 confirmation loops, automatic queue replacement or retry, Overplay-authored
 system Now Playing, live queue mutation on sync, mutable synced counters)
@@ -200,7 +200,7 @@ Behavioral parity is mandatory:
     Shared-state convergence alone is insufficient if the commands or audible
     transitions differ between surfaces.
 -   A behavioral difference requires an explicit product requirement in
-    `OVERPLAY_DESIGN_SPEC.md`. Do not infer permission for different behavior
+    `docs/OVERPLAY_DESIGN_SPEC.md`. Do not infer permission for different behavior
     from platform-specific UI code or from an existing divergence; treat that
     divergence as a defect.
 

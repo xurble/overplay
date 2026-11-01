@@ -19,7 +19,8 @@ source.mkdir()
 shutil.copy2(Path(__file__).with_name("IdentityProbeApp.swift"), source)
 shutil.copy2(repo / "Overplay/Services/MusicLibrarySongResolver.swift", source)
 shutil.copy2(repo / "Overplay/Overplay.entitlements", source)
-for name in ["AGENTS.md", "TODO.md", "OVERPLAY_DESIGN_SPEC.md"]:
+for name in ["AGENTS.md", "docs/TODO.md", "docs/OVERPLAY_DESIGN_SPEC.md"]:
+    (destination / name).parent.mkdir(parents=True, exist_ok=True)
     (destination / name).write_text("Standalone read-only identity probe.\n")
 
 info_path = destination / "Config/Info.plist"

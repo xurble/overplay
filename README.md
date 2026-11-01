@@ -2,7 +2,7 @@
 
 Overplay is an Apple Music player for iPhone, iPad, CarPlay and the Mac that
 keeps a main playlist fresh. Its priorities, in order, decide every trade-off (see
-**Product priorities** in [the spec](OVERPLAY_DESIGN_SPEC.md)):
+**Product priorities** in [the spec](docs/OVERPLAY_DESIGN_SPEC.md)):
 
 1. **A stable, fast, reliable music player.**
 2. **CarPlay and Siri first:** playlist management with the phone in a pocket.
@@ -110,13 +110,15 @@ and remaining playlist-ID/artwork work are recorded in
 
 ## Documentation
 
-- [OVERPLAY_DESIGN_SPEC.md](OVERPLAY_DESIGN_SPEC.md) — full product and
+- [docs/OVERPLAY_DESIGN_SPEC.md](docs/OVERPLAY_DESIGN_SPEC.md) — full product and
   technical direction.
-- [TODO.md](TODO.md) — the single living roadmap: the release plan, then
+- [docs/TODO.md](docs/TODO.md) — the single living roadmap: the release plan, then
   post-release work.
-- [PLAYBACK_RELIABILITY_FINDINGS.md](PLAYBACK_RELIABILITY_FINDINGS.md) — what
+- [docs/PLAYBACK_RELIABILITY_FINDINGS.md](docs/PLAYBACK_RELIABILITY_FINDINGS.md) — what
   is known about Apple Music playback stalls, what was tried, and what to
   collect next time.
+- [docs/SIDEBAR_NAVIGATION_NOTES.md](docs/SIDEBAR_NAVIGATION_NOTES.md) — how a sidebar
+  choice changes the regular-width list, and the traps found building it.
 - [AGENTS.md](AGENTS.md) — rules for AI agents working in this repo,
   including the shared playback-surface requirements.
 - [Overplay/CarPlaySupport/README-CarPlay.md](Overplay/CarPlaySupport/README-CarPlay.md)
@@ -260,6 +262,6 @@ layouts.
 The playback rewrite passed acceptance on iPhone; its CarPlay hardware pass is
 outstanding. Siri is not built, and search needs reworking. The release plan
 (internal TestFlight, device acceptance, v1 features, then external TestFlight
-and the App Store) is in `TODO.md`. The schema may still reset until the data
+and the App Store) is in `docs/TODO.md`. The schema may still reset until the data
 preservation decision there is made (see the pre-release data policy in
 `AGENTS.md`).

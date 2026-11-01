@@ -102,7 +102,7 @@ playlist-row selection, in-queue skip, and playback-mode paths in
 completed on 2026-09-08, before the October 2026 playback-core rewrite. The
 rewrite passed acceptance on iPhone on 2026-10-06 and CarPlay is in daily use,
 but the rewrite's own CarPlay hardware pass has not been run. It is listed in
-`TODO.md` under Device Acceptance. Repeat the affected hardware checks after
+`docs/TODO.md` under Device Acceptance. Repeat the affected hardware checks after
 every CarPlay, playback, attribution or MusicKit-mode change.
 
 Hardware follow-ups:

@@ -58,7 +58,7 @@ enum CurationOutcome: Equatable, Sendable {
 /// call; all state changes arrive through one observation path, whichever
 /// surface caused them. Counting, curation and sync read this state; none of
 /// them can gate or rewrite playback. See the Playback Engine section and the
-/// History of abandoned approaches in `OVERPLAY_DESIGN_SPEC.md`.
+/// History of abandoned approaches in `docs/OVERPLAY_DESIGN_SPEC.md`.
 @MainActor
 @Observable
 final class PlaybackController {

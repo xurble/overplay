@@ -1,6 +1,6 @@
 # Generation-2 cutover validation — 27 September 2026
 
-Implemented specification: `OVERPLAY_DESIGN_SPEC.md`, “Persisted Data Model” and
+Implemented specification: `docs/OVERPLAY_DESIGN_SPEC.md`, “Persisted Data Model” and
 “Datastore generation 2: configuration-preserving rebuild”.
 
 ## Live configuration and import
