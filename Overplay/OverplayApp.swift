@@ -40,23 +40,25 @@ struct OverplayApp: App {
     }
 
     @UIApplicationDelegateAdaptor(OverplayAppDelegate.self) private var appDelegate
-    private let modelContainer: ModelContainer
+    /// Nil when the library store could not be opened (`STORE-001`).
+    private let modelContainer: ModelContainer?
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
         BackgroundMusicKitWorkPolicy.launchedAt = .now
-        do {
-            modelContainer = try Self.makeModelContainer()
+        modelContainer = AppRuntime.shared.openLibraryStore {
+            let container = try Self.makeModelContainer()
             #if targetEnvironment(simulator)
-            if !Self.isRunningTests { SimulatorDemoLibrary.seedIfEmpty(modelContainer.mainContext) }
+            if !Self.isRunningTests { SimulatorDemoLibrary.seedIfEmpty(container.mainContext) }
             #endif
-            AppRuntime.shared.configure(modelContainer: modelContainer)
-        } catch {
-            fatalError("Could not create Overplay model container: \(error)")
+            return container
         }
 
         if !Self.isRunningTests {
+            // Registered even without a store: a wake already scheduled then
+            // finds no model context and does nothing.
             PlaybackBackgroundRefreshService.shared.register()
+            guard modelContainer != nil else { return }
             // Playback does not wait for iCloud restoration (`PLAY-010`): the
             // device-local intent can be shown, resumed and controlled now.
             AppRuntime.shared.playbackController.restoreIntent()
@@ -71,7 +73,7 @@ struct OverplayApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView(runtime: .shared)
+            requiringLibraryStore { ContentView(runtime: .shared) }
                 .hidesMacTitlebar()
                 .macSinglePlayerWindow()
                 // The window as the owner sized it (owner request,
@@ -79,7 +81,6 @@ struct OverplayApp: App {
                 .macMinimumWindowSize(CGSize(width: 619, height: 576))
                 .appliesAppearancePreference()
         }
-        .modelContainer(modelContainer)
         .commands { OverplayCommands() }
         .onChange(of: scenePhase) { _, newPhase in
             Task { @MainActor in
@@ -90,11 +91,20 @@ struct OverplayApp: App {
 #if targetEnvironment(macCatalyst)
         // A Mac opens Settings in its own window (`OverplayCommands`).
         WindowGroup("Settings", id: SettingsWindowView.windowID, for: String.self) { _ in
-            SettingsWindowView(runtime: .shared)
+            requiringLibraryStore { SettingsWindowView(runtime: .shared) }
                 .appliesAppearancePreference()
         }
-        .modelContainer(modelContainer)
 #endif
+    }
+
+    /// `content` with the library, or the blocking error in its place.
+    @ViewBuilder
+    private func requiringLibraryStore(@ViewBuilder _ content: () -> some View) -> some View {
+        if let modelContainer {
+            content().modelContainer(modelContainer)
+        } else {
+            LibraryStoreUnavailableView(detail: AppRuntime.shared.libraryStoreFailure ?? "")
+        }
     }
 
     /// Suspended-playback reconciliation runs at both edges of a
@@ -103,7 +113,7 @@ struct OverplayApp: App {
     /// foreground reconciles whatever played while suspended before the
     /// monitor's staleness rules would discard it.
     private func handleScenePhaseChange(_ phase: ScenePhase) async {
-        guard !Self.isRunningTests else { return }
+        guard !Self.isRunningTests, modelContainer != nil else { return }
         guard phase == .background || phase == .active else { return }
 
         if phase == .background {

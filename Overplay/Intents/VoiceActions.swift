@@ -18,6 +18,7 @@ enum VoiceActions {
     }
 
     static let notReadyMessage = "Overplay is still restoring your library. Open Overplay to finish."
+    static let storeUnavailableMessage = "Overplay can't open your library. Open Overplay for details."
 
     /// Shuffle and Play, which carries on with a playlist already playing
     /// (`PLAY-020`). Nil once it plays: the music answers for itself.

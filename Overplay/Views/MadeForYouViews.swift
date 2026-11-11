@@ -91,7 +91,7 @@ struct MadeForYouPlaylistView: View {
             await playbackController.moveCollectionSong(saved, toOneTruePlaylist: toOneTruePlaylist, context: modelContext)
         }
         .onAppear { shellPlace?.destination = .madeForYou(item.id) }
-        .task {
+        .task(id: item.id) {
             guard entries.isEmpty else { return }
             do {
                 entries = try await MadeForYouLibrary.songs(in: item)

@@ -49,6 +49,7 @@ struct AppShellDestinationView: View {
                 LibrarySongsView()
             } else {
                 LibraryCategoryView(category: category)
+                    .id(category)
             }
         case .search:
             SearchMusicView()
@@ -61,6 +62,7 @@ struct AppShellDestinationView: View {
         case let .madeForYou(id):
             if let item = MadeForYouLibrary.shared.items.first(where: { $0.id == id }) {
                 MadeForYouPlaylistView(item: item)
+                    .id(item.id)
             } else {
                 ContentUnavailableView("Mix Unavailable", systemImage: "person.crop.square")
             }

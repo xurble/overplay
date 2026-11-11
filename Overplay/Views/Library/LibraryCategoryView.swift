@@ -40,7 +40,10 @@ struct LibraryCategoryView: View {
         .listFilter(text: $filterText, isPresented: $isFiltering, prompt: category == .albums ? "Albums or artists" : category.rawValue)
         .miniPlayerScrollContentInset()
         .navigationTitle(category.rawValue)
-        .task { await cache.prepare(category) }
+        // A sidebar swap can change the category in place (see
+        // `docs/SIDEBAR_NAVIGATION_NOTES.md`); its host gives each category
+        // its own identity, so the filter does not carry over.
+        .task(id: category) { await cache.prepare(category) }
     }
 
     private var message: String? {
