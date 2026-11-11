@@ -285,4 +285,205 @@ struct CarPlayLibrarySnapshotTests {
         #expect(target === rootList)
         #expect(target !== poppedPlaylistList)
     }
+
+    // MARK: - Refresh cost (PF-3)
+
+    private func summaries(_ fixture: PlaybackFixture) throws -> [TrackSummaryPresentation] {
+        try CarPlayLibrarySnapshot.trackSummaries(forPlaylistID: fixture.playlist.id, in: fixture.context)
+    }
+
+    private func currentRows(
+        _ fixture: PlaybackFixture, rows: [TrackSummaryPresentation], load: ([UUID]) -> [TrackRecord]
+    ) -> Set<UUID> {
+        CarPlayLibrarySnapshot.currentRowIDs(
+            among: rows, in: fixture.playlist,
+            currentPlaylistID: fixture.controller.currentPlaylistContext?.musicPlaylistID,
+            currentPlaylistItem: fixture.controller.currentPlaylistItem,
+            currentTrack: fixture.controller.currentTrack,
+            loadTracks: load
+        )
+    }
+
+    @Test func aRefreshReadsTheTracksOnceHoweverManyRowsItShows() async throws {
+        let fixture = try PlaybackFixture(trackCount: 25); defer { fixture.cleanUp() }
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[7],
+                                              settings: fixture.settings, context: fixture.context)
+        let rows = try summaries(fixture)
+        var loads: [[UUID]] = []
+
+        let current = currentRows(fixture, rows: rows) { ids in
+            loads.append(ids)
+            return (try? TrackRecordRepository.tracks(ids: ids, in: fixture.context)) ?? []
+        }
+
+        #expect(loads.count == 1)
+        #expect(loads.first?.count == 25)
+        #expect(current == Set(rows.filter { $0.trackID == fixture.tracks[7].id }.map(\.id)))
+    }
+
+    @Test func aListThatIsNotPlayingReadsNoTracks() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[1],
+                                              settings: fixture.settings, context: fixture.context)
+        let rows = try summaries(fixture)
+        var loads = 0
+
+        let anotherPlaylistPlaying = CarPlayLibrarySnapshot.currentRowIDs(
+            among: rows, in: fixture.playlist, currentPlaylistID: "another",
+            currentPlaylistItem: fixture.controller.currentPlaylistItem, currentTrack: fixture.controller.currentTrack
+        ) { _ in loads += 1; return [] }
+        let nothingCurrent = CarPlayLibrarySnapshot.currentRowIDs(
+            among: rows, in: fixture.playlist, currentPlaylistID: fixture.playlist.musicPlaylistID,
+            currentPlaylistItem: nil, currentTrack: nil
+        ) { _ in loads += 1; return [] }
+
+        #expect(anotherPlaylistPlaying.isEmpty)
+        #expect(nothingCurrent.isEmpty)
+        #expect(loads == 0)
+    }
+
+    /// The playing indicators are the matcher's, row by row, in every case it
+    /// separates, including a row matched only by its music IDs.
+    @Test func currentRowsAreTheRowsTheMatcherCallsCurrent() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[1],
+                                              settings: fixture.settings, context: fixture.context)
+        let rows = try summaries(fixture)
+        let load: ([UUID]) -> [TrackRecord] = { (try? TrackRecordRepository.tracks(ids: $0, in: fixture.context)) ?? [] }
+        let musicIDMatch = try #require(fixture.controller.currentTrack)
+        let cases: [(item: PlaylistItemRecord?, track: CurrentPlaybackTrack?)] = [
+            (fixture.controller.currentPlaylistItem, musicIDMatch),
+            (fixture.controller.currentPlaylistItem, nil),
+            (nil, musicIDMatch),
+            (nil, nil),
+        ]
+        let context = fixture.controller.currentPlaylistContext?.musicPlaylistID
+        var found = 0
+
+        for (item, track) in cases {
+            let expected = Set(rows.filter { row in
+                guard let trackID = row.trackID, let record = load([trackID]).first else { return false }
+                return CurrentPlaylistItemMatcher.isCurrent(
+                    itemID: row.id, track: record, playlist: fixture.playlist, currentPlaylistID: context,
+                    currentPlaylistItem: item, currentTrack: track
+                )
+            }.map(\.id))
+            let current = CarPlayLibrarySnapshot.currentRowIDs(
+                among: rows, in: fixture.playlist, currentPlaylistID: context,
+                currentPlaylistItem: item, currentTrack: track, loadTracks: load
+            )
+
+            #expect(current == expected)
+            found += current.count
+        }
+        #expect(found == 3)
+    }
+
+    @Test func aRowWhoseTrackCannotBeReadIsNotCurrent() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[1],
+                                              settings: fixture.settings, context: fixture.context)
+
+        #expect(currentRows(fixture, rows: try summaries(fixture)) { _ in [] }.isEmpty)
+    }
+
+    private func rootFixture() throws -> (context: ModelContext, otp: PlaylistRecord, bucket: PlaylistRecord, item: PlaylistItemRecord) {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = ModelContext(container)
+        let otp = PlaylistRecord(musicPlaylistID: "one", name: "Keepers", role: .oneTruePlaylist)
+        let bucket = PlaylistRecord(musicPlaylistID: "triage", name: "Inbox", role: .triageBucket)
+        let track = TrackRecord(title: "A", artistName: "Artist")
+        let item = PlaylistItemRecord(playlistID: bucket.id, trackID: track.id)
+        context.insert(otp)
+        context.insert(bucket)
+        context.insert(track)
+        context.insert(item)
+        try context.save()
+        return (context, otp, bucket, item)
+    }
+
+    /// Reads the root twice around `change`: whether it rebuilt, and that what
+    /// came back is what a full read says.
+    private func rootRebuilds(
+        _ root: (context: ModelContext, otp: PlaylistRecord, bucket: PlaylistRecord, item: PlaylistItemRecord),
+        after change: () throws -> Void
+    ) throws -> Bool {
+        var cache = CarPlayRootSummaries()
+        var loads = 0
+        func load(_ context: ModelContext) throws -> [PlaylistSummaryPresentation] {
+            loads += 1
+            return try CarPlayLibrarySnapshot.playlistSummaries(in: context)
+        }
+        _ = try cache.current(in: root.context, load: load)
+        try change()
+        try root.context.save()
+
+        let after = try cache.current(in: root.context, load: load)
+
+        #expect(after.map(\.title) == (try CarPlayLibrarySnapshot.playlistSummaries(in: root.context).map(\.title)))
+        #expect(after.map(\.playableTrackCount) == (try CarPlayLibrarySnapshot.playlistSummaries(in: root.context).map(\.playableTrackCount)))
+        return loads == 2
+    }
+
+    @Test func playCountsAndPlaybackDoNotRebuildTheRoot() throws {
+        let root = try rootFixture()
+
+        #expect(try !rootRebuilds(root) {
+            root.item.playthroughCount += 1
+            root.item.skipCount += 1
+            root.item.lastPlayedAt = .now
+        })
+    }
+
+    @Test func aSongAddedToAPlaylistRebuildsTheRoot() throws {
+        let root = try rootFixture()
+
+        #expect(try rootRebuilds(root) {
+            let track = TrackRecord(title: "B", artistName: "Artist")
+            root.context.insert(track)
+            root.context.insert(PlaylistItemRecord(playlistID: root.otp.id, trackID: track.id))
+        })
+    }
+
+    @Test func retiringASongRebuildsTheRoot() throws {
+        let root = try rootFixture()
+
+        #expect(try rootRebuilds(root) { root.item.evictedAt = .now })
+    }
+
+    @Test func aRenamedPlaylistRebuildsTheRoot() throws {
+        let root = try rootFixture()
+
+        #expect(try rootRebuilds(root) { root.otp.name = "Favourites" })
+    }
+
+    @Test func swappingRolesRebuildsTheRoot() throws {
+        let root = try rootFixture()
+
+        #expect(try rootRebuilds(root) {
+            root.otp.role = .triageBucket
+            root.bucket.role = .oneTruePlaylist
+        })
+    }
+
+    @Test func anAddedPlaylistRebuildsTheRoot() throws {
+        let root = try rootFixture()
+
+        #expect(try rootRebuilds(root) {
+            root.context.insert(PlaylistRecord(musicPlaylistID: "new", name: "New", role: .triageSource))
+        })
+    }
+
+    @Test func aRootReadThatFailsIsTriedAgain() throws {
+        struct ReadFailed: Error {}
+        let root = try rootFixture()
+        var cache = CarPlayRootSummaries()
+
+        #expect(throws: ReadFailed.self) {
+            try cache.current(in: root.context) { _ in throw ReadFailed() }
+        }
+        let summaries = try cache.current(in: root.context) { try CarPlayLibrarySnapshot.playlistSummaries(in: $0) }
+
+        #expect(summaries.map(\.title) == ["Keepers", "Inbox", "Retired"])
+    }
 }
