@@ -133,56 +133,89 @@ struct PlaybackStartCostTests {
 
     // MARK: - The decoding scope
 
-    @Test func aDecodeIsSharedOnlyWithinAScope() throws {
+    @Test func aDecodeIsSharedOnlyWithinAScope() async throws {
         let cache = DevicePlaybackCache(directory: nil)
         let counter = DecodeCounter(cache)
         defer { counter.stop() }
         let id = UUID()
         cache.set(try PlaybackFixture.encodedTrack(id: "i.a", title: "A", artist: "Artist"), for: id)
 
-        cache.beginDecoding()
-        #expect(cache.track(for: id)?.title == "A")
-        #expect(cache.track(for: id)?.title == "A")
+        await DevicePlaybackCache.decodingOnce {
+            #expect(cache.track(for: id)?.title == "A")
+            #expect(cache.track(for: id)?.title == "A")
+            // A nested call shares the enclosing start's decodes.
+            await DevicePlaybackCache.decodingOnce { #expect(cache.track(for: id)?.title == "A") }
+        }
         #expect(counter.counts([id]) == [1])
-        cache.endDecoding()
 
         // Nothing decoded is kept once the start is over.
         #expect(cache.track(for: id)?.title == "A")
         #expect(cache.track(for: id)?.title == "A")
         #expect(counter.counts([id]) == [3])
         // The next start decodes afresh: nothing was held over.
-        cache.beginDecoding()
-        defer { cache.endDecoding() }
-        #expect(cache.track(for: id)?.title == "A")
+        await DevicePlaybackCache.decodingOnce { #expect(cache.track(for: id)?.title == "A") }
         #expect(counter.counts([id]) == [4])
     }
 
-    @Test func settingDataDropsItsDecode() throws {
+    @Test func settingDataDropsItsDecode() async throws {
         let cache = DevicePlaybackCache(directory: nil)
         let id = UUID()
         cache.set(try PlaybackFixture.encodedTrack(id: "i.a", title: "A", artist: "Artist"), for: id)
-        cache.beginDecoding()
-        defer { cache.endDecoding() }
-        #expect(cache.track(for: id)?.title == "A")
+        let replacement = try PlaybackFixture.encodedTrack(id: "i.b", title: "B", artist: "Artist")
+        await DevicePlaybackCache.decodingOnce {
+            #expect(cache.track(for: id)?.title == "A")
 
-        cache.set(try PlaybackFixture.encodedTrack(id: "i.b", title: "B", artist: "Artist"), for: id)
-        #expect(cache.track(for: id)?.title == "B")
-        cache.set(nil, for: id)
-        #expect(cache.track(for: id) == nil)
+            cache.set(replacement, for: id)
+            #expect(cache.track(for: id)?.title == "B")
+            cache.set(nil, for: id)
+            #expect(cache.track(for: id) == nil)
+        }
     }
 
     /// The decode is shared; whether it is the record's song is not.
-    @Test func aReMatchedRecordIsNotCurrentWithinAScope() throws {
+    @Test func aReMatchedRecordIsNotCurrentWithinAScope() async throws {
         let record = TrackRecord(catalogID: "cat-r", libraryID: "i.r", title: "R", artistName: "Artist")
         defer { DevicePlaybackCache.shared.set(nil, for: record.id) }
         DevicePlaybackCache.shared.set(try PlaybackFixture.encodedTrack(id: "i.r", title: "R", artist: "Artist"), for: record.id)
-        DevicePlaybackCache.shared.beginDecoding()
-        defer { DevicePlaybackCache.shared.endDecoding() }
 
-        #expect(DevicePlaybackCache.hasCurrentData(for: record))
-        record.libraryID = "i.other"
-        record.catalogID = "cat-other"
-        #expect(!DevicePlaybackCache.hasCurrentData(for: record))
+        await DevicePlaybackCache.decodingOnce {
+            #expect(DevicePlaybackCache.hasCurrentData(for: record))
+            record.libraryID = "i.other"
+            record.catalogID = "cat-other"
+            #expect(!DevicePlaybackCache.hasCurrentData(for: record))
+        }
+    }
+
+    /// A start held up by a lookup that has not returned keeps only its own
+    /// decodes: other callers' decodes are never kept meanwhile.
+    @Test func aHungLookupKeepsNoOtherCallersDecodes() async throws {
+        let cache = DevicePlaybackCache.shared
+        let waiting = TrackRecord(libraryID: "i.hung", title: "Hung", artistName: "Artist")
+        let other = UUID()
+        defer { cache.set(nil, for: other) }
+        cache.set(try PlaybackFixture.encodedTrack(id: "i.other", title: "Other", artist: "Artist"), for: other)
+        let counter = DecodeCounter()
+        defer { counter.stop() }
+        let (entered, enteredLookup) = AsyncStream<Void>.makeStream()
+        let (release, releaseLookup) = AsyncStream<Void>.makeStream()
+        let start = Task { @MainActor in
+            try? await DevicePlaybackCache.prepare([waiting], libraryLookup: { _ in
+                enteredLookup.yield()
+                for await _ in release {}
+                return [:]
+            }, catalogLookup: { _ in [:] })
+        }
+        var iterator = entered.makeAsyncIterator()
+        _ = await iterator.next()
+
+        // The start is suspended in its lookup; sync or play-count code
+        // reading another track decodes it each time.
+        #expect(cache.track(for: other)?.title == "Other")
+        #expect(cache.track(for: other)?.title == "Other")
+        #expect(counter.counts([other]) == [2])
+
+        releaseLookup.finish()
+        await start.value
     }
 
     @Test func preparationDecodesEachCachedTrackOnce() async throws {

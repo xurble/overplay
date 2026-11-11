@@ -1593,14 +1593,13 @@ final class PlaybackController {
     /// A playlist start's members and tracks, in record order, decoding each
     /// cached track once (PB-9).
     private func playableMembers(_ records: [TrackRecord], items: [PlaylistItemRecord]) async -> [(PlaybackIntent.Member, Track)] {
-        let cache = DevicePlaybackCache.shared
-        cache.beginDecoding()
-        defer { cache.endDecoding() }
-        let resolved = await resolvePlayableTracks(records)
-        let itemsByTrackID = items.firstValueDictionary(keyedBy: \.trackID)
-        return records.compactMap { record -> (PlaybackIntent.Member, Track)? in
-            guard let track = resolved[record.id] else { return nil }
-            return (Self.member(for: record, item: itemsByTrackID[record.id], track: track), track)
+        await DevicePlaybackCache.decodingOnce {
+            let resolved = await resolvePlayableTracks(records)
+            let itemsByTrackID = items.firstValueDictionary(keyedBy: \.trackID)
+            return records.compactMap { record -> (PlaybackIntent.Member, Track)? in
+                guard let track = resolved[record.id] else { return nil }
+                return (Self.member(for: record, item: itemsByTrackID[record.id], track: track), track)
+            }
         }
     }
 
@@ -1610,28 +1609,27 @@ final class PlaybackController {
     private func resolvePlayableTracks(
         _ records: [TrackRecord], refreshing: Set<UUID> = [], fallbackLocalTrackIDs: [String] = []
     ) async -> [UUID: Track] {
-        let cache = DevicePlaybackCache.shared
-        cache.beginDecoding()
-        defer { cache.endDecoding() }
-        if !records.isEmpty {
-            do {
-                try await preparePlaybackTracks(records, refreshing)
-            } catch {
-                // Name the songs left out where they can be seen: the activity
-                // report and the unified log at normal level (#75).
-                activityLog.record(
-                    .playbackQueuePreparation, detail: error.localizedDescription, error: error
-                )
+        await DevicePlaybackCache.decodingOnce {
+            if !records.isEmpty {
+                do {
+                    try await preparePlaybackTracks(records, refreshing)
+                } catch {
+                    // Name the songs left out where they can be seen: the activity
+                    // report and the unified log at normal level (#75).
+                    activityLog.record(
+                        .playbackQueuePreparation, detail: error.localizedDescription, error: error
+                    )
+                }
             }
-        }
-        var resolved: [UUID: Track] = [:]
-        let ids = Set(records.map(\.id) + fallbackLocalTrackIDs.compactMap(UUID.init(uuidString:)))
-        for id in ids {
-            if let track = cache.track(for: id), Self.isQueueable(track) {
-                resolved[id] = track
+            var resolved: [UUID: Track] = [:]
+            let ids = Set(records.map(\.id) + fallbackLocalTrackIDs.compactMap(UUID.init(uuidString:)))
+            for id in ids {
+                if let track = DevicePlaybackCache.shared.track(for: id), Self.isQueueable(track) {
+                    resolved[id] = track
+                }
             }
+            return resolved
         }
-        return resolved
     }
 
     private func resolveCollectionTracks(_ members: [PlaybackIntent.Member]) async -> [String: Track] {
