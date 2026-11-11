@@ -8,7 +8,16 @@ import Foundation
 final class MusicIdentityResolver {
     static let shared = MusicIdentityResolver(playbackCache: .shared)
 
-    enum Lookup: String, Hashable { case library, catalog, equivalents, isrc }
+    nonisolated enum Lookup: String, Hashable {
+        case library, catalog, equivalents, isrc
+
+        /// What the lookup is called in a message people read.
+        var displayName: String { self == .library ? "web library" : "catalog" }
+
+        static func displayNames(_ lookups: some Sequence<Lookup>) -> String {
+            Set(lookups.map(\.displayName)).sorted { $0 > $1 }.joined(separator: " and ")
+        }
+    }
     struct Scope: Equatable {
         var storefront: String
         var account: String
@@ -46,7 +55,38 @@ final class MusicIdentityResolver {
         struct Relationship: Decodable { var data: [Resource]; var next: String? }
         struct Meta: Decodable { var filters: [String: [String: [Resource]]]? }
     }
-    enum ResolutionError: Error { case incompleteResponse, unauthorized, scopeChanged }
+    enum ResolutionError: LocalizedError {
+        case incompleteResponse, unauthorized, scopeChanged
+        /// More of a playlist came back unidentified than may be skipped
+        /// (`PLAYLIST-010`).
+        case tooManyNotFound(lookups: String, count: Int, of: Int)
+        /// A request failed for a reason other than "not found".
+        case lookupFailed(Lookup, underlying: any Error)
+
+        var errorDescription: String? {
+            switch self {
+            case .incompleteResponse: "Apple Music returned an incomplete answer. Overplay will try again."
+            case .unauthorized: "Overplay couldn't connect to Apple Music. Check Overplay's Apple Music access in Settings."
+            case .scopeChanged: "The Apple Music account changed during the sync. Overplay will try again."
+            case .tooManyNotFound(let lookups, let count, let total):
+                "Apple Music couldn't identify \(count) of \(total) songs (\(lookups) lookup), so this playlist wasn't synced."
+            case .lookupFailed(let lookup, let underlying):
+                "The \(lookup.displayName) lookup failed. \(UserFacingError.friendly(underlying))"
+            }
+        }
+    }
+
+    /// One song a lookup answered nothing for, and which lookup that was.
+    struct NotFound: Equatable, Sendable {
+        var snapshotID: String
+        var lookup: Lookup
+    }
+    struct Enrichment {
+        /// One per input, in order; nil where a lookup found nothing.
+        var snapshots: [TrackSnapshot?]
+        /// Each song once, however many playlist entries hold it.
+        var notFound: [NotFound]
+    }
     typealias Fetch = (Lookup, [String], Scope) async throws -> [String: [Resource]]
     private struct Key: Hashable { var lookup: Lookup; var id: String }
     private struct Cached { var resources: [Resource]; var expires: Date }
@@ -89,8 +129,31 @@ final class MusicIdentityResolver {
     /// Per-resource caches allow overlapping playlists to share batched work.
     /// Memory-only: seven days for successes, one hour for absence/ambiguity;
     /// all entries expire on process exit, account change or storefront change.
+    ///
+    /// Any song the web library does not know fails the whole call: copies
+    /// and rewrites need every song. `enrichReportingNotFound` costs one song.
     func enrich(_ snapshots: [TrackSnapshot], includeCandidates: Bool = true) async throws -> [TrackSnapshot] {
-        guard !snapshots.isEmpty else { return [] }
+        try await enrich(snapshots, includeCandidates: includeCandidates, toleratesNotFound: false, catalogAbsenceIsNotFound: false)
+            .snapshots.compactMap { $0 }
+    }
+
+    /// As `enrich`, but a song a lookup answers nothing for is reported
+    /// rather than thrown (`PLAYLIST-010`). A failed request still throws.
+    /// - Parameter catalogAbsenceIsNotFound: A song known only by a catalog
+    ///   ID is also not found when the catalog answers nothing. Duplicate
+    ///   review leaves this off: an absent catalog ID is what it looks for
+    ///   replacements of.
+    func enrichReportingNotFound(
+        _ snapshots: [TrackSnapshot], includeCandidates: Bool = true, catalogAbsenceIsNotFound: Bool = false
+    ) async throws -> Enrichment {
+        try await enrich(snapshots, includeCandidates: includeCandidates, toleratesNotFound: true,
+                         catalogAbsenceIsNotFound: catalogAbsenceIsNotFound)
+    }
+
+    private func enrich(
+        _ snapshots: [TrackSnapshot], includeCandidates: Bool, toleratesNotFound: Bool, catalogAbsenceIsNotFound: Bool
+    ) async throws -> Enrichment {
+        guard !snapshots.isEmpty else { return Enrichment(snapshots: [], notFound: []) }
         let current: Scope
         do { current = try await currentScope() }
         catch { invalidate(); throw error }
@@ -104,8 +167,13 @@ final class MusicIdentityResolver {
         let library = try await lookup(.library, ids: libraryIDs, scope: current, revision: revision)
         var result = snapshots
         for index in result.indices { result[index].hasResolvedIdentityCandidates = includeCandidates }
+        var absent: [Int: Lookup] = [:]
         for index in result.indices {
             guard let id = result[index].resolvedIdentity.libraryID else { continue }
+            if library[id]?.isEmpty == true, toleratesNotFound {
+                absent[index] = .library
+                continue
+            }
             guard let libraryResources = library[id], libraryResources.count == 1,
                   let libraryResource = libraryResources.first,
                   libraryResource.id == id, libraryResource.type == "library-songs",
@@ -129,14 +197,19 @@ final class MusicIdentityResolver {
                 }
             }
         }
-        let catalogIDs = result.compactMap(\.catalogID)
+        var answered = result.indices.filter { absent[$0] == nil }
+        let catalogIDs = answered.compactMap { result[$0].catalogID }
         let catalog = try await lookup(.catalog, ids: catalogIDs, scope: current, revision: revision)
         let missing = catalogIDs.filter { catalog[$0]?.isEmpty != false }
         let equivalents = includeCandidates
             ? try await lookup(.equivalents, ids: missing, scope: current, revision: revision)
             : [:]
-        for index in result.indices {
+        for index in answered {
             guard let id = result[index].catalogID else { continue }
+            if catalogAbsenceIsNotFound, result[index].resolvedIdentity.libraryID == nil, catalog[id]?.isEmpty != false {
+                absent[index] = .catalog
+                continue
+            }
             result[index].hasDocumentedIdentity = true
             if let resource = catalog[id]?.first {
                 result[index].isrc = resource.attributes?.isrc ?? result[index].isrc
@@ -149,10 +222,11 @@ final class MusicIdentityResolver {
         }
         // ISRC is a candidate signal only. Multiple results never become an
         // authoritative identity, even if Apple calls them equivalents.
+        answered.removeAll { absent[$0] != nil }
         let recordings = includeCandidates
-            ? try await lookup(.isrc, ids: result.compactMap(\.isrc), scope: current, revision: revision)
+            ? try await lookup(.isrc, ids: answered.compactMap { result[$0].isrc }, scope: current, revision: revision)
             : [:]
-        for index in result.indices {
+        for index in answered {
             if let isrc = result[index].isrc {
                 result[index].equivalentCatalogIDs = Array(Set(result[index].equivalentCatalogIDs + (recordings[isrc] ?? []).map(\.id))).sorted()
             }
@@ -161,7 +235,12 @@ final class MusicIdentityResolver {
             result[index].artworkURLTemplate = PortableArtworkReference.validated(result[index].artworkURLTemplate)
         }
         guard generation == revision else { throw ResolutionError.scopeChanged }
-        return result
+        var seenNotFound = Set<String>()
+        let notFound = result.indices.compactMap { index -> NotFound? in
+            guard let lookup = absent[index], seenNotFound.insert(result[index].id).inserted else { return nil }
+            return NotFound(snapshotID: result[index].id, lookup: lookup)
+        }
+        return Enrichment(snapshots: result.indices.map { absent[$0] == nil ? result[$0] : nil }, notFound: notFound)
     }
 
     private func lookup(_ kind: Lookup, ids: [String], scope: Scope, revision: Int) async throws -> [String: [Resource]] {
@@ -215,6 +294,9 @@ final class MusicIdentityResolver {
         guard batch.allSatisfy({ values[$0] != nil }) else { throw ResolutionError.incompleteResponse }
         for id in batch {
             let resources = values[id]!
+            // The playlist retries each cycle (`PLAYLIST-010`), so a library
+            // song that has not arrived yet is asked about again.
+            if kind == .library, resources.isEmpty { continue }
             let matches = kind == .library ? (resources.first?.catalog ?? []) : resources
             let ttl: TimeInterval = matches.count == 1 ? 7 * 24 * 3600 : 3600
             cache[Key(lookup: kind, id: id)] = Cached(resources: resources, expires: now().addingTimeInterval(ttl))
@@ -250,15 +332,50 @@ final class MusicIdentityResolver {
     }
 
     static func liveFetch(_ kind: Lookup, ids: [String], scope: Scope) async throws -> [String: [Resource]] {
+        try await fetchResources(kind, ids: ids, scope: scope, perform: { request in
+            try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, detail: "identity \(kind.rawValue)") {
+                try await MusicDataRequest(urlRequest: request).response()
+            }.data
+        }, isNotFound: isNotFoundResponse)
+    }
+
+    nonisolated static func isNotFoundResponse(_ error: Error) -> Bool {
+        (error as? MusicDataRequest.Error)?.status == 404
+    }
+
+    /// Runs one named lookup. Every failure comes out saying which lookup it
+    /// was, except cancellation and Overplay's own resolution errors.
+    static func naming<T>(_ kind: Lookup, _ body: () async throws -> T) async throws -> T {
+        do {
+            return try await body()
+        } catch {
+            if error is CancellationError || (error as? URLError)?.code == .cancelled
+                || error is ResolutionError || error is MusicLibrarySongResolver.ResolutionError { throw error }
+            throw ResolutionError.lookupFailed(kind, underlying: error)
+        }
+    }
+
+    /// A 404 means "not found" for every ID in the batch; any other failure
+    /// is thrown. The transport is injected because MusicKit's error type
+    /// cannot be built outside MusicKit.
+    static func fetchResources(
+        _ kind: Lookup, ids: [String], scope: Scope,
+        perform: (URLRequest) async throws -> Data,
+        isNotFound: (Error) -> Bool
+    ) async throws -> [String: [Resource]] {
         var url = URLComponents(string: "https://api.music.apple.com")!
         url.path = kind == .library ? "/v1/me/library/songs" : "/v1/catalog/\(scope.storefront)/songs"
         let filter = switch kind { case .library, .catalog: "ids"; case .equivalents: "filter[equivalents]"; case .isrc: "filter[isrc]" }
         url.queryItems = [URLQueryItem(name: filter, value: ids.joined(separator: ","))]
         if kind == .library { url.queryItems?.append(URLQueryItem(name: "include", value: "catalog")) }
-        let response = try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, detail: "identity \(kind.rawValue)") {
-            try await MusicDataRequest(urlRequest: URLRequest(url: url.url!)).response()
+        let request = URLRequest(url: url.url!)
+        return try await naming(kind) {
+            do {
+                return try decode(try await perform(request), kind: kind, ids: ids)
+            } catch where isNotFound(error) {
+                return Dictionary(uniqueKeysWithValues: ids.map { ($0, [Resource]()) })
+            }
         }
-        return try decode(response.data, kind: kind, ids: ids)
     }
 
     static func decode(_ data: Data, kind: Lookup, ids: [String]) throws -> [String: [Resource]] {
@@ -275,9 +392,9 @@ final class MusicIdentityResolver {
                 resource.catalog = relationship.data.filter { $0.type == "songs" }
                 result[entry.id] = [resource]
             }
-            // An absent resource is unresolved. Only a returned library song
-            // with an explicitly empty relationship proves no catalog match.
-            guard Set(ids).isSubset(of: returnedIDs) else { throw ResolutionError.incompleteResponse }
+            // An absent resource stays empty: unresolved, not "no catalog
+            // match". Only a returned library song with an explicitly empty
+            // relationship proves that.
         case .catalog:
             for entry in envelope.data where result[entry.id] != nil && entry.type == "songs" { result[entry.id] = [entry.resource] }
         case .equivalents:

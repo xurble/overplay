@@ -172,6 +172,91 @@ struct MusicIdentityResolverTests {
         #expect(results[0].artworkURLTemplate == "https://example.com/library/{w}x{h}.jpg")
     }
 
+    // MARK: - #111: not found is a value; every other failure is thrown
+
+    private struct Transport404: Error {}
+    private let scope = MusicIdentityResolver.Scope(storefront: "gb", account: "a")
+
+    private func fetch(_ kind: MusicIdentityResolver.Lookup, ids: [String], throwing error: Error) async throws -> [String: [MusicIdentityResolver.Resource]] {
+        try await MusicIdentityResolver.fetchResources(kind, ids: ids, scope: scope, perform: { _ in throw error }, isNotFound: { $0 is Transport404 })
+    }
+
+    @Test func a404IsNotFoundForEveryIDInTheBatch() async throws {
+        for kind in [MusicIdentityResolver.Lookup.library, .catalog, .equivalents, .isrc] {
+            let values = try await fetch(kind, ids: ["a", "b"], throwing: Transport404())
+            #expect(values == ["a": [], "b": []])
+        }
+    }
+
+    @Test func otherFailuresThrowAndNameTheLookup() async throws {
+        var failure: Error?
+        do { _ = try await fetch(.library, ids: ["a"], throwing: URLError(.notConnectedToInternet)) } catch { failure = error }
+        guard case MusicIdentityResolver.ResolutionError.lookupFailed(.library, let underlying) = try #require(failure) else {
+            Issue.record("expected a named lookup failure"); return
+        }
+        #expect(underlying is URLError)
+        #expect(UserFacingError.friendly(try #require(failure)) == "The web library lookup failed. You're offline. Check your connection and try again.")
+    }
+
+    @Test func cancellationIsNotWrappedOrTreatedAsNotFound() async throws {
+        await #expect(throws: CancellationError.self) { try await fetch(.library, ids: ["a"], throwing: CancellationError()) }
+        await #expect(throws: URLError.self) { try await fetch(.catalog, ids: ["a"], throwing: URLError(.cancelled)) }
+    }
+
+    @Test func aDataRequestStatusOf404IsTheOnlyNotFound() {
+        #expect(!MusicIdentityResolver.isNotFoundResponse(URLError(.notConnectedToInternet)))
+        #expect(!MusicIdentityResolver.isNotFoundResponse(NSError(domain: "MusicKit.MusicDataRequest.Error", code: 404)))
+    }
+
+    @Test func aMissingLibraryIDIsReportedAndOthersStillResolve() async throws {
+        let resolver = MusicIdentityResolver(currentScope: { scope }, fetch: { kind, ids, _ in
+            Dictionary(uniqueKeysWithValues: ids.map { id in
+                (id, kind == .library && id != "i.gone" ? [library(id, catalog: [])] : [])
+            })
+        })
+        let result = try await resolver.enrichReportingNotFound([snapshot("i.a"), snapshot("i.gone"), snapshot("i.gone")], includeCandidates: false)
+        #expect(result.snapshots[0]?.libraryID == "i.a")
+        #expect(result.snapshots[1] == nil && result.snapshots[2] == nil)
+        #expect(result.notFound == [.init(snapshotID: "i.gone", lookup: .library)])
+    }
+
+    @Test func strictEnrichStillFailsOnAMissingLibrarySong() async throws {
+        let resolver = MusicIdentityResolver(currentScope: { scope }, fetch: { _, ids, _ in
+            Dictionary(uniqueKeysWithValues: ids.map { ($0, [MusicIdentityResolver.Resource]()) })
+        })
+        await #expect(throws: MusicIdentityResolver.ResolutionError.self) { try await resolver.enrich([snapshot("i.gone")]) }
+    }
+
+    @Test func aMissingLibrarySongIsAskedAboutAgainNextTime() async throws {
+        var calls = 0
+        var present = false
+        let resolver = MusicIdentityResolver(currentScope: { scope }, fetch: { _, ids, _ in
+            calls += 1
+            return Dictionary(uniqueKeysWithValues: ids.map { ($0, present ? [library($0, catalog: [])] : []) })
+        })
+        _ = try await resolver.enrichReportingNotFound([snapshot("i.a")], includeCandidates: false)
+        present = true
+        let result = try await resolver.enrichReportingNotFound([snapshot("i.a")], includeCandidates: false)
+        #expect(calls == 2)
+        #expect(result.notFound.isEmpty && result.snapshots[0] != nil)
+    }
+
+    @Test func catalogAbsenceIsNotFoundOnlyWhenAskedAndOnlyForCatalogOnlySongs() async throws {
+        let resolver = MusicIdentityResolver(currentScope: { scope }, fetch: { kind, ids, _ in
+            Dictionary(uniqueKeysWithValues: ids.map { id in
+                (id, kind == .library ? [library(id, catalog: [song("777")])] : [])
+            })
+        })
+        let tolerant = try await resolver.enrichReportingNotFound([snapshot("5")], includeCandidates: false)
+        #expect(tolerant.notFound.isEmpty)
+        let strict = try await resolver.enrichReportingNotFound(
+            [snapshot("5"), snapshot("i.a")], includeCandidates: false, catalogAbsenceIsNotFound: true
+        )
+        #expect(strict.notFound == [.init(snapshotID: "5", lookup: .catalog)])
+        // A library song's identity is its library resource, whatever the catalog says.
+        #expect(strict.snapshots[1]?.libraryID == "i.a")
+    }
+
     /// `PLAY-017`: playback tracks survive a relaunch and a failed account
     /// check; only a different account or storefront empties them.
     @Test func playbackTracksSurviveRelaunchesAndAreClearedOnlyForAnotherAccount() async throws {

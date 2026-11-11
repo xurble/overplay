@@ -17,6 +17,9 @@ struct PlaylistSourceFetchResult: Equatable, Sendable {
     var videoMusicItemIDs: Set<String> = []
     /// Songs nothing could identify; skipped, so the snapshot is incomplete.
     var unresolvedSongIDs: [String] = []
+    /// The lookup that found nothing for some of them, in words, when it
+    /// was the identity step (`PLAYLIST-010`).
+    var unresolvedLookupName: String?
 }
 
 protocol PlaylistSourceSyncing {

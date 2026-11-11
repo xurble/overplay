@@ -95,9 +95,8 @@ struct MusicLibraryIdentityImportTests {
     @Test("A missing library resource is unresolved; an explicit empty catalog relationship is valid")
     func absentResourceDiffersFromNoCatalogMatch() throws {
         // Exact empty response returned for every native numeric ID in the probe.
-        #expect(throws: MusicIdentityResolver.ResolutionError.self) {
-            try MusicIdentityResolver.decode(Data(#"{"data":[]}"#.utf8), kind: .library, ids: [samples[0].nativeID])
-        }
+        let absent = try MusicIdentityResolver.decode(Data(#"{"data":[]}"#.utf8), kind: .library, ids: [samples[0].nativeID])
+        #expect(absent[samples[0].nativeID] == [])
         let upload = samples[1]
         let result = try MusicIdentityResolver.decode(try libraryResponse([upload]), kind: .library, ids: [upload.libraryID])
         #expect(result[upload.libraryID]?.first?.catalog == [])
@@ -354,6 +353,192 @@ struct MusicLibraryIdentityImportTests {
         #expect(!AppleMusicPlaylistSourceSync.allowsSkipping(2, of: 5))
     }
 
+    // MARK: - #111: an identity lookup failure costs one song
+
+    private var tenSamples: [Sample] {
+        (0..<10).map { Sample(nativeID: "-\($0 + 100)", libraryID: "i.ten\($0)", catalogID: "10\($0)", title: "Song \($0)", artist: "Band") }
+    }
+
+    private func identityResolver(
+        _ samples: [Sample], omitting omitted: @escaping () -> Set<String>
+    ) -> MusicIdentityResolver {
+        MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "fixture") }, fetch: { kind, ids, _ in
+            if kind == .library {
+                let returned = samples.filter { ids.contains($0.libraryID) && !omitted().contains($0.libraryID) }
+                return try MusicIdentityResolver.decode(libraryResponse(returned), kind: kind, ids: ids)
+            }
+            return Dictionary(uniqueKeysWithValues: ids.map { ($0, [MusicIdentityResolver.Resource(id: $0, type: "songs", attributes: .init(isrc: "fixture"))]) })
+        })
+    }
+
+    private func nativeLibraryAdapter(_ record: PlaylistRecord, _ samples: [Sample], resolver: MusicIdentityResolver) throws -> AppleMusicPlaylistSourceSync {
+        try makeAdapter(playlistID: record.musicPlaylistID, identityResolver: resolver, using: samples, resolve: { observed in
+            let sample = try #require(samples.first { $0.nativeID == observed.id.rawValue })
+            return .library(try song(sample, id: sample.libraryID))
+        })
+    }
+
+    @Test("A song the web library does not return is skipped; the other nine sync and the playlist retries")
+    func songMissingFromWebLibraryIsSkipped() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let samples = tenSamples
+        let (record, items) = try seededOTP(samples, in: context)
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let retiredTrack = TrackRecord(catalogID: "999", title: "Retired", artistName: "Band")
+        let retired = PlaylistItemRecord(playlistID: bucket.id, trackID: retiredTrack.id, skipCount: 2)
+        retired.evictedAt = .now
+        retired.suppressedOTPMusicPlaylistIDs = [record.musicPlaylistID]
+        context.insert(retiredTrack); context.insert(retired)
+        try context.save()
+        var omitted: Set<String> = [samples[9].libraryID]
+        let resolver = identityResolver(samples, omitting: { omitted })
+        let adapter = try nativeLibraryAdapter(record, samples, resolver: resolver)
+        let service = PlaylistSyncService(sourceRegistry: .init(adapters: [.appleMusic: adapter]))
+
+        let summary = try await service.syncPlaylist(record, in: context)
+
+        #expect(summary.fetchedCount == 9)
+        #expect(summary.skippedReason == "unresolvedSongs")
+        #expect(record.lastSyncedAt != nil)
+        #expect(record.lastSyncError?.contains("web library") == true)
+        // The tenth row is untouched: not removed, retired or reset.
+        let skipped = items[9]
+        #expect(try PlaylistItemRepository.item(id: skipped.id, in: context) != nil)
+        #expect(skipped.evictedAt == nil && skipped.playthroughCount == 7 && skipped.skipCount == 1)
+        // A partial snapshot must not release stale-membership protection.
+        #expect(retired.suppressedOTPMusicPlaylistIDs == [record.musicPlaylistID])
+
+        // The next cycle asks again rather than remembering the absence.
+        omitted = []
+        _ = try await service.syncPlaylist(record, in: context)
+        #expect(record.lastSyncError == nil)
+    }
+
+    @Test("A 404 for a batch holding only the missing song skips that song and creates no row")
+    func notFoundBatchCostsOnlyItsSongs() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        struct NotFound: Error {}
+        // IDs sort, so the 26th song is alone in the second batch of 25.
+        let samples = (0..<26).map { Sample(nativeID: "-\($0 + 200)", libraryID: "i.batch\(100 + $0)", catalogID: "\(2000 + $0)", title: "Song \($0)", artist: "Band") }
+        let missing = samples[25].libraryID
+        let record = PlaylistRecord(musicPlaylistID: "batch-404", name: "Probe", role: .oneTruePlaylist)
+        context.insert(record)
+        try context.save()
+        let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "fixture") }, fetch: { kind, ids, scope in
+            try await MusicIdentityResolver.fetchResources(kind, ids: ids, scope: scope, perform: { _ in
+                if ids == [missing] { throw NotFound() }
+                if kind == .library { return try libraryResponse(samples.filter { ids.contains($0.libraryID) }) }
+                return Data(#"{"data":[]}"#.utf8)
+            }, isNotFound: { $0 is NotFound })
+        })
+        let adapter = try nativeLibraryAdapter(record, samples, resolver: resolver)
+        let service = PlaylistSyncService(sourceRegistry: .init(adapters: [.appleMusic: adapter]))
+
+        let summary = try await service.syncPlaylist(record, in: context)
+
+        #expect(summary.fetchedCount == 25)
+        #expect(summary.skippedReason == "unresolvedSongs")
+        #expect(try TrackRecordRepository.allTracks(in: context).count == 25)
+        #expect(record.lastSyncError == PlaylistSyncService.unresolvedSongsMessage(1, lookupName: "web library"))
+    }
+
+    @Test("More than a fifth with no identity fails the fetch, naming the lookup and importing nothing")
+    func tooManyNotFoundNamesTheLookup() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let samples = tenSamples
+        let record = PlaylistRecord(musicPlaylistID: "too-many-identity", name: "Probe", role: .oneTruePlaylist)
+        context.insert(record)
+        try context.save()
+        let omitted = Set(samples.prefix(3).map(\.libraryID))
+        let adapter = try nativeLibraryAdapter(record, samples, resolver: identityResolver(samples, omitting: { omitted }))
+        let service = PlaylistSyncService(sourceRegistry: .init(adapters: [.appleMusic: adapter]))
+
+        var failure: Error?
+        do { _ = try await service.syncPlaylist(record, in: context) } catch { failure = error }
+
+        let error = try #require(failure)
+        #expect(UserFacingError.friendly(error) == "Apple Music couldn't identify 3 of 10 songs (web library lookup), so this playlist wasn't synced.")
+        #expect(try TrackRecordRepository.allTracks(in: context).isEmpty)
+        #expect(record.lastSyncedAt == nil)
+    }
+
+    @Test("A song known only by catalog ID that the catalog does not return is skipped, naming the catalog")
+    func catalogLookupMissIsSkipped() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let samples = tenSamples
+        let record = PlaylistRecord(musicPlaylistID: "catalog-miss", name: "Probe", role: .oneTruePlaylist)
+        context.insert(record)
+        try context.save()
+        let missing = samples[9].nativeID
+        let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "fixture") }, fetch: { kind, ids, _ in
+            #expect(kind == .catalog)
+            return Dictionary(uniqueKeysWithValues: ids.map { ($0, $0 == missing ? [] : [MusicIdentityResolver.Resource(id: $0, type: "songs", attributes: .init(isrc: "fixture"))]) })
+        })
+        let adapter = try makeAdapter(playlistID: record.musicPlaylistID, identityResolver: resolver, using: samples, resolve: { observed in
+            let sample = try #require(samples.first { $0.nativeID == observed.id.rawValue })
+            return .catalog(try song(sample, id: sample.nativeID, type: "songs"))
+        })
+        let service = PlaylistSyncService(sourceRegistry: .init(adapters: [.appleMusic: adapter]))
+
+        let summary = try await service.syncPlaylist(record, in: context)
+
+        #expect(summary.fetchedCount == 9)
+        #expect(record.lastSyncError == PlaylistSyncService.unresolvedSongsMessage(1, lookupName: "catalog"))
+    }
+
+    @Test("A network failure during identity lookup fails the fetch and imports nothing")
+    func failedLookupStillFailsTheFetch() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let samples = tenSamples
+        let record = PlaylistRecord(musicPlaylistID: "network-failure", name: "Probe", role: .oneTruePlaylist)
+        context.insert(record)
+        try context.save()
+        let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "fixture") }, fetch: { _, _, _ in
+            throw URLError(.notConnectedToInternet)
+        })
+        let adapter = try nativeLibraryAdapter(record, samples, resolver: resolver)
+        let service = PlaylistSyncService(sourceRegistry: .init(adapters: [.appleMusic: adapter]))
+
+        await #expect(throws: URLError.self) { try await service.syncPlaylist(record, in: context) }
+        #expect(try TrackRecordRepository.allTracks(in: context).isEmpty)
+        #expect(record.lastSyncedAt == nil)
+    }
+
+    private static let rawMusicKitError = NSError(domain: "MusicKit.MusicDataRequest.Error", code: 1)
+
+    @Test("A failed Inbox source stores the friendly message, not MusicKit's raw text")
+    func inboxSourceStoresFriendlyError() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let source = PlaylistRecord(musicPlaylistID: "failing-source", name: "Source", role: .triageSource)
+        context.insert(source)
+        try context.save()
+        let service = PlaylistSyncService(sourceRegistry: .init(adapters: [.appleMusic: FailingPlaylistSource(error: Self.rawMusicKitError)]))
+
+        _ = try? await service.syncPlaylist(try PlaylistRepository.triageBucket(in: context), in: context)
+
+        #expect(source.lastSyncError == "Apple Music ran into a problem. Try again.")
+    }
+
+    @Test("A failed automatic sync stores the friendly message, not MusicKit's raw text")
+    func periodicSyncStoresFriendlyError() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let record = PlaylistRecord(musicPlaylistID: "failing-periodic", name: "Probe", role: .oneTruePlaylist)
+        context.insert(record)
+        try context.save()
+        let service = PeriodicPlaylistSyncService(syncPlaylist: { _, _ in throw Self.rawMusicKitError })
+
+        await service.syncLinkedPlaylists(context: context, force: true)
+
+        #expect(record.lastSyncError == "Apple Music ran into a problem. Try again.")
+    }
+
     /// Adapts a per-song resolver to the batched boundary; an unresolved song
     /// is reported rather than thrown, as the live resolver does.
     static func perSong(
@@ -416,6 +601,21 @@ struct MusicLibraryIdentityImportTests {
             return ["id": sample.libraryID, "type": "library-songs", "relationships": ["catalog": ["data": catalog]]]
         }
         return try JSONSerialization.data(withJSONObject: ["data": data])
+    }
+}
+
+@MainActor
+private struct FailingPlaylistSource: PlaylistSourceSyncing {
+    let source: PlaylistSource = .appleMusic
+    let error: Error
+
+    func fetchLibraryPlaylists() async throws -> [RemotePlaylistLink] { [] }
+
+    func fetchTrackSnapshots(
+        playlistID: String, playlistName: String?, playlistRecord: PlaylistRecord?,
+        skipWhenRemoteUnchanged: Bool, in context: ModelContext
+    ) async throws -> PlaylistSourceFetchResult {
+        throw error
     }
 }
 
