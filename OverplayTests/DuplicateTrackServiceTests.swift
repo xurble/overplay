@@ -279,7 +279,7 @@ struct DuplicateTrackServiceTests {
         var adds = 0
         let mutation = PlaylistMutationService(addRemotely: { _, _, _ in adds += 1 })
         await #expect(throws: (any Error).self) {
-            try await DuplicateTrackService.prepareOTPMembership(selected, in: context, mutation: mutation)
+            try await DuplicateTrackService.prepareOTPMembership(selected, in: context, mutation: mutation) {}
         }
         #expect(adds == 0)
         #expect(try TrackRecordRepository.allTracks(in: context).count == 2)
@@ -295,7 +295,7 @@ struct DuplicateTrackServiceTests {
             try context.save()
         })
         await #expect(throws: (any Error).self) {
-            try await DuplicateTrackService.prepareOTPMembership(selected, in: context, mutation: mutation)
+            try await DuplicateTrackService.prepareOTPMembership(selected, in: context, mutation: mutation) {}
         }
         let otp = try #require(try PlaylistRepository.oneTruePlaylist(in: context))
         try TrackLocationService.reconcileIntake(item, owner: otp, sourcePlaylist: otp, entryID: nil, at: .now, in: context)
@@ -311,7 +311,7 @@ struct DuplicateTrackServiceTests {
             try context.save()
         })
         await #expect(throws: (any Error).self) {
-            try await DuplicateTrackService.prepareOTPMembership(selected, in: context, mutation: mutation)
+            try await DuplicateTrackService.prepareOTPMembership(selected, in: context, mutation: mutation) {}
         }
         #expect(try TrackRecordRepository.allTracks(in: context).count == 2)
         #expect(try DuplicateTrackService.candidates(in: context).allSatisfy { $0.destination == .triage })
