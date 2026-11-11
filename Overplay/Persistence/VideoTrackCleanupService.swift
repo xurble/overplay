@@ -14,6 +14,12 @@ nonisolated enum VideoTrackPolicy {
         if case .musicVideo = track { return true }
         return false
     }
+
+    static func isSong(playbackData: Data?) -> Bool {
+        guard let playbackData,
+              let track = try? JSONDecoder().decode(Track.self, from: playbackData) else { return false }
+        return isSong(track)
+    }
 }
 
 enum TrackImportError: LocalizedError {
@@ -61,8 +67,14 @@ enum VideoTrackCleanupService {
         guard inspectPlaybackData || !knownVideoIDs.isEmpty else { return 0 }
         var videoIDs: Set<UUID> = []
         if !knownVideoIDs.isEmpty {
+            // A confirmed duplicate merge keeps the donor's IDs as the
+            // keeper's aliases, so a song that absorbed a legacy video holds
+            // that video's IDs: match a track's own IDs only. A merge can
+            // also give a keeper missing a catalog or library ID the donor's,
+            // so a stored song payload is never deleted on ID evidence.
             videoIDs = Set(try TrackRecordRepository.allTracks(in: context).filter { track in
-                !knownVideoIDs.isDisjoint(with: [track.catalogID, track.libraryID].compactMap { $0 } + track.identityAliases)
+                !knownVideoIDs.isDisjoint(with: [track.catalogID, track.libraryID].compactMap { $0 })
+                    && !VideoTrackPolicy.isSong(playbackData: track.musicKitPlaybackData)
             }.map(\.id))
         }
         if inspectPlaybackData {
@@ -76,7 +88,15 @@ enum VideoTrackCleanupService {
         }
         guard !videoIDs.isEmpty else { return 0 }
         // Re-read after the await: a sync or merge may have changed the store.
-        let videos = try TrackRecordRepository.allTracks(in: context).filter { videoIDs.contains($0.id) }
+        let matched = try TrackRecordRepository.allTracks(in: context).filter { videoIDs.contains($0.id) }
+        // A merge keeper holds the merged tracks' memberships and history.
+        // Whether it is a video is per-device evidence (the payload cache is
+        // not synced), but its lineage is synced, so every device agrees to
+        // keep it: a song merged into an unrecognised video row is never lost.
+        let videos = matched.filter { $0.absorbedTrackIDs.isEmpty }
+        for kept in matched where !kept.absorbedTrackIDs.isEmpty {
+            TrackMetadataDiagnostics.log("video cleanup kept merge keeper track=\(kept.id) absorbed=\(kept.absorbedTrackIDs.count)")
+        }
         guard !videos.isEmpty else { return 0 }
         let trackIDs = Set(videos.map(\.id))
         let localIDs = Set(trackIDs.map(\.uuidString))
