@@ -37,6 +37,7 @@
 		06E38AA02FB65E8700F0D393 /* docs/OVERPLAY_DESIGN_SPEC.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = docs/OVERPLAY_DESIGN_SPEC.md; sourceTree = "<group>"; };
 		06E38AB12FB7000000F0D393 /* OverplayTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OverplayTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		35D000000000000000000001 /* Development.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Development.xcconfig; sourceTree = "<group>"; };
+		7E57000000000000000000C1 /* Tests.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Tests.xcconfig; sourceTree = "<group>"; };
 		4F1A00000000000000000002 /* OverplayUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OverplayUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -112,6 +113,7 @@
 			children = (
 				06E38A9E2FB5E0F000F0D393 /* Shared.xcconfig */,
 				35D000000000000000000001 /* Development.xcconfig */,
+				7E57000000000000000000C1 /* Tests.xcconfig */,
 				06E38A9F2FB5E0F000F0D393 /* Local.example.xcconfig */,
 			);
 			path = Config;
@@ -493,10 +495,12 @@
 		};
 		06E38AB62FB7000000F0D393 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7E57000000000000000000C1 /* Tests.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -509,22 +513,26 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = YES;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = "1,2,6";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Overplay.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Overplay";
 			};
 			name = Debug;
 		};
 		06E38AB72FB7000000F0D393 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7E57000000000000000000C1 /* Tests.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -537,12 +545,14 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = YES;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = "1,2,6";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Overplay.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Overplay";
 			};
 			name = Release;
@@ -648,10 +658,12 @@
 		};
 		35D000000000000000000004 /* Development */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 7E57000000000000000000C1 /* Tests.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -664,12 +676,14 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = YES;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = "1,2,6";
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Overplay.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Overplay";
 			};
 			name = Development;
