@@ -294,6 +294,12 @@ struct PlaybackFixture {
     let controller: PlaybackController
     private let suiteName: String
 
+    /// Detached playback work (a skip on reach, a queue repair) can finish
+    /// after its test has returned. Releasing a container resets its main
+    /// context, and SwiftData traps on any later read of its models, so every
+    /// fixture's store lives for the whole run, as the app's does.
+    private static var retainedContainers: [ModelContainer] = []
+
     init(
         trackCount: Int = 3,
         role: PlaylistRole = .oneTruePlaylist,
@@ -305,7 +311,7 @@ struct PlaybackFixture {
     ) throws {
         let container = try container ?? OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let settings = try SettingsRepository.settings(in: context)
+        let settings = try OverplayTestSupport.seedSettings(in: context)
         let playlist: PlaylistRecord
         var tracks: [TrackRecord] = []
         var items: [PlaylistItemRecord] = []
@@ -338,6 +344,7 @@ struct PlaybackFixture {
             fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("\(suiteName).json"),
             defaults: UserDefaults(suiteName: suiteName)!
         )
+        Self.retainedContainers.append(container)
         self.container = container
         self.context = context
         self.settings = settings

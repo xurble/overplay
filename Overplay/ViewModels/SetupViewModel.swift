@@ -115,7 +115,7 @@ final class SetupViewModel {
     /// A Mac's request answers the card only on a device that cannot make the
     /// playlist; one that can makes it (`SETUP-002`).
     func restoreProgress(context: ModelContext, dependencies: Dependencies) {
-        guard let settings = try? context.fetch(FetchDescriptor<OverplaySettings>()).first else { return }
+        guard let settings = try? SettingsRepository.storedSettings(in: context) else { return }
         if let selected = settings.selectedPlaylistID {
             oneTruePlaylistID = selected
         } else if settings.pendingOneTruePlaylistRequestedAt != nil, !dependencies.canCreatePlaylists() {

@@ -23,8 +23,10 @@ enum TrackImportError: LocalizedError {
 }
 
 /// Which tracks' cached playback data this launch has already inspected.
-/// Only an upsert writes a stored track's payload, and it refuses videos, so
-/// one inspection per track per launch finds every video a repeat would (PF-9).
+/// Only song payloads are written to a stored track: an upsert refuses
+/// videos, playback preparation stores `Track.song`, and a merge copies only a
+/// donor payload that is not a video. So one inspection per track per launch
+/// finds every video a repeat would (PF-9).
 final class VideoPlaybackScan {
     static let shared = VideoPlaybackScan(cache: .shared)
     let cache: DevicePlaybackCache

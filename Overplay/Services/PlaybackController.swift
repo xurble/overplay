@@ -79,6 +79,9 @@ final class PlaybackController {
         var pausedSince: Date?
         /// It sat paused for `longPauseSeconds` or more at some point.
         var hadLongPause = false
+        /// Overplay has seen it playing. A session first seen paused (after a
+        /// relaunch, or split on hydration) was not paused by a failure Overplay saw.
+        var wasSeenPlaying = false
         var isAttributed: Bool { play.localTrackID != nil }
 
         /// Paused long enough, now or earlier, that ending it is not a skip.
@@ -141,6 +144,10 @@ final class PlaybackController {
     @ObservationIgnored var playbackCatalog = PlaybackCatalog.live
     /// Album and artist songs' native tracks on this device (`PLAY-019`); injectable for tests.
     @ObservationIgnored var collectionTrackCache = DevicePlaybackCache.shared
+    /// Resubmission's record fetch; tests count calls through it.
+    @ObservationIgnored var fetchTrackRecords: @MainActor ([UUID], ModelContext) throws -> [TrackRecord] = {
+        try TrackRecordRepository.tracks(ids: $0, in: $1)
+    }
     /// Adds a catalog song to an Apple Music playlist; injectable for tests.
     @ObservationIgnored var addCatalogSongToPlaylist: @MainActor (String, PlaylistRecord, ModelContext) async throws -> Void = {
         try await PlaylistMutationService().addCatalogSong(id: $0, to: $1, in: $2)
@@ -200,15 +207,16 @@ final class PlaybackController {
     /// at the limit.
     @ObservationIgnored private var startHold: Int?
     /// The start whose hold a Play press took over: it still owes its resume
-    /// seek, until the hold's limit.
-    @ObservationIgnored private var startTakenOver: Int?
+    /// seek, until the hold's limit or until that start ends. Readable for tests.
+    @ObservationIgnored private(set) var startTakenOver: Int?
     /// The start whose held observation has been recorded, so it is listed once.
     @ObservationIgnored private var recordedHeldStart: Int?
     /// The display last recorded, so only changes are listed.
     @ObservationIgnored private var recordedDisplay: String?
     private var isHoldingStart: Bool { startHold == startGeneration }
-    /// Shuffle and Play was tapped during a held start of the same intent.
-    @ObservationIgnored private var shuffleWhenHeldStartLoads = false
+    /// Shuffle and Play was tapped during a held start of the same intent;
+    /// cleared when that start ends. Readable for tests.
+    @ObservationIgnored private(set) var shuffleWhenHeldStartLoads = false
     /// How long the hold may last if Apple Music never finishes preparing.
     @ObservationIgnored var startHoldLimit: Duration = .seconds(8)
     /// The longest a start waits for MusicKit to load the queue.
@@ -848,12 +856,20 @@ final class PlaybackController {
         let completed = outgoing.map { PlaybackSessionEvaluationService.inferredNaturalCompletion(session: $0.play) } ?? false
         // A stale last observation means the end happened while Overplay was
         // suspended: most likely the queue played out. Unknown, not a failure.
-        let stale = outgoing.map {
-            Date.now.timeIntervalSince($0.play.lastObservedAt) > PlaybackSessionEvaluationService.observationStalenessThresholdSeconds
-        } ?? true
-        // Paused players are not sampled, so a paused session always looks
-        // stale; it did not play out. The system dropped its idle queue.
-        let lostWhilePaused = !completed && outgoing?.pausedSince != nil
+        let now = Date.now
+        let threshold = PlaybackSessionEvaluationService.observationStalenessThresholdSeconds
+        let stale = outgoing.map { now.timeIntervalSince($0.play.lastObservedAt) > threshold } ?? true
+        // Paused players are not sampled, so a long-paused session always
+        // looks stale; it did not play out. The system dropped its idle queue.
+        // A pause no older than the staleness threshold may be a delivery
+        // failure reporting paused first: that stays a stop mid-track. The
+        // pause's own age decides, since a stop reported after it refreshes
+        // the last observation. A pause on a session never seen playing is
+        // old: its age is only how long Overplay has been watching it.
+        let pauseIsOld = outgoing.map { current in
+            current.pausedSince.map { now.timeIntervalSince($0) > threshold || !current.wasSeenPlaying } ?? false
+        } ?? false
+        let lostWhilePaused = !completed && pauseIsOld
         let stoppedMidTrack = !completed && !stale
         activityLog.record(.queueEndObserved,
             detail: completed ? "played out" : lostWhilePaused ? "lost while paused" : stale ? "ended while suspended" : "stopped mid-track")
@@ -871,7 +887,8 @@ final class PlaybackController {
         }
         if stoppedMidTrack {
             // Keep the member and position, so Play resumes where it stopped.
-            fail(kind: .command, message: Self.playbackStoppedMessage)
+            // A failure already shown (did not start, stalled) says more.
+            if playbackFailure == nil { fail(kind: .command, message: Self.playbackStoppedMessage) }
             saveResumePoint(force: true)
             return
         }
@@ -1313,14 +1330,9 @@ final class PlaybackController {
         }
         startGeneration &+= 1
         let generation = startGeneration
-        let resolved = await resolvePlayableTracks(records)
+        let playable = await playableMembers(records, items: items)
         // A newer start or selection happened while this one prepared.
         guard generation == startGeneration else { return }
-        let itemsByTrackID = items.firstValueDictionary(keyedBy: \.trackID)
-        let playable = records.compactMap { record -> (PlaybackIntent.Member, Track)? in
-            guard let track = resolved[record.id] else { return nil }
-            return (Self.member(for: record, item: itemsByTrackID[record.id], track: track), track)
-        }
         guard !playable.isEmpty else {
             statusMessage = "None of the tracks in \(playlist.name) could be prepared for playback."
             return
@@ -1373,10 +1385,11 @@ final class PlaybackController {
             // An album or artist is looked up in the catalog again (`PLAY-018`).
             resolved = await resolveCollectionTracks(intent.members)
         } else {
-            let records = intent.members.compactMap { member -> TrackRecord? in
-                guard let id = member.trackID, let context = countingContext() else { return nil }
-                return try? TrackRecordRepository.track(id: id, in: context)
-            }
+            // One batched fetch, in member order (PB-9).
+            let ids = intent.members.compactMap(\.trackID)
+            let fetched = countingContext().flatMap { try? fetchTrackRecords(ids, $0) } ?? []
+            let byID = fetched.firstValueDictionary(keyedBy: \.id)
+            let records = ids.compactMap { byID[$0] }
             var refreshing: Set<UUID> = []
             if refreshingStart, let id = member?.trackID { refreshing.insert(id) }
             let tracks = await resolvePlayableTracks(records, refreshing: refreshing,
@@ -1457,8 +1470,12 @@ final class PlaybackController {
             case .playedAfterHoldEnded, .takenOverByPlay:
                 // Observation is running again, so the player may have moved on.
                 await observePlayer()
-                if intent.members.indices.contains(startIndex),
-                   currentMember?.localTrackID == intent.members[startIndex].localTrackID {
+                // Only an entry whose item has loaded and is attributed to the
+                // start song (`member(for:)` needs the item). An unloaded one
+                // is attributed by guess and may be the loading queue's
+                // interim track 1. Otherwise play on from wherever it is.
+                if intent.members.indices.contains(startIndex), let entry = player.currentEntry,
+                   member(for: entry)?.localTrackID == intent.members[startIndex].localTrackID {
                     seekToResumePosition(position)
                 }
             case .holdLost:
@@ -1528,6 +1545,10 @@ final class PlaybackController {
         defer {
             watchdog.cancel()
             if startHold == generation { startHold = nil }
+            // This start's outcome is decided; its takeover and repeat-tap
+            // shuffle end with it. A newer start's flag is left alone.
+            if startTakenOver == generation { startTakenOver = nil }
+            if generation == startGeneration { shuffleWhenHeldStartLoads = false }
         }
         queueNeedsFreshStart = true
         try await awaitPlayer("prepare start=\(generation)") { try await player.prepareToPlay() }
@@ -1590,32 +1611,46 @@ final class PlaybackController {
         }
     }
 
+    /// A playlist start's members and tracks, in record order, decoding each
+    /// cached track once (PB-9).
+    private func playableMembers(_ records: [TrackRecord], items: [PlaylistItemRecord]) async -> [(PlaybackIntent.Member, Track)] {
+        await DevicePlaybackCache.decodingOnce {
+            let resolved = await resolvePlayableTracks(records)
+            let itemsByTrackID = items.firstValueDictionary(keyedBy: \.trackID)
+            return records.compactMap { record -> (PlaybackIntent.Member, Track)? in
+                guard let track = resolved[record.id] else { return nil }
+                return (Self.member(for: record, item: itemsByTrackID[record.id], track: track), track)
+            }
+        }
+    }
+
     /// Native tracks from the device cache, preparing any that are missing.
     /// Unresolvable tracks are simply absent from the result (`PLAY-017`).
+    /// Preparation and resolution share one decode per cached track (PB-9).
     private func resolvePlayableTracks(
         _ records: [TrackRecord], refreshing: Set<UUID> = [], fallbackLocalTrackIDs: [String] = []
     ) async -> [UUID: Track] {
-        if !records.isEmpty {
-            do {
-                try await preparePlaybackTracks(records, refreshing)
-            } catch {
-                // Name the songs left out where they can be seen: the activity
-                // report and the unified log at normal level (#75).
-                activityLog.record(
-                    .playbackQueuePreparation, detail: error.localizedDescription, error: error
-                )
+        await DevicePlaybackCache.decodingOnce {
+            if !records.isEmpty {
+                do {
+                    try await preparePlaybackTracks(records, refreshing)
+                } catch {
+                    // Name the songs left out where they can be seen: the activity
+                    // report and the unified log at normal level (#75).
+                    activityLog.record(
+                        .playbackQueuePreparation, detail: error.localizedDescription, error: error
+                    )
+                }
             }
-        }
-        var resolved: [UUID: Track] = [:]
-        let ids = Set(records.map(\.id) + fallbackLocalTrackIDs.compactMap(UUID.init(uuidString:)))
-        for id in ids {
-            if let data = DevicePlaybackCache.shared.data(for: id),
-               let track = try? JSONDecoder().decode(Track.self, from: data),
-               Self.isQueueable(track) {
-                resolved[id] = track
+            var resolved: [UUID: Track] = [:]
+            let ids = Set(records.map(\.id) + fallbackLocalTrackIDs.compactMap(UUID.init(uuidString:)))
+            for id in ids {
+                if let track = DevicePlaybackCache.shared.track(for: id), Self.isQueueable(track) {
+                    resolved[id] = track
+                }
             }
+            return resolved
         }
-        return resolved
     }
 
     private func resolveCollectionTracks(_ members: [PlaybackIntent.Member]) async -> [String: Track] {
@@ -1729,12 +1764,26 @@ final class PlaybackController {
         adopt(context)
         let startToken = beginStart()
         defer { endStart(startToken) }
+        let selected = catalogSongID.flatMap { id in
+            intent?.collection?.groupKey == collection.groupKey ? intent?.members.first { $0.catalogSongID == id } : nil
+        }
+        // The caller's tracks go into the cache before selecting or starting,
+        // and each is written only when it differs from the cached copy, so a
+        // tap inside a playing collection normally writes nothing (PB-10).
+        // The caller's copy is the one queued: by a new start, and by a
+        // selection that has to rebuild the queue from the cache (after a
+        // relaunch or a failure). A library browser passes this device's
+        // local copies.
+        // Sorted keys, so an unchanged track encodes to the same data and is
+        // not written again.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
         for (id, track) in tracks {
-            collectionTrackCache.set(try? JSONEncoder().encode(track), forCatalogSongID: id)
+            let data = try? encoder.encode(track)
+            if data != collectionTrackCache.data(forCatalogSongID: id) { collectionTrackCache.set(data, forCatalogSongID: id) }
         }
         let shuffle = catalogSongID == nil
-        if let catalogSongID, let intent, intent.collection?.groupKey == collection.groupKey,
-           let member = intent.members.first(where: { $0.catalogSongID == catalogSongID }) {
+        if let member = selected, let intent {
             await select(member, in: intent)
             if recordsRecent { recordRecent(collection, songs: songs, artworkURLTemplate: nil) }
             return playbackFailure == nil
@@ -1851,7 +1900,10 @@ final class PlaybackController {
     /// song without one, its library ID.
     private func collectionPlayable(_ tracks: [(String, Track)]) -> [(PlaybackIntent.Member, Track)] {
         let context = countingContext()
-        let tracked = context.flatMap { try? TrackRecordRepository.tracksByCatalogID(in: $0) } ?? [:]
+        // One fetch serves both lookups, not one or more per song (PB-10).
+        let records = context.flatMap { try? TrackRecordRepository.allTracks(in: $0) } ?? []
+        let tracked = TrackRecordRepository.tracksByCatalogID(records)
+        let byLibraryID = Self.tracksByLibraryID(records)
         var seen: Set<String> = []
         return tracks.compactMap { catalogID, track in
             if collectionTrackCache.data(forCatalogSongID: catalogID) == nil {
@@ -1859,7 +1911,7 @@ final class PlaybackController {
             }
             var member: PlaybackIntent.Member
             // A library song is keyed by its library ID.
-            if let record = tracked[catalogID] ?? context.flatMap({ try? TrackRecordRepository.track(musicItemID: catalogID, in: $0) }),
+            if let record = tracked[catalogID] ?? byLibraryID[catalogID],
                let context,
                let item = try? PlaylistItemRepository.item(trackID: record.id, in: context) {
                 member = Self.member(for: record, item: item, track: track)
@@ -1880,6 +1932,25 @@ final class PlaybackController {
             guard seen.insert(member.localTrackID).inserted else { return nil }
             return (member, track)
         }
+    }
+
+    /// What `TrackRecordRepository.track(musicItemID:)` finds for a song ID
+    /// no record has as its catalog ID or catalog alias: the first record, in
+    /// `allTracks` order, with that library ID in the current library scope,
+    /// else with it as a confirmed library alias there.
+    static func tracksByLibraryID(_ records: [TrackRecord]) -> [String: TrackRecord] {
+        let scope = MusicResourceReference.currentLibraryScope
+        var byLibraryID: [String: TrackRecord] = [:]
+        for record in records where record.libraryScope == scope {
+            if let id = record.libraryID, byLibraryID[id] == nil { byLibraryID[id] = record }
+        }
+        for record in records {
+            for alias in record.confirmedAliases where alias.domain == .librarySong && alias.scope == scope
+                && byLibraryID[alias.value] == nil {
+                byLibraryID[alias.value] = record
+            }
+        }
+        return byLibraryID
     }
 
     /// The current song is one Overplay does not track, playing from an
@@ -2206,6 +2277,7 @@ final class PlaybackController {
         }
         if status == .playing {
             playWantedAt = now
+            if session?.entryID == entryID { session?.wasSeenPlaying = true }
             guard var episode = playEpisode, episode.entryID == entryID else {
                 playEpisode = PlayEpisode(entryID: entryID, since: now, lastPosition: position)
                 return
@@ -2992,10 +3064,12 @@ final class PlaybackController {
         return context
     }
 
-    private func settings(in context: ModelContext) -> OverplaySettings? {
+    func settings(in context: ModelContext) -> OverplaySettings? {
         if let cachedSettings, !cachedSettings.isDeleted { return cachedSettings }
-        cachedSettings = try? SettingsRepository.settings(in: context)
-        return cachedSettings
+        let settings = try? SettingsRepository.settings(in: context)
+        // Unsaved defaults stand in only until the real row arrives.
+        if settings?.modelContext != nil { cachedSettings = settings }
+        return settings
     }
 
     private func currentPlaylist(in context: ModelContext) throws -> PlaylistRecord? {

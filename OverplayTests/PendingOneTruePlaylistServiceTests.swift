@@ -104,4 +104,30 @@ struct PendingOneTruePlaylistServiceTests {
         #expect(settings.pendingOneTruePlaylistRequestedAt == nil)
         #expect(settings.selectedPlaylistID == "p.chosen")
     }
+
+    /// PR #122 review, finding 4: with a duplicate row present mid-session,
+    /// an unsorted read could find the newer row's request and no selection,
+    /// make a second "Overplay" and demote the chosen one.
+    @Test("with duplicate rows, the request is read from the row every device keeps")
+    func duplicateRowsReadTheKeptRow() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        context.insert(PlaylistRecord(musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+                                      name: "Triage", role: .triageBucket, writePolicy: .incomingOnly))
+        context.insert(PlaylistRecord(musicPlaylistID: "p.chosen", name: "Overplay", role: .oneTruePlaylist, writePolicy: .managed))
+        // Inserted first, so an unsorted read finds it first.
+        let newer = OverplaySettings(createdAt: Date(timeIntervalSince1970: 2_000))
+        newer.pendingOneTruePlaylistRequestedAt = Date(timeIntervalSince1970: 2_000)
+        context.insert(newer)
+        try context.save()
+        let kept = OverplaySettings(selectedPlaylistID: "p.chosen", selectedPlaylistName: "Overplay",
+                                    createdAt: Date(timeIntervalSince1970: 1_000))
+        context.insert(kept)
+        try context.save()
+
+        let service = service { _ in Issue.record("made a second One True Playlist") }
+        #expect(await service.fulfilIfNeeded(in: context) == nil)
+        #expect(kept.selectedPlaylistID == "p.chosen")
+        #expect(try PlaylistRepository.oneTruePlaylist(in: context)?.musicPlaylistID == "p.chosen")
+    }
 }

@@ -21,7 +21,7 @@ struct PendingOneTruePlaylistService {
 
     /// Asks a Mac to leave the One True Playlist for an iPhone or iPad.
     static func request(copying source: AppleMusicPlaylist?, in context: ModelContext) throws {
-        guard let settings = try context.fetch(FetchDescriptor<OverplaySettings>()).first else { return }
+        guard let settings = try SettingsRepository.storedSettings(in: context) else { return }
         settings.pendingOneTruePlaylistRequestedAt = .now
         settings.pendingOneTruePlaylistSourceID = source?.id
         settings.pendingOneTruePlaylistSourceName = source?.name
@@ -36,7 +36,7 @@ struct PendingOneTruePlaylistService {
     func fulfilIfNeeded(in context: ModelContext) async -> PlaylistRecord? {
         if let inFlight = Self.inFlight { return await inFlight.value.flatMap { context.model(for: $0) as? PlaylistRecord } }
         guard canCreatePlaylists(),
-              let settings = try? context.fetch(FetchDescriptor<OverplaySettings>()).first,
+              let settings = try? SettingsRepository.storedSettings(in: context),
               settings.pendingOneTruePlaylistRequestedAt != nil else { return nil }
         guard settings.selectedPlaylistID == nil else {
             Self.clear(settings)
