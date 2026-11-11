@@ -572,6 +572,40 @@ struct LibraryRestorationTests {
         #expect(item.sourceMusicPlaylistIDs.contains("p.other"))
     }
 
+    /// PR #122 re-review: two devices set up at once and this one is playing
+    /// its own One True Playlist when the other's older row arrives.
+    /// Convergence demotes the playing playlist; the intent must follow it to
+    /// the Inbox, through the call the import observer makes.
+    @Test("a convergence that demotes the playing One True Playlist moves the intent to the Inbox")
+    func convergenceMovesThePlayingIntentWithADemotion() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        let context = fixture.context
+        let inbox = try PlaylistRepository.triageBucket(in: context)
+        context.insert(PlaylistRecord(musicPlaylistID: "p.kept", name: "Overplay", role: .oneTruePlaylist, writePolicy: .managed))
+        fixture.settings.selectedPlaylistID = fixture.playlist.musicPlaylistID
+        fixture.settings.createdAt = Date(timeIntervalSince1970: 2_000)
+        context.insert(OverplaySettings(selectedPlaylistID: "p.kept", selectedPlaylistName: "Overplay",
+                                        createdAt: Date(timeIntervalSince1970: 1_000)))
+        try context.save()
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[1],
+                                              settings: fixture.settings, context: context)
+        #expect(fixture.controller.intent?.musicPlaylistID == fixture.playlist.musicPlaylistID)
+
+        let service = LibraryRestorationService(defaults: defaults())
+        try await prepareAfterImport(service, fixture.container)
+        #expect(service.isReady)
+        try AppRuntime.convergeSettingsAfterImport(service, playbackController: fixture.controller,
+                                                   in: ModelContext(fixture.container))
+
+        let demoted = try #require(try ModelContext(fixture.container).fetch(FetchDescriptor<PlaylistRecord>())
+            .first { $0.musicPlaylistID == fixture.playlist.musicPlaylistID })
+        #expect(demoted.role == .triageSource)
+        #expect(fixture.controller.intent?.musicPlaylistID == inbox.musicPlaylistID)
+        #expect(fixture.intentStore.loadIntent()?.musicPlaylistID == inbox.musicPlaylistID)
+        #expect(fixture.player.submitCount == 1, "Convergence must not restart playback")
+    }
+
     @Test("a device whose receipt names a duplicate row opens offline, and keeps the kept row's receipt")
     func aReceiptForADuplicateRowOpensOffline() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
@@ -603,6 +637,26 @@ struct LibraryRestorationTests {
         #expect(try service.convergeSettingsAfterImport(in: container.mainContext) == nil)
         let read = ModelContext(container)
         #expect(try settingsRows(read).map(\.updatedAt) == [updated])
+    }
+
+    /// PR #122 re-review: every import on a ready device ran the full
+    /// completeness check on the main actor, though there is almost always
+    /// one row and so nothing to converge.
+    @Test("a single settings row is counted, not scanned, after each import")
+    func convergenceSkipsTheCompletenessCheckForASingleRow() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        _ = try seed(container.mainContext)
+        let service = LibraryRestorationService(defaults: defaults())
+        try await prepareAfterImport(service, container)
+
+        #expect(try service.convergeSettingsAfterImport(in: container.mainContext) == nil)
+        #expect(service.completenessChecks == 0)
+
+        // A second row is worth the check.
+        container.mainContext.insert(OverplaySettings(createdAt: .distantFuture))
+        try container.mainContext.save()
+        #expect(try service.convergeSettingsAfterImport(in: container.mainContext) != nil)
+        #expect(service.completenessChecks == 1)
     }
 
     @Test("listen history and Recents alone make a store non-empty")

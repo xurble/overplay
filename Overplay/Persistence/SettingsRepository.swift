@@ -5,6 +5,9 @@ enum SettingsRepository {
     struct Convergence {
         let keeper: OverplaySettings
         let removedIDs: Set<UUID>
+        /// Another One True Playlist went into the Inbox: the playing intent
+        /// may name it (`reconcilePlaylistSelection`).
+        let demotedOneTruePlaylist: Bool
     }
 
     /// The stored row, or unsaved defaults when this store has none, as a
@@ -51,8 +54,9 @@ enum SettingsRepository {
         // one not kept goes into the Inbox, as when the user switches, so
         // each song stays in exactly one of the One True Playlist, the Inbox
         // or Retired.
+        var demoted = false
         if let selected = keeper.selectedPlaylistID, oneTruePlaylistIDs.contains(selected) {
-            try PlaylistRepository.demoteOneTruePlaylists(except: selected, in: context)
+            demoted = try !PlaylistRepository.demoteOneTruePlaylists(except: selected, in: context).isEmpty
         }
         let others = rows.dropFirst()
         keeper.completedRebuildID = keeper.completedRebuildID ?? others.lazy.compactMap(\.completedRebuildID).first
@@ -66,7 +70,7 @@ enum SettingsRepository {
         let removedIDs = Set(others.map(\.id))
         others.forEach(context.delete)
         try context.save()
-        return Convergence(keeper: keeper, removedIDs: removedIDs)
+        return Convergence(keeper: keeper, removedIDs: removedIDs, demotedOneTruePlaylist: demoted)
     }
 
     /// Sorted here for the UUID tie-break: independently created rows can

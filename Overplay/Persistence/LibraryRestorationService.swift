@@ -39,6 +39,8 @@ final class LibraryRestorationService {
     /// What iCloud said about this account's library, asked once the store
     /// is found empty.
     private(set) var cloudLibrary = CloudLibraryState.unknown
+    /// How many times convergence ran the full completeness check, for tests.
+    @ObservationIgnored private(set) var completenessChecks = 0
     @ObservationIgnored private let defaults: UserDefaults
     private static let receiptKey = "overplay.v2.restoredSettingsID"
 
@@ -162,6 +164,10 @@ final class LibraryRestorationService {
         guard isReady, hasImported, cloudError == nil else { return nil }
         let read = ModelContext(context.container)
         read.autosaveEnabled = false
+        // Almost every import finds one row: count before the completeness
+        // check, which loads the whole library on the main actor.
+        guard try read.fetchCount(FetchDescriptor<OverplaySettings>()) > 1 else { return nil }
+        completenessChecks += 1
         guard try Self.restoredSettings(in: read) != nil,
               let convergence = try SettingsRepository.convergeDuplicates(in: read) else { return nil }
         if convergence.removedIDs.contains(where: { $0.uuidString == defaults.string(forKey: Self.receiptKey) }) {

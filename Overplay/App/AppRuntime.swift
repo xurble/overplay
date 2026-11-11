@@ -90,10 +90,9 @@ final class AppRuntime {
                 guard let self else { return }
                 self.libraryRestoration.cloudImportFinished(error: error)
                 guard error == nil, let context = self.makeModelContext() else { return }
-                // Duplicate settings rows are deleted only here, once an
-                // import has settled on a ready device.
                 do {
-                    try self.libraryRestoration.convergeSettingsAfterImport(in: context)
+                    try Self.convergeSettingsAfterImport(self.libraryRestoration,
+                                                         playbackController: self.playbackController, in: context)
                 } catch {
                     StartupProfiler.mark("Settings convergence after import failed: \(error.localizedDescription)")
                 }
@@ -112,6 +111,20 @@ final class AppRuntime {
                 await self.checkOneTruePlaylist(in: context)
             }
         }
+    }
+
+    /// Duplicate settings rows are deleted only here, once an import has
+    /// settled on a ready device. A One True Playlist demoted into the Inbox
+    /// moves the playing intent with it, as every other demotion does, so the
+    /// playing song is selected in place and listens are not credited to the
+    /// demoted playlist.
+    static func convergeSettingsAfterImport(
+        _ restoration: LibraryRestorationService,
+        playbackController: PlaybackController,
+        in context: ModelContext
+    ) throws {
+        guard try restoration.convergeSettingsAfterImport(in: context)?.demotedOneTruePlaylist == true else { return }
+        playbackController.reconcilePlaylistSelection(context: context)
     }
 
     /// An import can carry another device's stale row over a newer local
