@@ -92,7 +92,7 @@ final class OneTruePlaylistPromptController {
         switch prompt {
         case .requestedByMac:
             await dependencies.fulfilPending(context)
-            if (try? context.fetch(FetchDescriptor<OverplaySettings>()).first?.selectedPlaylistID) == nil {
+            if (try? SettingsRepository.storedSettings(in: context)?.selectedPlaylistID) == nil {
                 // As the message says: not again at every iCloud import.
                 declined = true
                 dependencies.show("Overplay couldn’t make the playlist. It will ask again next time it starts.")

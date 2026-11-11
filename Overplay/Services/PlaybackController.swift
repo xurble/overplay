@@ -3042,10 +3042,12 @@ final class PlaybackController {
         return context
     }
 
-    private func settings(in context: ModelContext) -> OverplaySettings? {
+    func settings(in context: ModelContext) -> OverplaySettings? {
         if let cachedSettings, !cachedSettings.isDeleted { return cachedSettings }
-        cachedSettings = try? SettingsRepository.settings(in: context)
-        return cachedSettings
+        let settings = try? SettingsRepository.settings(in: context)
+        // Unsaved defaults stand in only until the real row arrives.
+        if settings?.modelContext != nil { cachedSettings = settings }
+        return settings
     }
 
     private func currentPlaylist(in context: ModelContext) throws -> PlaylistRecord? {

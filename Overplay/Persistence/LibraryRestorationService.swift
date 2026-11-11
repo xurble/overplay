@@ -39,6 +39,8 @@ final class LibraryRestorationService {
     /// What iCloud said about this account's library, asked once the store
     /// is found empty.
     private(set) var cloudLibrary = CloudLibraryState.unknown
+    /// How many times convergence ran the full completeness check, for tests.
+    @ObservationIgnored private(set) var completenessChecks = 0
     @ObservationIgnored private let defaults: UserDefaults
     private static let receiptKey = "overplay.v2.restoredSettingsID"
 
@@ -49,10 +51,12 @@ final class LibraryRestorationService {
         if error == nil { hasImported = true; importRevision += 1 }
     }
 
-    /// Read-only, including on an empty store or during a partial CloudKit batch.
+    /// Read-only, including on an empty store or during a partial CloudKit
+    /// batch. With duplicate rows it checks the row every reader uses
+    /// (`SettingsRepository.keeper(of:)`); the others are left for
+    /// `convergeSettingsAfterImport`.
     static func restoredSettings(in context: ModelContext) throws -> OverplaySettings? {
-        let settings = try context.fetch(FetchDescriptor<OverplaySettings>())
-        guard settings.count == 1, let settings = settings.first else { return nil }
+        guard let settings = try SettingsRepository.storedSettings(in: context) else { return nil }
         let playlists = try context.fetch(FetchDescriptor<PlaylistRecord>())
         guard playlists.contains(where: { $0.isTriageBucket }) else { return nil }
         if let selected = settings.selectedPlaylistID {
@@ -121,7 +125,11 @@ final class LibraryRestorationService {
             let read = ModelContext(context.container)
             read.autosaveEnabled = false
             if let settings = try Self.restoredSettings(in: read) {
-                let acceptedLocally = defaults.string(forKey: Self.receiptKey) == settings.id.uuidString
+                // A receipt for a duplicate row still here is this device's
+                // own library too; accepting records the kept row instead.
+                let receipt = defaults.string(forKey: Self.receiptKey)
+                let acceptedLocally = try receipt != nil
+                    && read.fetch(FetchDescriptor<OverplaySettings>()).contains { $0.id.uuidString == receipt }
                 let builtLocally = locallyRebuiltID != nil && settings.completedRebuildID == locallyRebuiltID
                 if acceptedLocally || builtLocally || (hasImported && cloudError == nil && (settings.selectedPlaylistID != nil || settings.pendingOneTruePlaylistRequestedAt != nil)) || !cloudEnabled {
                     accept(settings)
@@ -142,6 +150,30 @@ final class LibraryRestorationService {
         }
         if cloudLibrary == .exists { throw RestorationError.restoringFromCloud }
         throw hasImported ? RestorationError.incompleteLibrary : RestorationError.waitingForCloud
+    }
+
+    /// Deletes duplicate settings rows, only once the library has settled:
+    /// this device is ready, an import has just finished without error, and
+    /// the kept row's library is complete. Restoration itself never deletes:
+    /// a Nuke Database's new row can arrive before the old row's deletion,
+    /// and deleting the new row then would leave no row on any device.
+    /// Called after each successful import. A device that had accepted a
+    /// removed row keeps its local receipt.
+    @discardableResult
+    func convergeSettingsAfterImport(in context: ModelContext) throws -> SettingsRepository.Convergence? {
+        guard isReady, hasImported, cloudError == nil else { return nil }
+        let read = ModelContext(context.container)
+        read.autosaveEnabled = false
+        // Almost every import finds one row: count before the completeness
+        // check, which loads the whole library on the main actor.
+        guard try read.fetchCount(FetchDescriptor<OverplaySettings>()) > 1 else { return nil }
+        completenessChecks += 1
+        guard try Self.restoredSettings(in: read) != nil,
+              let convergence = try SettingsRepository.convergeDuplicates(in: read) else { return nil }
+        if convergence.removedIDs.contains(where: { $0.uuidString == defaults.string(forKey: Self.receiptKey) }) {
+            Self.recordLocalConfiguration(convergence.keeper, defaults: defaults)
+        }
+        return convergence
     }
 
     /// Explicit first-time setup only; never called by bootstrap or by a timeout.
