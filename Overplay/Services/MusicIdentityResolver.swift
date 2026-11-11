@@ -62,6 +62,10 @@ final class MusicIdentityResolver {
         case tooManyNotFound(lookups: String, count: Int, of: Int)
         /// A request failed for a reason other than "not found".
         case lookupFailed(Lookup, underlying: any Error)
+        /// Apple Music answered 404 for a whole batch. Unlike an ID a valid
+        /// response leaves out, this says nothing about any one song, so it
+        /// is never cached: the songs are not found for this pass only.
+        case notFound(Lookup, underlying: any Error)
 
         var errorDescription: String? {
             switch self {
@@ -70,7 +74,7 @@ final class MusicIdentityResolver {
             case .scopeChanged: "The Apple Music account changed during the sync. Overplay will try again."
             case .tooManyNotFound(let lookups, let count, let total):
                 "Apple Music couldn't identify \(count) of \(total) songs (\(lookups) lookup), so this playlist wasn't synced."
-            case .lookupFailed(let lookup, let underlying):
+            case .lookupFailed(let lookup, let underlying), .notFound(let lookup, let underlying):
                 "The \(lookup.displayName) lookup failed. \(UserFacingError.friendly(underlying))"
             }
         }
@@ -130,15 +134,18 @@ final class MusicIdentityResolver {
     /// Memory-only: seven days for successes, one hour for absence/ambiguity;
     /// all entries expire on process exit, account change or storefront change.
     ///
-    /// Any song the web library does not know fails the whole call: copies
-    /// and rewrites need every song. `enrichReportingNotFound` costs one song.
+    /// Any song the web library does not know, or any 404, fails the whole
+    /// call: copies and rewrites need every song, and artwork repair records
+    /// an absence only from a real answer. `enrichReportingNotFound` costs
+    /// one song.
     func enrich(_ snapshots: [TrackSnapshot], includeCandidates: Bool = true) async throws -> [TrackSnapshot] {
         try await enrich(snapshots, includeCandidates: includeCandidates, toleratesNotFound: false, catalogAbsenceIsNotFound: false)
             .snapshots.compactMap { $0 }
     }
 
-    /// As `enrich`, but a song a lookup answers nothing for is reported
-    /// rather than thrown (`PLAYLIST-010`). A failed request still throws.
+    /// As `enrich`, but a song a lookup answers nothing for, or whose batch
+    /// got a 404 from any lookup, is reported rather than thrown
+    /// (`PLAYLIST-010`). A failed request still throws.
     /// - Parameter catalogAbsenceIsNotFound: A song known only by a catalog
     ///   ID is also not found when the catalog answers nothing. Duplicate
     ///   review leaves this off: an absent catalog ID is what it looks for
@@ -164,13 +171,14 @@ final class MusicIdentityResolver {
         }
         let revision = generation
         let libraryIDs = snapshots.compactMap { $0.resolvedIdentity.libraryID }
-        let library = try await lookup(.library, ids: libraryIDs, scope: current, revision: revision)
+        let (library, libraryNotFound) = try await lookup(.library, ids: libraryIDs, scope: current, revision: revision,
+                                                          toleratesNotFound: toleratesNotFound)
         var result = snapshots
         for index in result.indices { result[index].hasResolvedIdentityCandidates = includeCandidates }
         var absent: [Int: Lookup] = [:]
         for index in result.indices {
             guard let id = result[index].resolvedIdentity.libraryID else { continue }
-            if library[id]?.isEmpty == true, toleratesNotFound {
+            if libraryNotFound.contains(id) || (library[id]?.isEmpty == true && toleratesNotFound) {
                 absent[index] = .library
                 continue
             }
@@ -199,13 +207,18 @@ final class MusicIdentityResolver {
         }
         var answered = result.indices.filter { absent[$0] == nil }
         let catalogIDs = answered.compactMap { result[$0].catalogID }
-        let catalog = try await lookup(.catalog, ids: catalogIDs, scope: current, revision: revision)
-        let missing = catalogIDs.filter { catalog[$0]?.isEmpty != false }
-        let equivalents = includeCandidates
-            ? try await lookup(.equivalents, ids: missing, scope: current, revision: revision)
-            : [:]
+        let (catalog, catalogNotFound) = try await lookup(.catalog, ids: catalogIDs, scope: current, revision: revision,
+                                                          toleratesNotFound: toleratesNotFound)
+        let missing = catalogIDs.filter { !catalogNotFound.contains($0) && catalog[$0]?.isEmpty != false }
+        let (equivalents, equivalentsNotFound) = includeCandidates
+            ? try await lookup(.equivalents, ids: missing, scope: current, revision: revision, toleratesNotFound: toleratesNotFound)
+            : ([:], [])
         for index in answered {
             guard let id = result[index].catalogID else { continue }
+            if let lookup: Lookup = catalogNotFound.contains(id) ? .catalog : equivalentsNotFound.contains(id) ? .equivalents : nil {
+                absent[index] = lookup
+                continue
+            }
             if catalogAbsenceIsNotFound, result[index].resolvedIdentity.libraryID == nil, catalog[id]?.isEmpty != false {
                 absent[index] = .catalog
                 continue
@@ -223,11 +236,16 @@ final class MusicIdentityResolver {
         // ISRC is a candidate signal only. Multiple results never become an
         // authoritative identity, even if Apple calls them equivalents.
         answered.removeAll { absent[$0] != nil }
-        let recordings = includeCandidates
-            ? try await lookup(.isrc, ids: answered.compactMap { result[$0].isrc }, scope: current, revision: revision)
-            : [:]
+        let (recordings, recordingsNotFound) = includeCandidates
+            ? try await lookup(.isrc, ids: answered.compactMap { result[$0].isrc }, scope: current, revision: revision,
+                               toleratesNotFound: toleratesNotFound)
+            : ([:], [])
         for index in answered {
             if let isrc = result[index].isrc {
+                if recordingsNotFound.contains(isrc) {
+                    absent[index] = .isrc
+                    continue
+                }
                 result[index].equivalentCatalogIDs = Array(Set(result[index].equivalentCatalogIDs + (recordings[isrc] ?? []).map(\.id))).sorted()
             }
         }
@@ -243,9 +261,14 @@ final class MusicIdentityResolver {
         return Enrichment(snapshots: result.indices.map { absent[$0] == nil ? result[$0] : nil }, notFound: notFound)
     }
 
-    private func lookup(_ kind: Lookup, ids: [String], scope: Scope, revision: Int) async throws -> [String: [Resource]] {
+    /// Answers, and the IDs whose batch got a 404 (`notFound`). A strict
+    /// caller (`toleratesNotFound` false) gets the 404 thrown instead.
+    private func lookup(
+        _ kind: Lookup, ids: [String], scope: Scope, revision: Int, toleratesNotFound: Bool
+    ) async throws -> (values: [String: [Resource]], notFound: Set<String>) {
         let unique = Array(Set(ids.filter { !$0.isEmpty })).sorted()
         var result: [String: [Resource]] = [:]
+        var notFound: Set<String> = []
         var missing: [String] = []
         for id in unique {
             if let cached = cache[Key(lookup: kind, id: id)], cached.expires > now() { result[id] = cached.resources }
@@ -259,15 +282,21 @@ final class MusicIdentityResolver {
             let end = min(window + windowSize, missing.count)
             let tasks = stride(from: window, to: end, by: Self.batchSize).map { start in
                 let batch = Array(missing[start..<min(start + Self.batchSize, end)])
-                return Task { try await self.lookupBatch(kind, batch: batch, scope: scope, revision: revision) }
+                return (batch, Task { try await self.lookupBatch(kind, batch: batch, scope: scope, revision: revision) })
             }
-            for task in tasks {
-                let values = try await task.value
-                try Task.checkCancellation()
-                result.merge(values) { _, incoming in incoming }
+            for (batch, task) in tasks {
+                do {
+                    let values = try await task.value
+                    try Task.checkCancellation()
+                    result.merge(values) { _, incoming in incoming }
+                } catch ResolutionError.notFound(let lookup, let underlying) {
+                    try Task.checkCancellation()
+                    guard toleratesNotFound else { throw ResolutionError.lookupFailed(lookup, underlying: underlying) }
+                    notFound.formUnion(batch)
+                }
             }
         }
-        return result
+        return (result, notFound)
     }
 
     private func lookupBatch(_ kind: Lookup, batch: [String], scope: Scope, revision: Int) async throws -> [String: [Resource]] {
@@ -355,9 +384,10 @@ final class MusicIdentityResolver {
         }
     }
 
-    /// A 404 means "not found" for every ID in the batch; any other failure
-    /// is thrown. The transport is injected because MusicKit's error type
-    /// cannot be built outside MusicKit.
+    /// A 404 throws `notFound` for the whole batch, which the resolver
+    /// neither caches nor reads as an answer about any one ID; any other
+    /// failure is thrown as `lookupFailed`. The transport is injected
+    /// because MusicKit's error type cannot be built outside MusicKit.
     static func fetchResources(
         _ kind: Lookup, ids: [String], scope: Scope,
         perform: (URLRequest) async throws -> Data,
@@ -373,7 +403,7 @@ final class MusicIdentityResolver {
             do {
                 return try decode(try await perform(request), kind: kind, ids: ids)
             } catch where isNotFound(error) {
-                return Dictionary(uniqueKeysWithValues: ids.map { ($0, [Resource]()) })
+                throw ResolutionError.notFound(kind, underlying: error)
             }
         }
     }

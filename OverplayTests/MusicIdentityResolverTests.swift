@@ -181,11 +181,81 @@ struct MusicIdentityResolverTests {
         try await MusicIdentityResolver.fetchResources(kind, ids: ids, scope: scope, perform: { _ in throw error }, isNotFound: { $0 is Transport404 })
     }
 
-    @Test func a404IsNotFoundForEveryIDInTheBatch() async throws {
+    /// A 404 is about the batch, not any one ID: it is kept apart from an
+    /// ID a valid response leaves out, so it is never cached as absence.
+    @Test func a404IsNotFoundForTheWholeBatchNotAnAnswer() async throws {
         for kind in [MusicIdentityResolver.Lookup.library, .catalog, .equivalents, .isrc] {
-            let values = try await fetch(kind, ids: ["a", "b"], throwing: Transport404())
-            #expect(values == ["a": [], "b": []])
+            var failure: Error?
+            do { _ = try await fetch(kind, ids: ["a", "b"], throwing: Transport404()) } catch { failure = error }
+            guard case MusicIdentityResolver.ResolutionError.notFound(let lookup, let underlying) = try #require(failure) else {
+                Issue.record("expected a batch not-found for \(kind)"); continue
+            }
+            #expect(lookup == kind && underlying is Transport404)
         }
+    }
+
+    /// Answers as the web API does, through `fetchResources`. A lookup in
+    /// `notFound` answers 404 for its whole batch. Library songs "i.N" come
+    /// back with catalog song "N" and no ISRC, so the catalog is asked too.
+    private func webAPI(
+        notFound: @escaping () -> Set<MusicIdentityResolver.Lookup>, catalogKnows: Bool = true,
+        asked: @escaping (MusicIdentityResolver.Lookup) -> Void = { _ in }
+    ) -> MusicIdentityResolver.Fetch {
+        { kind, ids, scope in
+            asked(kind)
+            return try await MusicIdentityResolver.fetchResources(kind, ids: ids, scope: scope, perform: { _ in
+                if notFound().contains(kind) { throw Transport404() }
+                let entries: [String] = switch kind {
+                case .library: ids.map { #"{"id":"\#($0)","type":"library-songs","relationships":{"catalog":{"data":[{"id":"\#($0.dropFirst(2))","type":"songs"}]}}}"# }
+                case .catalog: catalogKnows ? ids.map { #"{"id":"\#($0)","type":"songs","attributes":{"isrc":"ISRC-\#($0)"}}"# } : []
+                case .equivalents, .isrc: []
+                }
+                return Data(#"{"data":[\#(entries.joined(separator: ","))]}"#.utf8)
+            }, isNotFound: { $0 is Transport404 })
+        }
+    }
+
+    /// Review of #115, finding 2: a catalog 404 costs its batch for this
+    /// pass only. Nothing is cached, so the next sync asks again.
+    @Test func aCatalog404IsNotFoundThisPassOnlyAndIsAskedAgain() async throws {
+        var failing = true
+        var catalogRequests = 0
+        let resolver = MusicIdentityResolver(currentScope: { scope }, fetch: webAPI(
+            notFound: { failing ? [.catalog] : [] }, asked: { if $0 == .catalog { catalogRequests += 1 } }
+        ))
+        let input = [snapshot("5"), snapshot("6"), snapshot("7")]
+        let first = try await resolver.enrichReportingNotFound(input, includeCandidates: false, catalogAbsenceIsNotFound: true)
+        #expect(first.notFound == ["5", "6", "7"].map { .init(snapshotID: $0, lookup: .catalog) })
+        #expect(first.snapshots.allSatisfy { $0 == nil })
+        failing = false
+        let second = try await resolver.enrichReportingNotFound(input, includeCandidates: false, catalogAbsenceIsNotFound: true)
+        #expect(catalogRequests == 2)
+        #expect(second.notFound.isEmpty)
+        #expect(second.snapshots.allSatisfy { $0?.isrc != nil })
+    }
+
+    /// Review of #115, findings 3 and 4: a 404 on any lookup reports every
+    /// song in its batch as not found, even a library song and with
+    /// `catalogAbsenceIsNotFound` off (the duplicate scan), and strict
+    /// `enrich` (copies, artwork repair) throws it.
+    @Test(arguments: [MusicIdentityResolver.Lookup.library, .catalog, .equivalents, .isrc])
+    func a404OnAnyLookupCostsItsBatchAndStrictEnrichThrows(kind: MusicIdentityResolver.Lookup) async throws {
+        var asked: [MusicIdentityResolver.Lookup] = []
+        let resolver = MusicIdentityResolver(currentScope: { scope }, fetch: webAPI(
+            notFound: { [kind] }, catalogKnows: kind != .equivalents, asked: { asked.append($0) }
+        ))
+        let input = [snapshot("i.10"), snapshot("i.11")]
+        let tolerant = try await resolver.enrichReportingNotFound(input)
+        #expect(tolerant.notFound == ["i.10", "i.11"].map { .init(snapshotID: $0, lookup: kind) })
+        // A 404-covered song is not asked about further.
+        #expect(asked.last == kind)
+        #expect(tolerant.snapshots.allSatisfy { $0 == nil })
+        var failure: Error?
+        do { _ = try await resolver.enrich(input) } catch { failure = error }
+        guard case MusicIdentityResolver.ResolutionError.lookupFailed(let lookup, let underlying) = try #require(failure) else {
+            Issue.record("strict enrich must throw the \(kind) 404 as a failed lookup"); return
+        }
+        #expect(lookup == kind && underlying is Transport404)
     }
 
     @Test func otherFailuresThrowAndNameTheLookup() async throws {

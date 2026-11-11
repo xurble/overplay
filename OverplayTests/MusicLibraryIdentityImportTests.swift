@@ -490,6 +490,48 @@ struct MusicLibraryIdentityImportTests {
         #expect(record.lastSyncError == PlaylistSyncService.unresolvedSongsMessage(1, lookupName: "catalog"))
     }
 
+    /// Review of #115, finding 2: a catalog 404 is not cached as absence.
+    @Test("A catalog 404 skips its batch for one sync only; the next sync asks again and imports it")
+    func catalogNotFoundBatchIsAskedAgainNextSync() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        struct NotFound: Error {}
+        // IDs sort, so the last two songs share the second batch of 25.
+        let samples = (0..<27).map { Sample(nativeID: "\(3000 + $0)", libraryID: "i.unused\($0)", catalogID: "\(3000 + $0)", title: "Song \($0)", artist: "Band") }
+        let failingBatch = [samples[25].nativeID, samples[26].nativeID]
+        let record = PlaylistRecord(musicPlaylistID: "catalog-404", name: "Probe", role: .oneTruePlaylist)
+        context.insert(record)
+        try context.save()
+        var failing = true
+        var catalogRequests = 0
+        let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "fixture") }, fetch: { kind, ids, scope in
+            #expect(kind == .catalog)
+            catalogRequests += 1
+            return try await MusicIdentityResolver.fetchResources(kind, ids: ids, scope: scope, perform: { _ in
+                if failing, ids == failingBatch { throw NotFound() }
+                let entries = ids.map { #"{"id":"\#($0)","type":"songs","attributes":{"isrc":"ISRC-\#($0)"}}"# }
+                return Data(#"{"data":[\#(entries.joined(separator: ","))]}"#.utf8)
+            }, isNotFound: { $0 is NotFound })
+        })
+        let adapter = try makeAdapter(playlistID: record.musicPlaylistID, identityResolver: resolver, using: samples, resolve: { observed in
+            let sample = try #require(samples.first { $0.nativeID == observed.id.rawValue })
+            return .catalog(try song(sample, id: sample.nativeID, type: "songs"))
+        })
+        let service = PlaylistSyncService(sourceRegistry: .init(adapters: [.appleMusic: adapter]))
+
+        let first = try await service.syncPlaylist(record, in: context)
+        #expect(first.fetchedCount == 25)
+        #expect(record.lastSyncError == PlaylistSyncService.unresolvedSongsMessage(2, lookupName: "catalog"))
+
+        failing = false
+        let requestsBefore = catalogRequests
+        let second = try await service.syncPlaylist(record, in: context)
+        #expect(catalogRequests == requestsBefore + 1)
+        #expect(second.fetchedCount == 27)
+        #expect(record.lastSyncError == nil)
+        #expect(try TrackRecordRepository.allTracks(in: context).count == 27)
+    }
+
     @Test("A network failure during identity lookup fails the fetch and imports nothing")
     func failedLookupStillFailsTheFetch() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
