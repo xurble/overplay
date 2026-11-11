@@ -1,5 +1,4 @@
 import CoreGraphics
-import Dispatch
 import Foundation
 import ImageIO
 import Synchronization
@@ -46,7 +45,6 @@ struct AlbumArtworkTextRecognitionTests {
             coverKey: "cover",
             textRecognition: recognition
         )
-        timer.answerReceived()
 
         #expect(result.textRecognition == .failed)
         #expect(result.textRecognition?.isFinal == true)
@@ -58,16 +56,14 @@ struct AlbumArtworkTextRecognitionTests {
     func answeredRecognitionIsUsed() async throws {
         let text = Self.text("Song")
         let timer = TimerProbe()
-        // The answer arrives while the timer sleeps, and waking the timer
-        // holds the waiter until the test has the answer: a timer that could
-        // still claim a time-out after being cancelled would always win.
+        // The answer arrives while the timer sleeps; the timer's cancelled
+        // sleep then returns at once, and must not claim a time-out.
         let recognition = AlbumArtworkTextRecognition(
             recognizer: { _ in await timer.sleeping.wait(); return [text] },
             sleep: { _ in await timer.sleep() }
         )
 
         let outcome = await recognition.recognize(in: try Self.coverImage(), coverKey: "cover")
-        timer.answerReceived()
 
         #expect(outcome == .recognized([text]))
     }
@@ -227,11 +223,11 @@ struct AlbumArtworkTextRecognitionTests {
     }
 }
 
-/// Waits until its task is cancelled; `onCancel` runs in the cancelling call.
+/// Waits until its task is cancelled.
 private nonisolated final class CancellableWait: Sendable {
     private let state = Mutex<(cancelled: Bool, waiter: CheckedContinuation<Void, Never>?)>((false, nil))
 
-    func wait(whileWaiting: @Sendable () -> Void = {}, onCancel: @Sendable () -> Void = {}) async {
+    func wait(whileWaiting: @Sendable () -> Void = {}) async {
         await withTaskCancellationHandler {
             whileWaiting()
             await withCheckedContinuation { continuation in
@@ -249,28 +245,20 @@ private nonisolated final class CancellableWait: Sendable {
                 return state.waiter
             }
             waiter?.resume()
-            onCancel()
         }
     }
 }
 
-/// A recognition's time limit that never passes on its own. `sleeping` opens
-/// once the limit is being waited on. Cancelling it holds the canceller until
-/// `answerReceived()`, so anything the timer does after its cancelled sleep
-/// happens before the waiter's next step.
+/// A recognition's time limit that passes only when cancelled, as a
+/// cancelled `Task.sleep` does. `sleeping` opens once the limit is being
+/// waited on, so a recognizer can answer while the timer sleeps.
 private nonisolated final class TimerProbe: Sendable {
     let sleeping = RecognitionGate()
-    private let answer = DispatchSemaphore(value: 0)
     private let wait = CancellableWait()
 
     func sleep() async {
-        await wait.wait(whileWaiting: { sleeping.open() }, onCancel: { [answer] in
-            // Bounded, so a timer that rightly stays silent cannot hang the test.
-            _ = answer.wait(timeout: .now() + 5)
-        })
+        await wait.wait(whileWaiting: { sleeping.open() })
     }
-
-    func answerReceived() { answer.signal() }
 }
 
 private nonisolated final class CallCount: Sendable {
