@@ -278,4 +278,45 @@ struct PlaybackStartParityTests {
         #expect(fixture.player.submitCount == 2)
         #expect(fixture.player.queueEntries.map { $0.item?.id } == ["i.new-x"])
     }
+
+    /// After a relaunch the live queue is gone, so a tap inside the restored
+    /// collection rebuilds it: selecting another song resubmits, and the
+    /// current song resumes through Play, which resubmits too. Either way the
+    /// caller's copies are queued, not the differing copies cached earlier
+    /// (a Mac whose local-copy lookup once failed cached web-library copies).
+    @Test(arguments: ["song-2", "song-1"])
+    func tapThatRebuildsTheQueueQueuesTheCallersTracks(tapped: String) async throws {
+        let first = try PlaybackFixture()
+        defer { first.cleanUp(); clearCache(first) }
+        let cache = DevicePlaybackCache(directory: nil)
+        first.controller.playbackCatalog = FakePlaybackCatalog().catalog
+        first.controller.collectionTrackCache = cache
+        let collection = PlaybackCollection(kind: .libraryPlaylist, catalogID: "p.relaunch", title: "Relaunch")
+        let songs = [Self.collectionSong("song-1", "Song 1"), Self.collectionSong("song-2", "Song 2")]
+        let web = ["song-1": try FakePlaybackCatalog.track(id: "i.web-1", title: "Web 1"),
+                   "song-2": try FakePlaybackCatalog.track(id: "i.web-2", title: "Web 2")]
+        #expect(await first.controller.playCollection(collection, songs: songs, startingAt: "song-1",
+                                                      recordsRecent: false, tracks: web, context: first.context))
+        first.controller.pause()
+        first.controller.stopMonitoring()
+
+        let player = FakePlaybackPlayer()
+        let relaunched = PlaybackController(player: player, intentStore: first.intentStore,
+                                            preparePlaybackTracks: { _, _ in }, refreshUnknownApplePlayCount: { _, _ in 0 },
+                                            sleep: PlaybackFixture.manualSampling)
+        defer { relaunched.stopMonitoring() }
+        relaunched.playbackCatalog = FakePlaybackCatalog().catalog
+        relaunched.collectionTrackCache = cache
+        relaunched.restoreIntent()
+        #expect(relaunched.intent?.collection?.groupKey == collection.groupKey)
+        let local = ["song-1": try FakePlaybackCatalog.track(id: "i.local-1", title: "Local 1"),
+                     "song-2": try FakePlaybackCatalog.track(id: "i.local-2", title: "Local 2")]
+
+        #expect(await relaunched.playCollection(collection, songs: songs, startingAt: tapped,
+                                                recordsRecent: false, tracks: local, context: first.context))
+
+        #expect(player.submittedTitles == [["Local 1", "Local 2"]])
+        #expect(player.queueEntries.map { $0.item?.id } == ["i.local-1", "i.local-2"])
+        #expect(player.submittedStartIndices == [tapped == "song-1" ? 0 : 1])
+    }
 }

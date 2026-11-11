@@ -266,15 +266,9 @@ struct PlaybackStartCostTests {
         #expect(fixture.controller.currentTrack?.title == "Title alb-3")
         #expect(Self.trackFiles(in: directory).isEmpty)
 
-        // Even when the caller's copies differ: the playing queue is not
-        // rebuilt, so the cached copies stay.
         let differing = try Dictionary(uniqueKeysWithValues: tracks.keys.map {
             ($0, try FakePlaybackCatalog.track(id: "i.\($0)", title: "Other \($0)"))
         })
-        #expect(await fixture.controller.playCollection(collection, songs: songs, startingAt: "alb-2",
-                                                        recordsRecent: false, tracks: differing, context: fixture.context))
-        #expect(fixture.player.submitCount == 1)
-        #expect(Self.trackFiles(in: directory).isEmpty)
 
         // A new start writes only songs whose copy changed: none here.
         let other = PlaybackCollection(kind: .libraryPlaylist, catalogID: "p.other", title: "Other")
@@ -291,6 +285,15 @@ struct PlaybackStartCostTests {
                                                         recordsRecent: false, tracks: changed, context: fixture.context))
         #expect(fixture.player.submittedTitles.last == ["Other alb-1", "Title alb-2", "Title alb-3"])
         #expect(Self.trackFiles(in: directory) == ["catalog-alb-1.json"])
+        try FileManager.default.removeItem(at: directory.appendingPathComponent("catalog-alb-1.json"))
+
+        // A tap with differing copies selects in place and writes only the
+        // songs whose copy changed, for a later rebuild from the cache.
+        #expect(await fixture.controller.playCollection(third, songs: songs, startingAt: "alb-2",
+                                                        recordsRecent: false, tracks: differing, context: fixture.context))
+        #expect(fixture.player.submitCount == 3)
+        #expect(fixture.controller.currentTrack?.title == "Title alb-2")
+        #expect(Self.trackFiles(in: directory) == ["catalog-alb-2.json", "catalog-alb-3.json"])
     }
 
     /// The selection still fills songs the cache lost, for a selection that
