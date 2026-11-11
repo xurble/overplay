@@ -38,7 +38,7 @@ enum TrackIdentityMergeService {
         try ListenLedger.writeBaselinesIfNeeded(in: context)
 
         for group in await duplicateGroups(tracks: tracks) {
-            let ordered = group.sorted(by: canonicalPrecedes)
+            let ordered = videosLast(group.sorted(by: canonicalPrecedes))
             let canonical = ordered[0]
 
             for track in ordered {
@@ -124,14 +124,31 @@ enum TrackIdentityMergeService {
         return left.id.uuidString < right.id.uuidString
     }
 
+    /// Whether this device's stored playback data says the track is a
+    /// legacy music video. No payload, or a song one, is not evidence.
+    static func isKnownVideo(_ track: TrackRecord) -> Bool {
+        VideoTrackPolicy.isVideo(playbackData: track.musicKitPlaybackData)
+    }
+
+    /// A known legacy video is never the keeper: video cleanup would delete
+    /// it, and with it the song it absorbed. The order is otherwise kept, so
+    /// a group of songs keeps the same keeper.
+    static func videosLast(_ tracks: [TrackRecord]) -> [TrackRecord] {
+        let videos = Set(tracks.filter(isKnownVideo).map(\.id))
+        return tracks.filter { !videos.contains($0.id) } + tracks.filter { videos.contains($0.id) }
+    }
+
     static func absorb(_ duplicate: TrackRecord, into canonical: TrackRecord, confirmed: Bool = false) {
+        // A known video donor's IDs become aliases only, never the keeper's
+        // own catalog or library ID: video cleanup trusts a track's own IDs.
+        let donorIsVideo = isKnownVideo(duplicate)
         let documented = canonical.hasDocumentedIdentity ? canonical : duplicate.hasDocumentedIdentity ? duplicate : nil
         let documentedCatalog = documented?.catalogID
         let sameLibrary = canonical.libraryID != nil && canonical.libraryID == duplicate.libraryID
-        let authoritativeLibrary = !confirmed && sameLibrary && documented != nil
+        let authoritativeLibrary = !confirmed && !donorIsVideo && sameLibrary && documented != nil
         let acceptedDonorCatalog = authoritativeLibrary ? documentedCatalog : duplicate.catalogID
         let sameCatalog = canonical.catalogID != nil && canonical.catalogID == duplicate.catalogID
-        let adoptsRepresentative = !confirmed && sameCatalog && canonical.libraryScope == duplicate.libraryScope
+        let adoptsRepresentative = !confirmed && !donorIsVideo && sameCatalog && canonical.libraryScope == duplicate.libraryScope
             && duplicate.libraryID.map { incoming in canonical.libraryID.map { incoming < $0 } ?? true } == true
         var aliases = Set(canonical.confirmedAliases + duplicate.confirmedAliases)
         if adoptsRepresentative, let id = canonical.libraryID { aliases.insert(.library(id, scope: canonical.libraryScope)) }
@@ -151,7 +168,7 @@ enum TrackIdentityMergeService {
         canonical.isrc = canonical.isrc ?? duplicate.isrc
         canonical.equivalentCatalogIDs = Array(Set(canonical.equivalentCatalogIDs + duplicate.equivalentCatalogIDs)).sorted()
         canonical.hasDocumentedIdentity = canonical.hasDocumentedIdentity || duplicate.hasDocumentedIdentity
-        canonical.catalogID = canonical.catalogID ?? duplicate.catalogID
+        if !donorIsVideo { canonical.catalogID = canonical.catalogID ?? duplicate.catalogID }
         if authoritativeLibrary { canonical.catalogID = documentedCatalog }
         if adoptsRepresentative {
             canonical.title = duplicate.title
@@ -161,7 +178,7 @@ enum TrackIdentityMergeService {
             canonical.durationSeconds = duplicate.durationSeconds
             copyPayloadUnlessVideo(from: duplicate, to: canonical)
         }
-        if canonical.libraryID == nil || adoptsRepresentative {
+        if !donorIsVideo, canonical.libraryID == nil || adoptsRepresentative {
             canonical.libraryID = duplicate.libraryID
             canonical.libraryScope = duplicate.libraryScope
         }

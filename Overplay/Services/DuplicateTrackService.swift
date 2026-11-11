@@ -241,6 +241,21 @@ enum DuplicateTrackService {
         return destination
     }
 
+    /// The keeper first: never a known legacy video while a song is selected
+    /// (video cleanup would delete it and the merged song with it), then one
+    /// already in the destination, then by UUID.
+    static func keeperOrder(_ selected: [Candidate], destination: Destination?, in context: ModelContext) throws -> [Candidate] {
+        let videos = Set(try TrackRecordRepository.tracks(ids: selected.map(\.id), in: context)
+            .filter(TrackIdentityMergeService.isKnownVideo).map(\.id))
+        return selected.sorted {
+            if videos.contains($0.id) != videos.contains($1.id) { return !videos.contains($0.id) }
+            if let destination, ($0.destination == destination) != ($1.destination == destination) {
+                return $0.destination == destination
+            }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+    }
+
     /// Validate both row intent and the configured OTP again inside the remote
     /// gate. Suppression survives a failed/stale completion, just as promotion
     /// does, so subsequent incoming sync cannot undo a newer local decision.
@@ -251,7 +266,7 @@ enum DuplicateTrackService {
         commit: () throws -> Committed
     ) async throws -> Committed {
         guard let otp = try PlaylistRepository.oneTruePlaylist(in: context),
-              let first = selected.sorted(by: { $0.id.uuidString < $1.id.uuidString }).first,
+              let first = try keeperOrder(selected, destination: nil, in: context).first,
               let track = try TrackRecordRepository.track(id: first.id, in: context),
               let item = try PlaylistItemRepository.item(id: first.itemID, in: context) else { throw MergeError.missingOTP }
         let otpID = otp.id
@@ -272,10 +287,7 @@ enum DuplicateTrackService {
     static func merge(_ selected: [Candidate], destination: Destination?, in context: ModelContext,
                       defaults: UserDefaults = .standard) throws -> Result {
         let destination = try validate(selected, destination: destination, in: context)
-        let ordered = selected.sorted {
-            if ($0.destination == destination) != ($1.destination == destination) { return $0.destination == destination }
-            return $0.id.uuidString < $1.id.uuidString
-        }
+        let ordered = try keeperOrder(selected, destination: destination, in: context)
         guard let track = try TrackRecordRepository.track(id: ordered[0].id, in: context),
               let item = try PlaylistItemRepository.item(id: ordered[0].itemID, in: context) else { throw MergeError.stale }
         let otp = try PlaylistRepository.oneTruePlaylist(in: context)

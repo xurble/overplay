@@ -464,7 +464,9 @@ catalog relationship may invalidate an earlier unverified catalog hint.
 Duplicate track records describing the same song (legacy mirrored IDs, or
 CloudKit insert races, which cannot enforce unique constraints) are collapsed
 by an identity merge pass that runs at startup and after each sync. The
-oldest record wins; playlist items and history events repoint to it, and the
+oldest record wins, except that a legacy music video known on this device (its
+stored playback data decodes as a video) is never kept over a song; playlist
+items and history events repoint to it, and the
 keeper records each absorbed track UUID in `absorbedTrackIDs`. Listen ledger
 events are never rewritten, so the keeper's derived counts include the donor's
 events, including ones that arrive late from another device. When two items
@@ -3381,6 +3383,14 @@ select the recordings to merge and confirm. Mixed collections require choosing O
 Playlist, the Inbox, or Retired; a shared collection is retained. Canceling performs
 no merge. ISRC/equivalence can include different versions, so suggestions require
 human review.
+
+The keeper of a confirmed merge is the selected song already in the chosen
+collection, then the first by UUID; a legacy music video known on this device
+is never the keeper while a song is selected, because video cleanup would
+delete it and the merged song with it. In any merge, a known video donor's
+catalog and library IDs become confirmed aliases only, never the keeper's own
+IDs, and it is never the keeper's representative copy: video cleanup trusts a
+track's own IDs (`removeVideos`). Merges between songs are unchanged.
 
 A confirmed merge revalidates identity and location, records the donor track
 UUID in the keeper's `absorbedTrackIDs` so the ledger-derived counts include
