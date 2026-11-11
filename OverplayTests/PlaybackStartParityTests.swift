@@ -185,4 +185,97 @@ struct PlaybackStartParityTests {
         let intent = try #require(fixture.intentStore.loadIntent())
         #expect(intent.members.map(\.localTrackID) == [PlaybackIntent.Member.untrackedID(catalogID: "i.lib-1")])
     }
+
+    // MARK: - The caller's tracks win a new start
+
+    /// A library browser passes this device's copies; a new start queues
+    /// them, not whatever was cached first under the same song ID.
+    @Test func newCollectionStartQueuesTheCallersTracksOverADifferingCachedCopy() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp(); clearCache(fixture) }
+        let cache = DevicePlaybackCache(directory: nil)
+        fixture.controller.playbackCatalog = FakePlaybackCatalog().catalog
+        fixture.controller.collectionTrackCache = cache
+        // A Mac whose local-copy lookup failed once cached the web-library copy.
+        cache.set(try PlaybackFixture.encodedTrack(id: "i.web-1", title: "Web 1", artist: "Artist 0"), forCatalogSongID: "song-1")
+        let collection = PlaybackCollection(kind: .libraryPlaylist, catalogID: "p.local", title: "Local")
+        let songs = [Self.collectionSong("song-1", "Song 1"), Self.collectionSong("song-2", "Song 2")]
+        let tracks = ["song-1": try FakePlaybackCatalog.track(id: "i.local-1", title: "Local 1"),
+                      "song-2": try FakePlaybackCatalog.track(id: "i.local-2", title: "Local 2")]
+
+        #expect(await fixture.controller.playCollection(collection, songs: songs, startingAt: "song-1",
+                                                        recordsRecent: false, tracks: tracks, context: fixture.context))
+
+        #expect(fixture.player.submittedTitles == [["Local 1", "Local 2"]])
+        #expect(fixture.player.queueEntries.map { $0.item?.id } == ["i.local-1", "i.local-2"])
+    }
+
+    /// A song first cached by Play Album keeps its catalog copy there, but a
+    /// later Library play queues the library browser's copy.
+    @Test func libraryPlayAfterPlayAlbumQueuesTheLibraryCopy() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp(); clearCache(fixture) }
+        let catalog = FakePlaybackCatalog()
+        catalog.contents[.album] = try FakePlaybackCatalog.album()
+        fixture.controller.playbackCatalog = catalog.catalog
+        fixture.controller.collectionTrackCache = DevicePlaybackCache(directory: nil)
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[1],
+                                              settings: fixture.settings, context: fixture.context)
+        #expect(await fixture.controller.playCurrentCollection(.album, context: fixture.context))
+        #expect(fixture.player.submittedTitles.last == ["Song 0", "Album Song 1", "Album Song 2"])
+
+        let library = PlaybackCollection(kind: .libraryPlaylist, catalogID: "p.library-album", title: "Library Album")
+        let songs = [Self.collectionSong("alb-1", "Album Song 1"), Self.collectionSong("alb-2", "Album Song 2")]
+        let tracks = ["alb-1": try FakePlaybackCatalog.track(id: "i.alb-1", title: "Local Album Song 1"),
+                      "alb-2": try FakePlaybackCatalog.track(id: "i.alb-2", title: "Local Album Song 2")]
+        #expect(await fixture.controller.playCollection(library, songs: songs, startingAt: nil,
+                                                        recordsRecent: false, tracks: tracks, context: fixture.context))
+
+        #expect(Set(fixture.player.submittedTitles.last ?? []) == ["Local Album Song 1", "Local Album Song 2"])
+    }
+
+    /// A song first cached by a Recents play (looked up in the catalog), then
+    /// played from the library: the library copy is queued.
+    @Test func libraryPlayAfterARecentsPlayQueuesTheLibraryCopy() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp(); clearCache(fixture) }
+        let catalog = FakePlaybackCatalog()
+        catalog.contents[.album] = try FakePlaybackCatalog.album()
+        fixture.controller.playbackCatalog = catalog.catalog
+        fixture.controller.collectionTrackCache = DevicePlaybackCache(directory: nil)
+        let recents = PlaybackCollection(kind: .album, catalogID: "album-1", title: "Test Album")
+        let songs = [Self.collectionSong("alb-1", "Album Song 1"), Self.collectionSong("alb-2", "Album Song 2")]
+        #expect(await fixture.controller.playCollection(recents, songs: songs, startingAt: "alb-1",
+                                                        recordsRecent: false, context: fixture.context))
+        #expect(fixture.player.submittedTitles.last == ["Album Song 1", "Album Song 2"])
+
+        let library = PlaybackCollection(kind: .libraryPlaylist, catalogID: "p.library-recent", title: "Library")
+        let tracks = ["alb-1": try FakePlaybackCatalog.track(id: "i.alb-1", title: "Local Album Song 1"),
+                      "alb-2": try FakePlaybackCatalog.track(id: "i.alb-2", title: "Local Album Song 2")]
+        #expect(await fixture.controller.playCollection(library, songs: songs, startingAt: "alb-1",
+                                                        recordsRecent: false, tracks: tracks, context: fixture.context))
+
+        #expect(fixture.player.submittedTitles.last == ["Local Album Song 1", "Local Album Song 2"])
+    }
+
+    /// A library song removed and re-added has a new library ID; the next
+    /// Library play queues that, not the cached copy's old ID.
+    @Test func libraryPlayOfAReAddedSongQueuesItsNewLibraryID() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp(); clearCache(fixture) }
+        fixture.controller.playbackCatalog = FakePlaybackCatalog().catalog
+        fixture.controller.collectionTrackCache = DevicePlaybackCache(directory: nil)
+        let collection = PlaybackCollection(kind: .libraryPlaylist, catalogID: "p.readded", title: "Re-added")
+        let songs = [Self.collectionSong("cat-x", "Song X")]
+        #expect(await fixture.controller.playCollection(
+            collection, songs: songs, startingAt: nil, recordsRecent: false,
+            tracks: ["cat-x": try FakePlaybackCatalog.track(id: "i.old-x", title: "Song X")], context: fixture.context))
+
+        #expect(await fixture.controller.playCollection(
+            collection, songs: songs, startingAt: nil, recordsRecent: false,
+            tracks: ["cat-x": try FakePlaybackCatalog.track(id: "i.new-x", title: "Song X")], context: fixture.context))
+
+        #expect(fixture.player.submitCount == 2)
+        #expect(fixture.player.queueEntries.map { $0.item?.id } == ["i.new-x"])
+    }
 }
