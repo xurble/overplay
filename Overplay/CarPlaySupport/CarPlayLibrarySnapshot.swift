@@ -106,7 +106,6 @@ struct CarPlayRootSummaries {
         var name: String
         var role: PlaylistRole
         var activeCount: Int
-        var retiredCount: Int
     }
 
     private var shown: [Shown]?
@@ -126,14 +125,10 @@ struct CarPlayRootSummaries {
     private static func shown(in context: ModelContext) throws -> [Shown] {
         try PlaylistRepository.activePlaylists(in: context).map { playlist in
             let id = playlist.id
-            guard playlist.role.isPlaybackContext else {
-                return Shown(id: id, musicPlaylistID: playlist.musicPlaylistID, name: playlist.name, role: playlist.role,
-                             activeCount: 0, retiredCount: 0)
-            }
+            // Sources have no row of their own, and Retired's row shows no count.
             let active = FetchDescriptor<PlaylistItemRecord>(predicate: #Predicate { $0.playlistID == id && $0.evictedAt == nil })
-            let retired = FetchDescriptor<PlaylistItemRecord>(predicate: #Predicate { $0.playlistID == id && $0.evictedAt != nil })
             return Shown(id: id, musicPlaylistID: playlist.musicPlaylistID, name: playlist.name, role: playlist.role,
-                         activeCount: try context.fetchCount(active), retiredCount: try context.fetchCount(retired))
+                         activeCount: playlist.role.isPlaybackContext ? try context.fetchCount(active) : 0)
         }
     }
 }

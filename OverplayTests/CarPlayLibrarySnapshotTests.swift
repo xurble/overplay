@@ -457,6 +457,12 @@ struct CarPlayLibrarySnapshotTests {
         #expect(try rootRebuilds(root) { root.otp.name = "Favourites" })
     }
 
+    @Test func aPlaylistLinkedToAnotherAppleMusicPlaylistRebuildsTheRoot() throws {
+        let root = try rootFixture()
+
+        #expect(try rootRebuilds(root) { root.otp.musicPlaylistID = "relinked" })
+    }
+
     @Test func swappingRolesRebuildsTheRoot() throws {
         let root = try rootFixture()
 
