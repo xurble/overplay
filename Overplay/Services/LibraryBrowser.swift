@@ -188,23 +188,32 @@ enum LibraryBrowser {
     private static func fetchAll<Item: MusicItem & Decodable>(
         _ type: Item.Type, _ path: String, _ operation: MusicKitActivityOperation, onPage: (Data) -> Void = { _ in }
     ) async throws -> [Item] {
+        try await fetchAll(type, path, onPage: onPage) { url in
+            try await MusicKitActivityLog.shared.measure(operation, detail: "library browser \(type)") {
+                try await MusicDataRequest(urlRequest: URLRequest(url: url)).response().data
+            }
+        }
+    }
+
+    static func fetchAll<Item: MusicItem & Decodable>(
+        _ type: Item.Type, _ path: String, onPage: (Data) -> Void = { _ in }, request: (URL) async throws -> Data
+    ) async throws -> [Item] {
         let base = URL(string: "https://api.music.apple.com")!
         let separator = path.contains("?") ? "&" : "?"
-        var next: String? = path + separator + "limit=100"
+        var next: String? = path + separator + "limit=\(AppleMusicLibraryPlaylistResources.pageLimit)"
         var items: [Item] = []
         var visited = Set<String>()
         while let path = next, visited.insert(path).inserted, let url = URL(string: path, relativeTo: base)?.absoluteURL {
             let data: Data
             do {
-                data = try await MusicKitActivityLog.shared.measure(operation, detail: "library browser \(type)") {
-                    try await MusicDataRequest(urlRequest: URLRequest(url: url)).response().data
-                }
+                data = try await request(url)
             } catch let error as MusicDataRequest.Error where error.status == 404 && items.isEmpty {
                 return []
             }
             onPage(data)
             items += try JSONDecoder().decode(MusicItemCollection<Item>.self, from: data)
             next = try JSONDecoder().decode(NextPage.self, from: data).next
+                .map(AppleMusicLibraryPlaylistResources.requestingFullPages)
             try Task.checkCancellation()
         }
         return items

@@ -15,6 +15,29 @@ enum AppleMusicLibraryPlaylistResources {
         var next: String?
     }
 
+    /// Apple's default page is 25; the first request of every pager asks for
+    /// the maximum.
+    static let pageLimit = 100
+    private static var hasLoggedFirstNext = false
+
+    /// A followed `next` keeps asking for full pages: the first request's
+    /// limit may not survive into `next`, which would drop later pages to the
+    /// default size. A limit Apple did include is left alone. Anything
+    /// unparseable is returned as is, for the caller's own checks to refuse.
+    static func requestingFullPages(_ next: String) -> String {
+        guard var components = URLComponents(string: next) else { return next }
+        let existing = components.queryItems?.first { $0.name == "limit" }
+        if !hasLoggedFirstNext {
+            hasLoggedFirstNext = true
+            // PF-13: settles whether Apple drops the limit. No URL, no token.
+            TrackMetadataDiagnostics.log("Web library paging: first next has \(existing.map { "limit=\($0.value ?? "")" } ?? "no limit")")
+        }
+        guard existing == nil else { return next }
+        let query = components.percentEncodedQuery.flatMap { $0.isEmpty ? nil : $0 + "&" } ?? ""
+        components.percentEncodedQuery = query + "limit=\(pageLimit)"
+        return components.string ?? next
+    }
+
     static func fetchAll(
         request: (URL) async throws -> Data = { url in
             try await MusicKitActivityLog.shared.measure(.libraryPlaylistEnumeration, detail: "web library playlists page") {
@@ -22,7 +45,7 @@ enum AppleMusicLibraryPlaylistResources {
             }
         }
     ) async throws -> [RemotePlaylistLink] {
-        var next: URL? = URL(string: "https://api.music.apple.com/v1/me/library/playlists?limit=100")
+        var next: URL? = URL(string: "https://api.music.apple.com/v1/me/library/playlists?limit=\(pageLimit)")
         var visited = Set<URL>()
         var identifiers = Set<String>()
         var links: [RemotePlaylistLink] = []
@@ -38,7 +61,7 @@ enum AppleMusicLibraryPlaylistResources {
                 links.append(RemotePlaylistLink(id: resource.id, name: resource.attributes.name, source: .appleMusic))
             }
             if let path = page.next {
-                guard let url = URL(string: path, relativeTo: url)?.absoluteURL else { throw PlaylistSyncError.incompletePlaylist }
+                guard let url = URL(string: requestingFullPages(path), relativeTo: url)?.absoluteURL else { throw PlaylistSyncError.incompletePlaylist }
                 next = url
             } else { next = nil }
         }
@@ -131,7 +154,7 @@ enum AppleMusicLibraryPlaylistResources {
         var components = URLComponents(string: "https://api.music.apple.com")!
         components.path = "/v1/me/library/playlists/\(playlistID)/tracks"
         let path = components.path
-        components.queryItems = [URLQueryItem(name: "limit", value: "100")]
+        components.queryItems = [URLQueryItem(name: "limit", value: String(pageLimit))]
         var next = components.url
         var visited = Set<URL>()
         var entries: [Entry] = []
@@ -149,7 +172,7 @@ enum AppleMusicLibraryPlaylistResources {
             guard page.next == nil || !page.data.isEmpty else { throw PlaylistSyncError.incompletePlaylist }
             entries += page.data
             if let nextPath = page.next {
-                guard let url = URL(string: nextPath, relativeTo: url)?.absoluteURL else { throw PlaylistSyncError.incompletePlaylist }
+                guard let url = URL(string: requestingFullPages(nextPath), relativeTo: url)?.absoluteURL else { throw PlaylistSyncError.incompletePlaylist }
                 next = url
             } else { next = nil }
         }
