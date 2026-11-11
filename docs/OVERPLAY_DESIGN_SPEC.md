@@ -1924,8 +1924,11 @@ attribute normally.
    out or lost its hold to a Play press leaves it alone. A start that timed
    out does not seek either. A Play press that takes over a resuming start
    keeps the saved position: once prepare returns, within the hold's limit,
-   the start seeks if observation attributes the player's current entry to
-   the song being resumed, and otherwise does not. Past the limit it does
+   the start seeks only if the player's current entry has loaded its item
+   and that item is attributed to the song being resumed. An entry whose item
+   has not loaded may be the loading queue's interim track 1, attributed to
+   the start song only by guess; then the start does not seek, and plays on
+   from wherever the player is, with no retry or wait. Past the limit it does
    not seek, so audio already playing never jumps. Overplay paused
    the player for the start, so it does not offer Pause while the start is
    held. The first observed entry is attributed by its item. The app and
@@ -2171,10 +2174,20 @@ If the last observation is stale (the end happened while Overplay was
 suspended), the end is treated the same way and is not a failure. A fresh stop
 mid-track is a failure: the current member and position are kept, so Play
 resumes there. A queue lost while the session was seen paused and not near its
-end (the system dropped the idle queue, or media services reset) is neither of
-these: the current member and position are kept and saved as the resume point,
-no failure is shown, and Play resumes there, however long the pause lasted. A
-stop reported after that pause is still that pause. A session that pauses
+end, once that pause is old, is neither of these (the system dropped the idle
+queue, or media services reset): the current member and position are kept and
+saved as the resume point, no failure is shown, and Play resumes there. A
+pause is old when it was first seen more than the observation staleness
+threshold (5 seconds) before the queue was lost, or when Overplay never saw
+that session playing before it paused (a relaunch or background launch onto a
+paused queue, or a session split when its item loaded): its age then says only
+how long Overplay has watched it. A queue lost within 5 seconds of a pause
+that followed observed playing is a fresh stop mid-track, because MusicKit
+reports paused on a delivery failure before dropping the queue: the member and
+position are kept, and the failure is shown unless one is already showing (a
+play that did not start, or a stall), which stays because it says more. A stop
+reported after a pause is still that pause, and does not make it newer. A
+session that pauses
 within the natural-completion tolerance of its end still counts as the queue
 ending. With repeat-all on, MusicKit loops the queue and no queue end is
 observed. Under repeat-all, a wrap from the last entry to the first is

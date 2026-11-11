@@ -131,6 +131,27 @@ struct PlayDidNotStartTests {
         #expect(failure.offersRetry)
     }
 
+    /// Review of #133, finding 1: MusicKit drops the queue seconds after the
+    /// flicker. The specific advice stays, not the generic "stopped" message.
+    @Test(arguments: [50_000_000_000, 300_000_000] as [Int64])
+    func aQueueDroppedAfterAFailedStartKeepsItsFailureAndPlace(freeStorage: Int64) async throws {
+        let (fixture, _) = try await fixture(freeStorage: freeStorage)
+        defer { fixture.cleanUp() }
+        await flicker(fixture)
+        let shown = try #require(fixture.controller.playbackFailure)
+        #expect(shown.kind == .didNotStart)
+
+        await fixture.player.abandonQueue()
+
+        #expect(fixture.controller.playbackFailure?.kind == .didNotStart)
+        #expect(fixture.controller.playbackFailure?.message == shown.message)
+        #expect(fixture.controller.statusMessage == shown.message)
+        #expect(fixture.controller.currentTrack?.title == "Song 1")
+        let resume = try #require(fixture.intentStore.loadResumePoint())
+        #expect(resume.localTrackID == fixture.tracks[1].id.uuidString)
+        #expect(resume.positionSeconds == 0)
+    }
+
     @Test func progressAfterAFailureClearsIt() async throws {
         let (fixture, _) = try await fixture()
         defer { fixture.cleanUp() }
