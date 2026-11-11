@@ -98,8 +98,19 @@ nonisolated final class DevicePlaybackCache: Sendable {
         guard let data = shared.data(for: track.id),
               let cached = try? JSONDecoder().decode(Track.self, from: data) else { return false }
         // A catalog song prepared because the library ID was gone is current too.
-        return [track.libraryID, track.catalogID].contains(cached.id.rawValue)
+        if [track.libraryID, track.catalogID].contains(cached.id.rawValue) { return true }
+        // So is a catalog song found by title and artist for a library-only
+        // song, while it still meets the strict match.
+        guard track.catalogID == nil, !MusicTrackIdentity.isLibraryID(cached.id.rawValue),
+              let key = PlaybackAttribution.metadataKey(title: track.title, artist: track.artistName),
+              PlaybackAttribution.metadataKey(title: cached.title, artist: cached.artistName) == key,
+              let stored = track.durationSeconds, let duration = cached.duration else { return false }
+        return PlaybackAttribution.durationsAgree(stored, duration)
     }
+
+    /// Catalog searches by title and artist allowed in one preparation, so a
+    /// playlist of gone library-only songs cannot hold up the start.
+    static let catalogSearchesPerPreparation = 10
 
     /// Resolves whatever can be resolved, committing each track as it
     /// arrives, then reports the failures. One unavailable song must not
@@ -113,9 +124,19 @@ nonisolated final class DevicePlaybackCache: Sendable {
         _ tracks: [TrackRecord],
         refreshing: Set<UUID> = [],
         libraryLookup: ([String]) async throws -> [String: Song] = { try await loadLibrarySongs($0) },
-        catalogLookup: ([String]) async throws -> [String: Song] = { try await loadCatalogSongs($0) }
+        catalogLookup: ([String]) async throws -> [String: Song] = { try await loadCatalogSongs($0) },
+        catalogSearch: (String) async throws -> [Song] = { try await AppleMusicSongLookup.playbackCatalogSearch(term: $0) }
     ) async throws {
         let uncached = tracks.filter { refreshing.contains($0.id) || !hasCurrentData(for: $0) }
+        // A library-only song whose library ID is gone has nothing else to
+        // play from, so it is searched for by title and artist (`PLAY-017`).
+        var searchTargets: [String: TrackRecord] = [:]
+        // A track with a catalog ID takes the fallback above instead.
+        for track in uncached {
+            if let libraryID = track.libraryID, searchTargets[libraryID] == nil { searchTargets[libraryID] = track }
+        }
+        var searchesLeft = catalogSearchesPerPreparation
+        var searchFailure: Error?
         let libraryIDs = Array(Set(uncached.compactMap(\.libraryID))).sorted()
         let catalogIDs = Array(Set(uncached.filter { $0.libraryID == nil }.compactMap(\.catalogID))).sorted()
         // A stored library ID can stop existing in the account library while
@@ -163,6 +184,48 @@ nonisolated final class DevicePlaybackCache: Sendable {
                 }
                 if let song = try fallback?.get()[catalogID] { return try JSONEncoder().encode(Track.song(song)) }
                 throw PreparationError(message: "Apple Music returned no library song for \(reference.value) and no catalog song for \(catalogID).")
+            }
+            if reference.domain == .librarySong, let track = searchTargets[reference.value] {
+                // Played on this device only: the match is never stored as
+                // the song's identity. A failed search is remembered, so the
+                // rest fail fast (`LOAD-001`).
+                func searchFailed(_ error: Error) -> PreparationError {
+                    let underlying = error as NSError
+                    return PreparationError(message: "Apple Music returned no song for \(reference.value), and the catalog search by title and artist failed: \(error.localizedDescription) [\(underlying.domain), code \(underlying.code)]")
+                }
+                if let searchFailure { throw searchFailed(searchFailure) }
+                guard searchesLeft > 0 else {
+                    throw PreparationError(message: "Apple Music returned no song for \(reference.value), and this preparation's catalog searches are used up.")
+                }
+                searchesLeft -= 1
+                let candidates: [Song]
+                do {
+                    candidates = try await catalogSearch("\(track.title) \(track.artistName)")
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    searchFailure = error
+                    throw searchFailed(error)
+                }
+                switch AppleMusicSongLookup.strictCatalogMatch(
+                    title: track.title, artist: track.artistName, durationSeconds: track.durationSeconds, in: candidates
+                ) {
+                case .unique(let song):
+                    MusicKitActivityLog.shared.record(
+                        .playbackQueuePreparation, magnitude: 1,
+                        detail: "prepared ‘\(track.title)’ by \(track.artistName) from catalog song \(song.id.rawValue), found by title and artist; its library ID \(reference.value) no longer exists"
+                    )
+                    return try JSONEncoder().encode(Track.song(song))
+                case .ambiguous(let count):
+                    MusicKitActivityLog.shared.record(
+                        .playbackQueuePreparation, magnitude: Double(count),
+                        detail: "left out ‘\(track.title)’ by \(track.artistName): its library ID \(reference.value) no longer exists and \(count) catalog songs match its title, artist and duration"
+                    )
+                    throw PreparationError(message: "Apple Music returned no song for \(reference.value), and the catalog search by title and artist was ambiguous (\(count) matches).")
+                case .none:
+                    let reason = track.durationSeconds == nil ? "the track has no stored duration to match" : "no catalog song matches its title, artist and duration"
+                    throw PreparationError(message: "Apple Music returned no song for \(reference.value), and the catalog search by title and artist found no match: \(reason).")
+                }
             }
             throw PreparationError(message: "Apple Music returned no song for \(reference.value).")
         }

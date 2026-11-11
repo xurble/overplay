@@ -181,7 +181,79 @@ enum AppleMusicSongLookup {
         }
     }
 
+    // MARK: - Catalog search by title and artist
+
+    /// Results asked for in one playback catalog search.
+    static let catalogSearchLimit = 25
+
+    /// What a title-and-artist catalog search found for one track.
+    enum CatalogSearchMatch {
+        case unique(Song)
+        case ambiguous(count: Int)
+        case none
+    }
+
+    /// The strict rule for playing a library-only song from a catalog
+    /// search (`PLAY-017`): exactly one playable result whose normalised title
+    /// and artist equal the track's and whose duration is within 2 seconds of
+    /// the track's stored duration. Without a stored duration nothing
+    /// matches, so the search can never play a different song.
+    static func strictCatalogMatch(
+        title: String, artist: String, durationSeconds: Double?, in candidates: [Song]
+    ) -> CatalogSearchMatch {
+        guard let key = PlaybackAttribution.metadataKey(title: title, artist: artist),
+              let durationSeconds else { return .none }
+        var seen = Set<String>()
+        let matches = candidates.filter { song in
+            guard song.playParameters != nil,
+                  PlaybackAttribution.metadataKey(title: song.title, artist: song.artistName) == key,
+                  let duration = song.duration,
+                  PlaybackAttribution.durationsAgree(durationSeconds, duration) else { return false }
+            return seen.insert(song.id.rawValue).inserted
+        }
+        switch matches.count {
+        case 0: return .none
+        case 1: return .unique(matches[0])
+        default: return .ambiguous(count: matches.count)
+        }
+    }
+
+    /// Songs from one catalog search request. A 404 reads as no songs.
+    static func catalogSearchSongs(
+        term: String, storefront: String, request: (URL) async throws -> Data
+    ) async throws -> [Song] {
+        struct Response: Decodable {
+            struct Results: Decodable { var songs: Page? }
+            struct Page: Decodable { var data: [Song] }
+            var results: Results
+        }
+        var url = URLComponents(string: "https://api.music.apple.com")!
+        url.path = "/v1/catalog/\(storefront)/search"
+        url.queryItems = [
+            URLQueryItem(name: "term", value: term),
+            URLQueryItem(name: "types", value: "songs"),
+            URLQueryItem(name: "limit", value: String(catalogSearchLimit))
+        ]
+        let data: Data
+        do {
+            data = try await request(url.url!)
+        } catch where isNotFoundResponse(error) {
+            return []
+        }
+        return try JSONDecoder().decode(Response.self, from: data).results.songs?.data ?? []
+    }
+
     // MARK: - Live requests
+
+    /// One playback catalog search, keeping the playback request timeout.
+    static func playbackCatalogSearch(term: String) async throws -> [Song] {
+        let storefront = try await MusicDataRequest.currentCountryCode
+        return try await catalogSearchSongs(term: term, storefront: storefront) { url in
+            try await MusicKitActivityLog.shared.measure(.catalogSearch, detail: "playback catalog search") {
+                try await MusicDataRequest(urlRequest: DevicePlaybackCache.playbackRequest(url)).response().data
+            }
+        }
+    }
 
     /// The transport behind a playback web-library lookup, keeping its timeout.
     static func playbackWebLibraryData(_ url: URL, detail: String) async throws -> Data {
