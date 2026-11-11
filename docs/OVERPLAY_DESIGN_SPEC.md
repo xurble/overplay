@@ -125,6 +125,9 @@ Music's global play count or skip count.
 | `SURFACE-002` | Every observed player change is published as one snapshot to every Overplay surface within one observation cycle; system surfaces read the same player. Current track, playlist context, play state, position, outgoing-session evaluation and active-playlist projection must not diverge. | Confirmed product requirement (2026-08-31, revised 2026-10-04); `Overplay/Services/PlaybackController.swift` |
 | `SURFACE-003` | Equivalent iOS/iPadOS and CarPlay actions use one controller decision, including in-intent jump versus new intent, resume versus restart, and failure handling. | Confirmed product requirement (2026-09-25); `Overplay/Services/PlaybackController.swift` |
 
+`STORE-001` (the store cannot be opened) is specified in **Library Store
+Failure**.
+
 Withdrawn requirements: `PLAY-001` (Overplay-owned shuffle/repeat) and `PLAY-002`
 (windowed hand-off) — see History H-1 and H-2. `PLAY-006` (confirmed-mode
 retention during pending transitions) is superseded by `PLAY-004` and
@@ -1343,7 +1346,8 @@ Siri can launch Overplay in the background, with no window to run startup.
 An intent starts the same startup CarPlay uses and waits up to 8 seconds for
 the library. On a device that has restored its library before this is
 immediate. If the library is not ready in time, the intent says Overplay is
-still restoring and changes nothing.
+still restoring and changes nothing. If the library store could not be opened
+(`STORE-001`), it says so and changes nothing.
 
 ## Made For You
 
@@ -2934,6 +2938,23 @@ The obsolete `protectKeptTracks` setting and playlist-item `protected` flag
 have been removed, along with the controller and presentation paths that read
 them. They existed only to shield tracks from automatic eviction, which no
 longer exists.
+
+## Library Store Failure (`STORE-001`)
+
+If the SwiftData store cannot be opened at launch, Overplay does not crash and
+does not try to repair it:
+
+- The store file is never deleted, moved or overwritten. There is no reset
+  button and no migration; each launch simply tries to open it again. Data
+  preservation is decided separately (`TODO.md` 1.4).
+- Every app and Mac Settings window shows a blocking error screen saying the
+  library could not be opened, with the underlying error. It cannot be
+  mistaken for an empty library.
+- Nothing starts: no intent restore, no player observation, no sync, no
+  playback and no remote write.
+- CarPlay shows one list with the same message and does nothing else.
+- Siri says the library could not be opened and changes nothing.
+- A background wake finds no library and does nothing.
 
 ## Edge Cases
 

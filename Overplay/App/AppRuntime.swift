@@ -30,7 +30,7 @@ final class AppRuntime {
         return PlaybackController()
     }
 
-    private init() {
+    init() {
         // Counting and item reads wait for restoration; playback does not.
         playbackController.isLibraryReady = { [weak self] in self?.libraryRestoration.isReady ?? false }
         // CarPlay refreshes an old Library list only while playback is quiet (`LOAD-001`).
@@ -40,6 +40,29 @@ final class AppRuntime {
             return .init(isPlaying: controller.isPlaying, isStarting: controller.isStartingPlayback,
                          hasFailure: controller.playbackFailure != nil)
         }
+    }
+
+    /// Why the library store could not be opened at launch (`STORE-001`). Set
+    /// means there is no container, so nothing below can read, write or sync.
+    @ObservationIgnored private(set) var libraryStoreFailure: String?
+
+    /// Opens the store once at launch. A failure is recorded and left alone:
+    /// the store file is never deleted, moved or replaced (`STORE-001`).
+    func openLibraryStore(_ makeContainer: () throws -> ModelContainer) -> ModelContainer? {
+        do {
+            let container = try makeContainer()
+            configure(modelContainer: container)
+            return container
+        } catch {
+            libraryStoreFailure = String(describing: error)
+            StartupProfiler.mark("The library store could not be opened")
+            return nil
+        }
+    }
+
+    /// What Siri says when `prepareForBackgroundAction` finds no library.
+    var backgroundActionRefusal: String {
+        libraryStoreFailure == nil ? VoiceActions.notReadyMessage : VoiceActions.storeUnavailableMessage
     }
 
     func configure(modelContainer: ModelContainer) {

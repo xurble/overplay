@@ -16,7 +16,7 @@ private enum VoiceIntentRunner {
     static func play(_ target: VoiceActions.Playlist) async throws {
         let runtime = AppRuntime.shared
         guard let context = await runtime.prepareForBackgroundAction() else {
-            throw VoiceActionError(message: VoiceActions.notReadyMessage)
+            throw VoiceActionError(message: runtime.backgroundActionRefusal)
         }
         if let failure = await VoiceActions.play(target, controller: runtime.playbackController, context: context) {
             throw VoiceActionError(message: failure)
@@ -26,7 +26,7 @@ private enum VoiceIntentRunner {
     static func curate(_ action: VoiceActions.Curation) async throws -> String {
         let runtime = AppRuntime.shared
         guard let context = await runtime.prepareForBackgroundAction() else {
-            throw VoiceActionError(message: VoiceActions.notReadyMessage)
+            throw VoiceActionError(message: runtime.backgroundActionRefusal)
         }
         let outcome = await VoiceActions.curate(action, controller: runtime.playbackController, context: context)
         if case .failed(let message) = outcome { throw VoiceActionError(message: message) }
