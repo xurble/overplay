@@ -174,10 +174,10 @@ struct RecentsTests {
         #expect(songs[0].summary.detailText.contains(songs[0].summary.playSkipMetricLabel))
         #expect(songs[1].summary.detailText == "Artist 0")
         // Now Playing: the tracked song shows counts; the next, untracked, does not.
-        #expect(NowPlayingPresentationFactory.presentation(playbackController: fixture.controller, settings: fixture.settings,
+        #expect(NowPlayingPresentationFactory.presentation(playbackController: fixture.controller,
                                                            context: fixture.context).isTracked)
         await fixture.player.externallyAdvance()
-        #expect(!NowPlayingPresentationFactory.presentation(playbackController: fixture.controller, settings: fixture.settings,
+        #expect(!NowPlayingPresentationFactory.presentation(playbackController: fixture.controller,
                                                             context: fixture.context).isTracked)
     }
 

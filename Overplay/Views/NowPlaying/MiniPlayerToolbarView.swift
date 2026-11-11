@@ -31,7 +31,6 @@ struct MiniPlayerToolbarView: View {
 }
 
 private struct MiniPlayerToolbarPill: View {
-    @Environment(\.modelContext) private var modelContext
     @Environment(PlaybackController.self) private var playbackController
 
     var settings: OverplaySettings
@@ -89,7 +88,13 @@ private struct MiniPlayerToolbarPill: View {
         }
         .padding(.horizontal, 18 * SplitLayoutPolicy.macScale)
         .frame(height: height)
-        .overlay(alignment: .top) { progressLine }
+        .overlay(alignment: .top) {
+            NowPlayingProgressLineView(
+                settings: settings,
+                lineHeight: Self.progressLineHeight,
+                lineEndInset: progressLineEndInset
+            )
+        }
         // The tint is drawn, not the glass's: a glass tint drops out when the
         // window loses focus, the sidebar's wash does not.
         .background {
@@ -101,25 +106,6 @@ private struct MiniPlayerToolbarPill: View {
         .contentShape(.capsule)
         .glassEffect(.regular, in: .capsule)
         .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
-    }
-
-    private var progressLine: some View {
-        let presentation = NowPlayingPresentationFactory.presentation(
-            playbackController: playbackController,
-            settings: settings,
-            context: modelContext
-        )
-        return NowPlayingProgressBar(
-            progress: presentation.progress,
-            phase: presentation.progressPhase,
-            durationSeconds: presentation.durationSeconds,
-            isPlaying: presentation.isPlaying,
-            trackID: presentation.trackID,
-            lineHeight: Self.progressLineHeight,
-            lineEndInset: progressLineEndInset
-        )
-        .accessibilityHidden(true)
-        .allowsHitTesting(false)
     }
 }
 
