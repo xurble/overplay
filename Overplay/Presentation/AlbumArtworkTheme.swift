@@ -1,12 +1,22 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import OSLog
 import SwiftUI
 @preconcurrency import Vision
 
 nonisolated enum AlbumArtworkThemeDiagnostics {
-    static func log(_ message: String) {
-        _ = message
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Overplay", category: "ArtworkTheme")
+
+    /// Debug level, so it costs little and is kept only while someone is
+    /// streaming. Messages carry song titles and artwork URLs, so a Release
+    /// build marks them private; a Debug build shows them.
+    static func log(_ message: @escaping @autoclosure () -> String) {
+        #if DEBUG
+        logger.debug("\(message(), privacy: .public)")
+        #else
+        logger.debug("\(message(), privacy: .private)")
+        #endif
     }
 
     static func describe(_ color: AlbumArtworkRGBColor) -> String {
@@ -386,10 +396,28 @@ nonisolated enum AlbumArtworkThemeBuilder {
     }
 
     static func theme(from input: AlbumArtworkThemeInput) -> AlbumArtworkTheme {
+        guard let analysis = analysisImages(from: input) else { return .fallback }
+        return theme(from: analysis, input: input, recognizedText: recognizeText(in: analysis.textImage))
+    }
+
+    /// The player's theme. Text recognition is optional: it gets
+    /// `textRecognition`'s time limit, and past that, or when it fails, the
+    /// theme comes from the cover's colours alone.
+    static func theme(
+        from input: AlbumArtworkThemeInput,
+        coverKey: String,
+        textRecognition: AlbumArtworkTextRecognition
+    ) async -> (theme: AlbumArtworkTheme, textRecognition: AlbumArtworkTextRecognition.Outcome?) {
+        guard let analysis = analysisImages(from: input) else { return (.fallback, nil) }
+        let outcome = await textRecognition.recognize(in: analysis.textImage, coverKey: coverKey)
+        return (theme(from: analysis, input: input, recognizedText: outcome.observations), outcome)
+    }
+
+    private static func analysisImages(from input: AlbumArtworkThemeInput) -> (palette: [AlbumArtworkPaletteColor], textImage: CGImage)? {
         guard let image = downsampledImage(from: input.artworkData, maxDimension: 100),
               let croppedImage = cropped(image, removingOuterPercent: 0.08) else {
             AlbumArtworkThemeDiagnostics.log("builder fallback: could not decode/downsample artwork data bytes=\(input.artworkData.count)")
-            return .fallback
+            return nil
         }
 
         AlbumArtworkThemeDiagnostics.log(
@@ -399,10 +427,17 @@ nonisolated enum AlbumArtworkThemeBuilder {
         logPalette("builder raw palette", palette)
         let textImage = downsampledImage(from: input.artworkData, maxDimension: 512) ?? image
         AlbumArtworkThemeDiagnostics.log("builder ocr image: \(textImage.width)x\(textImage.height) uncropped")
-        let recognizedText = recognizeText(in: textImage)
-        return theme(
-            from: palette,
-            croppedImage: textImage,
+        return (palette, textImage)
+    }
+
+    private static func theme(
+        from analysis: (palette: [AlbumArtworkPaletteColor], textImage: CGImage),
+        input: AlbumArtworkThemeInput,
+        recognizedText: [AlbumArtworkRecognizedText]
+    ) -> AlbumArtworkTheme {
+        theme(
+            from: analysis.palette,
+            croppedImage: analysis.textImage,
             recognizedText: recognizedText,
             trackTitle: input.trackTitle,
             artistName: input.artistName,
@@ -1138,6 +1173,18 @@ nonisolated enum AlbumArtworkThemeBuilder {
     }
 
     private static func recognizeText(in image: CGImage) -> [AlbumArtworkRecognizedText] {
+        do {
+            return try visionText(in: image)
+        } catch {
+            AlbumArtworkThemeDiagnostics.log("builder ocr failed: \(error.localizedDescription)")
+            return []
+        }
+    }
+
+    /// Vision text recognition, synchronous. It can block for a long time:
+    /// the first request a newly built app makes on a Mac waits about a
+    /// minute for the Neural Engine to compile Vision's model.
+    static func visionText(in image: CGImage) throws -> [AlbumArtworkRecognizedText] {
         #if targetEnvironment(simulator)
         // Text recognition never returns in the iOS 27.1 simulator, which
         // left every new album without a theme; the palette alone will do.
@@ -1149,12 +1196,7 @@ nonisolated enum AlbumArtworkThemeBuilder {
         request.minimumTextHeight = 0.025
 
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
-        do {
-            try handler.perform([request])
-        } catch {
-            AlbumArtworkThemeDiagnostics.log("builder ocr failed: \(error.localizedDescription)")
-            return []
-        }
+        try handler.perform([request])
 
         let observations = request.results?.compactMap { observation -> AlbumArtworkRecognizedText? in
             guard let candidate = observation.topCandidates(1).first else { return nil }

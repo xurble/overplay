@@ -22,10 +22,12 @@ actor AlbumArtworkThemeProvider: AlbumArtworkThemeProviding {
     nonisolated static let artworkPixelSize = 512
 
     private let store: AlbumArtworkThemeStore
+    private let textRecognition: AlbumArtworkTextRecognition
     private var inFlightTasks: [String: Task<AlbumArtworkTheme, Never>] = [:]
 
-    init(store: AlbumArtworkThemeStore) {
+    init(store: AlbumArtworkThemeStore, textRecognition: AlbumArtworkTextRecognition = .shared) {
         self.store = store
+        self.textRecognition = textRecognition
     }
 
     func cachedTheme(
@@ -214,32 +216,39 @@ actor AlbumArtworkThemeProvider: AlbumArtworkThemeProviding {
         let options = AlbumArtworkThemeBuilder.Options(
             requiresIncreasedContrast: requiresIncreasedContrast
         )
+        let textRecognition = textRecognition
         let result = await Task.detached(priority: .background) {
             guard let data = try? Data(contentsOf: fileURL) else {
                 AlbumArtworkThemeDiagnostics.log("provider fallback: could not read artwork data at \(fileURL.path)")
-                return (cachedRecord?.theme ?? AlbumArtworkTheme.fallback, nil as String?)
+                return (cachedRecord?.theme ?? AlbumArtworkTheme.fallback, nil as String?, true)
             }
 
             AlbumArtworkThemeDiagnostics.log("provider artwork data: bytes=\(data.count)")
             let dataHash = AlbumArtworkThemeStore.artworkDataHash(data)
             if cachedRecord?.artworkDataHash == dataHash, let cachedTheme = cachedRecord?.theme {
                 AlbumArtworkThemeDiagnostics.log("provider artwork data unchanged: key=\(cacheKey)")
-                return (cachedTheme, dataHash)
+                return (cachedTheme, dataHash, true)
             }
 
-            let theme = AlbumArtworkThemeBuilder.theme(from: AlbumArtworkThemeInput(
-                artworkData: data,
-                artworkURLTemplate: normalizedArtworkURL,
-                trackTitle: trackTitle,
-                artistName: artistName,
-                albumTitle: albumTitle,
-                options: options
-            ))
-            return (theme, dataHash)
+            let built = await AlbumArtworkThemeBuilder.theme(
+                from: AlbumArtworkThemeInput(
+                    artworkData: data,
+                    artworkURLTemplate: normalizedArtworkURL,
+                    trackTitle: trackTitle,
+                    artistName: artistName,
+                    albumTitle: albumTitle,
+                    options: options
+                ),
+                coverKey: dataHash,
+                textRecognition: textRecognition
+            )
+            return (built.theme, dataHash, built.textRecognition?.isFinal ?? true)
         }.value
 
         let theme = result.0
-        if result.1 != nil, theme != cachedRecord?.theme || result.1 != cachedRecord?.artworkDataHash {
+        // A theme made without text recognition's answer is used now but
+        // not kept, so the cover gets another try at it.
+        if result.1 != nil, result.2, theme != cachedRecord?.theme || result.1 != cachedRecord?.artworkDataHash {
             await store.setTheme(
                 theme,
                 for: cacheKey,
