@@ -511,7 +511,9 @@ struct SplitAppShell: View {
     /// Divided in halves the player cannot be hidden, so there is no toggle.
     private var columnToggle: NowPlayingColumnToggle? {
         guard !isPinnedAtFold else { return nil }
-        return NowPlayingColumnToggle(isShown: showsNowPlaying, settings: settings) {
+        // A Mac's window toolbar runs over the player (`playerWidth`).
+        let playerWidth = ProcessInfo.processInfo.isMacCatalystApp && showsNowPlaying ? nowPlayingWidth + 1 : 0
+        return NowPlayingColumnToggle(isShown: showsNowPlaying, settings: settings, playerWidth: playerWidth) {
             withAnimation(.smooth) { showsNowPlaying.toggle() }
         }
     }
