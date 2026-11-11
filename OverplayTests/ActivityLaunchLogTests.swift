@@ -152,6 +152,40 @@ struct ActivityLaunchLogTests {
         #expect(detail.contains("timed out"))
     }
 
+    /// A pre-signed artwork URL holds a day-valid credential in its query, and
+    /// URLSession repeats it in every level of the error it throws.
+    @Test func aFailingSignedURLLeavesNoQueryInTheRecord() throws {
+        let signed = "https://blobstore.example.com/covers/abc.jpg?X-Amz-Signature=secret&X-Amz-Credential=key%2Fday"
+        let url = try #require(URL(string: signed))
+        let nested = NSError(domain: "kCFErrorDomainCFNetwork", code: -1001, userInfo: [NSURLErrorFailingURLStringErrorKey: signed])
+        let underlying = NSError(domain: NSURLErrorDomain, code: -1001, userInfo: [
+            NSURLErrorFailingURLErrorKey: url, NSUnderlyingErrorKey: nested,
+        ])
+        let error = NSError(domain: NSURLErrorDomain, code: -1001, userInfo: [
+            NSURLErrorFailingURLErrorKey: url,
+            NSURLErrorFailingURLStringErrorKey: signed,
+            NSLocalizedDescriptionKey: "Could not load \(signed)",
+            NSUnderlyingErrorKey: underlying,
+        ])
+        let log = MusicKitActivityLog(fileURL: nil)
+        log.record(.artworkDownload, detail: "retry \(signed)", error: error)
+
+        let event = try #require(log.snapshot().events.first)
+        let chain = try #require(event.errorDetail)
+        #expect(chain.contains("kCFErrorDomainCFNetwork"), "the nested error must be in the chain under test")
+        for text in [event.detail, event.errorDescription, chain].compactMap({ $0 }) {
+            #expect(!text.contains("X-Amz"))
+            #expect(!text.contains("?"))
+            #expect(text.contains("https://blobstore.example.com/covers/abc.jpg"))
+        }
+    }
+
+    @Test func aDetailWithoutAURLKeepsItsText() throws {
+        let log = MusicKitActivityLog(fileURL: nil)
+        log.record(.playerModeReset, detail: "Is This It? (Live)")
+        #expect(log.snapshot().events.first?.detail == "Is This It? (Live)")
+    }
+
     @Test func audioSessionInterruptionsAreDescribed() {
         let began = Notification(name: AVAudioSession.interruptionNotification, userInfo: [
             AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue,

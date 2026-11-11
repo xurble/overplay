@@ -362,7 +362,19 @@ nonisolated struct MusicKitActivityEvent: Codable, Equatable, Sendable {
             parts.append("\(underlying.domain) \(underlying.code) \(underlying.userInfo)")
             current = underlying
         }
-        return parts.joined(separator: " <- ")
+        return parts.joined(separator: " <- ").withoutURLQueries
+    }
+}
+
+nonisolated extension String {
+    /// This text with the query removed from every URL in it, wherever it
+    /// sits: an error's user info can repeat a pre-signed artwork URL at any
+    /// depth. Keeps scheme, host and path, which say what failed; the
+    /// credential is in the query. A query ends only at whitespace or a double
+    /// quote, so a stray delimiter costs a little text, never a leaked secret.
+    var withoutURLQueries: String {
+        guard contains("://") else { return self }
+        return replacing(#/([A-Za-z][A-Za-z0-9+.\-]*://[^\s"?]*)\?[^\s"]*/#) { String($0.output.1) }
     }
 }
 
