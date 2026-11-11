@@ -24,6 +24,17 @@ nonisolated final class DevicePlaybackCache: Sendable {
     /// The account and storefront fingerprint the tracks were filled under.
     private let scope = Mutex<String?>(nil)
     private let directory: URL?
+    /// One start's decoded tracks, so a start decodes each cached track once
+    /// (PB-9). Bound to the start's task by `decodingOnce`, never shared
+    /// process-wide: another caller's decodes are never kept, and a start
+    /// whose lookup never returns holds only its own. An entry is reused only
+    /// while the cache still holds the data it was decoded from.
+    nonisolated final class StartDecodes: Sendable {
+        fileprivate let tracks = Mutex<[String: (data: Data, track: Track?)]>([:])
+    }
+    @TaskLocal static var startDecodes: StartDecodes?
+    /// Tests count decodes through this; told each decoded key.
+    let decodeObserver = Mutex<(@Sendable (String) -> Void)?>(nil)
 
     init(directory: URL? = nil) {
         self.directory = directory
@@ -65,6 +76,27 @@ nonisolated final class DevicePlaybackCache: Sendable {
         }
     }
 
+    /// The cached track, decoded. Within `decodingOnce` each key is decoded
+    /// at most once until its data is set again.
+    func track(for id: UUID) -> Track? {
+        let key = id.uuidString
+        guard let data = data(forKey: key) else { return nil }
+        let start = Self.startDecodes
+        if let entry = start?.tracks.withLock({ $0[key] }), entry.data == data { return entry.track }
+        decodeObserver.withLock { $0 }?(key)
+        let track = try? JSONDecoder().decode(Track.self, from: data)
+        start?.tracks.withLock { $0[key] = (data, track) }
+        return track
+    }
+
+    /// Runs one start's work so each cached track is decoded at most once
+    /// (PB-9). A nested call shares the enclosing start's decodes; they are
+    /// dropped when the outermost call returns.
+    @MainActor static func decodingOnce<T>(_ operation: () async throws -> T) async rethrows -> T {
+        if startDecodes != nil { return try await operation() }
+        return try await $startDecodes.withValue(StartDecodes(), operation: operation)
+    }
+
     func removeAll() {
         resources.withLock { $0.removeAll() }
         if let directory { try? FileManager.default.removeItem(at: directory) }
@@ -93,12 +125,82 @@ nonisolated final class DevicePlaybackCache: Sendable {
     /// A cached track is current only when it decodes and is the song its
     /// record now names. Removing and re-adding a song, or a sync that
     /// re-matches the record, changes that ID while the disk cache keeps the
-    /// old play parameters across launches.
+    /// old play parameters across launches. Only the decode is shared within a
+    /// start; the ID check runs against the record every time.
+    /// A catalog copy found by a title-and-artist search is never current: the
+    /// library is asked again at every start, so a song that comes back to
+    /// the library (perhaps downloaded) plays from there.
     @MainActor static func hasCurrentData(for track: TrackRecord) -> Bool {
-        guard let data = shared.data(for: track.id),
-              let cached = try? JSONDecoder().decode(Track.self, from: data) else { return false }
+        guard let cached = shared.track(for: track.id) else { return false }
         // A catalog song prepared because the library ID was gone is current too.
         return [track.libraryID, track.catalogID].contains(cached.id.rawValue)
+    }
+
+    /// Catalog searches by title and artist allowed in one preparation, so a
+    /// playlist of gone library-only songs cannot hold up the start.
+    static let catalogSearchesPerPreparation = 10
+
+    // MARK: - Catalog search memory (`PLAY-017`)
+    //
+    // Device-local, beside the tracks and emptied with them; never synced.
+
+    /// Written only when a catalog search strictly matched a library-only
+    /// song: the catalog copy cached for the track came from that search.
+    struct CatalogSearchMatch: Codable, Equatable {
+        var libraryID: String
+        var catalogID: String
+    }
+
+    /// A search that found no unique match, so later starts do not wait on it
+    /// again until it expires or the track's library ID, title, artist or
+    /// duration changes.
+    struct CatalogSearchMiss: Codable, Equatable {
+        var libraryID: String
+        var metadataKey: String
+        var durationSeconds: Double
+        var searchedAt: Date
+    }
+
+    /// How long a search with no unique match is remembered.
+    static let catalogSearchMissLifetime: TimeInterval = 24 * 3600
+
+    func catalogSearchMatch(for id: UUID) -> CatalogSearchMatch? {
+        data(forKey: "search-match-\(id.uuidString)").flatMap { try? JSONDecoder().decode(CatalogSearchMatch.self, from: $0) }
+    }
+
+    func setCatalogSearchMatch(_ match: CatalogSearchMatch?, for id: UUID) {
+        set(match.flatMap { try? JSONEncoder().encode($0) }, forKey: "search-match-\(id.uuidString)")
+    }
+
+    func catalogSearchMiss(for id: UUID) -> CatalogSearchMiss? {
+        data(forKey: "search-miss-\(id.uuidString)").flatMap { try? JSONDecoder().decode(CatalogSearchMiss.self, from: $0) }
+    }
+
+    func setCatalogSearchMiss(_ miss: CatalogSearchMiss?, for id: UUID) {
+        set(miss.flatMap { try? JSONEncoder().encode($0) }, forKey: "search-miss-\(id.uuidString)")
+    }
+
+    /// The cached catalog copy a search found for this library-only track,
+    /// while the marker names it and it still meets the strict rule.
+    @MainActor static func reusableSearchMatch(for track: TrackRecord) -> Data? {
+        guard track.catalogID == nil, let libraryID = track.libraryID,
+              let marker = shared.catalogSearchMatch(for: track.id), marker.libraryID == libraryID,
+              let cached = shared.track(for: track.id), cached.id.rawValue == marker.catalogID,
+              let rule = AppleMusicSongLookup.strictMatchRule(title: track.title, artist: track.artistName, durationSeconds: track.durationSeconds),
+              PlaybackAttribution.metadataKey(title: cached.title, artist: cached.artistName) == rule.key,
+              let duration = cached.duration, duration.isFinite,
+              PlaybackAttribution.durationsAgree(rule.durationSeconds, duration) else { return nil }
+        return shared.data(for: track.id)
+    }
+
+    /// The remembered no-unique-match search for this track, if it still applies.
+    @MainActor static func rememberedSearchMiss(for track: TrackRecord, now: Date = .now) -> CatalogSearchMiss? {
+        guard let libraryID = track.libraryID,
+              let rule = AppleMusicSongLookup.strictMatchRule(title: track.title, artist: track.artistName, durationSeconds: track.durationSeconds),
+              let miss = shared.catalogSearchMiss(for: track.id),
+              miss.libraryID == libraryID, miss.metadataKey == rule.key, miss.durationSeconds == rule.durationSeconds,
+              (0..<catalogSearchMissLifetime).contains(now.timeIntervalSince(miss.searchedAt)) else { return nil }
+        return miss
     }
 
     /// Resolves whatever can be resolved, committing each track as it
@@ -113,9 +215,40 @@ nonisolated final class DevicePlaybackCache: Sendable {
         _ tracks: [TrackRecord],
         refreshing: Set<UUID> = [],
         libraryLookup: ([String]) async throws -> [String: Song] = { try await loadLibrarySongs($0) },
-        catalogLookup: ([String]) async throws -> [String: Song] = { try await loadCatalogSongs($0) }
+        catalogLookup: ([String]) async throws -> [String: Song] = { try await loadCatalogSongs($0) },
+        storefront: () async throws -> String = { try await AppleMusicSongLookup.playbackStorefront() },
+        catalogSearch: (_ term: String, _ storefront: String) async throws -> [Song] = {
+            try await AppleMusicSongLookup.playbackCatalogSearch(term: $0, storefront: $1)
+        }
+    ) async throws {
+        try await decodingOnce {
+            try await prepareOnce(
+                tracks, refreshing: refreshing, libraryLookup: libraryLookup, catalogLookup: catalogLookup,
+                storefront: storefront, catalogSearch: catalogSearch
+            )
+        }
+    }
+
+    @MainActor private static func prepareOnce(
+        _ tracks: [TrackRecord],
+        refreshing: Set<UUID>,
+        libraryLookup: ([String]) async throws -> [String: Song],
+        catalogLookup: ([String]) async throws -> [String: Song],
+        storefront: () async throws -> String,
+        catalogSearch: (String, String) async throws -> [Song]
     ) async throws {
         let uncached = tracks.filter { refreshing.contains($0.id) || !hasCurrentData(for: $0) }
+        // A library-only song whose library ID is gone has nothing else to
+        // play from, so it is searched for by title and artist (`PLAY-017`).
+        var searchTargets: [String: TrackRecord] = [:]
+        // A track with a catalog ID takes the fallback above instead.
+        for track in uncached {
+            if let libraryID = track.libraryID, searchTargets[libraryID] == nil { searchTargets[libraryID] = track }
+        }
+        var searchesLeft = catalogSearchesPerPreparation
+        var searchFailure: Error?
+        // Looked up once, and only when a search is about to run.
+        var storefrontResult: Result<String, Error>?
         let libraryIDs = Array(Set(uncached.compactMap(\.libraryID))).sorted()
         let catalogIDs = Array(Set(uncached.filter { $0.libraryID == nil }.compactMap(\.catalogID))).sorted()
         // A stored library ID can stop existing in the account library while
@@ -164,6 +297,75 @@ nonisolated final class DevicePlaybackCache: Sendable {
                 if let song = try fallback?.get()[catalogID] { return try JSONEncoder().encode(Track.song(song)) }
                 throw PreparationError(message: "Apple Music returned no library song for \(reference.value) and no catalog song for \(catalogID).")
             }
+            if reference.domain == .librarySong, let track = searchTargets[reference.value] {
+                // Played on this device only: the match is never stored as
+                // the song's identity. A copy an earlier search found plays
+                // again while the library still misses (`PLAY-017`).
+                if let reused = reusableSearchMatch(for: track) { return reused }
+                guard let rule = AppleMusicSongLookup.strictMatchRule(
+                    title: track.title, artist: track.artistName, durationSeconds: track.durationSeconds
+                ) else {
+                    let reason = track.durationSeconds?.isFinite == true ? "the track has no title or artist to match" : "the track has no stored duration to match"
+                    throw PreparationError(message: "Apple Music returned no song for \(reference.value), and it was not searched for by title and artist: \(reason).")
+                }
+                if let miss = rememberedSearchMiss(for: track) {
+                    throw PreparationError(message: "Apple Music returned no song for \(reference.value), and the catalog search by title and artist at \(miss.searchedAt.formatted(date: .abbreviated, time: .shortened)) found no unique match; it is searched again after a day.")
+                }
+                // A failed search or storefront lookup is remembered, so the
+                // rest fail fast (`LOAD-001`).
+                func searchFailed(_ error: Error) -> PreparationError {
+                    let underlying = error as NSError
+                    return PreparationError(message: "Apple Music returned no song for \(reference.value), and the catalog search by title and artist failed: \(error.localizedDescription) [\(underlying.domain), code \(underlying.code)]")
+                }
+                if let searchFailure { throw searchFailed(searchFailure) }
+                guard searchesLeft > 0 else {
+                    throw PreparationError(message: "Apple Music returned no song for \(reference.value), and this preparation's catalog searches are used up.")
+                }
+                searchesLeft -= 1
+                let candidates: [Song]
+                do {
+                    if storefrontResult == nil {
+                        do { storefrontResult = .success(try await storefront()) }
+                        catch is CancellationError { throw CancellationError() }
+                        catch { storefrontResult = .failure(error) }
+                    }
+                    let code = try storefrontResult!.get()
+                    candidates = try await catalogSearch("\(track.title) \(track.artistName)", code)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    searchFailure = error
+                    throw searchFailed(error)
+                }
+                let match = AppleMusicSongLookup.strictCatalogMatch(
+                    title: track.title, artist: track.artistName, durationSeconds: track.durationSeconds,
+                    albumTitle: track.albumTitle, in: candidates
+                )
+                if case .unique(let song) = match {
+                    MusicKitActivityLog.shared.record(
+                        .playbackQueuePreparation, magnitude: 1,
+                        detail: "prepared ‘\(track.title)’ by \(track.artistName) from catalog song \(song.id.rawValue), found by title and artist; its library ID \(reference.value) no longer exists"
+                    )
+                    shared.setCatalogSearchMiss(nil, for: track.id)
+                    let marker = CatalogSearchMatch(libraryID: reference.value, catalogID: song.id.rawValue)
+                    for record in uncached where record.libraryID == reference.value && record.catalogID == nil {
+                        shared.setCatalogSearchMatch(marker, for: record.id)
+                    }
+                    return try JSONEncoder().encode(Track.song(song))
+                }
+                shared.setCatalogSearchMiss(
+                    CatalogSearchMiss(libraryID: reference.value, metadataKey: rule.key, durationSeconds: rule.durationSeconds, searchedAt: .now),
+                    for: track.id
+                )
+                if case .ambiguous(let count) = match {
+                    MusicKitActivityLog.shared.record(
+                        .playbackQueuePreparation, magnitude: Double(count),
+                        detail: "left out ‘\(track.title)’ by \(track.artistName): its library ID \(reference.value) no longer exists and \(count) catalog songs match its title, artist and duration"
+                    )
+                    throw PreparationError(message: "Apple Music returned no song for \(reference.value), and the catalog search by title and artist was ambiguous (\(count) matches).")
+                }
+                throw PreparationError(message: "Apple Music returned no song for \(reference.value), and the catalog search by title and artist found no match: no catalog song matches its title, artist and duration.")
+            }
             throw PreparationError(message: "Apple Music returned no song for \(reference.value).")
         }
     }
@@ -185,6 +387,9 @@ nonisolated final class DevicePlaybackCache: Sendable {
     ) async throws {
         var failures: [String] = []
         for track in tracks {
+            // Within the start's `decodingOnce` this reuses the decode that
+            // built `uncached`; it is checked again here so a record listed
+            // twice is loaded once.
             if !refreshing.contains(track.id), hasCurrentData(for: track) { continue }
             try Task.checkCancellation()
             let reference: MusicResourceReference

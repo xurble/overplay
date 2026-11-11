@@ -344,6 +344,342 @@ struct LibraryRestorationTests {
         #expect(service.isReady)
     }
 
+    // MARK: - Finding DI-4: duplicate settings rows
+
+    /// A saved library with a One True Playlist and the Inbox, and no settings.
+    private func seedPlaylists(_ context: ModelContext) throws {
+        context.insert(PlaylistRecord(musicPlaylistID: "p.otp", name: "Overplay", role: .oneTruePlaylist, writePolicy: .managed))
+        context.insert(PlaylistRecord(musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+                                      name: "Triage", role: .triageBucket, writePolicy: .incomingOnly))
+        try context.save()
+    }
+
+    /// A fresh context, kept by the caller, sees what restoration saved.
+    private func settingsRows(_ read: ModelContext) throws -> [OverplaySettings] {
+        try read.fetch(FetchDescriptor<OverplaySettings>())
+    }
+
+    private func prepareAfterImport(_ service: LibraryRestorationService, _ container: ModelContainer) async throws {
+        service.cloudImportFinished(error: nil)
+        try await service.prepare(in: container.mainContext, cloudEnabled: true, hasLegacyStore: true,
+                                  locallyRebuiltID: nil, attempts: 1)
+    }
+
+    /// Restoration reads the kept row and leaves the others; they go only
+    /// once an import has settled on a ready device.
+    @Test("two settings rows restore from the oldest, and converge on it only after an import")
+    func duplicateSettingsRestoreAndConvergeAfterImport() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let oldest = try seed(context)
+        oldest.createdAt = Date(timeIntervalSince1970: 1_000)
+        let newer = OverplaySettings(createdAt: Date(timeIntervalSince1970: 2_000))
+        context.insert(newer)
+        try context.save()
+
+        let service = LibraryRestorationService(defaults: defaults())
+        try await prepareAfterImport(service, container)
+
+        #expect(service.isReady)
+        #expect(Set(try settingsRows(ModelContext(container)).map(\.id)) == [oldest.id, newer.id],
+                "Restoration deleted a row")
+
+        let convergence = try service.convergeSettingsAfterImport(in: context)
+        #expect(convergence?.removedIDs == [newer.id])
+        let rows = try settingsRows(ModelContext(container))
+        #expect(rows.map(\.id) == [oldest.id])
+        #expect(rows.first?.selectedPlaylistID == "p.otp")
+    }
+
+    @Test("rows created at the same moment converge on the lowest UUID")
+    func duplicateSettingsTieBreakOnUUID() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        try seedPlaylists(context)
+        let created = Date(timeIntervalSince1970: 1_000)
+        let high = OverplaySettings(id: UUID(uuidString: "FFFFFFFF-0000-0000-0000-000000000000")!,
+                                    selectedPlaylistID: "p.otp", createdAt: created)
+        let low = OverplaySettings(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+                                   selectedPlaylistID: "p.otp", createdAt: created)
+        context.insert(high)
+        context.insert(low)
+        try context.save()
+
+        let service = LibraryRestorationService(defaults: defaults())
+        try await prepareAfterImport(service, container)
+        try service.convergeSettingsAfterImport(in: context)
+
+        let read = ModelContext(container)
+        #expect(try settingsRows(read).map(\.id) == [low.id])
+    }
+
+    /// The device that set up the newer row opens from its receipt, then the
+    /// older, blank row takes its configuration.
+    @Test("the kept row takes what only the removed row knew, and this device's receipt moves to it")
+    func convergenceKeepsTheRemovedRowsConfiguration() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        try seedPlaylists(context)
+        let blank = OverplaySettings(createdAt: Date(timeIntervalSince1970: 1_000))
+        let configured = OverplaySettings(selectedPlaylistID: "p.otp", selectedPlaylistName: "Overplay",
+                                          createdAt: Date(timeIntervalSince1970: 2_000))
+        let rebuildID = UUID()
+        configured.completedRebuildID = rebuildID
+        let requested = Date(timeIntervalSince1970: 3_000)
+        configured.pendingOneTruePlaylistRequestedAt = requested
+        configured.pendingOneTruePlaylistSourceID = "p.source"
+        configured.pendingOneTruePlaylistSourceName = "Source"
+        context.insert(blank)
+        context.insert(configured)
+        try context.save()
+        let receipts = defaults()
+        LibraryRestorationService.recordLocalConfiguration(configured, defaults: receipts)
+
+        let service = LibraryRestorationService(defaults: receipts)
+        try await prepareAfterImport(service, container)
+        #expect(service.isReady)
+        try service.convergeSettingsAfterImport(in: context)
+
+        let read = ModelContext(container)
+        let kept = try #require(try settingsRows(read).first)
+        #expect(try settingsRows(read).count == 1)
+        #expect(kept.id == blank.id)
+        #expect(kept.selectedPlaylistID == "p.otp" && kept.selectedPlaylistName == "Overplay")
+        #expect(kept.completedRebuildID == rebuildID)
+        #expect(kept.pendingOneTruePlaylistRequestedAt == requested)
+        #expect(kept.pendingOneTruePlaylistSourceID == "p.source")
+        #expect(kept.pendingOneTruePlaylistSourceName == "Source")
+        #expect(receipts.string(forKey: "overplay.v2.restoredSettingsID") == blank.id.uuidString)
+    }
+
+    @Test("a selection naming a playlist that is gone gives way to one that is here")
+    func convergencePrefersASelectionThatResolves() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        try seedPlaylists(context)
+        let blank = OverplaySettings(createdAt: Date(timeIntervalSince1970: 500))
+        let stale = OverplaySettings(selectedPlaylistID: "p.deleted", selectedPlaylistName: "Old",
+                                     createdAt: Date(timeIntervalSince1970: 1_000))
+        let current = OverplaySettings(selectedPlaylistID: "p.otp", selectedPlaylistName: "Overplay",
+                                       createdAt: Date(timeIntervalSince1970: 2_000))
+        for row in [blank, stale, current] { context.insert(row) }
+        try context.save()
+
+        let convergence = try #require(try SettingsRepository.convergeDuplicates(in: context))
+        #expect(convergence.keeper.id == blank.id)
+        #expect(blank.selectedPlaylistID == "p.otp" && blank.selectedPlaylistName == "Overplay")
+    }
+
+    /// PR #122 review, finding 1: device A ran Nuke Database (delete all,
+    /// then a new row N). This device has some of the deletions and N, but
+    /// not yet the old row O's deletion. Deleting N here would sync, then
+    /// O's deletion would leave no row on any device, and every device
+    /// would wait for good.
+    @Test("a Nuke Database's new row arriving before the old row's deletion is never deleted")
+    func nukeOrderingKeepsTheNewRow() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let old = try seed(context)
+        old.createdAt = Date(timeIntervalSince1970: 1_000)
+        try context.save()
+        let receipts = defaults()
+        LibraryRestorationService.recordLocalConfiguration(old, defaults: receipts)
+        // Some deletions arrive: the old One True Playlist goes, so O's
+        // library is incomplete. Then N and its Inbox arrive.
+        let oldOTP = try #require(try context.fetch(FetchDescriptor<PlaylistRecord>()).first { $0.role == .oneTruePlaylist })
+        context.delete(oldOTP)
+        let new = OverplaySettings(createdAt: Date(timeIntervalSince1970: 9_000))
+        context.insert(new)
+        context.insert(PlaylistRecord(musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
+                                      name: "Triage", role: .triageBucket, writePolicy: .incomingOnly))
+        try context.save()
+
+        let service = LibraryRestorationService(defaults: receipts)
+        await #expect(throws: (any Error).self) { try await prepareAfterImport(service, container) }
+        #expect(!service.isReady)
+        #expect(try service.convergeSettingsAfterImport(in: context) == nil)
+        #expect(Set(try settingsRows(ModelContext(container)).map(\.id)) == [old.id, new.id])
+
+        // O's deletion lands: N is still here, and once A picks its One True
+        // Playlist this device restores from it.
+        context.delete(try #require(try context.fetch(FetchDescriptor<OverplaySettings>()).first { $0.id == old.id }))
+        try context.save()
+        #expect(try settingsRows(ModelContext(container)).map(\.id) == [new.id])
+        new.selectedPlaylistID = "p.new"
+        context.insert(PlaylistRecord(musicPlaylistID: "p.new", name: "Overplay", role: .oneTruePlaylist, writePolicy: .managed))
+        try context.save()
+        try await prepareAfterImport(service, container)
+        #expect(service.isReady)
+    }
+
+    /// Finding 1: nothing is deleted while an import may still be arriving.
+    @Test("duplicate rows are deleted only on a ready device, after a clean import, with the kept row's library complete")
+    func convergenceWaitsUntilTheLibraryHasSettled() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let oldest = try seed(context)
+        oldest.createdAt = Date(timeIntervalSince1970: 1_000)
+        let newer = OverplaySettings(selectedPlaylistID: "p.otp", createdAt: Date(timeIntervalSince1970: 2_000))
+        context.insert(newer)
+        try context.save()
+        func rowCount() throws -> Int { try settingsRows(ModelContext(container)).count }
+
+        // Not ready, even after a clean import of a complete library.
+        let notReady = LibraryRestorationService(defaults: defaults())
+        notReady.cloudImportFinished(error: nil)
+        #expect(try notReady.convergeSettingsAfterImport(in: context) == nil)
+        #expect(try rowCount() == 2)
+
+        let service = LibraryRestorationService(defaults: defaults())
+        try await service.prepare(in: context, cloudEnabled: false, hasLegacyStore: true, locallyRebuiltID: nil, attempts: 1)
+        #expect(service.isReady)
+        #expect(try rowCount() == 2)
+        // Ready, but no import yet.
+        #expect(try service.convergeSettingsAfterImport(in: context) == nil)
+        // The last import failed.
+        service.cloudImportFinished(error: nil)
+        service.cloudImportFinished(error: "Network")
+        #expect(try service.convergeSettingsAfterImport(in: context) == nil)
+        // A clean import, but the kept row's library is still arriving.
+        service.cloudImportFinished(error: nil)
+        let playlist = try #require(try context.fetch(FetchDescriptor<PlaylistRecord>()).first)
+        let arriving = PlaylistItemRecord(playlistID: playlist.id, trackID: UUID())
+        context.insert(arriving)
+        try context.save()
+        #expect(try service.convergeSettingsAfterImport(in: context) == nil)
+        #expect(try rowCount() == 2)
+        // It arrives.
+        context.delete(arriving)
+        try context.save()
+        #expect(try service.convergeSettingsAfterImport(in: context)?.removedIDs == [newer.id])
+        #expect(try rowCount() == 1)
+    }
+
+    /// PR #122 review, finding 2: two devices set up at once, each with its
+    /// own One True Playlist. The one not kept goes into the Inbox, so no song
+    /// is left in a playlist nothing shows.
+    @Test("converging two rows that each chose a One True Playlist leaves exactly one")
+    func convergenceDemotesTheOtherOneTruePlaylist() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        try seedPlaylists(context)
+        let other = PlaylistRecord(musicPlaylistID: "p.other", name: "Overplay", role: .oneTruePlaylist, writePolicy: .managed)
+        context.insert(other)
+        let track = TrackRecord(libraryID: "i.song", title: "Song", artistName: "Artist")
+        context.insert(track)
+        context.insert(PlaylistItemRecord(playlistID: other.id, trackID: track.id))
+        let first = OverplaySettings(selectedPlaylistID: "p.otp", selectedPlaylistName: "Overplay",
+                                     createdAt: Date(timeIntervalSince1970: 1_000))
+        let second = OverplaySettings(selectedPlaylistID: "p.other", selectedPlaylistName: "Overplay",
+                                      createdAt: Date(timeIntervalSince1970: 2_000))
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+
+        let service = LibraryRestorationService(defaults: defaults())
+        try await prepareAfterImport(service, container)
+        try service.convergeSettingsAfterImport(in: context)
+
+        let read = ModelContext(container)
+        let playlists = try read.fetch(FetchDescriptor<PlaylistRecord>())
+        let oneTruePlaylists = playlists.filter { $0.isActive && $0.role == .oneTruePlaylist }
+        #expect(oneTruePlaylists.map(\.musicPlaylistID) == ["p.otp"])
+        #expect(try PlaylistRepository.oneTruePlaylist(in: read)?.musicPlaylistID == "p.otp")
+        let demoted = try #require(playlists.first { $0.musicPlaylistID == "p.other" })
+        #expect(demoted.role == .triageSource)
+        let inbox = try #require(playlists.first { $0.isTriageBucket })
+        let item = try #require(try read.fetch(FetchDescriptor<PlaylistItemRecord>()).first { $0.trackID == track.id })
+        #expect(item.playlistID == inbox.id)
+        #expect(item.sourceMusicPlaylistIDs.contains("p.other"))
+    }
+
+    /// PR #122 re-review: two devices set up at once and this one is playing
+    /// its own One True Playlist when the other's older row arrives.
+    /// Convergence demotes the playing playlist; the intent must follow it to
+    /// the Inbox, through the call the import observer makes.
+    @Test("a convergence that demotes the playing One True Playlist moves the intent to the Inbox")
+    func convergenceMovesThePlayingIntentWithADemotion() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        let context = fixture.context
+        let inbox = try PlaylistRepository.triageBucket(in: context)
+        context.insert(PlaylistRecord(musicPlaylistID: "p.kept", name: "Overplay", role: .oneTruePlaylist, writePolicy: .managed))
+        fixture.settings.selectedPlaylistID = fixture.playlist.musicPlaylistID
+        fixture.settings.createdAt = Date(timeIntervalSince1970: 2_000)
+        context.insert(OverplaySettings(selectedPlaylistID: "p.kept", selectedPlaylistName: "Overplay",
+                                        createdAt: Date(timeIntervalSince1970: 1_000)))
+        try context.save()
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[1],
+                                              settings: fixture.settings, context: context)
+        #expect(fixture.controller.intent?.musicPlaylistID == fixture.playlist.musicPlaylistID)
+
+        let service = LibraryRestorationService(defaults: defaults())
+        try await prepareAfterImport(service, fixture.container)
+        #expect(service.isReady)
+        try AppRuntime.convergeSettingsAfterImport(service, playbackController: fixture.controller,
+                                                   in: ModelContext(fixture.container))
+
+        let demoted = try #require(try ModelContext(fixture.container).fetch(FetchDescriptor<PlaylistRecord>())
+            .first { $0.musicPlaylistID == fixture.playlist.musicPlaylistID })
+        #expect(demoted.role == .triageSource)
+        #expect(fixture.controller.intent?.musicPlaylistID == inbox.musicPlaylistID)
+        #expect(fixture.intentStore.loadIntent()?.musicPlaylistID == inbox.musicPlaylistID)
+        #expect(fixture.player.submitCount == 1, "Convergence must not restart playback")
+    }
+
+    @Test("a device whose receipt names a duplicate row opens offline, and keeps the kept row's receipt")
+    func aReceiptForADuplicateRowOpensOffline() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let oldest = try seed(context)
+        oldest.createdAt = Date(timeIntervalSince1970: 1_000)
+        let accepted = OverplaySettings(selectedPlaylistID: "p.otp", createdAt: Date(timeIntervalSince1970: 2_000))
+        context.insert(accepted)
+        try context.save()
+        let receipts = defaults()
+        LibraryRestorationService.recordLocalConfiguration(accepted, defaults: receipts)
+
+        // No import this launch: only the receipt can open the library.
+        let service = LibraryRestorationService(defaults: receipts)
+        try await service.prepare(in: context, cloudEnabled: true, hasLegacyStore: true, locallyRebuiltID: nil, attempts: 1)
+
+        #expect(service.isReady)
+        #expect(try settingsRows(ModelContext(container)).count == 2)
+        #expect(receipts.string(forKey: "overplay.v2.restoredSettingsID") == oldest.id.uuidString)
+    }
+
+    @Test("a single settings row is left alone")
+    func convergenceLeavesASingleRowUntouched() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let settings = try seed(container.mainContext)
+        let updated = settings.updatedAt
+        let service = LibraryRestorationService(defaults: defaults())
+        try await prepareAfterImport(service, container)
+        #expect(try service.convergeSettingsAfterImport(in: container.mainContext) == nil)
+        let read = ModelContext(container)
+        #expect(try settingsRows(read).map(\.updatedAt) == [updated])
+    }
+
+    /// PR #122 re-review: every import on a ready device ran the full
+    /// completeness check on the main actor, though there is almost always
+    /// one row and so nothing to converge.
+    @Test("a single settings row is counted, not scanned, after each import")
+    func convergenceSkipsTheCompletenessCheckForASingleRow() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        _ = try seed(container.mainContext)
+        let service = LibraryRestorationService(defaults: defaults())
+        try await prepareAfterImport(service, container)
+
+        #expect(try service.convergeSettingsAfterImport(in: container.mainContext) == nil)
+        #expect(service.completenessChecks == 0)
+
+        // A second row is worth the check.
+        container.mainContext.insert(OverplaySettings(createdAt: .distantFuture))
+        try container.mainContext.save()
+        #expect(try service.convergeSettingsAfterImport(in: container.mainContext) != nil)
+        #expect(service.completenessChecks == 1)
+    }
+
     @Test("listen history and Recents alone make a store non-empty")
     func listenHistoryAndRecentsAreNotEmpty() throws {
         let container = try OverplayTestSupport.makeModelContainer()

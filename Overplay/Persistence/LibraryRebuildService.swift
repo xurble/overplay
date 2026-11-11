@@ -88,7 +88,7 @@ enum LibraryRebuildService {
         if try completed(configuration.rebuildID, in: staging) { return false }
         try requireEmptyGraph(in: staging)
         do {
-            let settings = try staging.fetch(FetchDescriptor<OverplaySettings>()).first ?? OverplaySettings()
+            let settings = try SettingsRepository.storedSettings(in: staging) ?? OverplaySettings()
             if settings.modelContext == nil { staging.insert(settings) }
             let bucket = PlaylistRecord(musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
                                         name: PlaylistRecord.triageBucketName, role: .triageBucket,

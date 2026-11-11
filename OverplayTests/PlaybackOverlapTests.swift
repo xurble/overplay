@@ -144,6 +144,33 @@ struct PlaybackOverlapTests {
         try await waitUntil { fixture.controller.currentTrack?.title == "Song 2" }
     }
 
+    /// The 2026-11-11 03:48 test-host crash: a skip on reach answered after its
+    /// test had returned, and its observation read the current item of a
+    /// store the test had released ("destroyed by calling ModelContext.reset",
+    /// in `updateRetentionLease`). The app's store lives for the process.
+    @Test func aSkipOnReachAnsweredAfterItsTestReturnsFindsTheStoreAlive() async throws {
+        let skip = Gate()
+        let controller: PlaybackController
+        do {
+            let (fixture, _) = try fixture()
+            defer { fixture.cleanUp() }
+            await select(fixture, 0)
+            try fixture.controller.retireTrack(try fixture.item(1), playlist: fixture.playlist,
+                                               message: "Retired", context: fixture.context)
+            fixture.player.onNext = { await skip.wait() }
+            await fixture.player.externallyAdvance()
+            #expect(skip.waiting == 1)
+            controller = fixture.controller
+        }
+        // The test's store would be released by now: the main run loop drains
+        // what the fixture left behind. The skip answers afterwards, as it did
+        // after `aHungSkipOnReachDoesNotStopTheSampleLoop` returned.
+        try await Task.sleep(for: .milliseconds(200))
+        skip.open()
+        try await waitUntil { controller.currentTrack?.title == "Song 2" }
+        #expect(controller.currentPlaylistItem?.isDeleted == false)
+    }
+
     private func playingUnpreparedQueue(_ fixture: PlaybackFixture) async {
         await select(fixture, 0)
         fixture.player.playbackStatus = .playing
@@ -433,13 +460,20 @@ struct PlaybackOverlapTests {
 
     // MARK: - PB-3: a Play press that takes over a resume
 
-    /// Song 1 at 0:40, its queue lost while paused: Play resumes with no failure.
+    /// Song 1 at 0:40, its queue lost after a long pause: Play resumes with no failure.
     private func songLostWhilePaused(_ fixture: PlaybackFixture) async {
         await select(fixture, 1)
         await fixture.listen(seconds: 40)
-        fixture.player.playbackStatus = .paused
-        await fixture.player.notify()
+        await pauseFromLockScreen(fixture, long: true)
         await fixture.player.abandonQueue()
+    }
+
+    /// Pauses from the Lock Screen, so Overplay's own Pause has not saved
+    /// anything. A long pause is first seen ten minutes ago.
+    private func pauseFromLockScreen(_ fixture: PlaybackFixture, long: Bool) async {
+        fixture.player.playbackStatus = .paused
+        if long { await fixture.controller.samplePlayback(now: .now.addingTimeInterval(-600)) }
+        await fixture.player.notify()
     }
 
     /// Presses Play, then presses it again while the resume's prepare is held.
@@ -649,16 +683,13 @@ struct PlaybackOverlapTests {
 
     // MARK: - PB-5: a queue lost while paused
 
-    @Test(arguments: [false, true], [false, true])
-    func aQueueLostWhilePausedKeepsTheSongAndPosition(stale: Bool, reportsStoppedFirst: Bool) async throws {
+    @Test(arguments: [false, true])
+    func aQueueLostAfterALongPauseKeepsTheSongAndPosition(reportsStoppedFirst: Bool) async throws {
         let (fixture, _) = try fixture()
         defer { fixture.cleanUp() }
         await select(fixture, 1)
         await fixture.listen(seconds: 40)
-        // From the Lock Screen, so Overplay's own Pause has not saved anything.
-        fixture.player.playbackStatus = .paused
-        await fixture.player.notify()
-        if stale { await fixture.controller.samplePlayback(now: .now.addingTimeInterval(-600)) }
+        await pauseFromLockScreen(fixture, long: true)
         if reportsStoppedFirst {
             fixture.player.playbackStatus = .stopped
             await fixture.player.notify()
@@ -692,5 +723,206 @@ struct PlaybackOverlapTests {
 
         #expect(fixture.controller.playbackFailure == nil)
         #expect(fixture.controller.currentTrack?.title == "Song 0")
+    }
+
+    // MARK: - Review of #117, finding 1: a failure that pauses first
+
+    /// MusicKit reports paused on a delivery failure, then drops the queue:
+    /// that is a stop mid-track, shown, with the song and position kept.
+    @Test(arguments: [false, true])
+    func aQueueLostSecondsAfterAPauseShowsTheFailureAndKeepsThePosition(reportsStoppedFirst: Bool) async throws {
+        let (fixture, _) = try fixture()
+        defer { fixture.cleanUp() }
+        await select(fixture, 1)
+        await fixture.listen(seconds: 40)
+        await pauseFromLockScreen(fixture, long: false)
+        if reportsStoppedFirst {
+            fixture.player.playbackStatus = .stopped
+            await fixture.player.notify()
+        }
+
+        await fixture.player.abandonQueue()
+
+        #expect(fixture.controller.playbackFailure?.kind == .command)
+        #expect(fixture.controller.statusMessage == PlaybackController.playbackStoppedMessage)
+        #expect(fixture.controller.currentTrack?.title == "Song 1")
+        #expect(fixture.controller.elapsedSeconds == 40)
+        let resume = try #require(fixture.intentStore.loadResumePoint())
+        #expect(resume.localTrackID == fixture.tracks[1].id.uuidString)
+        #expect(resume.positionSeconds == 40)
+
+        await fixture.controller.play(context: fixture.context)
+        #expect(fixture.player.submittedStartIndices.last == 1)
+        #expect(fixture.player.playbackTime == 40)
+        #expect(fixture.controller.playbackFailure == nil)
+    }
+
+    // MARK: - Review of #133: where the pause's age falls
+
+    /// A pause first seen this many seconds before the queue is lost.
+    /// Within the 5 s threshold it may be a delivery failure; past it, not.
+    @Test(arguments: [4.0, 6.0])
+    func aPauseSeenSecondsBeforeTheQueueIsLost(secondsBefore: Double) async throws {
+        let (fixture, _) = try fixture()
+        defer { fixture.cleanUp() }
+        await select(fixture, 1)
+        await fixture.listen(seconds: 40)
+        fixture.player.playbackStatus = .paused
+        await fixture.controller.samplePlayback(now: .now.addingTimeInterval(-secondsBefore))
+        await fixture.player.notify()
+
+        await fixture.player.abandonQueue()
+
+        let fresh = secondsBefore < 5
+        #expect((fixture.controller.playbackFailure?.kind == .command) == fresh)
+        #expect(fixture.controller.statusMessage == (fresh ? PlaybackController.playbackStoppedMessage : nil))
+        #expect(fixture.controller.currentTrack?.title == "Song 1")
+        let resume = try #require(fixture.intentStore.loadResumePoint())
+        #expect(resume.localTrackID == fixture.tracks[1].id.uuidString)
+        #expect(resume.positionSeconds == 40)
+    }
+
+    /// Review of #133, finding 2: Overplay relaunches onto a queue the player
+    /// already holds paused, and the system drops it seconds later. Overplay
+    /// never saw it play, so nothing failed while it watched.
+    @Test func aQueueFirstSeenPausedAfterARelaunchIsLostSilently() async throws {
+        let (first, _) = try fixture()
+        defer { first.cleanUp() }
+        await select(first, 1)
+        await first.listen(seconds: 40)
+        await pauseFromLockScreen(first, long: false)
+        first.controller.stopMonitoring()
+
+        let relaunched = PlaybackController(player: first.player, intentStore: first.intentStore,
+                                            preparePlaybackTracks: { _, _ in }, sleep: PlaybackFixture.manualSampling)
+        relaunched.collectionTrackCache = DevicePlaybackCache(directory: nil)
+        relaunched.activityLog = MusicKitActivityLog(fileURL: nil)
+        defer { relaunched.stopMonitoring() }
+        relaunched.restoreLocalPlaybackDisplay(context: first.context)
+        await relaunched.reconcilePlayerState(context: first.context)
+        #expect(relaunched.currentTrack?.title == "Song 1")
+
+        await first.player.abandonQueue()
+
+        #expect(relaunched.playbackFailure == nil)
+        #expect(relaunched.statusMessage == nil)
+        #expect(relaunched.currentTrack?.title == "Song 1")
+        #expect(relaunched.elapsedSeconds == 40)
+        let resume = try #require(first.intentStore.loadResumePoint())
+        #expect(resume.localTrackID == first.tracks[1].id.uuidString)
+        #expect(resume.positionSeconds == 40)
+    }
+
+    // MARK: - Review of #117, finding 2: a takeover seeks only a confirmed song
+
+    /// Play pressed again during a resume, while MusicKit still reports the
+    /// loading queue's track 1 and has not loaded its item: the guessed
+    /// attribution says the resumed song, but the seek must not land on track 1.
+    @Test func aTakeoverDoesNotSeekAnInterimEntryWhoseItemHasNotLoaded() async throws {
+        let (fixture, _) = try fixture()
+        defer { fixture.cleanUp() }
+        await songLostWhilePaused(fixture)
+        fixture.player.hydratesOnSubmit = false
+        fixture.player.reportsFirstEntryUntilLoaded = true
+        fixture.player.loadsEntriesInSteps = 1
+        fixture.player.stopsLoading = true
+        let prepare = Gate()
+
+        let resuming = try await pressPlayDuringResume(fixture, prepare: prepare)
+        let trackOne = try #require(fixture.player.queueEntries.first)
+        #expect(fixture.player.currentEntry?.entryID == trackOne.entryID)
+        #expect(fixture.player.currentEntry?.item == nil)
+        // The guess: the first entry after the submission is the start song.
+        #expect(fixture.controller.currentTrack?.title == "Song 1")
+        prepare.open()
+        await resuming.value
+
+        #expect(fixture.player.currentEntry?.entryID == trackOne.entryID)
+        #expect(fixture.player.playbackTime == 0)
+        #expect(fixture.player.submitCount == 2)
+        #expect(fixture.controller.isPlaying)
+    }
+
+    // MARK: - Review of #117, finding 3: per-start flags end with their start
+
+    @Test func aTakeoverEndsWhenItsStartAnswersInTime() async throws {
+        let (fixture, _) = try fixture()
+        defer { fixture.cleanUp() }
+        await songLostWhilePaused(fixture)
+        let prepare = Gate()
+
+        let resuming = try await pressPlayDuringResume(fixture, prepare: prepare)
+        #expect(fixture.controller.startTakenOver != nil)
+        prepare.open()
+        await resuming.value
+
+        #expect(fixture.controller.startTakenOver == nil)
+        #expect(fixture.player.playbackTime == 40)
+    }
+
+    @Test func aRepeatShuffleTapEndsWithAStartThatTimesOut() async throws {
+        let (fixture, log) = try fixture(trackCount: 4)
+        defer { fixture.cleanUp() }
+        let clock = manualClock(fixture)
+        fixture.controller.startHoldLimit = .milliseconds(50)
+        let prepare = Gate()
+        fixture.player.onPrepare = { await prepare.wait() }
+        let first = Task { await select(fixture, 2) }
+        try await waitUntil { prepare.waiting == 1 }
+        await shuffleAndPlay(fixture)
+        #expect(fixture.controller.shuffleWhenHeldStartLoads)
+        try await advance(clock, by: .milliseconds(50))
+        #expect(events(log, .playbackSelectionPath).contains("startTimedOut"))
+
+        prepare.open()
+        await first.value
+
+        #expect(!fixture.controller.shuffleWhenHeldStartLoads)
+        #expect(!fixture.player.commands.contains("shuffle=songs"))
+    }
+
+    /// An older start that answers late must not clear a newer start's flags.
+    @Test func anOlderStartEndingLeavesTheNewerStartsFlagsAlone() async throws {
+        let (fixture, _) = try fixture(trackCount: 4)
+        defer { fixture.cleanUp() }
+        let older = Gate()
+        let newer = Gate()
+        var prepares = 0
+        fixture.player.onPrepare = {
+            prepares += 1
+            if prepares == 1 { await older.wait() } else { await newer.wait() }
+        }
+        // The older start plays the Inbox, so the newer is a new intent, not
+        // a jump within the older one's queue.
+        let bucket = try PlaylistRepository.triageBucket(in: fixture.context)
+        let other = TrackRecord(catalogID: "cat-other", libraryID: "i.lib-other", title: "Other",
+                                artistName: "Elsewhere", durationSeconds: 180)
+        fixture.context.insert(other)
+        fixture.context.insert(PlaylistItemRecord(playlistID: bucket.id, trackID: other.id))
+        DevicePlaybackCache.shared.set(try PlaybackFixture.encodedTrack(id: "i.lib-other", title: "Other",
+                                                                        artist: "Elsewhere"), for: other.id)
+        try fixture.context.save()
+        let olderStart = Task {
+            await fixture.controller.playPlaylist(bucket, startingAt: other,
+                                                  settings: fixture.settings, context: fixture.context)
+        }
+        try await waitUntil { older.waiting == 1 }
+        let newerStart = Task { await select(fixture, 1) }
+        try await waitUntil { newer.waiting == 1 }
+        // A repeat Shuffle and Play, then a Play press, both on the newer start.
+        await shuffleAndPlay(fixture)
+        #expect(fixture.controller.shuffleWhenHeldStartLoads)
+        await fixture.controller.play(context: fixture.context)
+        let takenOver = try #require(fixture.controller.startTakenOver)
+
+        older.open()
+        await olderStart.value
+
+        #expect(fixture.controller.shuffleWhenHeldStartLoads)
+        #expect(fixture.controller.startTakenOver == takenOver)
+        newer.open()
+        await newerStart.value
+        #expect(fixture.controller.startTakenOver == nil)
+        #expect(!fixture.controller.shuffleWhenHeldStartLoads)
     }
 }
