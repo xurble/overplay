@@ -214,7 +214,7 @@ struct DashboardView: View {
             }
             .overlay {
                 if !isPlaying(summary) {
-                    playButton(for: playlist, summary: summary)
+                    playButton(for: playlist)
                 }
             }
             .accessibilityElement(children: .contain)
@@ -232,18 +232,17 @@ struct DashboardView: View {
         summary.isCurrentPlaybackPlaylist && playbackController.isPlaying
     }
 
-    /// A glass Play over the artwork while the One True Playlist is not
-    /// playing: it resumes the playlist when it is the paused context, and
-    /// otherwise starts it, through the shared playback actions.
-    private func playButton(for playlist: PlaylistRecord, summary: PlaylistSummaryPresentation) -> some View {
+    /// What the Play button runs: Shuffle and Play, the one decision every
+    /// surface shares (`PLAY-020`, `SURFACE-003`).
+    static func play(_ playlist: PlaylistRecord, settings: OverplaySettings, controller: PlaybackController,
+                     context: ModelContext) async {
+        await controller.playPlaylist(playlist, scope: .active, settings: settings, context: context)
+    }
+
+    /// A glass Play over the artwork while the One True Playlist is not playing.
+    private func playButton(for playlist: PlaylistRecord) -> some View {
         Button {
-            Task {
-                if summary.isCurrentPlaybackPlaylist {
-                    await playbackController.play(context: modelContext)
-                } else {
-                    await playbackController.playPlaylist(playlist, scope: .active, settings: settings, context: modelContext)
-                }
-            }
+            Task { await Self.play(playlist, settings: settings, controller: playbackController, context: modelContext) }
         } label: {
             Image(systemName: "play.fill")
                 .font(.system(size: 24, weight: .semibold))

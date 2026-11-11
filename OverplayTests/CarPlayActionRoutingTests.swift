@@ -292,21 +292,36 @@ struct CarPlayActionRoutingTests {
         #expect(result.carPlay.currentTitle == "Song 1")
     }
 
-    /// PA-1: the dashboard's Play button resumes without `playPlaylist`, so a
-    /// paused, unshuffled One True Playlist stays unshuffled there
-    /// (`DashboardView.swift:241-245`) while CarPlay turns shuffle on. The app
-    /// side makes the call that view's branch makes.
-    @Test func pinsPA1DashboardPlayResumesWithoutTheShuffleCarPlayTurnsOn() async throws {
+    /// What the dashboard's Play button runs (`DashboardView.play`).
+    private func dashboardPlays(_ fixture: PlaybackFixture) async {
+        await DashboardView.play(fixture.playlist, settings: fixture.settings, controller: fixture.controller,
+                                 context: fixture.context)
+    }
+
+    /// `PLAY-020` on the main screen: a paused, unshuffled One True Playlist
+    /// gets shuffle turned on and plays, as it does from CarPlay and Siri.
+    @Test func dashboardPlayOnThePausedUnshuffledPlaylistShufflesAndResumesLikeCarPlay() async throws {
         let result = try await compare(
             arrange: { await paused(1, in: $0) },
             carPlay: { .shuffleAndPlay($0.playlist, scope: .active) },
-            app: { await $0.controller.play(context: $0.context) }
+            app: { await dashboardPlays($0) }
         )
 
-        #expect(result.carPlay.commands == ["shuffle=songs", "play"])
-        #expect(result.app.commands == ["play"])
-        #expect(result.carPlay.shuffleEnabled)
-        #expect(!result.app.shuffleEnabled)
+        #expect(result.carPlay == result.app)
+        #expect(result.app.commands == ["shuffle=songs", "play"])
+        #expect(result.app.shuffleEnabled)
+        #expect(result.app.submittedTitles.isEmpty)
+    }
+
+    @Test func dashboardPlayOfAnotherPlaylistStartsItShuffledLikeCarPlay() async throws {
+        let result = try await compare(
+            carPlay: { .shuffleAndPlay($0.playlist, scope: .active) },
+            app: { await dashboardPlays($0) }
+        )
+
+        #expect(result.carPlay == result.app)
+        #expect(result.app.commands.contains("submit"))
+        #expect(result.app.commands.contains("shuffle=songs"))
     }
 
     @Test func shuffleRowThatStartsNothingReportsIt() async throws {
@@ -844,9 +859,8 @@ struct CarPlayActionRoutingTests {
                               commands: Array(carPlayFixture.player.commands.dropFirst(commandsBefore)))
     }
 
-    /// PA-2: Siri gets the outcome and speaks it; CarPlay drops it, so a
-    /// Promote that Apple Music refuses shows nothing in the car.
-    @Test func pinsPA2AFailedPromoteShowsNothingInCarPlay() async throws {
+    /// A Promote that Apple Music refuses tells the driver what Siri would say.
+    @Test func aFailedPromoteIsReportedInCarPlayLikeSiri() async throws {
         let carPlay = try PlaybackFixture(role: .triageBucket); defer { carPlay.cleanUp() }
         let siri = try PlaybackFixture(role: .triageBucket); defer { siri.cleanUp() }
         for fixture in [carPlay, siri] {
@@ -860,26 +874,42 @@ struct CarPlayActionRoutingTests {
         let followUp = await perform(.promote, on: carPlay)
         let outcome = await VoiceActions.curate(.promote, controller: siri.controller, context: siri.context)
 
-        #expect(followUp == .nothing)
         guard case .failed = outcome else {
             Issue.record("Siri should report a failed promote, got \(outcome)")
             return
         }
+        #expect(followUp == .trackActionFailed(outcome.message))
+        #expect(followUp.reachedController)
     }
 
-    /// PA-2: as above, with nothing from Overplay to act on.
-    @Test func pinsPA2CurationWithNothingPlayingShowsNothingInCarPlay() async throws {
+    /// As above, with nothing from Overplay to act on, and a false Restore.
+    @Test func curationWithNothingPlayingIsReportedInCarPlay() async throws {
         let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
 
         let promote = await perform(.promote, on: fixture)
         let retire = await perform(.retire, on: fixture)
         let restore = await perform(.restore, on: fixture)
 
-        #expect(promote == .nothing)
-        #expect(retire == .nothing)
-        #expect(restore == .nothing)
-        #expect(fixture.controller.statusMessage == "Choose a retired track to restore.")
+        #expect(promote == .trackActionFailed("Nothing from Overplay is playing."))
+        #expect(retire == .trackActionFailed("Nothing from Overplay is playing."))
+        #expect(restore == .trackActionFailed("Choose a retired track to restore."))
         #expect(fixture.player.commands.isEmpty)
+    }
+
+    @Test func retiringASongAlreadyRetiredIsReportedInCarPlay() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        stubAppleMusic(fixture)
+        try fixture.item(0).skipCount = 2
+        try fixture.context.save()
+        try fixture.controller.retireTrack(try fixture.item(0), playlist: fixture.playlist, message: "Retired",
+                                           context: fixture.context)
+        let bucket = try PlaylistRepository.triageBucket(in: fixture.context)
+        await fixture.controller.playPlaylist(bucket, startingAt: fixture.tracks[0], scope: .retired,
+                                              settings: fixture.settings, context: fixture.context)
+
+        let followUp = await perform(.retire, on: fixture)
+
+        #expect(followUp == .trackActionFailed("Song 0 is already retired."))
     }
 
     // MARK: - Add
@@ -981,6 +1011,48 @@ struct CarPlayActionRoutingTests {
             _ = await perform(try testCase.action(fixture), on: fixture)
 
             #expect(origins == [.carPlay], "\(testCase.name)")
+        }
+    }
+
+    /// Promote, Retire and Restore each save the move inside the action, so
+    /// the origin is whatever is current when that save lands.
+    @Test func curationIsAttributedToCarPlay() async throws {
+        final class Origins: @unchecked Sendable { var seen: [MusicKitActivityOrigin?] = [] }
+        func originsOfSaves(role: PlaylistRole, arrange: Arrange, action: CarPlayAction) async throws -> [MusicKitActivityOrigin?] {
+            let fixture = try PlaybackFixture(role: role); defer { fixture.cleanUp() }
+            try await arrange(fixture)
+            let origins = Origins()
+            let observer = NotificationCenter.default.addObserver(
+                forName: ModelContext.didSave, object: fixture.context, queue: nil
+            ) { _ in origins.seen.append(MusicKitActivityLog.currentOrigin) }
+            defer { NotificationCenter.default.removeObserver(observer) }
+
+            _ = await perform(action, on: fixture)
+
+            return origins.seen
+        }
+        let retiredFirstSong: Arrange = { fixture in
+            stubAppleMusic(fixture)
+            try fixture.item(0).skipCount = 2
+            try fixture.context.save()
+            try fixture.controller.retireTrack(try fixture.item(0), playlist: fixture.playlist, message: "Retired",
+                                               context: fixture.context)
+            let bucket = try PlaylistRepository.triageBucket(in: fixture.context)
+            await fixture.controller.playPlaylist(bucket, startingAt: fixture.tracks[0], scope: .retired,
+                                                  settings: fixture.settings, context: fixture.context)
+        }
+        let retiring: Arrange = { fixture in
+            stubAppleMusic(fixture)
+            await playing(0, in: fixture)
+        }
+
+        let promote = try await originsOfSaves(role: .triageBucket, arrange: { try await playingInTriage($0) }, action: .promote)
+        let retire = try await originsOfSaves(role: .oneTruePlaylist, arrange: retiring, action: .retire)
+        let restore = try await originsOfSaves(role: .oneTruePlaylist, arrange: retiredFirstSong, action: .restore)
+
+        for (name, origins) in [("promote", promote), ("retire", retire), ("restore", restore)] {
+            #expect(!origins.isEmpty, "\(name) saved nothing")
+            #expect(origins.allSatisfy { $0 == .carPlay }, "\(name): \(origins)")
         }
     }
 }
