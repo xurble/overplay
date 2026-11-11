@@ -88,7 +88,7 @@ enum LibraryRebuildService {
         if try completed(configuration.rebuildID, in: staging) { return false }
         try requireEmptyGraph(in: staging)
         do {
-            let settings = try staging.fetch(FetchDescriptor<OverplaySettings>()).first ?? OverplaySettings()
+            let settings = try SettingsRepository.storedSettings(in: staging) ?? OverplaySettings()
             if settings.modelContext == nil { staging.insert(settings) }
             let bucket = PlaylistRecord(musicPlaylistID: PlaylistRecord.triageBucketMusicPlaylistID,
                                         name: PlaylistRecord.triageBucketName, role: .triageBucket,
@@ -96,7 +96,7 @@ enum LibraryRebuildService {
             staging.insert(bucket)
             let now = Date.now
             // Nothing suspends while staging, so one index serves every source.
-            let aliasIndex = try TrackAliasIndex(in: staging)
+            let aliasIndex = TrackAliasIndex(in: staging)
             // OTP goes first. Shared repository identity matching then attaches
             // all later source occurrences to the already-owned membership.
             fetched.sort {

@@ -90,7 +90,7 @@ enum TrackRecordRepository {
         if let exact = try context.fetch(limitedDescriptor).first { return exact }
         let references = Set([catalogID.map { MusicResourceReference.catalog($0) },
                               libraryID.map { MusicResourceReference.library($0, scope: libraryScope) }].compactMap { $0 })
-        if let aliasIndex, !aliasIndex.mayHold(references) { return nil }
+        if let aliasIndex, try !aliasIndex.mayHold(references) { return nil }
         return try allTracks(in: context).first { !references.isDisjoint(with: $0.confirmedAliases) }
     }
 
@@ -316,16 +316,31 @@ enum TrackRecordRepository {
 /// the alias array, so this is the cheap way to know no track holds an alias.
 /// It answers only "might a track hold one of these?": a yes still finds the
 /// track by the full scan, so the match, and its tie-break, are unchanged.
-/// Build it again after any suspension point, when another task may have
-/// merged tracks; aliases added through it during the pass are recorded.
+/// It is built by the first lookup that needs it, so a pass whose songs are
+/// all found by ID reads no whole table. Invalidate it after any suspension
+/// point, when another task may have merged tracks; the next lookup that
+/// needs it builds it again. Aliases added through it while built are
+/// recorded; while unbuilt there is nothing to record, because the build
+/// reads the tracks' unsaved aliases too.
 final class TrackAliasIndex {
-    private var references: Set<MusicResourceReference> = []
+    /// Called on each build of the index, so tests can count them.
+    @TaskLocal nonisolated static var didBuild: (@MainActor @Sendable () -> Void)?
 
-    init(in context: ModelContext) throws {
-        for track in try context.fetch(FetchDescriptor<TrackRecord>()) { references.formUnion(track.confirmedAliases) }
+    private let context: ModelContext
+    private var references: Set<MusicResourceReference>?
+
+    init(in context: ModelContext) { self.context = context }
+
+    func mayHold(_ candidates: Set<MusicResourceReference>) throws -> Bool {
+        if let references { return !references.isDisjoint(with: candidates) }
+        Self.didBuild?()
+        var built: Set<MusicResourceReference> = []
+        for track in try context.fetch(FetchDescriptor<TrackRecord>()) { built.formUnion(track.confirmedAliases) }
+        references = built
+        return !built.isDisjoint(with: candidates)
     }
 
-    func mayHold(_ candidates: Set<MusicResourceReference>) -> Bool { !references.isDisjoint(with: candidates) }
+    func add(_ reference: MusicResourceReference) { references?.insert(reference) }
 
-    func add(_ reference: MusicResourceReference) { references.insert(reference) }
+    func invalidate() { references = nil }
 }

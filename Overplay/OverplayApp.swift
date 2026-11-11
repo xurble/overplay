@@ -42,6 +42,15 @@ struct OverplayApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        #if targetEnvironment(macCatalyst)
+        // AppKit otherwise swallows an Objective-C exception that reaches its
+        // run loop. One raised inside a main-actor Task unwinds through the
+        // Swift runtime's job frame, leaving the main thread's current-executor
+        // state pointing at a dead stack frame; the next main-actor isolation
+        // check then crashes far from the cause (2026-11-11, in the progress
+        // bar). Crash at the exception instead, with its backtrace.
+        UserDefaults.standard.register(defaults: ["NSApplicationCrashOnExceptions": true])
+        #endif
         BackgroundMusicKitWorkPolicy.launchedAt = .now
         modelContainer = AppRuntime.shared.openLibraryStore {
             let container = try Self.makeModelContainer()

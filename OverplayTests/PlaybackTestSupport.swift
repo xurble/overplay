@@ -305,7 +305,7 @@ struct PlaybackFixture {
     ) throws {
         let container = try container ?? OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let settings = try SettingsRepository.settings(in: context)
+        let settings = try OverplayTestSupport.seedSettings(in: context)
         let playlist: PlaylistRecord
         var tracks: [TrackRecord] = []
         var items: [PlaylistItemRecord] = []

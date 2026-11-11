@@ -21,7 +21,7 @@ struct TrackAliasIndexTests {
         keeper.confirmedAliases = [.catalog("c.donor"), .library("i.donor")]
         context.insert(keeper)
         try context.save()
-        let index = try TrackAliasIndex(in: context)
+        let index = TrackAliasIndex(in: context)
 
         #expect(try TrackRecordRepository.track(catalogID: "c.donor", libraryID: nil, aliasIndex: index, in: context)?.id == keeper.id)
         #expect(try TrackRecordRepository.track(catalogID: nil, libraryID: "i.donor", aliasIndex: index, in: context)?.id == keeper.id)
@@ -41,7 +41,7 @@ struct TrackAliasIndexTests {
     func seesEarlierWritesOfTheSamePass() throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let index = try TrackAliasIndex(in: context)
+        let index = TrackAliasIndex(in: context)
         let first = try TrackRecordRepository.upsert(snapshot(catalogID: "c.1", libraryID: "i.b"), aliasIndex: index, in: context)
         // The same song again, unsaved, is the same track.
         #expect(try TrackRecordRepository.upsert(snapshot(catalogID: "c.1", libraryID: "i.b"), aliasIndex: index, in: context).id == first.id)
@@ -91,7 +91,7 @@ struct TrackAliasIndexTests {
             let container = try OverplayTestSupport.makeModelContainer()
             let context = container.mainContext
             try seed(context)
-            let index = indexed ? try TrackAliasIndex(in: context) : nil
+            let index = indexed ? TrackAliasIndex(in: context) : nil
             var labels: [UUID: String] = Dictionary(uniqueKeysWithValues: seedIDs.enumerated().map { ($1, "seed\($0)") })
             let matches = try batch.enumerated().map { position, value in
                 let record = try TrackRecordRepository.upsertWithResult(value, aliasIndex: index, in: context).record
@@ -136,4 +136,53 @@ struct TrackAliasIndexTests {
         #expect(try TrackRecordRepository.track(catalogID: lateAlias, libraryID: nil, in: context)?.id == keeper.id)
         #expect(try PlaylistItemRepository.item(trackID: keeper.id, in: context) != nil)
     }
+
+    @Test("A reconcile whose songs are all stored builds no index")
+    func storedSongsBuildNoIndex() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(musicPlaylistID: "otp", name: "Overplay", role: .oneTruePlaylist)
+        context.insert(playlist)
+        let count = PlaylistSyncService.syncYieldStride * 2 + 5
+        let snapshots = (0..<count).map { snapshot(catalogID: "c.\($0)", libraryID: "i.\($0)", title: "Song \($0)") }
+        let stored = try snapshots.map { try TrackRecordRepository.upsert($0, in: context).id }
+        try context.save()
+        let builds = BuildCount()
+        var yields = 0
+        let service = PlaylistSyncService(yieldDuringReconciliation: { yields += 1 })
+        _ = try await TrackAliasIndex.$didBuild.withValue({ builds.value += 1 }) {
+            try await service.reconcile(snapshots: snapshots, playlistRecord: playlist, syncedAt: .now, in: context)
+        }
+        #expect(yields == 2)
+        #expect(builds.value == 0)
+        #expect(try TrackRecordRepository.allTracks(in: context).map(\.id).sorted { $0.uuidString < $1.uuidString }
+            == stored.sorted { $0.uuidString < $1.uuidString })
+    }
+
+    @Test("A pass builds the index once for its first miss, and again only for a miss after a yield")
+    func buildsOnlyForMisses() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let playlist = PlaylistRecord(musicPlaylistID: "otp", name: "Overplay", role: .oneTruePlaylist)
+        context.insert(playlist)
+        let stride = PlaylistSyncService.syncYieldStride
+        // Songs 0..<stride*2+5 are new except the whole second chunk.
+        let count = stride * 2 + 5
+        let snapshots = (0..<count).map { snapshot(catalogID: "c.\($0)", libraryID: nil, title: "Song \($0)") }
+        for position in stride..<(stride * 2) { try TrackRecordRepository.upsert(snapshots[position], in: context) }
+        try context.save()
+        let builds = BuildCount()
+        let service = PlaylistSyncService(yieldDuringReconciliation: {})
+        _ = try await TrackAliasIndex.$didBuild.withValue({ builds.value += 1 }) {
+            try await service.reconcile(snapshots: snapshots, playlistRecord: playlist, syncedAt: .now, in: context)
+        }
+        // First chunk: one build. Second chunk: all stored, none. Third: one.
+        #expect(builds.value == 2)
+        #expect(try TrackRecordRepository.allTracks(in: context).count == count)
+    }
+}
+
+@MainActor
+private final class BuildCount {
+    var value = 0
 }

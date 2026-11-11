@@ -159,14 +159,14 @@ enum TrackIdentityMergeService {
             canonical.albumTitle = duplicate.albumTitle
             canonical.artworkURLTemplate = duplicate.artworkURLTemplate
             canonical.durationSeconds = duplicate.durationSeconds
-            canonical.musicKitPlaybackData = duplicate.musicKitPlaybackData
+            copyPayloadUnlessVideo(from: duplicate, to: canonical)
         }
         if canonical.libraryID == nil || adoptsRepresentative {
             canonical.libraryID = duplicate.libraryID
             canonical.libraryScope = duplicate.libraryScope
         }
         if canonical.musicKitPlaybackData == nil {
-            canonical.musicKitPlaybackData = duplicate.musicKitPlaybackData
+            copyPayloadUnlessVideo(from: duplicate, to: canonical)
         }
         if canonical.albumTitle == nil {
             canonical.albumTitle = duplicate.albumTitle
@@ -177,6 +177,14 @@ enum TrackIdentityMergeService {
         if canonical.durationSeconds == nil {
             canonical.durationSeconds = duplicate.durationSeconds
         }
+    }
+
+    /// The video cleanup inspects each track's payload once per launch
+    /// (PF-9), so a merge never hands the keeper a legacy video payload.
+    private static func copyPayloadUnlessVideo(from duplicate: TrackRecord, to canonical: TrackRecord) {
+        let payload = duplicate.musicKitPlaybackData
+        guard !VideoTrackPolicy.isVideo(playbackData: payload) else { return }
+        canonical.musicKitPlaybackData = payload
     }
 
     private static func repointItems(
