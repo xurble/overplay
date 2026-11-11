@@ -79,6 +79,9 @@ final class PlaybackController {
         var pausedSince: Date?
         /// It sat paused for `longPauseSeconds` or more at some point.
         var hadLongPause = false
+        /// Overplay has seen it playing. A session first seen paused (after a
+        /// relaunch, or split on hydration) was not paused by a failure Overplay saw.
+        var wasSeenPlaying = false
         var isAttributed: Bool { play.localTrackID != nil }
 
         /// Paused long enough, now or earlier, that ending it is not a skip.
@@ -204,15 +207,16 @@ final class PlaybackController {
     /// at the limit.
     @ObservationIgnored private var startHold: Int?
     /// The start whose hold a Play press took over: it still owes its resume
-    /// seek, until the hold's limit.
-    @ObservationIgnored private var startTakenOver: Int?
+    /// seek, until the hold's limit or until that start ends. Readable for tests.
+    @ObservationIgnored private(set) var startTakenOver: Int?
     /// The start whose held observation has been recorded, so it is listed once.
     @ObservationIgnored private var recordedHeldStart: Int?
     /// The display last recorded, so only changes are listed.
     @ObservationIgnored private var recordedDisplay: String?
     private var isHoldingStart: Bool { startHold == startGeneration }
-    /// Shuffle and Play was tapped during a held start of the same intent.
-    @ObservationIgnored private var shuffleWhenHeldStartLoads = false
+    /// Shuffle and Play was tapped during a held start of the same intent;
+    /// cleared when that start ends. Readable for tests.
+    @ObservationIgnored private(set) var shuffleWhenHeldStartLoads = false
     /// How long the hold may last if Apple Music never finishes preparing.
     @ObservationIgnored var startHoldLimit: Duration = .seconds(8)
     /// The longest a start waits for MusicKit to load the queue.
@@ -852,12 +856,20 @@ final class PlaybackController {
         let completed = outgoing.map { PlaybackSessionEvaluationService.inferredNaturalCompletion(session: $0.play) } ?? false
         // A stale last observation means the end happened while Overplay was
         // suspended: most likely the queue played out. Unknown, not a failure.
-        let stale = outgoing.map {
-            Date.now.timeIntervalSince($0.play.lastObservedAt) > PlaybackSessionEvaluationService.observationStalenessThresholdSeconds
-        } ?? true
-        // Paused players are not sampled, so a paused session always looks
-        // stale; it did not play out. The system dropped its idle queue.
-        let lostWhilePaused = !completed && outgoing?.pausedSince != nil
+        let now = Date.now
+        let threshold = PlaybackSessionEvaluationService.observationStalenessThresholdSeconds
+        let stale = outgoing.map { now.timeIntervalSince($0.play.lastObservedAt) > threshold } ?? true
+        // Paused players are not sampled, so a long-paused session always
+        // looks stale; it did not play out. The system dropped its idle queue.
+        // A pause no older than the staleness threshold may be a delivery
+        // failure reporting paused first: that stays a stop mid-track. The
+        // pause's own age decides, since a stop reported after it refreshes
+        // the last observation. A pause on a session never seen playing is
+        // old: its age is only how long Overplay has been watching it.
+        let pauseIsOld = outgoing.map { current in
+            current.pausedSince.map { now.timeIntervalSince($0) > threshold || !current.wasSeenPlaying } ?? false
+        } ?? false
+        let lostWhilePaused = !completed && pauseIsOld
         let stoppedMidTrack = !completed && !stale
         activityLog.record(.queueEndObserved,
             detail: completed ? "played out" : lostWhilePaused ? "lost while paused" : stale ? "ended while suspended" : "stopped mid-track")
@@ -875,7 +887,8 @@ final class PlaybackController {
         }
         if stoppedMidTrack {
             // Keep the member and position, so Play resumes where it stopped.
-            fail(kind: .command, message: Self.playbackStoppedMessage)
+            // A failure already shown (did not start, stalled) says more.
+            if playbackFailure == nil { fail(kind: .command, message: Self.playbackStoppedMessage) }
             saveResumePoint(force: true)
             return
         }
@@ -1457,8 +1470,12 @@ final class PlaybackController {
             case .playedAfterHoldEnded, .takenOverByPlay:
                 // Observation is running again, so the player may have moved on.
                 await observePlayer()
-                if intent.members.indices.contains(startIndex),
-                   currentMember?.localTrackID == intent.members[startIndex].localTrackID {
+                // Only an entry whose item has loaded and is attributed to the
+                // start song (`member(for:)` needs the item). An unloaded one
+                // is attributed by guess and may be the loading queue's
+                // interim track 1. Otherwise play on from wherever it is.
+                if intent.members.indices.contains(startIndex), let entry = player.currentEntry,
+                   member(for: entry)?.localTrackID == intent.members[startIndex].localTrackID {
                     seekToResumePosition(position)
                 }
             case .holdLost:
@@ -1528,6 +1545,10 @@ final class PlaybackController {
         defer {
             watchdog.cancel()
             if startHold == generation { startHold = nil }
+            // This start's outcome is decided; its takeover and repeat-tap
+            // shuffle end with it. A newer start's flag is left alone.
+            if startTakenOver == generation { startTakenOver = nil }
+            if generation == startGeneration { shuffleWhenHeldStartLoads = false }
         }
         queueNeedsFreshStart = true
         try await awaitPlayer("prepare start=\(generation)") { try await player.prepareToPlay() }
@@ -2256,6 +2277,7 @@ final class PlaybackController {
         }
         if status == .playing {
             playWantedAt = now
+            if session?.entryID == entryID { session?.wasSeenPlaying = true }
             guard var episode = playEpisode, episode.entryID == entryID else {
                 playEpisode = PlayEpisode(entryID: entryID, since: now, lastPosition: position)
                 return

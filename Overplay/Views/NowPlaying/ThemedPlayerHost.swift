@@ -20,8 +20,9 @@ struct ThemedPlayerHost<Content: View>: View {
         content(artworkTheme) { applyArtworkTheme($0, source: "debug-refresh") }
             .coordinateSpace(.named(PlayerGlassBackdrop.coordinateSpace))
             .environment(\.playerGlassArtwork, glassArtwork)
-            // Text reads against the art under it; with no art, the theme
-            // colours already suit the plain background.
+            // Text reads against the art under it; with no theme, text keeps
+            // the system colours, which the neutral wash is heavy enough for
+            // (`PlayerBackdropStyle.neutralWash(isDark:)`).
             .environment(\.playerGlassBackdrop, artworkTheme.isFallback || background != .art || reduceTransparency ? nil : glassBackdrop)
             .animation(.easeInOut(duration: 0.35), value: artworkTheme)
             .task(id: artworkThemeIdentity) {

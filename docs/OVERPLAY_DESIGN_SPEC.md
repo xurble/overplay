@@ -1964,8 +1964,11 @@ attribute normally.
    out or lost its hold to a Play press leaves it alone. A start that timed
    out does not seek either. A Play press that takes over a resuming start
    keeps the saved position: once prepare returns, within the hold's limit,
-   the start seeks if observation attributes the player's current entry to
-   the song being resumed, and otherwise does not. Past the limit it does
+   the start seeks only if the player's current entry has loaded its item
+   and that item is attributed to the song being resumed. An entry whose item
+   has not loaded may be the loading queue's interim track 1, attributed to
+   the start song only by guess; then the start does not seek, and plays on
+   from wherever the player is, with no retry or wait. Past the limit it does
    not seek, so audio already playing never jumps. Overplay paused
    the player for the start, so it does not offer Pause while the start is
    held. The first observed entry is attributed by its item. The app and
@@ -2211,10 +2214,20 @@ If the last observation is stale (the end happened while Overplay was
 suspended), the end is treated the same way and is not a failure. A fresh stop
 mid-track is a failure: the current member and position are kept, so Play
 resumes there. A queue lost while the session was seen paused and not near its
-end (the system dropped the idle queue, or media services reset) is neither of
-these: the current member and position are kept and saved as the resume point,
-no failure is shown, and Play resumes there, however long the pause lasted. A
-stop reported after that pause is still that pause. A session that pauses
+end, once that pause is old, is neither of these (the system dropped the idle
+queue, or media services reset): the current member and position are kept and
+saved as the resume point, no failure is shown, and Play resumes there. A
+pause is old when it was first seen more than the observation staleness
+threshold (5 seconds) before the queue was lost, or when Overplay never saw
+that session playing before it paused (a relaunch or background launch onto a
+paused queue, or a session split when its item loaded): its age then says only
+how long Overplay has watched it. A queue lost within 5 seconds of a pause
+that followed observed playing is a fresh stop mid-track, because MusicKit
+reports paused on a delivery failure before dropping the queue: the member and
+position are kept, and the failure is shown unless one is already showing (a
+play that did not start, or a stall), which stays because it says more. A stop
+reported after a pause is still that pause, and does not make it newer. A
+session that pauses
 within the natural-completion tolerance of its end still counts as the queue
 ending. With repeat-all on, MusicKit loops the queue and no queue end is
 observed. Under repeat-all, a wrap from the last entry to the first is
@@ -2614,6 +2627,25 @@ Show:
   level from the hidden system volume view five times a second, so it follows
   the volume buttons: the app's own audio session is never active, so it is
   never told. In the background it does not check.
+- Background, on every device: the album art filling the player, blurred,
+  under a wash of the track's theme colour. Until the theme is ready, the
+  blurred art shows under a heavier neutral wash in the system background
+  colour, with text in the system's colours; when the theme arrives the wash
+  eases into the theme colour. Only a track without art (or nothing playing)
+  has the plain background.
+- The theme comes from the cover's colours, with text recognition on the
+  cover (Vision) choosing an accent from its lettering where it can. Text
+  recognition is optional and bounded: a theme waits for it at most three
+  seconds, and on a time-out or failure uses the colours alone. A cover has
+  one recognition at a time. A theme made without recognition's answer is
+  used but not cached, so the cover tries again later. A recognition that
+  outlives its wait keeps running, and the last few answers are kept, so
+  the cover's next request uses that answer rather than running Vision
+  again. On a Mac the first
+  recognition after each new build of the app waited about 66 seconds for the
+  Neural Engine to compile Vision's model (measured 2026-11-11, M1 Pro,
+  macOS 27.0.1); before this bound, no theme, and so no blurred art, showed
+  until it finished.
 
 Now Playing displays the player-reported track (`PLAY-011`). When the
 current entry is unattributed, the curation actions are disabled rather than
@@ -2653,8 +2685,9 @@ Platform notes:
   scroll view does, so a swipe that started on a button never presses it. A
   swipe the system interrupts (Control Center, a call) puts the player back
   open. Behind the
-  blurred art is a solid pane of the theme colour, which is all that shows
-  until the art arrives.
+  blurred art is a solid pane of the wash colour (the theme colour, or the
+  neutral one while the theme is pending), which is all that shows until the
+  art arrives.
   A drag handle at the top, clear of the Dynamic Island, closes it on a tap.
   The system zoom transition was tried and dropped: its swipe down missed
   about half of first attempts and lost to the controls. Regular width shows
@@ -3378,7 +3411,8 @@ settings, through system controls where possible:
   name and explanation.
 - Reduce Motion: the full player fades instead of growing from the mini
   player, and the art does not move with the phone's tilt.
-- Reduce Transparency: the full player shows the theme colour, not the art.
+- Reduce Transparency: the full player shows the theme colour, not the art
+  (the plain background while the theme is pending).
 - The mini player's text stops at the largest standard size, as its bar has a
   fixed height; it and the transport buttons offer the Large Content Viewer.
 - CarPlay's own templates provide its accessibility; its art badges cannot be
