@@ -26,6 +26,9 @@ final class PlaylistRemoteMutationCoordinator {
         return try await operation()
     }
 
+    /// Operations queued behind the one holding the gate; nil when it is free.
+    func waitingCount(playlistID: String) -> Int? { waiters[playlistID]?.count }
+
     @discardableResult
     func rewrite<Snapshot>(
         playlistID: String,

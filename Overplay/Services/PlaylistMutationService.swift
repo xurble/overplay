@@ -219,11 +219,12 @@ struct PlaylistMutationService {
         try? context.save()
     }
 
-    func ensureRemoteMembership(
+    func ensureRemoteMembership<Committed>(
         track: TrackRecord, playlist: PlaylistRecord,
         isCurrent: () throws -> Bool, beforeAdd: () throws -> Void,
+        commit: () throws -> Committed,
         in context: ModelContext
-    ) async throws {
+    ) async throws -> Committed {
         guard playlist.allowsRemoteWrites else { throw PlaylistMutationError.playlistIncomingOnly }
         try await PlaylistRemoteMutationCoordinator.shared.perform(playlistID: playlist.musicPlaylistID) {
             guard try isCurrent(), playlist.allowsRemoteWrites else { throw PlaylistMutationError.trackMissing }
@@ -231,6 +232,7 @@ struct PlaylistMutationService {
             try await addUnlessPresent(track, to: playlist, in: context)
             guard try isCurrent() else { throw PlaylistMutationError.trackMissing }
         }
+        return try commit()
     }
 
     /// Adds a catalog song Overplay does not track yet to a writable Apple

@@ -2503,14 +2503,19 @@ final class PlaybackController {
         context: ModelContext
     ) async throws -> String {
         let target = try DuplicateTrackService.validate(selected, destination: destination, in: context)
+        func commit() throws -> DuplicateTrackService.Result {
+            _ = try DuplicateTrackService.validate(selected, destination: target, in: context)
+            if let current = currentPlaylistItem, selected.contains(where: { $0.itemID == current.id }) {
+                settleSessionBeforeMoving(current)
+            }
+            return try DuplicateTrackService.merge(selected, destination: target, in: context)
+        }
+        let result: DuplicateTrackService.Result
         if target == .otp, !selected.contains(where: { $0.destination == .otp }) {
-            try await DuplicateTrackService.prepareOTPMembership(selected, in: context)
+            result = try await DuplicateTrackService.prepareOTPMembership(selected, in: context, commit: commit)
+        } else {
+            result = try commit()
         }
-        _ = try DuplicateTrackService.validate(selected, destination: target, in: context)
-        if let current = currentPlaylistItem, selected.contains(where: { $0.itemID == current.id }) {
-            settleSessionBeforeMoving(current)
-        }
-        let result = try DuplicateTrackService.merge(selected, destination: target, in: context)
         applyDuplicateMerge(result, context: context)
         var message = "Merged tracks. Play and skip counts were combined."
         if let otp = result.previousOTP, !result.remoteRemovalIDs.isEmpty {

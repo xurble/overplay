@@ -241,16 +241,17 @@ enum DuplicateTrackService {
     /// Validate both row intent and the configured OTP again inside the remote
     /// gate. Suppression survives a failed/stale completion, just as promotion
     /// does, so subsequent incoming sync cannot undo a newer local decision.
-    static func prepareOTPMembership(
+    static func prepareOTPMembership<Committed>(
         _ selected: [Candidate], in context: ModelContext,
-        mutation: PlaylistMutationService = PlaylistMutationService()
-    ) async throws {
+        mutation: PlaylistMutationService = PlaylistMutationService(),
+        commit: () throws -> Committed
+    ) async throws -> Committed {
         guard let otp = try PlaylistRepository.oneTruePlaylist(in: context),
               let first = selected.sorted(by: { $0.id.uuidString < $1.id.uuidString }).first,
               let track = try TrackRecordRepository.track(id: first.id, in: context),
               let item = try PlaylistItemRepository.item(id: first.itemID, in: context) else { throw MergeError.missingOTP }
         let otpID = otp.id
-        try await mutation.ensureRemoteMembership(track: track, playlist: otp, isCurrent: {
+        return try await mutation.ensureRemoteMembership(track: track, playlist: otp, isCurrent: {
             guard try PlaylistRepository.oneTruePlaylist(in: context)?.id == otpID else { return false }
             _ = try validate(selected, destination: .otp, in: context)
             return true
@@ -259,7 +260,7 @@ enum DuplicateTrackService {
                 item.suppressedOTPMusicPlaylistIDs.append(otp.musicPlaylistID)
             }
             try context.save()
-        }, in: context)
+        }, commit: commit, in: context)
     }
 
     /// Synchronous commit after remote preflight; no await between validation,
