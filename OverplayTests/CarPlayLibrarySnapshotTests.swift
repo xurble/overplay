@@ -454,7 +454,8 @@ struct CarPlayLibrarySnapshotTests {
     @Test func aRenamedPlaylistRebuildsTheRoot() throws {
         let root = try rootFixture()
 
-        #expect(try rootRebuilds(root) { root.otp.name = "Favourites" })
+        // Still sorts after the Inbox, so only the name changes.
+        #expect(try rootRebuilds(root) { root.otp.name = "Keepers Mix" })
     }
 
     @Test func aPlaylistLinkedToAnotherAppleMusicPlaylistRebuildsTheRoot() throws {
