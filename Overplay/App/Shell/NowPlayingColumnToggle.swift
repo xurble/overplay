@@ -9,6 +9,11 @@ import SwiftUI
 struct NowPlayingColumnToggle {
     var isShown: Bool
     var settings: OverplaySettings
+    /// On a Mac, the width the player column takes at the window's trailing
+    /// edge while shown. The window's toolbar spans the player too, so this
+    /// much is kept clear at its trailing end and the list's buttons end at
+    /// the list's edge, not over the player. 0 elsewhere.
+    var playerWidth: CGFloat = 0
     var toggle: () -> Void
 }
 
@@ -50,7 +55,8 @@ private struct NowPlayingColumnToggleToolbar: ViewModifier {
                     .untinted()
                 }
             }
-            // Top right whether shown or hidden (owner request, 2026-10-31).
+            // Top right of the list whether shown or hidden (owner request,
+            // 2026-10-31; beside the player while it shows, 2026-11-11).
             if let columnToggle {
                 ToolbarItem(placement: .primaryAction) {
                     let title = columnToggle.isShown ? "Hide Now Playing" : "Show Now Playing"
@@ -60,6 +66,14 @@ private struct NowPlayingColumnToggleToolbar: ViewModifier {
                     .help(title)
                     .untinted()
                 }
+            }
+            if let columnToggle, columnToggle.playerWidth > 0 {
+                ToolbarItem(placement: .primaryAction) {
+                    Color.clear
+                        .frame(width: columnToggle.playerWidth, height: 1)
+                        .accessibilityHidden(true)
+                }
+                .sharedBackgroundVisibility(.hidden)
             }
         }
     }
