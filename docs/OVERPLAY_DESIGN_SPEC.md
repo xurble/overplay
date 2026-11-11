@@ -2963,7 +2963,10 @@ every other surface carry on. Duplicates come only from two devices creating a
 library at once, from builds before this rule, or for a while after Nuke
 Database on another device. Every read uses the same row: the oldest, then the
 lowest UUID (`SettingsRepository.keeper`). See **Generation 2: first launch on
-another device** for how they converge.
+another device** for how they converge. A device that has restored keeps
+showing the app if every row goes, reading the same unsaved defaults until a
+row arrives, so Settings and Nuke Database stay in reach; a device that has not
+restored still waits for its row.
 
 The obsolete `protectKeptTracks` setting and playlist-item `protected` flag
 have been removed, along with the controller and presentation paths that read
@@ -3098,8 +3101,21 @@ The following are not requirements of the current product:
   new row arrives before the old row's deletion during an import, but it is
   not proof: if one finished import ever delivered the new row while the old
   row and its library were still whole, the new row would be deleted and, once
-  the old row's deletion landed, no device would have a row. Real CloudKit
-  ordering between devices has not been tested. Until rows converge, the kept
+  the old row's deletion landed, no device would have a row. The likeliest
+  trigger is a Nuke Database followed by setup while that device is offline or
+  on a poor connection, so everything goes up in one coalesced export whose
+  batch order is undocumented. Then:
+  - If that device has already chosen its new One True Playlist, convergence
+    keeps the old row's selection and demotes the new One True Playlist into
+    the Inbox before deleting the new row.
+  - Once the old row's deletion lands, no row exists. A device that has not
+    restored waits for good. A device that has restored keeps showing the app
+    on unsaved defaults, with Settings and Nuke Database in reach, instead of
+    "Preparing Overplay" with no way out; playback is not gated either way. A
+    relaunch of that device still waits, because restoration needs a row.
+  Narrowing this, for example by deleting a duplicate only after this device
+  has seen it across imports for a while, is deferred to a follow-up. Real
+  CloudKit ordering between devices has not been tested. Until rows converge, the kept
   row is read everywhere, so a device that made a newer row reads the older
   one, and a second One True Playlist from a simultaneous setup stays until the
   next clean import. A suppression proven absent by iCloud's read is released
@@ -3491,7 +3507,10 @@ opens offline, and its receipt then names the kept row.
 The other rows are deleted only later, when the library has settled: on a
 device that is ready, straight after an import that finished without error, and
 only when the kept row's library passes the same completeness check
-(`LibraryRestorationService.convergeSettingsAfterImport`). Deleting during
+(`LibraryRestorationService.convergeSettingsAfterImport`). It counts the rows
+first and, with only one, does nothing more: the completeness check loads the
+whole library on the main actor, and most imports have nothing to converge.
+Deleting during
 restoration is unsafe. Nuke Database deletes every row and then inserts a new,
 newest one; another device can receive the new row before the old row's
 deletion. Keeping the old row and deleting the new one there would sync, and
@@ -3505,8 +3524,12 @@ any rebuild receipt or Mac playlist request it lacks; its own thresholds stand.
 Any other active One True Playlist is demoted as `PlaylistRepository.setOneTruePlaylist`
 demotes one: its songs move into the Inbox and it becomes an Inbox source, so
 each song stays in exactly one of the One True Playlist, the Inbox or Retired.
-Two devices that set up at once each made one. The other rows are deleted, and
-a device whose receipt named one moves it to the kept row. One exception: a
+Two devices that set up at once each made one. After a demotion the playback
+intent is reconciled, as after every other demotion
+(`PlaybackController.reconcilePlaylistSelection`): an intent naming the demoted
+playlist moves to the Inbox, so the playing song is selected in place and
+listens are not credited to the demoted playlist. The other rows are deleted,
+and a device whose receipt named one moves it to the kept row. One exception: a
 membership whose track is missing and named as a donor by a merge lineage
 event does not wait for that track, which is gone for good, once the track
 that survived the merge is here; the location repair then moves it to that
