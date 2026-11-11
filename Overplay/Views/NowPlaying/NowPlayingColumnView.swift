@@ -43,16 +43,10 @@ struct NowPlayingColumnView: View {
                 }
             }
             .background {
-                Group {
-                    if artworkTheme.isFallback {
-                        Rectangle().fill(.background)
-                    } else {
-                        PlayerGlassArtBackground(tint: artworkTheme.background)
-                    }
-                }
-                .ignoresSafeArea()
-                .accessibilityHidden(true)
-                .allowsHitTesting(false)
+                PlayerBackdropView(artworkTheme: artworkTheme)
+                    .ignoresSafeArea()
+                    .accessibilityHidden(true)
+                    .allowsHitTesting(false)
             }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("now-playing-column")
