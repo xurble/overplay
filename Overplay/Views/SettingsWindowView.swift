@@ -27,7 +27,7 @@ struct SettingsWindowView: View {
 
     var body: some View {
         Group {
-            if let settings = settingsRecords.first {
+            if let settings = SettingsRepository.keeper(of: settingsRecords) {
                 VStack(spacing: 0) {
                     VStack(spacing: 0) {
                         SettingsWindowHeader(pane: $pane)

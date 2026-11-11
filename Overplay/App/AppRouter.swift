@@ -173,8 +173,9 @@ struct AppRouter: View {
         }
     }
 
+    /// The row every other reader uses while duplicates exist.
     private var settings: OverplaySettings? {
-        settingsRecords.first
+        SettingsRepository.keeper(of: settingsRecords)
     }
 
     private var isShowingOneTruePlaylistPrompt: Binding<Bool> {

@@ -73,7 +73,7 @@ struct OneTruePlaylistPresenceService {
             MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP prompt suppressed: device cannot create playlists")
             return nil
         }
-        guard let settings = try? context.fetch(FetchDescriptor<OverplaySettings>()).first else {
+        guard let settings = try? SettingsRepository.storedSettings(in: context) else {
             MusicKitActivityLog.shared.record(.diagnosticNote, detail: "OTP prompt suppressed: settings unavailable")
             return nil
         }
