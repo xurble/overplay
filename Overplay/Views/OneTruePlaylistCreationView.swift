@@ -33,7 +33,7 @@ struct OneTruePlaylistCreationView: View {
     /// own Copy and Start Empty.
     private func makeRequestedPlaylist() async {
         guard dependencies.canCreatePlaylists(),
-              let settings = try? modelContext.fetch(FetchDescriptor<OverplaySettings>()).first,
+              let settings = try? SettingsRepository.storedSettings(in: modelContext),
               settings.pendingOneTruePlaylistRequestedAt != nil, settings.selectedPlaylistID == nil else { return }
         viewModel.isCreatingOneTruePlaylist = true
         await runtime.fulfilPendingOneTruePlaylist(in: modelContext)

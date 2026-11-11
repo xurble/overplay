@@ -453,13 +453,13 @@ struct PlaylistSyncService {
         var processedSnapshots: [TrackSnapshot] = []
         var processedTrackIDs = Set<UUID>()
         var insertedOrderTrackIDs = Set<String>()
-        var aliasIndex = try TrackAliasIndex(in: context)
+        let aliasIndex = TrackAliasIndex(in: context)
 
         for (sortOrder, snapshot) in snapshots.enumerated() {
             if sortOrder > 0, sortOrder.isMultiple(of: Self.syncYieldStride) {
                 try await yieldDuringReconciliation()
                 // Another task may have merged tracks while this pass yielded.
-                aliasIndex = try TrackAliasIndex(in: context)
+                aliasIndex.invalidate()
                 guard playlistRecord.isActive, playlistRecord.triageLinkedAt == reconciliationLinkDate else {
                     summary.fetchedCount = sortOrder
                     summary.skippedCount += snapshots.count - sortOrder
@@ -629,7 +629,11 @@ struct PlaylistSyncService {
 
         // Only a complete snapshot can release stale remote-membership
         // protection. A failed/partial fetch must never resurrect a retirement.
-        if isComplete, playlistRecord.role == .oneTruePlaylist {
+        // A managed playlist's snapshot proves nothing either: this device's
+        // copy can lag iCloud, so only `removeSongsHeldOutside`, which reads
+        // iCloud's, releases there (`PLAYLIST-008`).
+        if isComplete, playlistRecord.role == .oneTruePlaylist,
+           !OneTruePlaylistRemoteMembership.managesRemoteMembership(of: playlistRecord) {
             for item in try PlaylistItemRepository.allItems(in: context)
             where item.suppressedOTPMusicPlaylistIDs.contains(playlistRecord.musicPlaylistID)
                 && !processedTrackIDs.contains(item.trackID) {

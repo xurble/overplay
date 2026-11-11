@@ -156,11 +156,9 @@ enum LibraryBrowser {
         var tracks = Dictionary(entries.map { ($0.song.catalogID, $0.track) }, uniquingKeysWith: { first, _ in first })
         let libraryIDs = entries.map(\.track.id).filter { MusicTrackIdentity.isLibraryID($0.rawValue) }
         guard !libraryIDs.isEmpty else { return tracks }
-        var request = MusicLibraryRequest<Song>()
-        request.filter(matching: \.id, memberOf: libraryIDs)
-        guard let local = try? await MusicKitActivityLog.shared.measure(.libraryTrackQuery, detail: "library browser local copies", {
-            try await request.response().items
-        }) else { return tracks }
+        guard let local = try? await AppleMusicSongLookup.nativeLibrarySongs(
+            libraryIDs.map(\.rawValue), detail: "library browser local copies"
+        ) else { return tracks }
         let localByID = Dictionary(local.map { ($0.id.rawValue, $0) }, uniquingKeysWith: { first, _ in first })
         for entry in entries {
             if let song = localByID[entry.track.id.rawValue] { tracks[entry.song.catalogID] = .song(song) }

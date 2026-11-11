@@ -124,7 +124,7 @@ struct PeriodicPlaylistSyncServiceTests {
         context.insert(playlist(musicPlaylistID: "triage-a", lastSyncedAt: nil, lastSyncError: nil))
         context.insert(playlist(musicPlaylistID: "selected", lastSyncedAt: nil, lastSyncError: nil))
         context.insert(playlist(musicPlaylistID: "playing", lastSyncedAt: nil, lastSyncError: nil))
-        let settings = try SettingsRepository.settings(in: context)
+        let settings = try OverplayTestSupport.seedSettings(in: context)
         settings.selectedPlaylistID = "selected"
         let suite = "OverplayTests.Periodic.\(UUID().uuidString)"
         let store = PlaybackIntentStore(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("\(suite).json"),

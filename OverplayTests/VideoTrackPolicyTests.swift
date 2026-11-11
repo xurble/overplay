@@ -203,6 +203,37 @@ struct VideoTrackPolicyTests {
         #expect(try TrackRecordRepository.allTracks(in: context).isEmpty)
     }
 
+    /// The cleanup inspects each track's payload once per launch (PF-9), so a
+    /// merge must not hand a keeper it has already inspected a video payload.
+    @Test("A merge never copies a donor's video payload onto the keeper")
+    func mergeCopiesOnlySongPayloads() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let videoData = try JSONEncoder().encode(makeVideo())
+        let songData = try JSONEncoder().encode(makeSong())
+
+        // A keeper with no payload takes a donor's song payload, not a video.
+        let bare = TrackRecord(catalogID: "c.bare", title: "Song", artistName: "Artist")
+        let videoDonor = TrackRecord(catalogID: "c.bare", title: "Song", artistName: "Artist", musicKitPlaybackData: videoData)
+        let songDonor = TrackRecord(catalogID: "c.bare", title: "Song", artistName: "Artist", musicKitPlaybackData: songData)
+        for track in [bare, videoDonor, songDonor] { context.insert(track) }
+        TrackIdentityMergeService.absorb(videoDonor, into: bare)
+        #expect(bare.musicKitPlaybackData == nil)
+        TrackIdentityMergeService.absorb(songDonor, into: bare)
+        #expect(bare.musicKitPlaybackData == songData)
+
+        // A donor that becomes the representative copy brings its metadata,
+        // but not a video payload: the keeper keeps its song.
+        let keeper = TrackRecord(catalogID: "c.rep", libraryID: "i.b", title: "Keeper", artistName: "Artist",
+                                 musicKitPlaybackData: songData)
+        let representative = TrackRecord(catalogID: "c.rep", libraryID: "i.a", title: "Representative",
+                                         artistName: "Artist", musicKitPlaybackData: videoData)
+        for track in [keeper, representative] { context.insert(track) }
+        TrackIdentityMergeService.absorb(representative, into: keeper)
+        #expect(keeper.libraryID == "i.a" && keeper.title == "Representative")
+        #expect(keeper.musicKitPlaybackData == songData)
+    }
+
     private func makeVideo() throws -> Track {
         let json = #"{"id":"video","type":"music-videos","attributes":{"name":"Video","artistName":"Artist","genreNames":[],"durationInMillis":100000}}"#
         return .musicVideo(try JSONDecoder().decode(MusicVideo.self, from: Data(json.utf8)))

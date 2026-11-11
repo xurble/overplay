@@ -23,6 +23,16 @@ enum OverplayTestSupport {
         )
         return try ModelContainer(for: schema, configurations: [configuration])
     }
+
+    /// The store's settings row, made as setup makes it when there is none:
+    /// the app's accessor only reads.
+    static func seedSettings(in context: ModelContext) throws -> OverplaySettings {
+        if let existing = try context.fetch(FetchDescriptor<OverplaySettings>()).first { return existing }
+        let settings = OverplaySettings()
+        context.insert(settings)
+        try context.save()
+        return settings
+    }
 }
 
 /// A disposable domain for controller-owned playback restoration state.

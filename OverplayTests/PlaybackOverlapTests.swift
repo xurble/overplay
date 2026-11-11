@@ -144,6 +144,33 @@ struct PlaybackOverlapTests {
         try await waitUntil { fixture.controller.currentTrack?.title == "Song 2" }
     }
 
+    /// The 2026-11-11 03:48 test-host crash: a skip on reach answered after its
+    /// test had returned, and its observation read the current item of a
+    /// store the test had released ("destroyed by calling ModelContext.reset",
+    /// in `updateRetentionLease`). The app's store lives for the process.
+    @Test func aSkipOnReachAnsweredAfterItsTestReturnsFindsTheStoreAlive() async throws {
+        let skip = Gate()
+        let controller: PlaybackController
+        do {
+            let (fixture, _) = try fixture()
+            defer { fixture.cleanUp() }
+            await select(fixture, 0)
+            try fixture.controller.retireTrack(try fixture.item(1), playlist: fixture.playlist,
+                                               message: "Retired", context: fixture.context)
+            fixture.player.onNext = { await skip.wait() }
+            await fixture.player.externallyAdvance()
+            #expect(skip.waiting == 1)
+            controller = fixture.controller
+        }
+        // The test's store would be released by now: the main run loop drains
+        // what the fixture left behind. The skip answers afterwards, as it did
+        // after `aHungSkipOnReachDoesNotStopTheSampleLoop` returned.
+        try await Task.sleep(for: .milliseconds(200))
+        skip.open()
+        try await waitUntil { controller.currentTrack?.title == "Song 2" }
+        #expect(controller.currentPlaylistItem?.isDeleted == false)
+    }
+
     private func playingUnpreparedQueue(_ fixture: PlaybackFixture) async {
         await select(fixture, 0)
         fixture.player.playbackStatus = .playing
