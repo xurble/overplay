@@ -71,6 +71,21 @@ struct PlaybackOverlapTests {
         #expect(condition(), sourceLocation: sourceLocation)
     }
 
+    /// Puts the controller's limits on a clock only the test moves (TST-8).
+    private func manualClock(_ fixture: PlaybackFixture) -> ManualPlaybackClock {
+        let clock = ManualPlaybackClock()
+        fixture.controller.clock = clock.clock
+        return clock
+    }
+
+    /// Once `sleepers` limits of `duration` have started, moves the clock on
+    /// by it. Each limit's watchdog has decided when this returns.
+    private func advance(_ clock: ManualPlaybackClock, by duration: Duration, sleepers: Int = 1,
+                         sourceLocation: SourceLocation = #_sourceLocation) async throws {
+        try await waitUntil({ clock.pending(duration) >= sleepers }, sourceLocation: sourceLocation)
+        await clock.advance(by: duration)
+    }
+
     // MARK: - PB-1: a hung player call must not stop observation
 
     @Test(arguments: [false, true])
@@ -140,6 +155,7 @@ struct PlaybackOverlapTests {
         player.prepareFailuresRemaining = 1
         let (fixture, log) = try fixture(player: player)
         defer { fixture.cleanUp() }
+        let clock = manualClock(fixture)
         await playingUnpreparedQueue(fixture)
         fixture.controller.startHoldLimit = .milliseconds(50)
         let prepare = Gate()
@@ -155,7 +171,8 @@ struct PlaybackOverlapTests {
         #expect(fixture.player.submitCount == 2)
 
         // Its hold ends at the limit, and the player is observed again.
-        try await waitUntil { events(log, .playbackSelectionPath).contains("startTimedOut") }
+        try await advance(clock, by: .milliseconds(50))
+        #expect(events(log, .playbackSelectionPath).contains("startTimedOut"))
         fixture.player.playbackStatus = .playing
         await fixture.player.notify()
         #expect(fixture.controller.isPlaying)
@@ -295,11 +312,14 @@ struct PlaybackOverlapTests {
     @Test func aRepeatTapAfterTheHoldHasEndedIsAPlayAgain() async throws {
         let (fixture, log) = try fixture(trackCount: 4)
         defer { fixture.cleanUp() }
+        let clock = manualClock(fixture)
         fixture.controller.startHoldLimit = .milliseconds(50)
         let prepare = Gate()
         fixture.player.onPrepare = { await prepare.wait() }
         let first = Task { await select(fixture, 2) }
-        try await waitUntil { events(log, .playbackSelectionPath).contains("startTimedOut") }
+        try await waitUntil { prepare.waiting == 1 }
+        try await advance(clock, by: .milliseconds(50))
+        #expect(events(log, .playbackSelectionPath).contains("startTimedOut"))
 
         await select(fixture, 2)
 
@@ -311,15 +331,18 @@ struct PlaybackOverlapTests {
     // MARK: - PB-3: only a start that reached play() settles the failure
 
     @Test func aStartThatTimesOutKeepsItsFailure() async throws {
-        let (fixture, _) = try fixture()
+        let (fixture, log) = try fixture()
         defer { fixture.cleanUp() }
+        let clock = manualClock(fixture)
         fixture.controller.startHoldLimit = .milliseconds(50)
         fixture.controller.stuckCallLimit = .milliseconds(50)
         let prepare = Gate()
         fixture.player.onPrepare = { await prepare.wait() }
         let starting = Task { await select(fixture, 0) }
-        try await waitUntil { fixture.controller.playbackFailure?.kind == .stuck }
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitUntil { prepare.waiting == 1 }
+        try await advance(clock, by: .milliseconds(50), sleepers: 2)
+        #expect(fixture.controller.playbackFailure?.kind == .stuck)
+        #expect(events(log, .playbackSelectionPath).contains("startTimedOut"))
 
         prepare.open()
         await starting.value
@@ -335,13 +358,18 @@ struct PlaybackOverlapTests {
         await select(fixture, 1)
         await fixture.listen(seconds: 40)
         await fixture.player.abandonQueue()
+        let clock = manualClock(fixture)
         fixture.controller.startHoldLimit = .milliseconds(50)
         let prepare = Gate()
         fixture.player.onPrepare = { await prepare.wait() }
         let playsBefore = fixture.player.playCount
 
         let press = Task { await fixture.controller.play(context: fixture.context) }
-        try await waitUntil { events(log, .playbackSelectionPath).contains("startTimedOut") }
+        try await waitUntil { prepare.waiting == 1 && clock.pending(.milliseconds(50)) == 1 }
+        await clock.advance(by: .milliseconds(49))
+        #expect(!events(log, .playbackSelectionPath).contains("startTimedOut"))
+        await clock.advance(by: .milliseconds(1))
+        #expect(events(log, .playbackSelectionPath).contains("startTimedOut"))
         prepare.open()
         await press.value
 
@@ -488,10 +516,12 @@ struct PlaybackOverlapTests {
         let (fixture, log) = try fixture()
         defer { fixture.cleanUp() }
         await songLostWhilePaused(fixture)
+        let clock = manualClock(fixture)
         fixture.controller.startHoldLimit = .milliseconds(50)
         let prepare = Gate()
         let resuming = try await pressPlayDuringResume(fixture, prepare: prepare)
-        try await waitUntil { events(log, .playbackSelectionPath).contains("startTakeoverExpired") }
+        try await advance(clock, by: .milliseconds(50))
+        #expect(events(log, .playbackSelectionPath).contains("startTakeoverExpired"))
 
         // The song has been playing from the top meanwhile.
         fixture.player.playbackTime = 30
@@ -506,12 +536,15 @@ struct PlaybackOverlapTests {
         let (fixture, log) = try fixture()
         defer { fixture.cleanUp() }
         await songLostWhilePaused(fixture)
+        let clock = manualClock(fixture)
         fixture.controller.startHoldLimit = .milliseconds(50)
         let play = Gate()
         fixture.player.onPlay = { await play.wait() }
 
         let resuming = Task { await fixture.controller.play(context: fixture.context) }
-        try await waitUntil { events(log, .playbackSelectionPath).contains("startTimedOut") }
+        try await waitUntil { play.waiting == 1 }
+        try await advance(clock, by: .milliseconds(50))
+        #expect(events(log, .playbackSelectionPath).contains("startTimedOut"))
         if movedOn { fixture.player.silentlyAdvance(to: 7) }
         play.open()
         await resuming.value
@@ -528,13 +561,16 @@ struct PlaybackOverlapTests {
         await fixture.listen(seconds: 40)
         await fixture.player.abandonQueue()
         #expect(fixture.controller.playbackFailure != nil)
+        let clock = manualClock(fixture)
         fixture.controller.startHoldLimit = .milliseconds(50)
         let play = Gate()
         fixture.player.onPlay = { await play.wait() }
 
         // Play recovers with a fresh queue, whose final play() outlasts the hold.
         let starting = Task { await fixture.controller.play(context: fixture.context) }
-        try await waitUntil { events(log, .playbackSelectionPath).contains("startTimedOut") }
+        try await waitUntil { play.waiting == 1 }
+        try await advance(clock, by: .milliseconds(50))
+        #expect(events(log, .playbackSelectionPath).contains("startTimedOut"))
         play.open()
         await starting.value
 
@@ -583,15 +619,27 @@ struct PlaybackOverlapTests {
         player.onPrepare = { await prepare.wait() }
         let (fixture, log) = try fixture(player: player)
         defer { fixture.cleanUp() }
+        let clock = manualClock(fixture)
         fixture.controller.networkSettleDelay = .milliseconds(200)
         await select(fixture, 0)
         await stall(fixture)
 
         let first = Task { await fixture.controller.networkReturned() }
-        let second = Task { await fixture.controller.networkReturned() }
-        try await waitUntil { prepare.waiting >= 1 }
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitUntil { clock.pending(.milliseconds(200)) == 1 }
+        // The second update arrives while the first settles: it returns at
+        // once, or, unguarded, settles alongside.
+        var secondReturned = false
+        let second = Task {
+            await fixture.controller.networkReturned()
+            secondReturned = true
+        }
+        try await waitUntil { secondReturned || clock.pending(.milliseconds(200)) == 2 }
+        #expect(events(log, .playbackRecoveryAttempt).isEmpty)
 
+        await clock.advance(by: .milliseconds(200))
+
+        #expect(events(log, .playbackRecoveryAttempt) == ["network returned"])
+        try await waitUntil { prepare.waiting == 1 }
         #expect(events(log, .playbackRecoveryAttempt) == ["network returned"])
 
         prepare.open()

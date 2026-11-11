@@ -20,15 +20,15 @@ struct CarPlayListRendererTests {
             .init(id: "main", title: "Main", detail: "3 tracks", artwork: .symbol("music.note"))
         ])])
         renderer.update(state, on: template, actions: [:])
-        let deadline = ContinuousClock.now + .seconds(2)
-        while !writes.contains(.carPlayArtworkUpdate), ContinuousClock.now < deadline { await Task.yield() }
+        await renderer.artworkTask?.value
+        #expect(writes.contains(.carPlayArtworkUpdate))
         #expect(loads == 1)
         let row = try #require(renderer.items["main"])
         let section = try #require(template.sections.first)
         #expect(row.image != nil)
         writes.removeAll()
         for _ in 0..<20 { renderer.update(state, on: template, actions: [:]) }
-        await Task.yield()
+        await renderer.artworkTask?.value
         #expect(writes.isEmpty)
         #expect(loads == 1)
         #expect(renderer.items["main"] === row)
@@ -91,7 +91,7 @@ struct CarPlayListRendererTests {
         state.sections[0].rows[0].artwork = .symbol("new")
         renderer.update(state, on: template, actions: [:])
         pending.resume(returning: UIImage(systemName: "music.note"))
-        while artworkWrites == 0, ContinuousClock.now < deadline { await Task.yield() }
+        await renderer.artworkTask?.value
         #expect(artworkWrites == 1)
         #expect(renderer.items["main"]?.image != nil)
     }
@@ -174,7 +174,7 @@ struct CarPlayListRendererTests {
         let placeholder = header.thumbnail
         details.removeAll()
         try #require(release).resume()
-        try await Task.sleep(for: .milliseconds(100))
+        await renderer.artworkTask?.value
         #expect(header.thumbnail === placeholder)
         renderer.releaseHeaderChanges()
         #expect(template.listHeader === header)
@@ -228,9 +228,8 @@ struct CarPlayListRendererTests {
                 .init(id: "tile", title: "Tile", artwork: .track(url: "t", playlistID: "p"), isPlaying: true),
             ])),
         ])]), on: template, actions: [:])
-        let deadline = ContinuousClock.now + .seconds(2)
-        while loads < 3, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
-        try await Task.sleep(for: .milliseconds(50))
+        await renderer.artworkTask?.value
+        #expect(loads == 3)
 
         let item = try #require(renderer.items["row"])
         #expect(item.isPlaying)
@@ -260,7 +259,7 @@ struct CarPlayListRendererTests {
         renderer.playbackStateChanged()
         // Unmarked at once, marked again on the next turn.
         #expect(!inbox.isPlaying)
-        try await Task.sleep(for: .milliseconds(50))
+        await renderer.replayTask?.value
         #expect(inbox.isPlaying)
         #expect(!retired.isPlaying)
         #expect(details.last == "rows=inbox fields=playing-replayed")
@@ -270,7 +269,7 @@ struct CarPlayListRendererTests {
         let beforeSkip = details.filter { $0.hasSuffix("playing-replayed") }.count
         renderer.playbackStateChanged()
         renderer.update(state(playing: "retired"), on: template, actions: [:])
-        try await Task.sleep(for: .milliseconds(50))
+        await renderer.replayTask?.value
         #expect(!inbox.isPlaying)
         #expect(retired.isPlaying)
         #expect(details.filter { $0.hasSuffix("playing-replayed") }.count == beforeSkip)
@@ -279,7 +278,7 @@ struct CarPlayListRendererTests {
         renderer.update(state(playing: nil), on: template, actions: [:])
         let recorded = details.count
         renderer.playbackStateChanged()
-        try await Task.sleep(for: .milliseconds(50))
+        await renderer.replayTask?.value
         #expect(details.count == recorded)
     }
 
@@ -297,7 +296,7 @@ struct CarPlayListRendererTests {
 
         renderer.playbackStateChanged()
         #expect(inbox.isPlaying)
-        try await Task.sleep(for: .milliseconds(50))
+        await renderer.replayTask?.value
         #expect(inbox.isPlaying)
         #expect(details.count == recorded)
     }
@@ -329,10 +328,8 @@ struct CarPlayListRendererTests {
                 ])),
             ])])
         }
-        func settle(loads: Int) async {
-            let deadline = ContinuousClock.now + .seconds(2)
-            while loaded.count < loads, ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
-            try? await Task.sleep(for: .milliseconds(50))
+        func settle() async {
+            if let loading = renderer.artworkTask { await loading.value }
         }
         func badged(_ image: UIImage?, displayed: CGSize = CPListItem.maximumImageSize) throws -> Bool {
             try hasPlayingBadge(try #require(image), displayed: displayed)
@@ -341,7 +338,7 @@ struct CarPlayListRendererTests {
         let cardSize = CPListImageRowItemCardElement.maximumImageSize
 
         renderer.update(state(playing: "row"), on: template, actions: [:])
-        await settle(loads: 4)
+        await settle()
         // The loader is asked for the art itself; the badge is drawn over it.
         #expect(loaded.map { "\($0)" }.sorted() == [art("card"), art("row"), .symbol("tray"), art("tile")].map { "\($0)" }.sorted())
         let item = try #require(renderer.items["row"])
@@ -363,7 +360,7 @@ struct CarPlayListRendererTests {
         // A symbol row shows playing in its symbol, chosen by the list.
         renderer.update(state(playing: "symbol"), on: template, actions: [:])
         #expect(try !badged(renderer.imageRows["card"]?.elements.first?.image, displayed: cardSize))
-        await settle(loads: 1)
+        await settle()
         #expect(loaded.isEmpty)
     }
 

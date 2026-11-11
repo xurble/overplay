@@ -80,7 +80,12 @@ final class CarPlayListRenderer {
     private var actions: [String: @MainActor () async -> Void] = [:]
     private var requestedArtwork: [String: Row.Artwork] = [:]
     private var loadedArtwork: [String: Row.Artwork] = [:]
-    private var artworkTask: Task<Void, Never>?
+    /// Loads art one slot at a time; nil once every slot is settled. Tests
+    /// await it rather than waiting on the wall clock.
+    private(set) var artworkTask: Task<Void, Never>?
+    /// The latest replay of the playing rows (`playbackStateChanged`), for
+    /// tests to await.
+    private(set) var replayTask: Task<Void, Never>?
     /// The header art whose load has finished, loaded or not.
     private var settledHeaderArtwork: Row.Artwork?
     /// CarPlay lays out a header assigned while a push animates at the
@@ -123,7 +128,7 @@ final class CarPlayListRenderer {
         let playing = playingIDs.compactMap { id in items[id].map { (id, $0) } }
         guard !playing.isEmpty else { return }
         playing.forEach { $0.1.isPlaying = false }
-        Task { @MainActor [weak self] in
+        replayTask = Task { @MainActor [weak self] in
             guard let self else { return }
             // Only rows that are still playing, in this renderer's list.
             let replayed = playing.filter { id, item in
