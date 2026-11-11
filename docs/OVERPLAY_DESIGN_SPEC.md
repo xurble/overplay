@@ -3165,6 +3165,8 @@ CarPlay supports:
 - Promote the current bucket track, whether or not it is retired — deciding to
   keep a track you had set aside is the point of hearing it again.
 - Move the current retired track to the Inbox with explicit keep intent.
+- An alert for a Promote, Retire or Restore that did not happen, with the
+  reason Siri would speak, so a failure is never silent in the car.
 - Return to the root menu from Now Playing.
 
 CarPlay keeps iOS 27's MiniPlayer on (the system default; `allowsMiniPlayer`

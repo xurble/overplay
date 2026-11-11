@@ -881,6 +881,7 @@ final class CarPlayCoordinator: NSObject {
         case .nowPlaying: showNowPlaying()
         case .playbackFailed: showPlaybackFailure(title: "Playback failed")
         case .couldNotAdd(let message): showError(title: "Couldn't add", message: message)
+        case .trackActionFailed(let message): showError(title: "Track action failed", message: message)
         case .nothing: break
         }
     }

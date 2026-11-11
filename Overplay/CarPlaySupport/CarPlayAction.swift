@@ -11,13 +11,15 @@ enum CarPlayActionFollowUp: Equatable, Sendable {
     /// Nothing started and no shared failure says why.
     case playbackFailed
     case couldNotAdd(String)
+    /// Promote, Retire or Restore reached the controller and did not happen.
+    case trackActionFailed(String)
     /// A shared failure presents its own alert, or there is nothing to show.
     case nothing
 
     var reachedController: Bool {
         switch self {
         case .staleLists, .blocked: false
-        case .nowPlaying, .playbackFailed, .couldNotAdd, .nothing: true
+        case .nowPlaying, .playbackFailed, .couldNotAdd, .trackActionFailed, .nothing: true
         }
     }
 }
@@ -125,21 +127,18 @@ enum CarPlayAction {
                 return !started && controller.playbackFailure == nil ? .playbackFailed : .nothing
 
             case .promote:
-                // PA-2: the outcome is discarded and the call has no CarPlay origin.
                 let settings = try SettingsRepository.settings(in: context)
-                _ = await controller.promoteCurrent(settings: settings, context: context)
-                return .nothing
+                let outcome = await fromCarPlay { await controller.promoteCurrent(settings: settings, context: context) }
+                return Self.curationFollowUp(outcome)
 
             case .retire:
-                // PA-2: as Promote.
                 let settings = try SettingsRepository.settings(in: context)
-                _ = await controller.evictCurrent(settings: settings, context: context)
-                return .nothing
+                let outcome = await fromCarPlay { await controller.evictCurrent(settings: settings, context: context) }
+                return Self.curationFollowUp(outcome)
 
             case .restore:
-                // PA-2: as Promote.
-                _ = controller.restoreCurrent(context: context)
-                return .nothing
+                let restored = await fromCarPlay { controller.restoreCurrent(context: context) }
+                return restored ? .nothing : .trackActionFailed(controller.statusMessage ?? "Overplay couldn't restore this song.")
 
             case .addToTriage:
                 await fromCarPlay { await controller.addCurrentToTriage(context: context) }
@@ -193,6 +192,15 @@ enum CarPlayAction {
     private static func startFollowUp(started: Bool, controller: PlaybackController) -> CarPlayActionFollowUp {
         if started { return .nowPlaying }
         return controller.playbackFailure == nil ? .playbackFailed : .nothing
+    }
+
+    /// A move shows itself on Now Playing; anything else would be silent in
+    /// the car, so it reports the reason Siri speaks.
+    private static func curationFollowUp(_ outcome: CurationOutcome) -> CarPlayActionFollowUp {
+        switch outcome {
+        case .moved: .nothing
+        case .unavailable, .failed: .trackActionFailed(outcome.message)
+        }
     }
 
     /// PA-4: success is inferred from the song current by now, which may not
