@@ -145,6 +145,10 @@ final class PlaybackController {
     @ObservationIgnored var addCatalogSongToPlaylist: @MainActor (String, PlaylistRecord, ModelContext) async throws -> Void = {
         try await PlaylistMutationService().addCatalogSong(id: $0, to: $1, in: $2)
     }
+    /// Adds a song only the library knows to an Apple Music playlist; injectable for tests.
+    @ObservationIgnored var addLibrarySongToPlaylist: @MainActor (String, PlaylistRecord, ModelContext) async throws -> Void = {
+        try await PlaylistMutationService().addLibrarySong(id: $0, to: $1, in: $2)
+    }
     /// The IDs among these that the account's web library holds as library
     /// songs; injectable for tests.
     @ObservationIgnored var webLibrarySongIDs: @MainActor ([String]) async throws -> [String] = { ids in
@@ -1907,8 +1911,13 @@ final class PlaybackController {
                 throw PlaylistMutationError.songUnknownToAppleMusic
             }
             if toOneTruePlaylist {
-                guard let catalogID = identity.catalogID else { throw PlaylistMutationError.musicItemMissing }
-                try await addCatalogSongToPlaylist(catalogID, destination, context)
+                if let catalogID = identity.catalogID {
+                    try await addCatalogSongToPlaylist(catalogID, destination, context)
+                } else if let libraryID = identity.libraryID {
+                    try await addLibrarySongToPlaylist(libraryID, destination, context)
+                } else {
+                    throw PlaylistMutationError.musicItemMissing
+                }
             }
             let item = try mutations.recordSuccessfulManualAdd(song, identity: identity, to: destination, in: context)
             activityLog.record(.diagnosticNote, detail: "manual add to \(destination.role.rawValue): "

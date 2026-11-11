@@ -1054,6 +1054,12 @@ library playlist with a MusicKit add and records nothing in Overplay; a
 contributing playlist brings it into the Inbox at its next sync. Failures show a
 clear message.
 
+A song known only by a library ID, such as an upload or a matched song, can be
+promoted and added to the One True Playlist: the write fetches the library song
+by that ID and adds it, through the same "already in iCloud's copy" check as any
+promotion (`PLAYLIST-008`). A song with a catalog ID is still added by catalog
+ID. A song neither the catalog nor the web library knows is refused.
+
 The shared local manual-add boundary also supports the Inbox without a remote
 write. It establishes explicit keep intent, reuses/revives the global item,
 and never demotes an active OTP item. Search's swipes use it. Moving from Retired to the Inbox uses the same explicit keep semantics.

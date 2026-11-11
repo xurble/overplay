@@ -36,6 +36,9 @@ struct PlaylistMutationService {
     // Inject only the remote boundary; durable movement remains shared.
     var addRemotely: (@MainActor (TrackRecord, PlaylistRecord, ModelContext) async throws -> Void)?
     var remoteMembership = OneTruePlaylistRemoteMembership()
+    /// The library song for an ID, and the write. Injected so tests need no MusicKit.
+    var librarySong: @MainActor (String) async throws -> Song = PlaylistMutationService.liveLibrarySong
+    var writeSong: (@MainActor (Song, PlaylistRecord, ModelContext) async throws -> Void)?
 
     @discardableResult
     func promote(
@@ -251,6 +254,18 @@ struct PlaylistMutationService {
         }
     }
 
+    /// Adds a song only the library knows, such as an upload, to a writable
+    /// Apple Music playlist. It goes through the same "already there" check
+    /// as a promotion, so it is added once (`PLAYLIST-008`).
+    func addLibrarySong(id songID: String, to playlistRecord: PlaylistRecord, in context: ModelContext) async throws {
+        guard playlistRecord.allowsRemoteWrites else { throw PlaylistMutationError.playlistIncomingOnly }
+        try await PlaylistRemoteMutationCoordinator.shared.perform(playlistID: playlistRecord.musicPlaylistID) {
+            // Never inserted: it only carries the ID to the shared add.
+            let track = TrackRecord(libraryID: songID, title: "", artistName: "")
+            try await addUnlessPresent(track, to: playlistRecord, in: context)
+        }
+    }
+
     /// A song already in iCloud's copy, for example one whose earlier
     /// removal could not run, is not added a second time (`PLAYLIST-008`).
     /// When iCloud cannot be checked, adding is the safe default.
@@ -264,20 +279,35 @@ struct PlaylistMutationService {
     }
 
     private func add(track: TrackRecord, to playlistRecord: PlaylistRecord, in context: ModelContext) async throws {
-        guard let musicItemID = track.catalogID ?? track.libraryID else {
+        // A catalog request cannot find a library ID, and uploaded and
+        // matched songs legitimately have no catalog ID.
+        let song: Song
+        if let catalogID = track.catalogID {
+            song = try await self.song(id: catalogID)
+        } else if let libraryID = track.libraryID {
+            song = try await librarySong(libraryID)
+        } else {
             throw PlaylistMutationError.musicItemMissing
         }
-
+        if let writeSong {
+            try await writeSong(song, playlistRecord, context)
+            return
+        }
         let playlist = try await PlaylistSyncService().loadPlaylist(
             id: playlistRecord.musicPlaylistID,
             name: playlistRecord.name,
             playlistRecord: playlistRecord,
             in: context
         )
-        let song = try await song(id: musicItemID)
         try await MusicKitActivityLog.shared.measure(.libraryPlaylistAddItem) {
             try await AppleMusicPlaylistWrites.add(song, to: playlist)
         }
+    }
+
+    static func liveLibrarySong(id: String) async throws -> Song {
+        let songs = try await MusicLibrarySongResolver.librarySongs(MusicItemID(id))
+        guard songs.count == 1, let song = songs.first else { throw PlaylistMutationError.musicItemMissing }
+        return song
     }
 
     private func song(id: String) async throws -> Song {
