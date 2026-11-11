@@ -197,11 +197,16 @@ final class PlaybackController {
     /// plays, when a newer start replaces it, when the user presses Play, or
     /// at the limit.
     @ObservationIgnored private var startHold: Int?
+    /// The start whose hold a Play press took over: it still owes its resume
+    /// seek, until the hold's limit.
+    @ObservationIgnored private var startTakenOver: Int?
     /// The start whose held observation has been recorded, so it is listed once.
     @ObservationIgnored private var recordedHeldStart: Int?
     /// The display last recorded, so only changes are listed.
     @ObservationIgnored private var recordedDisplay: String?
     private var isHoldingStart: Bool { startHold == startGeneration }
+    /// Shuffle and Play was tapped during a held start of the same intent.
+    @ObservationIgnored private var shuffleWhenHeldStartLoads = false
     /// How long the hold may last if Apple Music never finishes preparing.
     @ObservationIgnored var startHoldLimit: Duration = .seconds(8)
     /// The longest a start waits for MusicKit to load the queue.
@@ -510,7 +515,11 @@ final class PlaybackController {
     // MARK: - Observation (`PLAY-011`)
 
     /// The one path by which player changes reach Overplay, whichever surface
-    /// or MusicKit itself caused them.
+    /// or MusicKit itself caused them. Nothing here may wait on the player:
+    /// the delivery task and the sample loop wait on this, so a call that
+    /// never returned would stop observation until relaunch or foreground.
+    /// The calls it causes are issued in `Task.immediate`, in the same order
+    /// as if awaited here, and answered beside it.
     func observePlayer() async {
         guard !isHoldingStart else {
             if recordedHeldStart != startHold {
@@ -533,24 +542,24 @@ final class PlaybackController {
 
         if let entry {
             if entry.entryID != lastEntryID {
-                await transition(to: entry)
+                transition(to: entry)
             } else if entry.item != nil, !lastEntryWasHydrated {
                 lastEntryWasHydrated = true
-                await attributeCurrent(entry)
+                attributeCurrent(entry)
                 recordEntry(entry, path: "hydrated")
             }
             let position = player.playbackTime
             elapsedSeconds = position
             updateSessionProgress(position: position)
         } else if lastEntryID != nil {
-            await queueBecameEmpty(status: status)
+            queueBecameEmpty(status: status)
         }
         noteObservedStatus(status, position: player.playbackTime, now: .now)
         notePause(status: status, now: .now)
         ensureSampling()
         if nowPlayingRepairPending {
             nowPlayingRepairPending = false
-            await repairUnpreparedQueue()
+            Task.immediate { @MainActor [weak self] in await self?.repairUnpreparedQueue() }
         }
     }
 
@@ -564,6 +573,8 @@ final class PlaybackController {
         guard let intent, let member = currentMember, player.playbackStatus == .playing, !isHoldingStart else { return }
         activityLog.record(.playbackSelectionPath, detail: "nowPlayingRepair from=\"\(member.title)\"")
         await resubmit(intent, from: member, position: 0)
+        // Changes during the repair's hold were not observed.
+        await observePlayer()
     }
 
     /// The one-second sample while playing: cheap reads only (`LOAD-001`).
@@ -623,7 +634,7 @@ final class PlaybackController {
         if shuffleChanged { saveResumePoint(force: true) }
     }
 
-    private func transition(to entry: PlayerEntrySnapshot) async {
+    private func transition(to entry: PlayerEntrySnapshot) {
         let previousEntryID = lastEntryID
         let position = player.playbackTime
         // The first entry after a submission is the one Overplay asked to
@@ -641,7 +652,7 @@ final class PlaybackController {
         if let carried = pendingCarriedSession {
             pendingCarriedSession = nil
             if incoming?.localTrackID == carried.play.localTrackID {
-                await carryOver(carried, to: entry, confirmed: entry.item != nil)
+                carryOver(carried, to: entry, confirmed: entry.item != nil)
                 return
             }
             // Recovery or resume was interrupted by Overplay, not the user:
@@ -657,7 +668,7 @@ final class PlaybackController {
             let sameMember = incoming != nil && incoming?.localTrackID == outgoing.play.localTrackID
             let notYetKnown = entry.item == nil && outgoing.isAttributed
             if continuous, sameMember || notYetKnown {
-                await carryOver(outgoing, to: entry, confirmed: sameMember)
+                carryOver(outgoing, to: entry, confirmed: sameMember)
                 return
             }
             let completedNaturally = PlaybackSessionEvaluationService.inferredNaturalCompletion(session: outgoing.play)
@@ -678,7 +689,7 @@ final class PlaybackController {
         )
         frozenSamples = 0
         lastSamplePosition = nil
-        await attributeCurrent(entry)
+        attributeCurrent(entry)
         recordEntry(entry, path: "new")
         saveResumePoint(force: true)
         // A new song on a queue that is playing unprepared: rebuild it once,
@@ -691,7 +702,7 @@ final class PlaybackController {
 
     /// Moves a session onto a new entry ID for the same song. Unconfirmed
     /// carry-overs are checked again when the entry's item hydrates.
-    private func carryOver(_ carried: ObservedSession, to entry: PlayerEntrySnapshot, confirmed: Bool) async {
+    private func carryOver(_ carried: ObservedSession, to entry: PlayerEntrySnapshot, confirmed: Bool) {
         var session = carried
         session.entryID = entry.entryID
         session.awaitsHydrationCheck = !confirmed
@@ -703,14 +714,14 @@ final class PlaybackController {
         lastEntryID = entry.entryID
         lastEntryWasHydrated = entry.item != nil
         activityLog.record(.playbackSelectionPath, detail: "sessionCarriedOver confirmed=\(confirmed)")
-        await attributeCurrent(entry)
+        attributeCurrent(entry)
         recordEntry(entry, path: "carried")
         saveResumePoint(force: true)
     }
 
     /// Attributes the current entry and publishes the display. Never clears
     /// the intent or the playlist context (`PLAY-012`).
-    private func attributeCurrent(_ entry: PlayerEntrySnapshot) async {
+    private func attributeCurrent(_ entry: PlayerEntrySnapshot) {
         let member = member(for: entry)
         currentMember = member ?? (entry.item == nil ? attribution?.member(localTrackID: attributedEntries[entry.entryID]) : nil)
         if var current = session, current.entryID == entry.entryID {
@@ -750,7 +761,7 @@ final class PlaybackController {
         applyDisplay(entry: entry, member: currentMember)
         updateActivePlaylistSnapshotCurrentRow()
         prioritizeUnknownApplePlayCount()
-        await skipIfMemberLeftScope(entry: entry)
+        skipIfMemberLeftScope(entry: entry)
     }
 
     private func member(for entry: PlayerEntrySnapshot) -> PlaybackIntent.Member? {
@@ -830,7 +841,7 @@ final class PlaybackController {
         return newIndex < oldIndex
     }
 
-    private func queueBecameEmpty(status: MusicPlayer.PlaybackStatus) async {
+    private func queueBecameEmpty(status: MusicPlayer.PlaybackStatus) {
         let outgoing = session
         let completed = outgoing.map { PlaybackSessionEvaluationService.inferredNaturalCompletion(session: $0.play) } ?? false
         // A stale last observation means the end happened while Overplay was
@@ -838,9 +849,12 @@ final class PlaybackController {
         let stale = outgoing.map {
             Date.now.timeIntervalSince($0.play.lastObservedAt) > PlaybackSessionEvaluationService.observationStalenessThresholdSeconds
         } ?? true
+        // Paused players are not sampled, so a paused session always looks
+        // stale; it did not play out. The system dropped its idle queue.
+        let lostWhilePaused = !completed && outgoing?.pausedSince != nil
         let stoppedMidTrack = !completed && !stale
         activityLog.record(.queueEndObserved,
-            detail: completed ? "played out" : stale ? "ended while suspended" : "stopped mid-track")
+            detail: completed ? "played out" : lostWhilePaused ? "lost while paused" : stale ? "ended while suspended" : "stopped mid-track")
         if let outgoing, completed {
             finish(outgoing, end: .queueEnded)
         }
@@ -848,6 +862,11 @@ final class PlaybackController {
         lastEntryID = nil
         lastEntryWasHydrated = false
         guard let intent else { return }
+        if lostWhilePaused {
+            // Keep the member and position; Play resumes there, as after a relaunch.
+            saveResumePoint(force: true)
+            return
+        }
         if stoppedMidTrack {
             // Keep the member and position, so Play resumes where it stopped.
             fail(kind: .command, message: Self.playbackStoppedMessage)
@@ -918,7 +937,8 @@ final class PlaybackController {
     /// Times the current song's pauses. Only a pause counts: a stall or a
     /// start in progress is not one.
     private func notePause(status: MusicPlayer.PlaybackStatus, now: Date) {
-        guard var current = session else { return }
+        // A paused queue that is dropped can report stopped first; still that pause.
+        guard var current = session, status != .stopped else { return }
         if status == .paused {
             if current.pausedSince == nil { current.pausedSince = now } else { return }
         } else if let pausedSince = current.pausedSince {
@@ -1037,6 +1057,7 @@ final class PlaybackController {
         adopt(context)
         playWantedAt = .now
         // Play takes over from a start still preparing.
+        if isHoldingStart { startTakenOver = startHold }
         startHold = nil
         if playbackFailure != nil {
             await recover()
@@ -1162,6 +1183,13 @@ final class PlaybackController {
     ) async {
         adopt(context)
         if let intent, intent.collection == nil, intent.musicPlaylistID == playlist.musicPlaylistID, intent.scope == scope {
+            if isHoldingStart {
+                // A repeat tap: playing or shuffling now would act on a queue
+                // still loading. The start shuffles once loaded, if it wasn't going to.
+                activityLog.record(.playbackSelectionPath, detail: "repeatDuringStart")
+                shuffleWhenHeldStartLoads = true
+                return
+            }
             activityLog.record(.playbackSelectionPath, detail: "resumeCurrentPlaylist")
             if !shuffleEnabled {
                 // MusicKit shuffles what is still to come; the song playing goes on.
@@ -1204,6 +1232,12 @@ final class PlaybackController {
     private func select(_ member: PlaybackIntent.Member, in intent: PlaybackIntent) async {
         let localTrackID = member.localTrackID
         if currentMember?.localTrackID == localTrackID {
+            // A repeat tap: the start in flight is already doing this, and
+            // Play would end its hold and play a queue still loading.
+            guard !isHoldingStart else {
+                activityLog.record(.playbackSelectionPath, detail: "repeatDuringStart")
+                return
+            }
             // The current track resumes, never restarts, live queue or not.
             activityLog.record(.playbackSelectionPath, detail: "resumeCurrent")
             if let context, player.currentEntryID == nil || player.playbackStatus != .playing { await play(context: context) }
@@ -1411,20 +1445,51 @@ final class PlaybackController {
         player.pause()
         player.submitQueue(tracks, startingAt: startIndex)
         do {
-            try await startLoaded(trackCount: tracks.count, shuffle: shuffle, keepsShuffle: keepsShuffle,
-                                  generation: generation)
+            let outcome = try await startLoaded(trackCount: tracks.count, shuffle: shuffle, keepsShuffle: keepsShuffle,
+                                                generation: generation)
             // A newer start replaced this queue while play was in flight.
             guard generation == startGeneration else { return }
-            if let duration = currentMember?.durationSeconds, position > 5, position < duration - 5 {
-                player.playbackTime = position
+            switch outcome {
+            case .played:
+                seekToResumePosition(position)
+            case .playedAfterHoldEnded, .takenOverByPlay:
+                // Observation is running again, so the player may have moved on.
+                await observePlayer()
+                if intent.members.indices.contains(startIndex),
+                   currentMember?.localTrackID == intent.members[startIndex].localTrackID {
+                    seekToResumePosition(position)
+                }
+            case .holdLost:
+                break
             }
-            clearFailure()
-            statusMessage = nil
+            // Only this start's own play settles a failure; a Play press reports its own.
+            if outcome == .played || outcome == .playedAfterHoldEnded {
+                clearFailure()
+                statusMessage = nil
+            }
         } catch {
             guard generation == startGeneration else { return }
             fail(error)
         }
         saveResumePoint(force: true)
+    }
+
+    private func seekToResumePosition(_ position: Double) {
+        guard let duration = currentMember?.durationSeconds, position > 5, position < duration - 5 else { return }
+        player.playbackTime = position
+        elapsedSeconds = position
+    }
+
+    /// How a held start ended, which decides what `submit` still does for it.
+    private enum StartOutcome {
+        /// Reached `play()` with the hold intact.
+        case played
+        /// Reached `play()`, but the hold ended during that call.
+        case playedAfterHoldEnded
+        /// A Play press took the hold before this start reached `play()`.
+        case takenOverByPlay
+        /// The hold timed out or was given up, and nothing played.
+        case holdLost
     }
 
     /// Every start (#76): load the queue without playing, wait until MusicKit
@@ -1435,15 +1500,23 @@ final class PlaybackController {
     /// the first few songs. Nothing is heard or shown before the chosen song.
     /// A resubmission that keeps shuffle reshuffles the loaded queue the same
     /// way but stays on its start song.
-    private func startLoaded(trackCount: Int, shuffle: Bool, keepsShuffle: Bool = false, generation: Int) async throws {
+    private func startLoaded(trackCount: Int, shuffle: Bool, keepsShuffle: Bool = false, generation: Int) async throws -> StartOutcome {
         startHold = generation
+        shuffleWhenHeldStartLoads = false
         // The player was paused for this start; never offer Pause meanwhile.
         isPlaying = false
         // On 2026-10-07 prepareToPlay never returned, and the hold left the
         // controller believing it was playing until relaunch.
         let watchdog = Task { [weak self, limit = startHoldLimit] in
             try? await Task.sleep(for: limit)
-            guard !Task.isCancelled, let self, self.startHold == generation else { return }
+            guard !Task.isCancelled, let self else { return }
+            if self.startTakenOver == generation {
+                // Prepare answering later must not jump audio already playing.
+                self.startTakenOver = nil
+                activityLog.record(.playbackSelectionPath, detail: "startTakeoverExpired")
+                return
+            }
+            guard self.startHold == generation else { return }
             // Stop hiding the player; Play recovers as usual, and a late
             // prepare does not resume this start.
             self.startHold = nil
@@ -1458,28 +1531,33 @@ final class PlaybackController {
         try await awaitPlayer("prepare start=\(generation)") { try await player.prepareToPlay() }
         // A late answer for an older queue says nothing about the current one.
         if generation == startGeneration { queueNeedsFreshStart = false }
-        guard isHoldingStart(generation) else { return }
+        guard isHoldingStart(generation) else { return lostHold(generation) }
         // Nothing is playing yet; past the limit, start anyway.
         let clock = ContinuousClock()
         let limit = clock.now.advanced(by: queueLoadLimit)
         while player.loadedEntryCount < trackCount, clock.now < limit {
             try? await Task.sleep(for: .milliseconds(50))
-            guard isHoldingStart(generation) else { return }
+            guard isHoldingStart(generation) else { return lostHold(generation) }
         }
-        guard isHoldingStart(generation) else { return }
+        guard isHoldingStart(generation) else { return lostHold(generation) }
         if shuffle {
             player.setShuffleMode(.off)
             player.setShuffleMode(.songs)
             if trackCount > 1 {
                 try await awaitPlayer("shuffle skip start=\(generation)") { try await player.skipToNextEntry() }
             }
-            guard isHoldingStart(generation) else { return }
-        } else if keepsShuffle {
+            guard isHoldingStart(generation) else { return lostHold(generation) }
+        } else if keepsShuffle || shuffleWhenHeldStartLoads {
             player.setShuffleMode(.off)
             player.setShuffleMode(.songs)
             observeModes()
         }
         try await awaitPlayer("play start=\(generation)") { try await player.play() }
+        return isHoldingStart(generation) ? .played : .playedAfterHoldEnded
+    }
+
+    private func lostHold(_ generation: Int) -> StartOutcome {
+        startTakenOver == generation ? .takenOverByPlay : .holdLost
     }
 
     private func isHoldingStart(_ generation: Int) -> Bool {
@@ -2066,9 +2144,12 @@ final class PlaybackController {
             activityLog.record(.playbackRecoveryAttempt, detail: "network returned: playback not wanted recently, no call made")
             return
         }
+        // Covers only the settle delay, which merges a burst of path updates.
+        // A hung recovery must not block the next return; its fresh queue
+        // supersedes the hung one.
         isRecoveringForNetworkReturn = true
-        defer { isRecoveringForNetworkReturn = false }
         try? await Task.sleep(for: networkSettleDelay)
+        isRecoveringForNetworkReturn = false
         // Recovered, or paused, while the connections settled.
         guard playbackFailure != nil, self.playWantedAt != nil else { return }
         startHold = nil
@@ -2667,7 +2748,7 @@ final class PlaybackController {
 
     /// `PLAY-015`: an entry whose member left the intent's scope is skipped
     /// when it becomes current, rather than mutating the queue in advance.
-    private func skipIfMemberLeftScope(entry: PlayerEntrySnapshot) async {
+    private func skipIfMemberLeftScope(entry: PlayerEntrySnapshot) {
         // An album or artist plays everything in it, retired songs included (`PLAY-018`).
         guard let member = currentMember, intent != nil, intent?.collection == nil, scopeCheckedVisitEntryID != entry.entryID,
               !skippedEntryIDs.contains(entry.entryID),
@@ -2698,8 +2779,10 @@ final class PlaybackController {
         skippedEntryIDs.insert(entry.entryID)
         markSessionEvaluatedWithoutSkip()
         activityLog.record(.playbackSelectionPath, detail: "skipOnReach")
-        try? await player.skipToNextEntry()
-        await observePlayer()
+        Task.immediate { @MainActor [weak self] in
+            try? await self?.player.skipToNextEntry()
+            await self?.observePlayer()
+        }
     }
 
     // MARK: - Display

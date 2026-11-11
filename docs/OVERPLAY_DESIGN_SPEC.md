@@ -1829,7 +1829,10 @@ current entry ID, status and position. It drives witnessed listening and the
 playthrough threshold, and it catches a missed entry change. Nothing in steady
 state enumerates the queue. Paused, stopped and interrupted players are not
 sampled. Observation stays installed, and foregrounding runs one observation
-pass.
+pass. Observation never waits on the player: the two calls it causes (the
+skip of an entry that has left the scope, and the unprepared queue repair)
+are issued from it but answered beside it, so a call that never returns cannot
+stop later changes being observed.
 
 Every Overplay surface renders one observed state:
 
@@ -1902,10 +1905,24 @@ attribute normally.
    `prepareToPlay` once never returned, and an unbounded hold left Overplay
    believing it was playing until relaunch. At the limit Overplay observes
    the player again and records `startTimedOut`; a prepare that returns
-   later does not resume the start, and nothing is retried. Overplay paused
+   later does not resume the start, and nothing is retried. Only a start
+   that reached `play()` clears a failure that was showing; one that timed
+   out or lost its hold to a Play press leaves it alone. A start that timed
+   out does not seek either. A Play press that takes over a resuming start
+   keeps the saved position: once prepare returns, within the hold's limit,
+   the start seeks if observation attributes the player's current entry to
+   the song being resumed, and otherwise does not. Past the limit it does
+   not seek, so audio already playing never jumps. Overplay paused
    the player for the start, so it does not offer Pause while the start is
    held. The first observed entry is attributed by its item. The app and
    CarPlay both use this shared action.
+   A repeat of the start in flight, such as tapping the same song or Shuffle
+   and Play again in the car when nothing is heard yet, makes no player call
+   while the hold lasts: the start is already doing it. Shuffle and Play
+   during a held start that was not going to shuffle is applied by that start
+   once its queue has loaded, as a resubmission keeps shuffle. A real Play
+   press still takes over, and once the hold has ended a repeat tap is Play
+   again.
    Each shuffle or repeat write is listed in the activity log with how far
    the queue had loaded (`loaded=12/97`), to explain a shuffle that does not
    take while a queue is still loading.
@@ -1918,7 +1935,9 @@ goes on, and a queue that Play has to resubmit keeps the shuffle. Then, if the
 player is playing, nothing else changes; otherwise it is Play, with Play's
 recovery and queue-end behaviour. This holds on every surface: the app's Shuffle and Play,
 the main screen, CarPlay and Siri. To shuffle afresh, start another playlist
-or scope first. Selecting a track is unchanged (`SURFACE-003`).
+or scope first. Selecting a track is unchanged (`SURFACE-003`). While a start
+of that intent is still held, this writes nothing to the player (see step 4
+above).
 
 The device playback cache stores encoded native `Track` objects in the caches
 directory, keyed by local track UUID. It survives relaunch, is never synced,
@@ -1931,7 +1950,9 @@ controller action:
 
 - **The selected member is the current member:** resume if paused, never
   restart. With no live queue (after a relaunch or a stop), this resumes the
-  intent at its saved position, exactly like Play.
+  intent at its saved position, exactly like Play. While that member's start
+  is still held, a repeat tap does nothing, so a loading queue is not played
+  early (`PLAY-005`).
 - **The track is a member of the live intent (same playlist and scope):**
   enumerate the player's queue once, find the member's entry by attribution,
   set it as the current entry, and play. If no entry can be found, submit a new
@@ -2052,7 +2073,9 @@ directly (CarPlay or Lock Screen transport) is not seen, so the window bounds
 it. A stuck player is given a fresh queue again. A path that changes
 interface without dropping (Wi-Fi to mobile data) does not count: arriving
 home must not start music in a pocket. The failure's advice says so (owner
-request, 2026-10-24).
+request, 2026-10-24). Only the 2-second wait de-duplicates path updates: a
+recovery that hangs does not block the next return, whose fresh queue
+supersedes it.
 
 **Stuck player (#84).** A player call Overplay waits on (`prepareToPlay`,
 `play`, or the skip that starts Shuffle and Play; from a start, a resume, a
@@ -2133,7 +2156,13 @@ playback stops. The intent stays. Play then resubmits it from its first member.
 If the last observation is stale (the end happened while Overplay was
 suspended), the end is treated the same way and is not a failure. A fresh stop
 mid-track is a failure: the current member and position are kept, so Play
-resumes there. With repeat-all on, MusicKit loops the queue and no queue end is
+resumes there. A queue lost while the session was seen paused and not near its
+end (the system dropped the idle queue, or media services reset) is neither of
+these: the current member and position are kept and saved as the resume point,
+no failure is shown, and Play resumes there, however long the pause lasted. A
+stop reported after that pause is still that pause. A session that pauses
+within the natural-completion tolerance of its end still counts as the queue
+ending. With repeat-all on, MusicKit loops the queue and no queue end is
 observed. Under repeat-all, a wrap from the last entry to the first is
 forward and a move from the first to the last (in a queue of three or more) is
 backward. Without repeat-all, queue order alone decides.
@@ -2168,7 +2197,8 @@ mutate the live MusicKit queue:
   not (`MUT-004`);
 - an entry whose member has left the intent's scope (retired from Active, or
   restored from Retired) is skipped with Next when it is observed becoming
-  current. Its session is marked evaluated without a skip. An entry is
+  current. Observation issues that Next without waiting for its answer. Its
+  session is marked evaluated without a skip. An entry is
   checked each time it becomes current, so a track retired after it played is
   skipped on the next repeat-all lap. It is checked once per visit, never after
   a mid-song carry-over, and skipped at most once per intent, so a wrap over

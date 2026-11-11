@@ -38,6 +38,8 @@ final class FakePlaybackPlayer: PlaybackPlayer {
     var onPrepare: (@MainActor () async -> Void)?
     /// Runs inside `play`, e.g. to hang it (#84).
     var onPlay: (@MainActor () async -> Void)?
+    /// Runs inside `skipToNextEntry`, e.g. to hang a skip-on-reach.
+    var onNext: (@MainActor () async -> Void)?
     /// MusicKit loads a prepared queue over a fraction of a second, and
     /// shuffle then covers only the loaded entries (#76). When set, prepare
     /// loads this many and each read of `loadedEntryCount` loads this many
@@ -141,6 +143,7 @@ final class FakePlaybackPlayer: PlaybackPlayer {
 
     func skipToNextEntry() async throws {
         commands.append("next")
+        if let onNext { await onNext() }
         if nextFailuresRemaining > 0 {
             nextFailuresRemaining -= 1
             throw Failure.commandFailed
