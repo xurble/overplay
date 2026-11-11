@@ -37,22 +37,34 @@ enum RecentCollectionPresentation {
         songs(recent.songs, rowID: recent.id, in: context)
     }
 
+    /// Up to this many songs, only the records they match are read. An album
+    /// or a search result is well under it; a library's Songs list is not.
+    static let targetedFetchLimit = 200
+
     /// Any collection's songs as track rows, as for a Recents entry.
-    static func songs(_ songs: [PlaybackCollectionSong], rowID: UUID, in context: ModelContext) -> [Song] {
-        // Three fetches in all, then lookups: a library's Songs list is
-        // thousands of rows, and a fetch per row hung the Mac.
-        let allTracks = (try? TrackRecordRepository.allTracks(in: context)) ?? []
-        let tracked = TrackRecordRepository.tracksByCatalogID(allTracks)
+    static func songs(_ songs: [PlaybackCollectionSong], rowID: UUID, in context: ModelContext,
+                      targetedFetchLimit: Int = Self.targetedFetchLimit) -> [Song] {
+        // A few fetches in all, then lookups: a library's Songs list is
+        // thousands of rows, and a fetch per row hung the Mac. A short list
+        // reads only its own records: these views run this on each track change.
+        let isTargeted = songs.count <= targetedFetchLimit
+        let tracks = (try? isTargeted
+            ? TrackRecordRepository.tracks(holdingMusicItemIDs: Set(songs.map(\.catalogID)), in: context)
+            : TrackRecordRepository.allTracks(in: context)) ?? []
+        let tracked = TrackRecordRepository.tracksByCatalogID(tracks)
         let scope = MusicResourceReference.currentLibraryScope
         var byLibraryID: [String: TrackRecord] = [:]
-        for record in allTracks {
+        for record in tracks {
             // A merged track keeps the library IDs it absorbed as aliases.
             let aliases = record.confirmedAliases.filter { $0.domain == .librarySong && $0.scope == scope }.map(\.value)
             let own = record.libraryScope == scope ? [record.libraryID].compactMap { $0 } : []
             for libraryID in own + aliases where byLibraryID[libraryID] == nil { byLibraryID[libraryID] = record }
         }
         var itemsByTrackID: [UUID: PlaylistItemRecord] = [:]
-        for item in (try? PlaylistItemRepository.allItems(in: context)) ?? [] where !item.isDeleted {
+        let items = (try? isTargeted
+            ? PlaylistItemRepository.items(forTrackIDs: tracks.map(\.id), in: context)
+            : PlaylistItemRepository.allItems(in: context)) ?? []
+        for item in items where !item.isDeleted {
             if itemsByTrackID[item.trackID] == nil { itemsByTrackID[item.trackID] = item }
         }
         let roles = Dictionary(((try? context.fetch(FetchDescriptor<PlaylistRecord>())) ?? []).map { ($0.id, $0.role) },

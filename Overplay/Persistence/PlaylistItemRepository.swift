@@ -29,7 +29,7 @@ enum PlaylistItemRepository {
         guard !trackIDs.isEmpty else { return [] }
         return try context.fetch(FetchDescriptor<PlaylistItemRecord>(predicate: #Predicate {
             trackIDs.contains($0.trackID)
-        })).filter { !$0.isDeleted }
+        }, sortBy: [SortDescriptor(\.createdAt)])).filter { !$0.isDeleted }
     }
 
     /// Tracks an identity merge absorbed: each merge writes an immutable

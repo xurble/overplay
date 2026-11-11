@@ -195,6 +195,89 @@ struct RecentsTests {
         #expect(songs.first?.summary.trackID == fixture.tracks[0].id)
     }
 
+    /// A store with every way a song can match a track, or fail to.
+    private func songsMatchingEveryWay(_ fixture: PlaybackFixture) throws -> [PlaybackCollectionSong] {
+        let context = fixture.context
+        fixture.tracks[0].confirmedAliases.append(.catalog("alias-catalog"))
+        fixture.tracks[1].confirmedAliases.append(.library("i.alias-library"))
+        fixture.tracks[2].confirmedAliases.append(.library("i.other-scope", scope: "another-library"))
+
+        // Two tracks claim one ID, as an alias and as a catalog ID: the first
+        // by title wins.
+        let first = TrackRecord(title: "Aardvark", artistName: "A")
+        first.confirmedAliases = [.catalog("claimed-twice")]
+        let second = TrackRecord(catalogID: "claimed-twice", title: "Zebra", artistName: "Z")
+        let foreignScope = TrackRecord(libraryID: "i.foreign", title: "Foreign", artistName: "F")
+        foreignScope.libraryScope = "another-library"
+        // Zebra is saved first, so only the sort can put Aardvark ahead.
+        context.insert(second)
+        try context.save()
+        for track in [first, foreignScope] { context.insert(track) }
+        context.insert(PlaylistItemRecord(playlistID: fixture.playlist.id, trackID: first.id))
+        context.insert(PlaylistItemRecord(playlistID: fixture.playlist.id, trackID: second.id))
+
+        // Two rows for one track, before a sync merges them: the oldest shows.
+        try fixture.item(1).skipCount = 4
+        let older = PlaylistItemRecord(playlistID: fixture.playlist.id, trackID: fixture.tracks[1].id, skipCount: 9,
+                                       createdAt: Date(timeIntervalSince1970: 1))
+        context.insert(older)
+        try fixture.item(2).evictedAt = .now
+        try context.save()
+        // Not saved: fetches must still see it.
+        fixture.tracks[2].confirmedAliases.append(.catalog("alias-pending"))
+
+        return ["cat-0", "i.lib-1", "cat-2", "alias-catalog", "i.alias-library", "i.other-scope", "alias-pending",
+                "claimed-twice", "i.foreign", "untracked", "cat-0"].map(song)
+    }
+
+    @Test func aShortListReadsTheSameAsTheWholeLibraryScan() throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        let input = try songsMatchingEveryWay(fixture)
+        let rowID = UUID()
+
+        let targeted = RecentCollectionPresentation.songs(input, rowID: rowID, in: fixture.context)
+        let wholeLibrary = RecentCollectionPresentation.songs(input, rowID: rowID, in: fixture.context, targetedFetchLimit: -1)
+
+        #expect(targeted == wholeLibrary)
+        let byID = Dictionary(targeted.map { ($0.catalogID, $0.summary) }, uniquingKeysWith: { first, _ in first })
+        #expect(byID["alias-catalog"]?.trackID == fixture.tracks[0].id)
+        #expect(byID["i.alias-library"]?.trackID == fixture.tracks[1].id)
+        #expect(byID["i.alias-library"]?.skipCount == 9)
+        #expect(byID["alias-pending"]?.trackID == fixture.tracks[2].id)
+        #expect(byID["cat-2"]?.isRetired == true)
+        #expect(byID["claimed-twice"]?.title == "Song claimed-twice")
+        #expect(byID["claimed-twice"]?.trackID != nil)
+        #expect(byID["i.other-scope"]?.isTracked == false)
+        #expect(byID["i.foreign"]?.isTracked == false)
+        #expect(byID["untracked"]?.isTracked == false)
+        #expect(targeted.count == input.count)
+    }
+
+    @Test func theFirstTrackByTitleWinsAnIDTwoTracksClaim() throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        let input = try songsMatchingEveryWay(fixture)
+
+        let songs = RecentCollectionPresentation.songs(input, rowID: UUID(), in: fixture.context)
+
+        let aardvark = try #require(try TrackRecordRepository.allTracks(in: fixture.context).first { $0.title == "Aardvark" })
+        #expect(songs.first { $0.catalogID == "claimed-twice" }?.summary.trackID == aardvark.id)
+    }
+
+    @Test func aRowChangeIsShownOnTheNextRead() throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        let input = [song("cat-0")]
+        #expect(RecentCollectionPresentation.songs(input, rowID: UUID(), in: fixture.context).first?.summary.isRetired == false)
+
+        try fixture.item(0).evictedAt = .now
+
+        #expect(RecentCollectionPresentation.songs(input, rowID: UUID(), in: fixture.context).first?.summary.isRetired == true)
+    }
+
+    @Test func noSongsNeedNoFetch() throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        #expect(RecentCollectionPresentation.songs([], rowID: UUID(), in: fixture.context).isEmpty)
+    }
+
     @Test func unreachableUnplayedSongsChangeNothing() async throws {
         let (fixture, catalog) = try await playingAlbum()
         defer { fixture.cleanUp() }
