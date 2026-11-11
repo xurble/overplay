@@ -156,6 +156,35 @@ struct OneTruePlaylistRemoteMembershipTests {
         }
     }
 
+    struct StepFailure: Error {}
+
+    /// PR #122 review: this pass is a managed playlist's only release, so a
+    /// song iCloud proved gone is released even when the load or rewrite for
+    /// a song still there fails.
+    @Test("A song iCloud proves gone is released even when the rest of the pass fails", arguments: ["load", "write"])
+    func provenAbsenceSurvivesALaterFailure(failingStep: String) async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        let context = fixture.context
+        let absent = try retire(0, in: fixture, skipCount: 2)
+        let present = try retire(1, in: fixture, skipCount: 2)
+
+        let recorder = Recorder()
+        var membership = Self.membership(cloud: { Self.entries(["i.lib-1", "i.lib-2"]) }, device: ["i.lib-1", "i.lib-2"],
+                                         recorder: recorder)
+        if failingStep == "load" {
+            membership.loadDeviceCopy = { _ in throw StepFailure() }
+        } else {
+            membership.write = { _, _ in throw StepFailure() }
+        }
+        await #expect(throws: StepFailure.self) {
+            try await membership.removeSongsHeldOutside(fixture.playlist, in: context)
+        }
+
+        #expect(absent.suppressedOTPMusicPlaylistIDs.isEmpty && absent.evictedAt != nil)
+        #expect(present.suppressedOTPMusicPlaylistIDs == ["playlist-main"])
+        #expect(!context.hasChanges)
+    }
+
     /// Nothing can read an incoming-only playlist's iCloud copy on its behalf,
     /// so its complete sync remains the only evidence, as it always was.
     @Test("An incoming-only One True Playlist still releases on a complete read, and only then")
