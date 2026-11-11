@@ -120,6 +120,7 @@ final class LibraryRestorationService {
             // earlier partial settings object across suspension points.
             let read = ModelContext(context.container)
             read.autosaveEnabled = false
+            try convergeSettings(in: read)
             if let settings = try Self.restoredSettings(in: read) {
                 let acceptedLocally = defaults.string(forKey: Self.receiptKey) == settings.id.uuidString
                 let builtLocally = locallyRebuiltID != nil && settings.completedRebuildID == locallyRebuiltID
@@ -142,6 +143,15 @@ final class LibraryRestorationService {
         }
         if cloudLibrary == .exists { throw RestorationError.restoringFromCloud }
         throw hasImported ? RestorationError.incompleteLibrary : RestorationError.waitingForCloud
+    }
+
+    /// Duplicate rows would otherwise fail restoration on every device, for
+    /// good. A device that had accepted a removed row keeps its local receipt.
+    private func convergeSettings(in context: ModelContext) throws {
+        guard let convergence = try SettingsRepository.convergeDuplicates(in: context) else { return }
+        if convergence.removedIDs.contains(where: { $0.uuidString == defaults.string(forKey: Self.receiptKey) }) {
+            Self.recordLocalConfiguration(convergence.keeper, defaults: defaults)
+        }
     }
 
     /// Explicit first-time setup only; never called by bootstrap or by a timeout.
