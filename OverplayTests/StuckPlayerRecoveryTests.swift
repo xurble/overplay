@@ -12,6 +12,10 @@ import Testing
 @MainActor
 @Suite("Stuck player recovery", .serialized)
 struct StuckPlayerRecoveryTests {
+    /// Every limit here runs on this clock, so nothing times out unless a
+    /// test moves it, and nothing waits on the wall clock (TST-8).
+    let clock = ManualPlaybackClock()
+
     /// Holds every prepare after the first `passing` until released. Once
     /// released, later prepares pass, so a broken guard fails a test rather
     /// than hanging it.
@@ -46,6 +50,7 @@ struct StuckPlayerRecoveryTests {
         let fixture = try PlaybackFixture(player: player)
         let log = MusicKitActivityLog(fileURL: nil)
         fixture.controller.activityLog = log
+        fixture.controller.clock = clock.clock
         return (fixture, log)
     }
 
@@ -68,6 +73,13 @@ struct StuckPlayerRecoveryTests {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(condition())
+    }
+
+    /// Once `sleepers` limits of `duration` have started, moves the clock on
+    /// by it. Each limit's watchdog has decided when this returns.
+    private func advance(by duration: Duration, sleepers: Int = 1) async throws {
+        try await waitUntil { clock.pending(duration) >= sleepers }
+        await clock.advance(by: duration)
     }
 
     // MARK: - Escalation past a hung rung
@@ -129,12 +141,11 @@ struct StuckPlayerRecoveryTests {
             if lookupFails { throw CancellationError() }
         })
         defer { fixture.cleanUp() }
-        fixture.controller.stuckCallLimit = .milliseconds(20)
-        fixture.controller.startHoldLimit = .milliseconds(20)
+        fixture.controller.clock = clock.clock
 
         let starting = Task { await start(fixture) }
         try await waitUntil { held.count == 1 }
-        try await Task.sleep(for: .milliseconds(200))
+        await clock.advance(by: fixture.controller.stuckCallLimit + fixture.controller.startHoldLimit)
         #expect(fixture.player.commands.isEmpty)
         #expect(!fixture.controller.isPlaying)
         #expect(fixture.controller.isStartingPlayback)
@@ -175,14 +186,19 @@ struct StuckPlayerRecoveryTests {
         let hung = HungPrepares()
         let (fixture, _) = try fixture(hung: hung)
         defer { fixture.cleanUp() }
-        // Long enough to see it starting first, even on a busy run.
         fixture.controller.stuckCallLimit = .milliseconds(50)
         fixture.controller.startHoldLimit = .seconds(2)
 
         let starting = Task { await start(fixture) }
         try await waitUntil { hung.waiting.count == 1 }
         #expect(fixture.controller.isStartingPlayback)
-        try await waitUntil { !fixture.controller.isStartingPlayback }
+        // Stuck, and the hold has ended, but not yet both limits together.
+        try await advance(by: .milliseconds(50))
+        await clock.advance(by: .seconds(2) - .milliseconds(1))
+        #expect(fixture.controller.playbackFailure?.kind == .stuck)
+        #expect(fixture.controller.isStartingPlayback)
+        await clock.advance(by: .milliseconds(1))
+        #expect(!fixture.controller.isStartingPlayback)
         #expect(hung.waiting.count == 1)
 
         hung.releaseAll()
@@ -199,7 +215,11 @@ struct StuckPlayerRecoveryTests {
         fixture.controller.startHoldLimit = .milliseconds(50)
 
         let starting = Task { await start(fixture) }
-        try await waitUntil { fixture.controller.playbackFailure?.kind == .stuck }
+        try await waitUntil { clock.pending(.milliseconds(50)) == 2 }
+        await clock.advance(by: .milliseconds(49))
+        #expect(fixture.controller.playbackFailure == nil)
+        await clock.advance(by: .milliseconds(1))
+        #expect(fixture.controller.playbackFailure?.kind == .stuck)
 
         let failure = try #require(fixture.controller.playbackFailure)
         #expect(failure.message == PlaybackController.stuckMessage)
@@ -222,7 +242,8 @@ struct StuckPlayerRecoveryTests {
         fixture.controller.stuckCallLimit = .milliseconds(50)
         fixture.controller.startHoldLimit = .milliseconds(50)
         let starting = Task { await start(fixture) }
-        try await waitUntil { fixture.controller.playbackFailure?.kind == .stuck }
+        try await advance(by: .milliseconds(50), sleepers: 2)
+        #expect(fixture.controller.playbackFailure?.kind == .stuck)
 
         // The first press skips straight to a fresh queue: preparing the hung
         // queue again would only stack another call on it.
@@ -232,7 +253,7 @@ struct StuckPlayerRecoveryTests {
         #expect(events(log, .playerCallStarted).allSatisfy { !$0.contains("rung=") })
 
         // That queue hangs too. Later presses send nothing.
-        try await Task.sleep(for: .milliseconds(100))
+        try await advance(by: .milliseconds(50), sleepers: 2)
         let commandsBefore = fixture.player.commands
         let laterPresses = Task {
             await fixture.controller.play(context: fixture.context)
@@ -258,7 +279,8 @@ struct StuckPlayerRecoveryTests {
         var release: CheckedContinuation<Void, Never>?
         fixture.player.onPlay = { await withCheckedContinuation { release = $0 } }
         let press = Task { await fixture.controller.play(context: fixture.context) }
-        try await waitUntil { fixture.controller.playbackFailure?.kind == .stuck }
+        try await advance(by: .milliseconds(50), sleepers: 1)
+        #expect(fixture.controller.playbackFailure?.kind == .stuck)
 
         // The player drops its queue, which on its own reads "press Play".
         await fixture.player.abandonQueue()
@@ -277,7 +299,8 @@ struct StuckPlayerRecoveryTests {
         fixture.controller.stuckCallLimit = .milliseconds(50)
         fixture.controller.startHoldLimit = .milliseconds(50)
         let starting = Task { await start(fixture) }
-        try await waitUntil { fixture.controller.playbackFailure?.kind == .stuck }
+        try await advance(by: .milliseconds(50), sleepers: 2)
+        #expect(fixture.controller.playbackFailure?.kind == .stuck)
 
         // The fresh queue's prepare answers, then its play fails: the player
         // is answering, so its own error is shown and Play is offered.
@@ -299,7 +322,8 @@ struct StuckPlayerRecoveryTests {
         await start(fixture)
         await stall(fixture)
         let press = Task { await fixture.controller.play(context: fixture.context) }
-        try await waitUntil { fixture.controller.playbackFailure?.kind == .stuck }
+        try await advance(by: .milliseconds(50), sleepers: 1)
+        #expect(fixture.controller.playbackFailure?.kind == .stuck)
 
         // MusicKit plays after all: the player is no longer stuck.
         for _ in 0..<2 {
@@ -330,7 +354,7 @@ struct StuckPlayerRecoveryTests {
         #expect(fixture.controller.playbackFailure == nil)
 
         // Rung 2's limit passes while the new queue plays.
-        try await Task.sleep(for: .milliseconds(300))
+        try await advance(by: .milliseconds(100), sleepers: 1)
         #expect(fixture.controller.playbackFailure == nil)
         #expect(events(log, .playerCallStuck).isEmpty)
         hung.releaseAll()
@@ -354,7 +378,8 @@ struct StuckPlayerRecoveryTests {
         var release: CheckedContinuation<Void, Never>?
         fixture.player.onPlay = { await withCheckedContinuation { release = $0 } }
         let press = Task { await fixture.controller.play(context: fixture.context) }
-        try await waitUntil { fixture.controller.playbackFailure?.kind == .stuck }
+        try await advance(by: .milliseconds(50), sleepers: 1)
+        #expect(fixture.controller.playbackFailure?.kind == .stuck)
         fixture.player.onPlay = nil
         fixture.player.playFailuresRemaining = 1
         let commandsBefore = fixture.player.commands
@@ -377,7 +402,8 @@ struct StuckPlayerRecoveryTests {
         fixture.player.onPlay = { await withCheckedContinuation { release = $0 } }
 
         let press = Task { await fixture.controller.play(context: fixture.context) }
-        try await waitUntil { fixture.controller.playbackFailure?.kind == .stuck }
+        try await advance(by: .milliseconds(50), sleepers: 1)
+        #expect(fixture.controller.playbackFailure?.kind == .stuck)
         #expect(events(log, .playerCallStuck).contains("play resume unanswered"))
         fixture.player.onPlay = nil
         release?.resume()
@@ -392,7 +418,8 @@ struct StuckPlayerRecoveryTests {
         fixture.controller.stuckCallLimit = .milliseconds(50)
         fixture.controller.startHoldLimit = .milliseconds(50)
         let starting = Task { await start(fixture) }
-        try await waitUntil { fixture.controller.playbackFailure?.kind == .stuck }
+        try await advance(by: .milliseconds(50), sleepers: 2)
+        #expect(fixture.controller.playbackFailure?.kind == .stuck)
         let pressing = Task { await fixture.controller.play(context: fixture.context) }
         try await waitUntil { hung.waiting.count == 2 }
         hung.releaseAll()
@@ -477,11 +504,12 @@ struct StuckPlayerRecoveryTests {
         fixture.controller.startHoldLimit = .milliseconds(50)
         fixture.controller.networkSettleDelay = .zero
         let starting = Task { await start(fixture) }
-        try await waitUntil { fixture.controller.playbackFailure?.kind == .stuck }
+        try await advance(by: .milliseconds(50), sleepers: 2)
+        #expect(fixture.controller.playbackFailure?.kind == .stuck)
         // The press's fresh queue hangs too, so a further press sends nothing.
         let press = Task { await fixture.controller.play(context: fixture.context) }
         try await waitUntil { hung.waiting.count == 2 }
-        try await Task.sleep(for: .milliseconds(100))
+        try await advance(by: .milliseconds(50), sleepers: 2)
         await fixture.controller.play(context: fixture.context)
         #expect(events(log, .playbackRecoveryAttempt).contains { $0.contains("no call made") })
 
