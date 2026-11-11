@@ -13,6 +13,8 @@ struct AppRouter: View {
     private var hasPresentedAuthorizedUI = false
 
     @Query(sort: \OverplaySettings.createdAt) private var settingsRecords: [OverplaySettings]
+    /// Never inserted: what a restored device shows while it has no row.
+    @State private var unsavedDefaults = OverplaySettings()
     @State private var isPlayerExpanded = false
     /// The expanded player was hidden by a fold or a size change, so it comes
     /// back already open, as the screen activates.
@@ -173,9 +175,23 @@ struct AppRouter: View {
         }
     }
 
-    /// The row every other reader uses while duplicates exist.
     private var settings: OverplaySettings? {
-        SettingsRepository.keeper(of: settingsRecords)
+        Self.shownSettings(settingsRecords, isLibraryReady: runtime.libraryRestoration.isReady,
+                           unsavedDefaults: unsavedDefaults)
+    }
+
+    /// The row every other reader uses while duplicates exist. A device that
+    /// has restored keeps showing the app if every row goes, as a Nuke
+    /// Database on another device can leave it, reading unsaved defaults as
+    /// `SettingsRepository.settings(in:)` does until a row arrives, so
+    /// Settings and Nuke Database stay in reach. A device that has not
+    /// restored still waits for its row.
+    static func shownSettings(
+        _ rows: [OverplaySettings],
+        isLibraryReady: Bool,
+        unsavedDefaults: OverplaySettings
+    ) -> OverplaySettings? {
+        SettingsRepository.keeper(of: rows) ?? (isLibraryReady ? unsavedDefaults : nil)
     }
 
     private var isShowingOneTruePlaylistPrompt: Binding<Bool> {

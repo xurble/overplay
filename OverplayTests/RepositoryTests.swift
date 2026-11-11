@@ -24,6 +24,30 @@ struct SettingsRepositoryTests {
         #expect(settings.playthroughThresholdPercentage == 90)
     }
 
+    /// PR #122 re-review: a restored device whose every row went (a Nuke
+    /// Database on another device, delivered in an unlucky order) showed
+    /// "Preparing Overplay" for good, with no way to Settings. It keeps the
+    /// app on unsaved defaults; a device that has not restored still waits.
+    @Test("a restored device with no settings row shows the app on unsaved defaults; a new device waits")
+    func shownSettingsFallsBackOnlyOnceRestored() throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let unsaved = OverplaySettings()
+
+        #expect(AppRouter.shownSettings([], isLibraryReady: true, unsavedDefaults: unsaved) === unsaved)
+        #expect(AppRouter.shownSettings([], isLibraryReady: false, unsavedDefaults: unsaved) == nil)
+        #expect(try context.fetchCount(FetchDescriptor<OverplaySettings>()) == 0)
+
+        // A row arrives: it replaces the defaults at once.
+        let newer = OverplaySettings(createdAt: Date(timeIntervalSince1970: 2_000))
+        let older = OverplaySettings(createdAt: Date(timeIntervalSince1970: 1_000))
+        context.insert(newer)
+        context.insert(older)
+        try context.save()
+        #expect(AppRouter.shownSettings([newer, older], isLibraryReady: true, unsavedDefaults: unsaved) === older)
+        #expect(AppRouter.shownSettings([newer, older], isLibraryReady: false, unsavedDefaults: unsaved) === older)
+    }
+
     @Test("reading settings finds the stored row, whichever device's row is oldest")
     func readingFindsOldestRow() throws {
         let container = try OverplayTestSupport.makeModelContainer()

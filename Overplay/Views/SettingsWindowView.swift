@@ -9,6 +9,8 @@ struct SettingsWindowView: View {
 
     let runtime: AppRuntime
     @Query(sort: \OverplaySettings.createdAt) private var settingsRecords: [OverplaySettings]
+    /// Never inserted: a restored Mac with no row still reaches Nuke Database.
+    @State private var unsavedDefaults = OverplaySettings()
     @State private var pane: SettingsView.Pane = .general
     @State private var headerHeight: CGFloat = 0
     @State private var contentHeight: CGFloat = 0
@@ -27,7 +29,8 @@ struct SettingsWindowView: View {
 
     var body: some View {
         Group {
-            if let settings = SettingsRepository.keeper(of: settingsRecords) {
+            if let settings = AppRouter.shownSettings(settingsRecords, isLibraryReady: runtime.libraryRestoration.isReady,
+                                                      unsavedDefaults: unsavedDefaults) {
                 VStack(spacing: 0) {
                     VStack(spacing: 0) {
                         SettingsWindowHeader(pane: $pane)
