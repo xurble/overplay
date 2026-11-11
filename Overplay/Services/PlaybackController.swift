@@ -1745,15 +1745,30 @@ final class PlaybackController {
         adopt(context)
         let startToken = beginStart()
         defer { endStart(startToken) }
-        // Only songs not yet cached are written, so tapping another song of
-        // a playing collection writes nothing (PB-10). They are still filled
-        // before selecting, for a selection that has to resubmit.
-        for (id, track) in tracks where collectionTrackCache.data(forCatalogSongID: id) == nil {
-            collectionTrackCache.set(try? JSONEncoder().encode(track), forCatalogSongID: id)
+        let selected = catalogSongID.flatMap { id in
+            intent?.collection?.groupKey == collection.groupKey ? intent?.members.first { $0.catalogSongID == id } : nil
+        }
+        // The caller's tracks go into the cache before selecting, for a
+        // selection that has to resubmit from it. Selecting in place fills
+        // only songs the cache lost, so a tap inside a playing collection
+        // writes nothing (PB-10). A new start writes each track that differs
+        // from the cached copy, so the caller's copy is the one queued: a
+        // library browser passes this device's local copies.
+        // Sorted keys, so an unchanged track encodes to the same data and is
+        // not written again.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        for (id, track) in tracks {
+            let cached = collectionTrackCache.data(forCatalogSongID: id)
+            if selected != nil {
+                if cached == nil { collectionTrackCache.set(try? encoder.encode(track), forCatalogSongID: id) }
+            } else {
+                let data = try? encoder.encode(track)
+                if data != cached { collectionTrackCache.set(data, forCatalogSongID: id) }
+            }
         }
         let shuffle = catalogSongID == nil
-        if let catalogSongID, let intent, intent.collection?.groupKey == collection.groupKey,
-           let member = intent.members.first(where: { $0.catalogSongID == catalogSongID }) {
+        if let member = selected, let intent {
             await select(member, in: intent)
             if recordsRecent { recordRecent(collection, songs: songs, artworkURLTemplate: nil) }
             return playbackFailure == nil
