@@ -43,15 +43,17 @@ struct SyncCleanupTests {
         var webRequested: [[String]] = []
         let result = try await MusicLibrarySongResolver.resolveAll(
             [onDevice, web, catalogOnly, nowhere, ambiguous, web],
-            library: { id in
-                switch id.rawValue {
-                case "i.on-device": [onDevice]
-                case "i.ambiguous": [ambiguous, ambiguous]
-                default: []
+            library: { ids in
+                ids.flatMap { id -> [Song] in
+                    switch id.rawValue {
+                    case "i.on-device": [onDevice]
+                    case "i.ambiguous": [ambiguous, ambiguous]
+                    default: []
+                    }
                 }
             },
             webLibrary: { ids in webRequested.append(ids.map(\.rawValue)); return ["i.web"] },
-            catalog: { id in id.rawValue == "1234" ? [catalogOnly] : [] }
+            catalog: { ids in ids.map(\.rawValue).contains("1234") ? [catalogOnly] : [] }
         )
         #expect(webRequested == [["i.web", "1234", "i.nowhere"]])
         #expect(result.resolutions[onDevice.id]?.identity.libraryID == "i.on-device")
@@ -85,6 +87,100 @@ struct SyncCleanupTests {
         )
         #expect(resolved.snapshots.map { $0?.libraryID } == ["i.a", nil])
         #expect(throws: MusicLibrarySongResolver.ResolutionError.self) { try resolved.requireAll() }
+    }
+
+    // MARK: - #111 batched on-device library and catalog lookups
+
+    @Test("On-device library and catalog lookups are batched in 100s and correlated by ID")
+    func nativeAndCatalogAreBatched() async throws {
+        let observed = try (0..<230).map { try Self.song("cat-\($0)") }
+        var nativeBatches: [Int] = []
+        var catalogBatches: [Int] = []
+        let result = try await MusicLibrarySongResolver.resolveAll(
+            observed,
+            library: { ids in nativeBatches.append(ids.count); return [] },
+            librarySong: { _ in Issue.record("per-song lookup without a reason"); return [] },
+            webLibrary: { _ in [] },
+            catalog: { ids in
+                catalogBatches.append(ids.count)
+                return try ids.reversed().map { try Self.song($0.rawValue) }
+            }
+        )
+        #expect(nativeBatches == [100, 100, 30])
+        #expect(catalogBatches == [100, 100, 30])
+        #expect(result.unresolved.isEmpty)
+        #expect(result.resolutions.count == 230)
+        #expect(result.resolutions.values.allSatisfy { $0.identity.catalogID != nil })
+    }
+
+    @Test("A batched native lookup with two matches for a song leaves that song unresolved, not the rest")
+    func batchedMultipleMatchesAreUnresolved() async throws {
+        let plain = try Self.song("i.plain")
+        let twice = try Self.song("i.twice")
+        let result = try await MusicLibrarySongResolver.resolveAll(
+            [plain, twice],
+            library: { _ in [plain, twice, twice] },
+            librarySong: { _ in Issue.record("per-song lookup without a reason"); return [] },
+            webLibrary: { _ in Issue.record("web library consulted"); return [] },
+            catalog: { _ in Issue.record("catalog consulted"); return [] }
+        )
+        #expect(result.resolutions[plain.id]?.identity.libraryID == "i.plain")
+        #expect(result.unresolved == [twice.id])
+    }
+
+    /// Mac persistent IDs answer with a different, web library ID: probe of
+    /// 2026-09-27, `[native song id=-3140821922437280474]`. A batch cannot say
+    /// which observed song such an answer belongs to.
+    @Test("A native batch answering under other IDs falls back to per-song lookups")
+    func unattributableNativeBatchFallsBackPerSong() async throws {
+        let observed = try ["111", "222", "333"].map { try Self.song($0) }
+        var batches = 0
+        var perSong: [String] = []
+        let result = try await MusicLibrarySongResolver.resolveAll(
+            observed,
+            library: { _ in batches += 1; return try [Self.song("i.mapped-a"), Self.song("i.mapped-b")] },
+            librarySong: { id in
+                perSong.append(id.rawValue)
+                return id.rawValue == "333" ? [] : [try Self.song("i.mapped-\(id.rawValue)")]
+            },
+            webLibrary: { _ in [] },
+            catalog: { _ in [] }
+        )
+        #expect(batches == 1)
+        #expect(perSong == ["111", "222", "333"])
+        #expect(result.resolutions[observed[0].id]?.identity.libraryID == "i.mapped-111")
+        #expect(result.resolutions[observed[1].id]?.identity.libraryID == "i.mapped-222")
+        #expect(result.unresolved == [observed[2].id])
+    }
+
+    @Test("A native batch that mixes correlated and mapped answers only falls back for the unanswered")
+    func mixedNativeBatchFallsBackForTheUnanswered() async throws {
+        let answered = try Self.song("i.answered")
+        let mapped = try Self.song("222")
+        var perSong: [String] = []
+        let result = try await MusicLibrarySongResolver.resolveAll(
+            [answered, mapped],
+            library: { _ in [answered, try Self.song("i.mapped")] },
+            librarySong: { id in perSong.append(id.rawValue); return [try Self.song("i.mapped")] },
+            webLibrary: { _ in [] },
+            catalog: { _ in [] }
+        )
+        #expect(perSong == ["222"])
+        #expect(result.resolutions[answered.id]?.identity.libraryID == "i.answered")
+        #expect(result.resolutions[mapped.id]?.identity.libraryID == "i.mapped")
+    }
+
+    @Test("A native batch failure stops the fetch")
+    func nativeBatchFailureThrows() async throws {
+        await #expect(throws: URLError.self) {
+            _ = try await MusicLibrarySongResolver.resolveAll(
+                [try Self.song("i.a")],
+                library: { _ in throw URLError(.notConnectedToInternet) },
+                librarySong: { _ in Issue.record("per-song lookup after a failure"); return [] },
+                webLibrary: { _ in [] },
+                catalog: { _ in [] }
+            )
+        }
     }
 
     // MARK: - #69 retention sweep
