@@ -23,7 +23,7 @@ final class AppRuntime {
     private static func makePlaybackController() -> PlaybackController {
         #if targetEnvironment(simulator)
         // No Apple Music in the simulator: play the library on a clock.
-        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+        if !TestHost.isHostingUnitTests {
             return PlaybackController(player: SimulatorPlaybackPlayer(), preparePlaybackTracks: SimulatorPlaybackPlayer.prepare)
         }
         #endif

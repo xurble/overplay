@@ -331,6 +331,11 @@ struct PlaybackFixture {
             player: player, intentStore: store, preparePlaybackTracks: preparePlaybackTracks,
             refreshUnknownApplePlayCount: refreshUnknownApplePlayCount, sleep: PlaybackFixture.manualSampling
         )
+        // No backing files: fixture runs never touch the device's playback
+        // cache directory or activity log. The playlist path reads
+        // `DevicePlaybackCache.shared`, which is memory only under test.
+        controller.collectionTrackCache = DevicePlaybackCache(directory: nil)
+        controller.activityLog = MusicKitActivityLog(fileURL: nil)
         controller.startMonitoring(context: context)
     }
 

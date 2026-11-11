@@ -12,8 +12,11 @@ nonisolated final class DevicePlaybackCache: Sendable {
         var errorDescription: String? { message }
     }
 
+    /// Memory only while hosting unit tests, so tests never fill or read
+    /// the device's cache directory.
     static let shared = DevicePlaybackCache(
-        directory: URL.cachesDirectory.appendingPathComponent("Overplay/PlaybackTracks", isDirectory: true)
+        directory: TestHost.isHostingUnitTests
+            ? nil : URL.cachesDirectory.appendingPathComponent("Overplay/PlaybackTracks", isDirectory: true)
     )
     /// Keyed by track UUID, or by `catalog-<song ID>` for album and artist
     /// songs Overplay does not track (`PLAY-018`).

@@ -27,7 +27,9 @@ import Synchronization
 /// non-isolated code on the 1 Hz playback tick, so state is held under a
 /// `Mutex` rather than in an actor.
 nonisolated final class MusicKitActivityLog: Sendable {
-    static let shared = MusicKitActivityLog()
+    /// Memory only while hosting unit tests, so tests never write the
+    /// device's activity report or launch logs.
+    static let shared = MusicKitActivityLog(fileURL: TestHost.isHostingUnitTests ? nil : defaultFileURL())
 
     /// Individually listed calls retained. High-frequency operations are
     /// tallied instead of listed, so this holds a long narrative of the
