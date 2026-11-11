@@ -29,7 +29,6 @@ struct NowPlayingPaneView: View {
         GeometryReader { proxy in
             let presentation = NowPlayingPresentationFactory.presentation(
                 playbackController: playbackController,
-                settings: settings,
                 context: modelContext
             )
             let activeArtworkTheme = artworkTheme?.isFallback == false ? artworkTheme : nil
@@ -133,7 +132,7 @@ struct NowPlayingPaneView: View {
     @ViewBuilder
     private func trackControls(presentation: NowPlayingPresentation, artworkTheme: AlbumArtworkTheme?) -> some View {
         NowPlayingProgressView(
-            presentation: presentation,
+            settings: settings,
             foreground: artworkTheme?.artistName,
             foregroundRGB: artworkTheme?.artistNameRGB
         )

@@ -137,12 +137,20 @@ struct PlaybackCollectionContextView: View {
     }
 }
 
+/// The bar and times. Reads the playback position itself, so its once-a-second
+/// change re-evaluates only this view.
 struct NowPlayingProgressView: View {
-    var presentation: NowPlayingPresentation
+    @Environment(PlaybackController.self) private var playbackController
+
+    var settings: OverplaySettings
     var foreground: Color? = nil
     var foregroundRGB: AlbumArtworkRGBColor? = nil
 
     var body: some View {
+        let presentation = NowPlayingPresentationFactory.progressPresentation(
+            playbackController: playbackController,
+            settings: settings
+        )
         VStack(spacing: 6) {
             NowPlayingProgressBar(
                 progress: presentation.progress,
@@ -293,6 +301,44 @@ struct NowPlayingProgressBar: View {
     }
 }
 
+/// The mini players' progress along their top edge. Reads the playback
+/// position here, so its once-a-second change does not re-evaluate the bar.
+struct NowPlayingProgressLineView: View {
+    @Environment(PlaybackController.self) private var playbackController
+
+    var settings: OverplaySettings
+    var lineHeight: CGFloat
+    var lineEndInset: CGFloat
+
+    var body: some View {
+        let presentation = NowPlayingPresentationFactory.progressPresentation(
+            playbackController: playbackController,
+            settings: settings
+        )
+        NowPlayingProgressBar(
+            progress: presentation.progress,
+            phase: presentation.progressPhase,
+            durationSeconds: presentation.durationSeconds,
+            isPlaying: presentation.isPlaying,
+            trackID: presentation.trackID,
+            lineHeight: lineHeight,
+            lineEndInset: lineEndInset
+        )
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
+    }
+}
+
+#Preview {
+    NowPlayingProgressLineView(
+        settings: OverplaySettings(selectedPlaylistID: "preview-playlist", selectedPlaylistName: "Overplay"),
+        lineHeight: 3,
+        lineEndInset: 8
+    )
+    .environment(PlaybackController())
+    .padding()
+}
+
 struct TrackPlaybackFactsView: View {
     var presentation: NowPlayingPresentation
     var artworkTheme: AlbumArtworkTheme? = nil
@@ -342,16 +388,19 @@ struct NowPlayingActionButtonsView: View {
     @State private var width: CGFloat = 0
 
     var body: some View {
+        // These fetch: once a pass, and handed down.
+        let actions = currentActions
+        let side = circleSide(actionCount: actions.count)
         if let compactSize {
             HStack(spacing: compactSize.spacing) {
-                ForEach(actions, id: \.self) { button(for: $0) }
+                ForEach(actions, id: \.self) { button(for: $0, circleSide: side) }
             }
         } else {
-            circlesRow
+            circlesRow(actions, circleSide: side)
         }
     }
 
-    private var circlesRow: some View {
+    private func circlesRow(_ actions: [CarPlayNowPlayingAction], circleSide: CGFloat) -> some View {
         // Evenly spaced, closing up and then shrinking smoothly as the column
         // narrows, so the row never widens the column it sits in (that pushed
         // the art off the screen) and nothing jumps while the sidebar moves
@@ -359,7 +408,7 @@ struct NowPlayingActionButtonsView: View {
         HStack(spacing: 0) {
             ForEach(Array(actions.enumerated()), id: \.element) { index, action in
                 if index > 0 { Spacer(minLength: 8).frame(maxWidth: 20) }
-                button(for: action)
+                button(for: action, circleSide: circleSide)
             }
         }
         .frame(maxWidth: .infinity)
@@ -367,13 +416,13 @@ struct NowPlayingActionButtonsView: View {
     }
 
     /// As large as the row allows, up to the full size.
-    private var circleSide: CGFloat {
-        let count = CGFloat(max(actions.count, 1))
+    private func circleSide(actionCount: Int) -> CGFloat {
+        let count = CGFloat(max(actionCount, 1))
         guard width > 0 else { return FullScreenPlayerGlassButtonStyle.circleSide }
         return min(FullScreenPlayerGlassButtonStyle.circleSide, max(32, ((width - 8 * (count - 1)) / count).rounded(.down)))
     }
 
-    private var actions: [CarPlayNowPlayingAction] {
+    private var currentActions: [CarPlayNowPlayingAction] {
         CarPlayNowPlayingActionPolicy.actions(
             playlistRole: playbackController.currentPlaylistRole(context: modelContext),
             isRetired: playbackController.displayedIsEvicted(context: modelContext),
@@ -382,46 +431,46 @@ struct NowPlayingActionButtonsView: View {
     }
 
     @ViewBuilder
-    private func button(for action: CarPlayNowPlayingAction) -> some View {
+    private func button(for action: CarPlayNowPlayingAction, circleSide: CGFloat) -> some View {
         let controls = NowPlayingPresentationFactory.playbackControlsPresentation(playbackController: playbackController)
         switch action {
         case .shuffle:
-            circle(controls.shuffleTitle, systemImage: controls.shuffleSystemImage, isOn: controls.isShuffling) {
+            circle(controls.shuffleTitle, systemImage: controls.shuffleSystemImage, isOn: controls.isShuffling, circleSide: circleSide) {
                 await playbackController.toggleShuffle(context: modelContext)
             }
             .accessibilityValue(controls.isShuffling ? "On" : "Off")
             .disabled(!playbackController.hasLiveQueue)
         case .repeatMode:
-            circle(controls.repeatAllTitle, systemImage: controls.repeatAllSystemImage, isOn: controls.isRepeatingAll) {
+            circle(controls.repeatAllTitle, systemImage: controls.repeatAllSystemImage, isOn: controls.isRepeatingAll, circleSide: circleSide) {
                 await playbackController.toggleRepeatAll(context: modelContext)
             }
             .accessibilityValue(controls.isRepeatingAll ? "On" : "Off")
             .disabled(!playbackController.hasLiveQueue)
         case .promote:
-            circle("Promote to One True Playlist", systemImage: "arrow.up.circle") {
+            circle("Promote to One True Playlist", systemImage: "arrow.up.circle", circleSide: circleSide) {
                 await playbackController.promoteCurrent(settings: settings, context: modelContext)
             }
             .accessibilityInputLabels(["Overplay", "Promote"])
             .disabled(playbackController.currentMember == nil)
         case .retire:
-            circle("Retire", systemImage: "archivebox", prominence: .destructive) {
+            circle("Retire", systemImage: "archivebox", prominence: .destructive, circleSide: circleSide) {
                 await playbackController.evictCurrent(settings: settings, context: modelContext)
             }
             .disabled(playbackController.currentMember == nil)
         case .restore:
-            circle("Move to the Inbox", systemImage: "tray.and.arrow.down") {
+            circle("Move to the Inbox", systemImage: "tray.and.arrow.down", circleSide: circleSide) {
                 _ = playbackController.restoreCurrent(context: modelContext)
             }
             .accessibilityInputLabels(["Inbox", "Move to the Inbox"])
             .disabled(playbackController.currentMember == nil)
         case .addToTriage:
             // A song Overplay does not track, from an album or artist (`PLAY-018`).
-            circle("Add to the Inbox", systemImage: "tray.and.arrow.down") {
+            circle("Add to the Inbox", systemImage: "tray.and.arrow.down", circleSide: circleSide) {
                 await playbackController.addCurrentToTriage(context: modelContext)
             }
             .accessibilityInputLabels(["Inbox", "Add to the Inbox"])
         case .addToOneTruePlaylist:
-            circle("Add to One True Playlist", systemImage: "arrow.up.circle") {
+            circle("Add to One True Playlist", systemImage: "arrow.up.circle", circleSide: circleSide) {
                 await playbackController.addCurrentToOneTruePlaylist(context: modelContext)
             }
             .accessibilityInputLabels(["Overplay", "Add to One True Playlist"])
@@ -433,6 +482,7 @@ struct NowPlayingActionButtonsView: View {
     private func circle(
         _ title: String, systemImage: String, isOn: Bool = false,
         prominence: FullScreenPlayerControlProminence = .secondary,
+        circleSide: CGFloat,
         action: @escaping () async -> Void
     ) -> some View {
         if let compactSize {
@@ -448,13 +498,14 @@ struct NowPlayingActionButtonsView: View {
                 usesSystemGlass: true, isSelected: isOn
             ))
         } else {
-            fullSizeCircle(title, systemImage: systemImage, isOn: isOn, prominence: prominence, action: action)
+            fullSizeCircle(title, systemImage: systemImage, isOn: isOn, prominence: prominence, circleSide: circleSide, action: action)
         }
     }
 
     private func fullSizeCircle(
         _ title: String, systemImage: String, isOn: Bool,
         prominence: FullScreenPlayerControlProminence,
+        circleSide: CGFloat,
         action: @escaping () async -> Void
     ) -> some View {
         Button {

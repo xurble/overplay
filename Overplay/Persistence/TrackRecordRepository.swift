@@ -30,6 +30,22 @@ enum TrackRecordRepository {
         return try context.fetch(descriptor)
     }
 
+    /// The tracks holding any of these IDs, as a catalog ID, a library ID or a
+    /// confirmed alias, in `allTracks` order. A predicate cannot look inside
+    /// the stored alias array (`unsupportedPredicate`), so one pass over the
+    /// tracks finds the aliases; a single predicate then fetches the matches.
+    static func tracks(holdingMusicItemIDs musicItemIDs: Set<String>, in context: ModelContext) throws -> [TrackRecord] {
+        guard !musicItemIDs.isEmpty else { return [] }
+        let aliasHolders = try context.fetch(FetchDescriptor<TrackRecord>())
+            .filter { track in track.confirmedAliases.contains { musicItemIDs.contains($0.value) } }
+            .map(\.id)
+        let ids: [String?] = musicItemIDs.map(Optional.some)
+        return try context.fetch(FetchDescriptor<TrackRecord>(
+            predicate: #Predicate { ids.contains($0.catalogID) || ids.contains($0.libraryID) || aliasHolders.contains($0.id) },
+            sortBy: [SortDescriptor(\.title), SortDescriptor(\.artistName)]
+        ))
+    }
+
     static func track(catalogID: String?, libraryID: String?, libraryScope: String = MusicResourceReference.currentLibraryScope, in context: ModelContext) throws -> TrackRecord? {
         if let libraryID {
             var library = FetchDescriptor<TrackRecord>(predicate: #Predicate { $0.libraryID == libraryID && $0.libraryScope == libraryScope })

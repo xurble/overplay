@@ -364,7 +364,7 @@ struct ApplePlayCountTests {
         let snapshot = try #require(controller.activePlaylistSnapshot)
         #expect(snapshot.rows.first?.applePlayCount == 1)
         #expect(CarPlayLibrarySnapshot.trackSummaries(from: snapshot).first?.applePlayCount == 1)
-        let presentation = NowPlayingPresentationFactory.presentation(playbackController: controller, settings: OverplaySettings())
+        let presentation = NowPlayingPresentationFactory.presentation(playbackController: controller)
         #expect(presentation.playSkipMetricText == "1 play · 0 skips")
     }
 }

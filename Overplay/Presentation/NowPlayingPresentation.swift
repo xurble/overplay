@@ -6,18 +6,14 @@ enum NowPlayingProgressPhase: Equatable, Sendable {
     case safe
 }
 
+/// The current song: what does not change as it plays. Kept apart from
+/// `NowPlayingProgressPresentation` so that building this never subscribes a
+/// view to the playback position, which changes every second.
 struct NowPlayingPresentation: Equatable, Sendable {
     let trackID: String?
     let title: String
     let artistName: String
     let albumTitle: String?
-    let progress: Double
-    let progressPhase: NowPlayingProgressPhase
-    let elapsedSeconds: Double
-    let durationSeconds: Double?
-    let isPlaying: Bool
-    let elapsedText: String
-    let durationText: String
     let skipCount: Int
     let playthroughCount: Int
     let applePlayCount: Int?
@@ -32,13 +28,6 @@ struct NowPlayingPresentation: Equatable, Sendable {
         title: String?,
         artistName: String?,
         albumTitle: String?,
-        progress: Double,
-        elapsedSeconds: Double,
-        durationSeconds: Double?,
-        isPlaying: Bool = false,
-        skipThresholdPercentage: Double = 50,
-        minimumSkipListeningSeconds: Double = 10,
-        playthroughThresholdPercentage: Double = 90,
         skipCount: Int,
         playthroughCount: Int = 0,
         applePlayCount: Int? = nil,
@@ -49,19 +38,6 @@ struct NowPlayingPresentation: Equatable, Sendable {
         self.title = title ?? "Nothing playing"
         self.artistName = artistName ?? "Choose Play Overplay from the dashboard."
         self.albumTitle = albumTitle
-        self.progress = progress
-        self.elapsedSeconds = elapsedSeconds
-        self.durationSeconds = durationSeconds
-        self.isPlaying = isPlaying
-        self.progressPhase = Self.progressPhase(
-            elapsedSeconds: elapsedSeconds,
-            durationSeconds: durationSeconds,
-            skipThresholdPercentage: skipThresholdPercentage,
-            minimumSkipListeningSeconds: minimumSkipListeningSeconds,
-            playthroughThresholdPercentage: playthroughThresholdPercentage
-        )
-        self.elapsedText = Self.formatTime(elapsedSeconds)
-        self.durationText = Self.formatTime(durationSeconds ?? 0)
         self.skipCount = skipCount
         self.playthroughCount = playthroughCount
         self.applePlayCount = applePlayCount
@@ -108,5 +84,44 @@ struct NowPlayingPresentation: Equatable, Sendable {
             return .danger
         }
         return .normal
+    }
+}
+
+/// How far through the song playback is. It changes every second, so only
+/// the small views that draw the progress build it.
+struct NowPlayingProgressPresentation: Equatable, Sendable {
+    let trackID: String?
+    let progress: Double
+    let progressPhase: NowPlayingProgressPhase
+    let elapsedSeconds: Double
+    let durationSeconds: Double?
+    let isPlaying: Bool
+    let elapsedText: String
+    let durationText: String
+
+    init(
+        trackID: String? = nil,
+        progress: Double,
+        elapsedSeconds: Double,
+        durationSeconds: Double?,
+        isPlaying: Bool = false,
+        skipThresholdPercentage: Double = 50,
+        minimumSkipListeningSeconds: Double = 10,
+        playthroughThresholdPercentage: Double = 90
+    ) {
+        self.trackID = trackID
+        self.progress = progress
+        self.elapsedSeconds = elapsedSeconds
+        self.durationSeconds = durationSeconds
+        self.isPlaying = isPlaying
+        self.progressPhase = NowPlayingPresentation.progressPhase(
+            elapsedSeconds: elapsedSeconds,
+            durationSeconds: durationSeconds,
+            skipThresholdPercentage: skipThresholdPercentage,
+            minimumSkipListeningSeconds: minimumSkipListeningSeconds,
+            playthroughThresholdPercentage: playthroughThresholdPercentage
+        )
+        self.elapsedText = NowPlayingPresentation.formatTime(elapsedSeconds)
+        self.durationText = NowPlayingPresentation.formatTime(durationSeconds ?? 0)
     }
 }
