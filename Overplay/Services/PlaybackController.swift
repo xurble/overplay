@@ -154,7 +154,7 @@ final class PlaybackController {
     @ObservationIgnored var webLibrarySongIDs: @MainActor ([String]) async throws -> [String] = { ids in
         try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, magnitude: Double(ids.count),
                                                      detail: "manual add web library check") {
-            try await MusicLibrarySongResolver.webLibrarySongIDs(ids.map { MusicItemID($0) })
+            try await AppleMusicSongLookup.webLibrarySongIDs(ids)
         }
     }
     @ObservationIgnored private let sleep: @MainActor (Duration) async -> Void

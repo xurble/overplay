@@ -215,13 +215,9 @@ private enum MusicKitPlaybackCatalog {
     }
 
     static func songs(ids: [String]) async throws -> [String: Track] {
-        var result: [String: Track] = [:]
-        for chunk in stride(from: 0, to: ids.count, by: 100).map({ Array(ids[$0..<min($0 + 100, ids.count)]) }) {
-            let request = MusicCatalogResourceRequest<Song>(matching: \.id, memberOf: chunk.map { MusicItemID($0) })
-            let songs = try await measure("songs by id") { try await request.response().items }
-            for song in songs { result[song.id.rawValue] = .song(song) }
-        }
-        return result
+        try await AppleMusicSongLookup.playableCatalogSongs(ids) { batch in
+            try await AppleMusicSongLookup.catalogSongs(batch, detail: "songs by id")
+        }.mapValues(Track.song)
     }
 
     private static func artworkURL(_ artwork: Artwork?) -> String? {
@@ -229,10 +225,7 @@ private enum MusicKitPlaybackCatalog {
     }
 
     private static func catalogSong(id: String, properties: [PartialMusicAsyncProperty<Song>]) async throws -> Song {
-        var request = MusicCatalogResourceRequest<Song>(matching: \.id, equalTo: MusicItemID(id))
-        request.properties = properties
-        request.limit = 1
-        guard let song = try await measure("song for collection", { try await request.response().items }).first else {
+        guard let song = try await AppleMusicSongLookup.catalogSong(id: id, detail: "song for collection", properties: properties, limit: 1) else {
             throw PlaybackCollectionError.songNotInCatalog
         }
         return song
