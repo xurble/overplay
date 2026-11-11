@@ -223,6 +223,10 @@ struct PlayerGlassArtBackground: View {
     /// size and position, and a shrinking sheet crops it rather than
     /// shrinking it, so its edges never show.
     @State private var fullHeight: CGFloat = 0
+    /// The player's size, kept to place the art for a backdrop that arrives
+    /// later: the host supplies one only once there is a theme, usually
+    /// without the size changing.
+    @State private var size: CGSize = .zero
 
     private var tilt: CGSize { reduceMotion ? .zero : motion.tilt }
 
@@ -276,7 +280,12 @@ struct PlayerGlassArtBackground: View {
         .allowsHitTesting(false)
         .accessibilityHidden(true)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size in
+            self.size = size
             fullHeight = max(fullHeight, size.height)
+            backdrop?.artFrame = Self.artFrame(for: size, fullHeight: fullHeight)
+        }
+        .onChange(of: backdrop.map(ObjectIdentifier.init)) {
+            guard size != .zero else { return }
             backdrop?.artFrame = Self.artFrame(for: size, fullHeight: fullHeight)
         }
         // Only while there is art to move: not under Reduce Motion, nor when
