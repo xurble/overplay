@@ -304,10 +304,14 @@ struct PlaylistMutationService {
         }
     }
 
+    /// The device's library first, then the web library: a device's library
+    /// can lag the account, and manual add confirms a song through the web.
     static func liveLibrarySong(id: String) async throws -> Song {
-        let songs = try await MusicLibrarySongResolver.librarySongs(MusicItemID(id))
-        guard songs.count == 1, let song = songs.first else { throw PlaylistMutationError.musicItemMissing }
-        return song
+        do {
+            return try await DevicePlaybackCache.loadLibrarySong(id)
+        } catch is DevicePlaybackCache.PreparationError {
+            throw PlaylistMutationError.musicItemMissing
+        }
     }
 
     private func song(id: String) async throws -> Song {
