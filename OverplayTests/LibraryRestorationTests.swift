@@ -187,6 +187,27 @@ struct LibraryRestorationTests {
         #expect(!restoredDefaultsOnly.isReady)
     }
 
+    /// PF-8 was to accept a receipted library on the cheap checks alone. A
+    /// receipt is a preference: it survives a local store that is emptied and
+    /// filled again from iCloud, and the spec says restored preferences must
+    /// not bypass the gate. So a receipt does not excuse a missing reference.
+    @Test("a local receipt does not excuse a membership whose track has not arrived")
+    func receiptDoesNotExcuseADanglingMembership() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let settings = try seed(context)
+        let local = defaults()
+        LibraryRestorationService.recordLocalConfiguration(settings, defaults: local)
+        let playlist = try #require(try context.fetch(FetchDescriptor<PlaylistRecord>()).first)
+        context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: UUID()))
+        try context.save()
+        let service = LibraryRestorationService(defaults: local)
+        await #expect(throws: (any Error).self) {
+            try await service.prepare(in: context, hasLegacyStore: true, locallyRebuiltID: nil, attempts: 1)
+        }
+        #expect(!service.isReady)
+    }
+
     @Test func explicitLocalCutoverCanOpenWithoutWaitingForItsOwnCloudUpload() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let settings = try seed(container.mainContext)
