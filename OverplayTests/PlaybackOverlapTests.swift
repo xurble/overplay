@@ -730,6 +730,62 @@ struct PlaybackOverlapTests {
         #expect(fixture.controller.playbackFailure == nil)
     }
 
+    // MARK: - Review of #133: where the pause's age falls
+
+    /// A pause first seen this many seconds before the queue is lost.
+    /// Within the 5 s threshold it may be a delivery failure; past it, not.
+    @Test(arguments: [4.0, 6.0])
+    func aPauseSeenSecondsBeforeTheQueueIsLost(secondsBefore: Double) async throws {
+        let (fixture, _) = try fixture()
+        defer { fixture.cleanUp() }
+        await select(fixture, 1)
+        await fixture.listen(seconds: 40)
+        fixture.player.playbackStatus = .paused
+        await fixture.controller.samplePlayback(now: .now.addingTimeInterval(-secondsBefore))
+        await fixture.player.notify()
+
+        await fixture.player.abandonQueue()
+
+        let fresh = secondsBefore < 5
+        #expect((fixture.controller.playbackFailure?.kind == .command) == fresh)
+        #expect(fixture.controller.statusMessage == (fresh ? PlaybackController.playbackStoppedMessage : nil))
+        #expect(fixture.controller.currentTrack?.title == "Song 1")
+        let resume = try #require(fixture.intentStore.loadResumePoint())
+        #expect(resume.localTrackID == fixture.tracks[1].id.uuidString)
+        #expect(resume.positionSeconds == 40)
+    }
+
+    /// Review of #133, finding 2: Overplay relaunches onto a queue the player
+    /// already holds paused, and the system drops it seconds later. Overplay
+    /// never saw it play, so nothing failed while it watched.
+    @Test func aQueueFirstSeenPausedAfterARelaunchIsLostSilently() async throws {
+        let (first, _) = try fixture()
+        defer { first.cleanUp() }
+        await select(first, 1)
+        await first.listen(seconds: 40)
+        await pauseFromLockScreen(first, long: false)
+        first.controller.stopMonitoring()
+
+        let relaunched = PlaybackController(player: first.player, intentStore: first.intentStore,
+                                            preparePlaybackTracks: { _, _ in }, sleep: PlaybackFixture.manualSampling)
+        relaunched.collectionTrackCache = DevicePlaybackCache(directory: nil)
+        relaunched.activityLog = MusicKitActivityLog(fileURL: nil)
+        defer { relaunched.stopMonitoring() }
+        relaunched.restoreLocalPlaybackDisplay(context: first.context)
+        await relaunched.reconcilePlayerState(context: first.context)
+        #expect(relaunched.currentTrack?.title == "Song 1")
+
+        await first.player.abandonQueue()
+
+        #expect(relaunched.playbackFailure == nil)
+        #expect(relaunched.statusMessage == nil)
+        #expect(relaunched.currentTrack?.title == "Song 1")
+        #expect(relaunched.elapsedSeconds == 40)
+        let resume = try #require(first.intentStore.loadResumePoint())
+        #expect(resume.localTrackID == first.tracks[1].id.uuidString)
+        #expect(resume.positionSeconds == 40)
+    }
+
     // MARK: - Review of #117, finding 2: a takeover seeks only a confirmed song
 
     /// Play pressed again during a resume, while MusicKit still reports the

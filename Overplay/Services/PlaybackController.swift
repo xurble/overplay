@@ -79,6 +79,9 @@ final class PlaybackController {
         var pausedSince: Date?
         /// It sat paused for `longPauseSeconds` or more at some point.
         var hadLongPause = false
+        /// Overplay has seen it playing. A session first seen paused (after a
+        /// relaunch, or split on hydration) was not paused by a failure Overplay saw.
+        var wasSeenPlaying = false
         var isAttributed: Bool { play.localTrackID != nil }
 
         /// Paused long enough, now or earlier, that ending it is not a skip.
@@ -857,8 +860,12 @@ final class PlaybackController {
         // A pause no older than the staleness threshold may be a delivery
         // failure reporting paused first: that stays a stop mid-track. The
         // pause's own age decides, since a stop reported after it refreshes
-        // the last observation.
-        let lostWhilePaused = !completed && (outgoing?.pausedSince.map { now.timeIntervalSince($0) > threshold } ?? false)
+        // the last observation. A pause on a session never seen playing is
+        // old: its age is only how long Overplay has been watching it.
+        let pauseIsOld = outgoing.map { current in
+            current.pausedSince.map { now.timeIntervalSince($0) > threshold || !current.wasSeenPlaying } ?? false
+        } ?? false
+        let lostWhilePaused = !completed && pauseIsOld
         let stoppedMidTrack = !completed && !stale
         activityLog.record(.queueEndObserved,
             detail: completed ? "played out" : lostWhilePaused ? "lost while paused" : stale ? "ended while suspended" : "stopped mid-track")
@@ -876,7 +883,8 @@ final class PlaybackController {
         }
         if stoppedMidTrack {
             // Keep the member and position, so Play resumes where it stopped.
-            fail(kind: .command, message: Self.playbackStoppedMessage)
+            // A failure already shown (did not start, stalled) says more.
+            if playbackFailure == nil { fail(kind: .command, message: Self.playbackStoppedMessage) }
             saveResumePoint(force: true)
             return
         }
@@ -2219,6 +2227,7 @@ final class PlaybackController {
         }
         if status == .playing {
             playWantedAt = now
+            if session?.entryID == entryID { session?.wasSeenPlaying = true }
             guard var episode = playEpisode, episode.entryID == entryID else {
                 playEpisode = PlayEpisode(entryID: entryID, since: now, lastPosition: position)
                 return
