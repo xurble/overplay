@@ -67,7 +67,7 @@ struct LibraryArtworkServiceTests {
         try context.save()
         let (store, cleanUp) = absenceStore(); defer { cleanUp() }
         let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "a") }, fetch: { kind, ids, scope in
-            try await MusicIdentityResolver.fetchResources(kind, ids: ids, scope: scope, perform: { _ in throw Transport404() },
+            try await AppleMusicSongLookup.fetchResources(kind, ids: ids, scope: scope, perform: { _ in throw Transport404() },
                                                            isNotFound: { $0 is Transport404 })
         })
 

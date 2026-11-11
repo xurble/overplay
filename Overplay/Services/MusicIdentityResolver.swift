@@ -112,7 +112,7 @@ final class MusicIdentityResolver {
 
     init(
         currentScope: @escaping () async throws -> Scope = MusicIdentityResolver.liveScope,
-        fetch: @escaping Fetch = MusicIdentityResolver.liveFetch,
+        fetch: @escaping Fetch = AppleMusicSongLookup.liveIdentityResources,
         now: @escaping () -> Date = { .now },
         playbackCache: DevicePlaybackCache? = nil
     ) {
@@ -360,18 +360,6 @@ final class MusicIdentityResolver {
         return Scope(storefront: try await MusicDataRequest.currentCountryCode, account: account)
     }
 
-    static func liveFetch(_ kind: Lookup, ids: [String], scope: Scope) async throws -> [String: [Resource]] {
-        try await fetchResources(kind, ids: ids, scope: scope, perform: { request in
-            try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, detail: "identity \(kind.rawValue)") {
-                try await MusicDataRequest(urlRequest: request).response()
-            }.data
-        }, isNotFound: isNotFoundResponse)
-    }
-
-    nonisolated static func isNotFoundResponse(_ error: Error) -> Bool {
-        (error as? MusicDataRequest.Error)?.status == 404
-    }
-
     /// Runs one named lookup. Every failure comes out saying which lookup it
     /// was, except cancellation and Overplay's own resolution errors.
     static func naming<T>(_ kind: Lookup, _ body: () async throws -> T) async throws -> T {
@@ -382,64 +370,5 @@ final class MusicIdentityResolver {
                 || error is ResolutionError || error is MusicLibrarySongResolver.ResolutionError { throw error }
             throw ResolutionError.lookupFailed(kind, underlying: error)
         }
-    }
-
-    /// A 404 throws `notFound` for the whole batch, which the resolver
-    /// neither caches nor reads as an answer about any one ID; any other
-    /// failure is thrown as `lookupFailed`. The transport is injected
-    /// because MusicKit's error type cannot be built outside MusicKit.
-    static func fetchResources(
-        _ kind: Lookup, ids: [String], scope: Scope,
-        perform: (URLRequest) async throws -> Data,
-        isNotFound: (Error) -> Bool
-    ) async throws -> [String: [Resource]] {
-        var url = URLComponents(string: "https://api.music.apple.com")!
-        url.path = kind == .library ? "/v1/me/library/songs" : "/v1/catalog/\(scope.storefront)/songs"
-        let filter = switch kind { case .library, .catalog: "ids"; case .equivalents: "filter[equivalents]"; case .isrc: "filter[isrc]" }
-        url.queryItems = [URLQueryItem(name: filter, value: ids.joined(separator: ","))]
-        if kind == .library { url.queryItems?.append(URLQueryItem(name: "include", value: "catalog")) }
-        let request = URLRequest(url: url.url!)
-        return try await naming(kind) {
-            do {
-                return try decode(try await perform(request), kind: kind, ids: ids)
-            } catch where isNotFound(error) {
-                throw ResolutionError.notFound(kind, underlying: error)
-            }
-        }
-    }
-
-    static func decode(_ data: Data, kind: Lookup, ids: [String]) throws -> [String: [Resource]] {
-        let envelope = try JSONDecoder().decode(Envelope.self, from: data)
-        guard envelope.next == nil else { throw ResolutionError.incompleteResponse }
-        var result = Dictionary(uniqueKeysWithValues: ids.map { ($0, [Resource]()) })
-        switch kind {
-        case .library:
-            var returnedIDs: Set<String> = []
-            for entry in envelope.data where result[entry.id] != nil {
-                guard entry.type == "library-songs", returnedIDs.insert(entry.id).inserted,
-                      let relationship = entry.relationships?.catalog, relationship.next == nil else { throw ResolutionError.incompleteResponse }
-                var resource = entry.resource
-                resource.catalog = relationship.data.filter { $0.type == "songs" }
-                result[entry.id] = [resource]
-            }
-            // An absent resource stays empty: unresolved, not "no catalog
-            // match". Only a returned library song with an explicitly empty
-            // relationship proves that.
-        case .catalog:
-            for entry in envelope.data where result[entry.id] != nil && entry.type == "songs" { result[entry.id] = [entry.resource] }
-        case .equivalents:
-            // Correlate through documented meta.filters, never by result order.
-            guard envelope.data.isEmpty || envelope.meta?.filters?["equivalents"] != nil else {
-                throw ResolutionError.incompleteResponse
-            }
-            let mapping = envelope.meta?.filters?["equivalents"] ?? [:]
-            let byID = envelope.data.firstValueDictionary(keyedBy: \.id)
-            for id in ids { result[id] = (mapping[id] ?? []).filter { $0.type == "songs" }.map { byID[$0.id]?.resource ?? $0 } }
-        case .isrc:
-            for entry in envelope.data where entry.type == "songs" {
-                if let isrc = entry.attributes?.isrc, result[isrc] != nil { result[isrc]?.append(entry.resource) }
-            }
-        }
-        return result
     }
 }

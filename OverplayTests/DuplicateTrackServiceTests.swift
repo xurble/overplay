@@ -107,7 +107,7 @@ struct DuplicateTrackServiceTests {
         }
         try context.save()
         let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "a") }, fetch: { kind, ids, scope in
-            try await MusicIdentityResolver.fetchResources(kind, ids: ids, scope: scope, perform: { _ in
+            try await AppleMusicSongLookup.fetchResources(kind, ids: ids, scope: scope, perform: { _ in
                 if kind == failing { throw Transport404() }
                 let entries = kind == .catalog
                     ? ids.map { #"{"id":"\#($0)","type":"songs","attributes":{"isrc":"ISRC-\#($0)"}}"# } : []
