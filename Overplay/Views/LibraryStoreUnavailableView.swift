@@ -21,5 +21,5 @@ struct LibraryStoreUnavailableView: View {
 }
 
 #Preview {
-    LibraryStoreUnavailableView(detail: "SwiftDataError: loadIssueModelContainer")
+    LibraryStoreUnavailableView(detail: "NSCocoaErrorDomain 134110")
 }

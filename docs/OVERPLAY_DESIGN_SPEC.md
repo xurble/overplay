@@ -2948,7 +2948,7 @@ does not try to repair it:
   button and no migration; each launch simply tries to open it again. Data
   preservation is decided separately (`TODO.md` 1.4).
 - Every app and Mac Settings window shows a blocking error screen saying the
-  library could not be opened, with the underlying error. It cannot be
+  library could not be opened, with the error's domain and code only, since its text can name a file path. It cannot be
   mistaken for an empty library.
 - Nothing starts: no intent restore, no player observation, no sync, no
   playback and no remote write.

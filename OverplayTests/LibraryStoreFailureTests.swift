@@ -27,6 +27,20 @@ struct LibraryStoreFailureTests {
         #expect(runtime.backgroundActionRefusal == VoiceActions.storeUnavailableMessage)
     }
 
+    @Test func theReportedFailureNamesNoFilePath() {
+        let path = "/var/mobile/Containers/Data/Application/Library/default.store"
+        let runtime = AppRuntime()
+
+        #expect(runtime.openLibraryStore {
+            throw NSError(domain: "SwiftData", code: 134110, userInfo: [
+                NSFilePathErrorKey: path,
+                NSLocalizedDescriptionKey: "Could not open \(path)",
+            ])
+        } == nil)
+
+        #expect(runtime.libraryStoreFailure == "SwiftData 134110")
+    }
+
     @Test func aStoreThatOpensConfiguresTheRuntime() throws {
         let runtime = AppRuntime()
         let container = try OverplayTestSupport.makeModelContainer()

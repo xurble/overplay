@@ -54,7 +54,10 @@ final class AppRuntime {
             configure(modelContainer: container)
             return container
         } catch {
-            libraryStoreFailure = String(describing: error)
+            // Shown on screen, so only the domain and code: an error's text
+            // can name a file path.
+            let failure = error as NSError
+            libraryStoreFailure = "\(failure.domain) \(failure.code)"
             StartupProfiler.mark("The library store could not be opened")
             return nil
         }
