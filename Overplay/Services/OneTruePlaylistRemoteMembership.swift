@@ -58,75 +58,102 @@ struct OneTruePlaylistRemoteMembership {
         playlist.isActive && playlist.source == .appleMusic && playlist.role == .oneTruePlaylist && playlist.allowsRemoteWrites
     }
 
-    /// Removes every song that carries this playlist's stale-OTP suppression.
-    /// Removed or already absent songs release the suppression; a retired one
-    /// then gets the retention rule, so an unwanted 0/0 row is deleted at once.
+    /// Removes every song that carries this playlist's stale-OTP suppression,
+    /// except one on its way in (see `songsHeldOutside`). Removed or already
+    /// absent songs release the suppression; a retired one then gets the
+    /// retention rule, so an unwanted 0/0 row is deleted at once.
     @discardableResult
     func removeSongsHeldOutside(_ playlist: PlaylistRecord, in context: ModelContext) async throws -> Outcome {
-        guard Self.managesRemoteMembership(of: playlist) else { return Outcome() }
+        guard Self.managesRemoteMembership(of: playlist),
+              try !songsHeldOutside(playlist, in: context).isEmpty else { return Outcome() }
         let musicPlaylistID = playlist.musicPlaylistID
-        let playlistID = playlist.id
+        // The whole pass holds the gate, so an add and its local move are
+        // either finished or have not begun.
+        return try await PlaylistRemoteMutationCoordinator.shared.perform(playlistID: musicPlaylistID) {
+            let outcome = try await removeFromAppleMusic(playlist, in: context)
+            let stillHeld = try songsHeldOutside(playlist, in: context)
+            for itemID in outcome.removedItemIDs.union(outcome.absentItemIDs) where stillHeld[itemID] != nil {
+                guard let item = try PlaylistItemRepository.item(id: itemID, in: context) else { continue }
+                item.suppressedOTPMusicPlaylistIDs.removeAll { $0 == musicPlaylistID }
+                item.updatedAt = .now
+                // Retired rows only: an active Triage row keeps its usual triggers.
+                if item.evictedAt != nil { try TrackRetentionPolicy.deleteIfUnowned(item, in: context) }
+            }
+            try context.save()
+            return outcome
+        }
+    }
+
+    /// The rows that must leave this playlist, with their songs' references,
+    /// read live. A suppression also marks a promotion in flight, so a song
+    /// being added is never one of them; the add settles it either way.
+    private func songsHeldOutside(_ playlist: PlaylistRecord, in context: ModelContext) throws -> [UUID: Set<MusicResourceReference>] {
+        let musicPlaylistID = playlist.musicPlaylistID
+        let beingAdded = try TrackRecordRepository.tracks(
+            ids: PlaylistRemoteMutationCoordinator.shared.tracksBeingAdded(to: musicPlaylistID), in: context
+        ).reduce(into: Set<MusicResourceReference>()) { $0.formUnion($1.identityReferences) }
         var referencesByItemID: [UUID: Set<MusicResourceReference>] = [:]
         for item in try PlaylistItemRepository.allItems(in: context)
-        where item.playlistID != playlistID && item.suppressedOTPMusicPlaylistIDs.contains(musicPlaylistID) {
-            guard let track = try TrackRecordRepository.track(id: item.trackID, in: context) else { continue }
+        where item.playlistID != playlist.id && item.suppressedOTPMusicPlaylistIDs.contains(musicPlaylistID) {
+            guard let track = try TrackRecordRepository.track(id: item.trackID, in: context),
+                  track.identityReferences.isDisjoint(with: beingAdded) else { continue }
             referencesByItemID[item.id] = track.identityReferences
         }
-        guard !referencesByItemID.isEmpty else { return Outcome() }
+        return referencesByItemID
+    }
 
+    /// One read/modify/write. The caller holds the gate.
+    private func removeFromAppleMusic(_ playlist: PlaylistRecord, in context: ModelContext) async throws -> Outcome {
+        let musicPlaylistID = playlist.musicPlaylistID
+        let referencesByItemID = try songsHeldOutside(playlist, in: context)
         var outcome = Outcome()
-        try await PlaylistRemoteMutationCoordinator.shared.perform(playlistID: musicPlaylistID) {
-            let cloud = try await cloudEntries(musicPlaylistID)
-            let cloudReferences = Set(cloud.compactMap(\.reference))
-            var presentReferences = Set<MusicResourceReference>()
-            var presentItemIDs = Set<UUID>()
-            for (itemID, references) in referencesByItemID {
-                let present = references.intersection(cloudReferences)
-                if present.isEmpty {
-                    outcome.absentItemIDs.insert(itemID)
-                } else {
-                    presentReferences.formUnion(present)
-                    presentItemIDs.insert(itemID)
-                }
-            }
-            guard !presentItemIDs.isEmpty else { return }
-            guard playlist.remoteEditsRefusedAt == nil else {
-                outcome.refusedItemIDs = presentItemIDs
-                return
-            }
-            guard canEditPlaylists() else {
-                outcome.notEditableHereItemIDs = presentItemIDs
-                return
-            }
+        guard !referencesByItemID.isEmpty else { return outcome }
 
-            let (remotePlaylist, tracks) = try await loadDeviceCopy(musicPlaylistID)
-            guard let deviceReferences = try await references(for: tracks, matching: cloud) else {
-                outcome.deferredItemIDs = presentItemIDs
-                TrackMetadataDiagnostics.log("remote removal deferred playlist=\(musicPlaylistID): device copy differs from iCloud")
-                return
+        let cloud = try await cloudEntries(musicPlaylistID)
+        let cloudReferences = Set(cloud.compactMap(\.reference))
+        var presentItemIDs = Set<UUID>()
+        for (itemID, references) in referencesByItemID {
+            if references.isDisjoint(with: cloudReferences) {
+                outcome.absentItemIDs.insert(itemID)
+            } else {
+                presentItemIDs.insert(itemID)
             }
-            let remaining = zip(tracks, deviceReferences).filter { !presentReferences.contains($0.1) }.map(\.0)
-            do {
-                try await write(remotePlaylist, remaining)
-            } catch where Self.isEditRefusal(error) {
-                playlist.remoteEditsRefusedAt = .now
-                outcome.refusedItemIDs = presentItemIDs
-                TrackMetadataDiagnostics.log("remote edits refused playlist=\(musicPlaylistID): not created by this app")
-                return
-            }
-            outcome.removedItemIDs = presentItemIDs
+        }
+        guard !presentItemIDs.isEmpty else { return outcome }
+        guard playlist.remoteEditsRefusedAt == nil else {
+            outcome.refusedItemIDs = presentItemIDs
+            return outcome
+        }
+        guard canEditPlaylists() else {
+            outcome.notEditableHereItemIDs = presentItemIDs
+            return outcome
         }
 
-        for itemID in outcome.removedItemIDs.union(outcome.absentItemIDs) {
-            guard let item = try PlaylistItemRepository.item(id: itemID, in: context),
-                  item.playlistID != playlistID,
-                  item.suppressedOTPMusicPlaylistIDs.contains(musicPlaylistID) else { continue }
-            item.suppressedOTPMusicPlaylistIDs.removeAll { $0 == musicPlaylistID }
-            item.updatedAt = .now
-            // Retired rows only: an active Triage row keeps its usual triggers.
-            if item.evictedAt != nil { try TrackRetentionPolicy.deleteIfUnowned(item, in: context) }
+        let (remotePlaylist, tracks) = try await loadDeviceCopy(musicPlaylistID)
+        guard let deviceReferences = try await references(for: tracks, matching: cloud) else {
+            outcome.deferredItemIDs = presentItemIDs
+            TrackMetadataDiagnostics.log("remote removal deferred playlist=\(musicPlaylistID): device copy differs from iCloud")
+            return outcome
         }
-        try context.save()
+
+        // A promotion may have started during those awaits, and the rewrite
+        // cannot be undone. Re-read with no await before the write.
+        let stillHeld = try songsHeldOutside(playlist, in: context)
+        presentItemIDs.formIntersection(stillHeld.keys)
+        guard !presentItemIDs.isEmpty else { return outcome }
+        let removedReferences = presentItemIDs.reduce(into: Set<MusicResourceReference>()) {
+            $0.formUnion(stillHeld[$1, default: []].intersection(cloudReferences))
+        }
+        let remaining = zip(tracks, deviceReferences).filter { !removedReferences.contains($0.1) }.map(\.0)
+        do {
+            try await write(remotePlaylist, remaining)
+        } catch where Self.isEditRefusal(error) {
+            playlist.remoteEditsRefusedAt = .now
+            outcome.refusedItemIDs = presentItemIDs
+            TrackMetadataDiagnostics.log("remote edits refused playlist=\(musicPlaylistID): not created by this app")
+            return outcome
+        }
+        outcome.removedItemIDs = presentItemIDs
         return outcome
     }
 

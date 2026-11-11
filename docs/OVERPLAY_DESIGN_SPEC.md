@@ -569,6 +569,13 @@ deleted elsewhere or drop songs added elsewhere. So:
 - A song that is removed, or already absent from iCloud's copy, releases its
   suppression and gets the retention rule at once, so a retired source-free
   0/0 row is deleted.
+- A song being promoted also carries the suppression while its add is in
+  flight, but it is not being held outside the playlist: from before the add
+  queues for the remote gate until its local move, removals neither remove it
+  nor release its suppression. The removal reads its rows with the gate held
+  and again just before the rewrite, and the local move happens inside the
+  gate. A retirement during the add still wins: the add ends, the song stays
+  suppressed, and the next removal takes it out.
 - MusicKit lets an app replace a playlist's contents only when that app
   created it, and Apple Music can stop recognising Overplay as the creator of
   an older playlist. When it refuses (`ICPlaylistUpdateErrorDomain` -1),

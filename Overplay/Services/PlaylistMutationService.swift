@@ -49,7 +49,9 @@ struct PlaylistMutationService {
         let itemID = sourceItem.id
         let locationChangedAt = sourceItem.locationChangedAt
         let playlistID = playlist.id
-        return try await PlaylistRemoteMutationCoordinator.shared.perform(playlistID: playlist.musicPlaylistID) {
+        return try await PlaylistRemoteMutationCoordinator.shared.perform(
+            playlistID: playlist.musicPlaylistID, addingTrack: sourceItem.trackID
+        ) {
             guard let liveItem = try PlaylistItemRepository.item(id: itemID, in: context),
                   liveItem.locationChangedAt == locationChangedAt,
                   try PlaylistRepository.oneTruePlaylist(in: context)?.id == playlistID else {
@@ -226,13 +228,16 @@ struct PlaylistMutationService {
         in context: ModelContext
     ) async throws -> Committed {
         guard playlist.allowsRemoteWrites else { throw PlaylistMutationError.playlistIncomingOnly }
-        try await PlaylistRemoteMutationCoordinator.shared.perform(playlistID: playlist.musicPlaylistID) {
+        return try await PlaylistRemoteMutationCoordinator.shared.perform(
+            playlistID: playlist.musicPlaylistID, addingTrack: track.id
+        ) {
             guard try isCurrent(), playlist.allowsRemoteWrites else { throw PlaylistMutationError.trackMissing }
             try beforeAdd()
             try await addUnlessPresent(track, to: playlist, in: context)
             guard try isCurrent() else { throw PlaylistMutationError.trackMissing }
+            // Inside the gate: a queued removal must find the song already moved.
+            return try commit()
         }
-        return try commit()
     }
 
     /// Adds a catalog song Overplay does not track yet to a writable Apple

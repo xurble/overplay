@@ -516,10 +516,9 @@ struct OneTruePlaylistRemoteMembershipTests {
         let promotion = Task { _ = try await service.promote(item: promoted, in: fixture.context) }
         await Self.queued(1)
         cloudGate.release()
-        let outcome = try await removal.value
+        _ = try await removal.value
         await Self.yield { addGate.entered }
 
-        #expect(!outcome.absentItemIDs.contains(promotedID))
         let row = try #require(try PlaylistItemRepository.item(id: promotedID, in: fixture.context))
         #expect(row.suppressedOTPMusicPlaylistIDs == [Self.gatePlaylistID])
         addGate.release()
@@ -611,6 +610,46 @@ struct OneTruePlaylistRemoteMembershipTests {
         #expect(waitingAtCommit == 1)
         #expect(apple.writes == [["i.lib-1", keeperEntry]])
         let item = try #require(try PlaylistItemRepository.item(id: keeper.itemID, in: fixture.context))
+        #expect(item.playlistID == fixture.playlist.id && item.suppressedOTPMusicPlaylistIDs.isEmpty)
+    }
+
+    @Test("A removal that takes the gate ahead of a waiting duplicate merge leaves the merged song in Apple Music")
+    func removalAheadOfWaitingMerge() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        _ = try retire(0, in: fixture, skipCount: 2)
+        _ = try inboxSong(in: fixture, id: "dup-a", isrc: "SAME-RECORDING", skipCount: 1)
+        let second = try inboxSong(in: fixture, id: "dup-b", isrc: "SAME-RECORDING", skipCount: 1)
+        second.evictedAt = .now
+        try fixture.context.save()
+        let selected = try DuplicateTrackService.candidates(in: fixture.context).filter { $0.isrc == "SAME-RECORDING" }
+        let keeper = try #require(selected.sorted { $0.id.uuidString < $1.id.uuidString }.first)
+        let keeperEntry = try #require(keeper.libraryID)
+        // Left suppressed by an earlier attempt, and still in Apple Music.
+        let item = try #require(try PlaylistItemRepository.item(id: keeper.itemID, in: fixture.context))
+        item.suppressedOTPMusicPlaylistIDs = [Self.gatePlaylistID]
+        try fixture.context.save()
+        let apple = FakeAppleMusic(["i.lib-0", "i.lib-1", keeperEntry])
+        let holder = Gate()
+        let service = Self.promotions(apple)
+
+        let holding = Task {
+            try await PlaylistRemoteMutationCoordinator.shared.perform(playlistID: Self.gatePlaylistID) { await holder.pause() }
+        }
+        await Self.yield { holder.entered }
+        let removal = Task { try await Self.live(apple).removeSongsHeldOutside(fixture.playlist, in: fixture.context) }
+        await Self.queued(1)
+        let merge = Task {
+            _ = try await DuplicateTrackService.prepareOTPMembership(selected, in: fixture.context, mutation: service) {
+                try DuplicateTrackService.merge(selected, destination: .otp, in: fixture.context)
+            }
+        }
+        await Self.queued(2)
+        holder.release()
+        try await holding.value
+        _ = try await removal.value
+        try await merge.value
+
+        #expect(apple.writes == [["i.lib-1", keeperEntry]])
         #expect(item.playlistID == fixture.playlist.id && item.suppressedOTPMusicPlaylistIDs.isEmpty)
     }
 

@@ -241,6 +241,7 @@ enum DuplicateTrackService {
     /// Validate both row intent and the configured OTP again inside the remote
     /// gate. Suppression survives a failed/stale completion, just as promotion
     /// does, so subsequent incoming sync cannot undo a newer local decision.
+    /// `commit` makes the local move, still inside the gate.
     static func prepareOTPMembership<Committed>(
         _ selected: [Candidate], in context: ModelContext,
         mutation: PlaylistMutationService = PlaylistMutationService(),
