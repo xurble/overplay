@@ -67,18 +67,27 @@ struct TrackLocationRepairTests {
         #expect(try TrackLocationService.repairRetirementState(in: f.context) == 0)
     }
 
-    @Test("A repaired 0/0 One True Playlist retirement is deleted by the next complete sync without it")
-    func repairedZeroZeroRetirementIsPurgedBySync() async throws {
+    @Test("A repaired 0/0 One True Playlist retirement survives this device's sync and is deleted once iCloud proves it gone")
+    func repairedZeroZeroRetirementIsPurgedOnICloudEvidence() async throws {
         let f = try fixture(skipCount: 0)
+        f.context.insert(TrackRecord(id: f.item.trackID, catalogID: "song", title: "Song", artistName: "Artist"))
         try TrackActionService.evictTrack(f.item, playlist: f.otp, message: "Retired manually", in: f.context)
         overwriteWithStaleActiveOTPRow(f.item, otp: f.otp)
         try TrackLocationService.repairRetirementState(in: f.context)
         // Suppression protects it while the song may still be in Apple Music.
         #expect(!f.item.isDeleted && f.item.evictedAt != nil)
 
+        // This device's copy can lag iCloud, so its complete read proves
+        // nothing for a managed playlist (DI-2).
         _ = try await PlaylistSyncService().reconcile(
             snapshots: [], playlistRecord: f.otp, syncedAt: .now, in: f.context
         )
+        #expect(f.item.suppressedOTPMusicPlaylistIDs == ["otp"])
+        #expect(try PlaylistItemRepository.allItems(in: f.context).count == 1)
+
+        var membership = OneTruePlaylistRemoteMembership()
+        membership.cloudEntries = { _ in [] }
+        try await membership.removeSongsHeldOutside(f.otp, in: f.context)
         #expect(try PlaylistItemRepository.allItems(in: f.context).isEmpty)
     }
 
