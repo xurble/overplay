@@ -30,7 +30,33 @@ enum TrackRecordRepository {
         return try context.fetch(descriptor)
     }
 
+    /// The tracks holding any of these IDs, as a catalog ID, a library ID or a
+    /// confirmed alias, in `allTracks` order. A predicate cannot look inside
+    /// the stored alias array (`unsupportedPredicate`), so one pass over the
+    /// tracks finds the aliases; a single predicate then fetches the matches.
+    static func tracks(holdingMusicItemIDs musicItemIDs: Set<String>, in context: ModelContext) throws -> [TrackRecord] {
+        guard !musicItemIDs.isEmpty else { return [] }
+        let aliasHolders = try context.fetch(FetchDescriptor<TrackRecord>())
+            .filter { track in track.confirmedAliases.contains { musicItemIDs.contains($0.value) } }
+            .map(\.id)
+        let ids: [String?] = musicItemIDs.map(Optional.some)
+        return try context.fetch(FetchDescriptor<TrackRecord>(
+            predicate: #Predicate { ids.contains($0.catalogID) || ids.contains($0.libraryID) || aliasHolders.contains($0.id) },
+            sortBy: [SortDescriptor(\.title), SortDescriptor(\.artistName)]
+        ))
+    }
+
     static func track(catalogID: String?, libraryID: String?, libraryScope: String = MusicResourceReference.currentLibraryScope, in context: ModelContext) throws -> TrackRecord? {
+        try track(catalogID: catalogID, libraryID: libraryID, libraryScope: libraryScope, aliasIndex: nil, in: context)
+    }
+
+    /// With an `aliasIndex`, a song no stored alias names skips the scan of
+    /// every track that confirmed aliases otherwise need (PF-1); one that may
+    /// match still takes the scan, so the answer is the same.
+    static func track(
+        catalogID: String?, libraryID: String?, libraryScope: String = MusicResourceReference.currentLibraryScope,
+        aliasIndex: TrackAliasIndex?, in context: ModelContext
+    ) throws -> TrackRecord? {
         if let libraryID {
             var library = FetchDescriptor<TrackRecord>(predicate: #Predicate { $0.libraryID == libraryID && $0.libraryScope == libraryScope })
             library.fetchLimit = 1
@@ -64,6 +90,7 @@ enum TrackRecordRepository {
         if let exact = try context.fetch(limitedDescriptor).first { return exact }
         let references = Set([catalogID.map { MusicResourceReference.catalog($0) },
                               libraryID.map { MusicResourceReference.library($0, scope: libraryScope) }].compactMap { $0 })
+        if let aliasIndex, try !aliasIndex.mayHold(references) { return nil }
         return try allTracks(in: context).first { !references.isDisjoint(with: $0.confirmedAliases) }
     }
 
@@ -89,18 +116,18 @@ enum TrackRecordRepository {
     }
 
     @discardableResult
-    static func upsert(_ snapshot: TrackSnapshot, in context: ModelContext) throws -> TrackRecord {
-        try upsertWithResult(snapshot, in: context).record
+    static func upsert(_ snapshot: TrackSnapshot, aliasIndex: TrackAliasIndex? = nil, in context: ModelContext) throws -> TrackRecord {
+        try upsertWithResult(snapshot, aliasIndex: aliasIndex, in: context).record
     }
 
     @discardableResult
-    static func upsertWithResult(_ snapshot: TrackSnapshot, in context: ModelContext) throws -> TrackRecordUpsertResult {
+    static func upsertWithResult(_ snapshot: TrackSnapshot, aliasIndex: TrackAliasIndex? = nil, in context: ModelContext) throws -> TrackRecordUpsertResult {
         var identity = MusicTrackIdentity.IDs(catalogID: snapshot.catalogID, libraryID: snapshot.libraryID)
         guard identity.catalogID != nil || identity.libraryID != nil else {
             throw MusicLibrarySongResolver.ResolutionError.unresolved(snapshot.id)
         }
         if !snapshot.hasDocumentedIdentity,
-           let existing = try track(catalogID: identity.catalogID, libraryID: identity.libraryID, in: context),
+           let existing = try track(catalogID: identity.catalogID, libraryID: identity.libraryID, aliasIndex: aliasIndex, in: context),
            existing.hasDocumentedIdentity {
             identity.catalogID = existing.catalogID
             identity.libraryID = existing.libraryID
@@ -109,7 +136,7 @@ enum TrackRecordRepository {
             catalogID: identity.catalogID, libraryID: identity.libraryID,
             title: snapshot.title, artistName: snapshot.artistName, albumTitle: snapshot.albumTitle,
             artworkURLTemplate: snapshot.artworkURLTemplate, durationSeconds: snapshot.durationSeconds,
-            musicKitPlaybackData: snapshot.musicKitPlaybackData, in: context
+            musicKitPlaybackData: snapshot.musicKitPlaybackData, aliasIndex: aliasIndex, in: context
         )
         let changed = applyIdentity(snapshot, to: result.record)
         if changed { result.record.updatedAt = .now }
@@ -159,12 +186,13 @@ enum TrackRecordRepository {
         musicKitPlaybackData: Data? = nil,
         createdAt: Date = .now,
         updatedAt: Date = .now,
+        aliasIndex: TrackAliasIndex? = nil,
         in context: ModelContext
     ) throws -> TrackRecordUpsertResult {
         guard !VideoTrackPolicy.isVideo(playbackData: musicKitPlaybackData) else {
             throw TrackImportError.videoNotSupported
         }
-        guard let track = try track(catalogID: catalogID, libraryID: libraryID, in: context) else {
+        guard let track = try track(catalogID: catalogID, libraryID: libraryID, aliasIndex: aliasIndex, in: context) else {
             let insertedTrack = TrackRecord(
                 catalogID: catalogID,
                 libraryID: libraryID,
@@ -200,6 +228,7 @@ enum TrackRecordRepository {
             let reference = MusicResourceReference.library(alias, scope: track.libraryScope)
             if !track.confirmedAliases.contains(reference) {
                 track.confirmedAliases.append(reference)
+                aliasIndex?.add(reference)
                 didChange = true
             }
         }
@@ -280,4 +309,38 @@ enum TrackRecordRepository {
         track[keyPath: keyPath] = value
         didChange = true
     }
+}
+
+/// Every confirmed alias the tracks hold, built once so a sync pass need not
+/// scan every track for each song it looks up (PF-1). SwiftData cannot query
+/// the alias array, so this is the cheap way to know no track holds an alias.
+/// It answers only "might a track hold one of these?": a yes still finds the
+/// track by the full scan, so the match, and its tie-break, are unchanged.
+/// It is built by the first lookup that needs it, so a pass whose songs are
+/// all found by ID reads no whole table. Invalidate it after any suspension
+/// point, when another task may have merged tracks; the next lookup that
+/// needs it builds it again. Aliases added through it while built are
+/// recorded; while unbuilt there is nothing to record, because the build
+/// reads the tracks' unsaved aliases too.
+final class TrackAliasIndex {
+    /// Called on each build of the index, so tests can count them.
+    @TaskLocal nonisolated static var didBuild: (@MainActor @Sendable () -> Void)?
+
+    private let context: ModelContext
+    private var references: Set<MusicResourceReference>?
+
+    init(in context: ModelContext) { self.context = context }
+
+    func mayHold(_ candidates: Set<MusicResourceReference>) throws -> Bool {
+        if let references { return !references.isDisjoint(with: candidates) }
+        Self.didBuild?()
+        var built: Set<MusicResourceReference> = []
+        for track in try context.fetch(FetchDescriptor<TrackRecord>()) { built.formUnion(track.confirmedAliases) }
+        references = built
+        return !built.isDisjoint(with: candidates)
+    }
+
+    func add(_ reference: MusicResourceReference) { references?.insert(reference) }
+
+    func invalidate() { references = nil }
 }

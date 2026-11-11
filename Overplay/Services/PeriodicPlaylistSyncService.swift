@@ -204,7 +204,7 @@ final class PeriodicPlaylistSyncService {
                 didMutateRecords = didMutateRecords || summary.didMutateRecords
                 playbackController?.reconcileStoredOrder(for: playlist, context: context)
             } catch {
-                playlist.lastSyncError = error.localizedDescription
+                playlist.lastSyncError = UserFacingError.message(for: error)
                 playlist.updatedAt = .now
                 try? context.save()
                 // Deleted in the Music app? Ask before making it again.

@@ -135,6 +135,7 @@ enum DuplicateTrackService {
 
     static func isUnanswered(_ error: Error) -> Bool {
         if case MusicIdentityResolver.ResolutionError.incompleteResponse = error { return true }
+        if case MusicIdentityResolver.ResolutionError.lookupFailed(_, let underlying) = error { return isUnanswered(underlying) }
         if let request = error as? MusicDataRequest.Error { return isUnansweredStatus(request.status) }
         return false
     }
@@ -195,18 +196,20 @@ enum DuplicateTrackService {
         try await confirmNameMatches(try localScan(in: context), in: context, resolver: resolver)
     }
 
-    /// Apple Music may not answer for some songs (one removed from the
-    /// library, or an ID it rejects as malformed), and one such song fails the
-    /// whole request. Imports stop there; a scan only suggests, so it halves
-    /// the request until it finds the song and goes on without it. Answers
-    /// already fetched are cached, so only the failing part is asked again.
-    /// Access, rate-limit, server and network failures still end the scan.
+    /// A song the lookup finds nothing for is reported by the resolver, as
+    /// in a sync. A scan is also lenient where a sync must not be: a request
+    /// refused outright (an ID rejected as malformed, 400 or 422) or a
+    /// malformed response. A scan only suggests, so it halves the request
+    /// until it finds the song and goes on without it. Answers already
+    /// fetched are cached, so only the failing part is asked again. Access,
+    /// rate-limit, server and network failures still end the scan.
     static func enrichSkippingUnanswered(
         _ snapshots: [TrackSnapshot], resolver: MusicIdentityResolver
     ) async throws -> (snapshots: [TrackSnapshot], checked: [Bool]) {
         guard !snapshots.isEmpty else { return ([], []) }
         do {
-            return (try await resolver.enrich(snapshots), Array(repeating: true, count: snapshots.count))
+            let enrichment = try await resolver.enrichReportingNotFound(snapshots)
+            return (zip(enrichment.snapshots, snapshots).map { $0 ?? $1 }, enrichment.snapshots.map { $0 != nil })
         } catch where isUnanswered(error) {
             guard snapshots.count > 1 else { return (snapshots, [false]) }
             let middle = snapshots.count / 2

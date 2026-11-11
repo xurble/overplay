@@ -8,6 +8,10 @@ struct NowPlayingView: View {
     var settings: OverplaySettings
 
     var body: some View {
+        let presentation = NowPlayingPresentationFactory.presentation(
+            playbackController: playbackController,
+            context: modelContext
+        )
         ZStack {
             background
 
@@ -20,9 +24,9 @@ struct NowPlayingView: View {
                         .aspectRatio(1, contentMode: .fit)
                         .shadow(color: .black.opacity(0.35), radius: 24, y: 18)
 
-                    NowPlayingTrackTextView(presentation: nowPlayingPresentation, offersCollectionMenu: true)
-                    NowPlayingProgressView(presentation: nowPlayingPresentation)
-                    TrackPlaybackFactsView(presentation: nowPlayingPresentation)
+                    NowPlayingTrackTextView(presentation: presentation, offersCollectionMenu: true)
+                    NowPlayingProgressView(settings: settings)
+                    TrackPlaybackFactsView(presentation: presentation)
                         .overlay(alignment: .top) {
                             PlayingFromView()
                                 .alignmentGuide(.top) { $0[.bottom] - 8 }
@@ -52,14 +56,6 @@ struct NowPlayingView: View {
 
     private func secondaryControls(settings: OverplaySettings) -> some View {
         NowPlayingActionButtonsView(settings: settings)
-    }
-
-    private var nowPlayingPresentation: NowPlayingPresentation {
-        NowPlayingPresentationFactory.presentation(
-            playbackController: playbackController,
-            settings: settings,
-            context: modelContext
-        )
     }
 }
 

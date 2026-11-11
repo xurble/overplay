@@ -67,22 +67,7 @@ struct OneTruePlaylistRebuildService {
             TrackMetadataDiagnostics.log("rebuild could not load the current playlist: \(error.localizedDescription)")
         }
         let missing = records.filter { tracks[$0.id] == nil && $0.catalogID != nil }
-        if !missing.isEmpty {
-            do {
-                let request = MusicCatalogResourceRequest<Song>(
-                    matching: \.id, memberOf: missing.compactMap { $0.catalogID.map { MusicItemID($0) } }
-                )
-                let songs = try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, detail: "rebuild songs") {
-                    try await request.response().items
-                }
-                let songsByID = Dictionary(songs.map { ($0.id.rawValue, $0) }, uniquingKeysWith: { first, _ in first })
-                for record in missing {
-                    if let catalogID = record.catalogID, let song = songsByID[catalogID] { tracks[record.id] = .song(song) }
-                }
-            } catch {
-                TrackMetadataDiagnostics.log("rebuild catalog lookup failed: \(error.localizedDescription)")
-            }
-        }
+        for (id, track) in await OneTruePlaylistRebuildService.catalogTracks(for: missing) { tracks[id] = track }
         return tracks
     }
     var createPlaylist: @MainActor (String, [Track]) async throws -> Playlist = { name, items in
@@ -112,6 +97,25 @@ struct OneTruePlaylistRebuildService {
     }
 
     init() {}
+
+    /// Catalog items for these records, through the shared chunked lookup
+    /// (API-2). A failed lookup costs those songs, not the rebuild.
+    static func catalogTracks(
+        for records: [TrackRecord],
+        fetch: ([String]) async throws -> [Song] = { batch in
+            try await AppleMusicSongLookup.catalogSongs(batch, detail: "rebuild songs")
+        }
+    ) async -> [UUID: Track] {
+        do {
+            let songs = try await AppleMusicSongLookup.playableCatalogSongs(records.compactMap(\.catalogID), fetch: fetch)
+            return records.reduce(into: [:]) { tracks, record in
+                if let catalogID = record.catalogID, let song = songs[catalogID] { tracks[record.id] = .song(song) }
+            }
+        } catch {
+            TrackMetadataDiagnostics.log("rebuild catalog lookup failed: \(error.localizedDescription)")
+            return [:]
+        }
+    }
 
     func rebuild(in context: ModelContext) async throws -> Result {
         guard canCreatePlaylists() else { throw RebuildError.notOnThisDevice }

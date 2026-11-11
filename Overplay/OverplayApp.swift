@@ -12,10 +12,7 @@ import SwiftUI
 @main
 @MainActor
 struct OverplayApp: App {
-    private static var isRunningTests: Bool {
-        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-            || NSClassFromString("XCTestCase") != nil
-    }
+    private static var isRunningTests: Bool { TestHost.isHostingUnitTests }
 
     private static func makeModelContainer() throws -> ModelContainer {
         AppPersistence.resetFirstRunIfRequested()
@@ -45,6 +42,15 @@ struct OverplayApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        #if targetEnvironment(macCatalyst)
+        // AppKit otherwise swallows an Objective-C exception that reaches its
+        // run loop. One raised inside a main-actor Task unwinds through the
+        // Swift runtime's job frame, leaving the main thread's current-executor
+        // state pointing at a dead stack frame; the next main-actor isolation
+        // check then crashes far from the cause (2026-11-11, in the progress
+        // bar). Crash at the exception instead, with its backtrace.
+        UserDefaults.standard.register(defaults: ["NSApplicationCrashOnExceptions": true])
+        #endif
         BackgroundMusicKitWorkPolicy.launchedAt = .now
         modelContainer = AppRuntime.shared.openLibraryStore {
             let container = try Self.makeModelContainer()
@@ -73,13 +79,18 @@ struct OverplayApp: App {
 
     var body: some Scene {
         WindowGroup {
-            requiringLibraryStore { ContentView(runtime: .shared) }
-                .hidesMacTitlebar()
-                .macSinglePlayerWindow()
-                // The window as the owner sized it (owner request,
-                // 2026-10-31).
-                .macMinimumWindowSize(CGSize(width: 619, height: 576))
-                .appliesAppearancePreference()
+            if Self.isRunningTests {
+                // Hosting unit tests: no ContentView, so no startup bootstrap.
+                Color.clear
+            } else {
+                requiringLibraryStore { ContentView(runtime: .shared) }
+                    .hidesMacTitlebar()
+                    .macSinglePlayerWindow()
+                    // The window as the owner sized it (owner request,
+                    // 2026-10-31).
+                    .macMinimumWindowSize(CGSize(width: 619, height: 576))
+                    .appliesAppearancePreference()
+            }
         }
         .commands { OverplayCommands() }
         .onChange(of: scenePhase) { _, newPhase in

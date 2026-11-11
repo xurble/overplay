@@ -114,6 +114,7 @@ final class CarPlayCoordinator: NSObject {
     private var modelContext: ModelContext?
     private var refreshTask: Task<Void, Never>?
     private var rootRenderer = CarPlayListRenderer()
+    private var rootSummaries = CarPlayRootSummaries()
     private var playlistRenderer = CarPlayListRenderer()
     private var libraryRefreshTask: Task<Void, Never>?
     private var playbackObservationGeneration = 0
@@ -197,6 +198,7 @@ final class CarPlayCoordinator: NSObject {
     func disconnect() {
         isPlacingPlayingPlaylist = false
         rootRenderer.stop()
+        rootSummaries = CarPlayRootSummaries()
         playlistRenderer.stop()
         recentsRenderer.stop()
         recentRenderer.stop()
@@ -272,7 +274,7 @@ final class CarPlayCoordinator: NSObject {
                 artwork: artwork.map { .collage($0, playlistID: summary.musicPlaylistID ?? "", scope: summary.playbackScope) })
         }
         do {
-            let summaries = try playlistSummaries()
+            let summaries = try modelContext.map { try rootSummaries.current(in: $0) } ?? []
             // The One True Playlist, the Inbox and Retired share one headerless
             // section. The One True Playlist leads as an ordinary row, its art
             // and its track count (owner request, 2026-10-27), so it shows
@@ -700,21 +702,15 @@ final class CarPlayCoordinator: NSObject {
         playbackController?.isPlaying(summary.playbackContext) == true
     }
 
-    private func isCurrentTrack(_ summary: TrackSummaryPresentation, in playlist: PlaylistRecord) -> Bool {
-        guard let playbackController,
-              let modelContext,
-              let trackID = summary.trackID,
-              let track = try? TrackRecordRepository.track(id: trackID, in: modelContext) else {
-            return false
-        }
-
-        return CurrentPlaylistItemMatcher.isCurrent(
-            itemID: summary.id,
-            track: track,
-            playlist: playlist,
+    private func currentRowIDs(among rows: some Collection<TrackSummaryPresentation>, in playlist: PlaylistRecord) -> Set<UUID> {
+        guard let playbackController, let modelContext else { return [] }
+        return CarPlayLibrarySnapshot.currentRowIDs(
+            among: rows,
+            in: playlist,
             currentPlaylistID: playbackController.currentPlaylistContext?.musicPlaylistID,
             currentPlaylistItem: playbackController.currentPlaylistItem,
-            currentTrack: playbackController.currentTrack
+            currentTrack: playbackController.currentTrack,
+            loadTracks: { (try? TrackRecordRepository.tracks(ids: $0, in: modelContext)) ?? [] }
         )
     }
 
@@ -823,9 +819,10 @@ final class CarPlayCoordinator: NSObject {
         typealias Row = CarPlayListPresentation.Row
         let shownTracks = tracks.prefix(max(0, CPListTemplate.maximumItemCount - 1))
         let actions = CarPlayAction.playlistRows(shownTracks, in: playlist, scope: scope).mapValues(playlistRowHandler)
+        let currentRowIDs = currentRowIDs(among: shownTracks, in: playlist)
         let rows: [Row] = shownTracks.map { summary in
             Row(id: summary.id.uuidString, title: summary.title, detail: summary.detailText,
-                isPlaying: isCurrentTrack(summary, in: playlist), isEnabled: summary.isPlayable,
+                isPlaying: currentRowIDs.contains(summary.id), isEnabled: summary.isPlayable,
                 artwork: .track(url: summary.artworkURLString, playlistID: playlist.musicPlaylistID))
         }
         // The playlist's art over Shuffle and Play and its tracks, as on the phone.
@@ -881,6 +878,7 @@ final class CarPlayCoordinator: NSObject {
         case .nowPlaying: showNowPlaying()
         case .playbackFailed: showPlaybackFailure(title: "Playback failed")
         case .couldNotAdd(let message): showError(title: "Couldn't add", message: message)
+        case .trackActionFailed(let message): showError(title: "Track action failed", message: message)
         case .nothing: break
         }
     }

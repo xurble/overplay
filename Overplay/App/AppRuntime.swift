@@ -23,7 +23,7 @@ final class AppRuntime {
     private static func makePlaybackController() -> PlaybackController {
         #if targetEnvironment(simulator)
         // No Apple Music in the simulator: play the library on a clock.
-        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+        if !TestHost.isHostingUnitTests {
             return PlaybackController(player: SimulatorPlaybackPlayer(), preparePlaybackTracks: SimulatorPlaybackPlayer.prepare)
         }
         #endif
@@ -65,8 +65,12 @@ final class AppRuntime {
 
     /// What Siri says when `prepareForBackgroundAction` finds no library.
     var backgroundActionRefusal: String {
-        libraryStoreFailure == nil ? VoiceActions.notReadyMessage : VoiceActions.storeUnavailableMessage
+        if libraryStoreFailure != nil { return VoiceActions.storeUnavailableMessage }
+        return backgroundLibraryState.flatMap(VoiceActions.spokenReason(for:)) ?? VoiceActions.notReadyMessage
     }
+
+    /// Where the last `prepareForBackgroundAction` left the library.
+    @ObservationIgnored private var backgroundLibraryState: VoiceActions.LibraryState?
 
     func configure(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
@@ -176,8 +180,10 @@ final class AppRuntime {
 
     /// Siri and Shortcuts can launch Overplay with no window, so nothing has
     /// started the library. Start it as CarPlay does and wait a bounded time
-    /// (`SIRI-002`). Nil when it is not ready in time; nothing changes then.
+    /// for a restoration under way (`SIRI-002`). Nil when it is not ready;
+    /// nothing changes then, and `backgroundActionRefusal` says why.
     func prepareForBackgroundAction(timeout: Duration = .seconds(8)) async -> ModelContext? {
+        backgroundLibraryState = nil
         guard let context = mainModelContext else { return nil }
         if !libraryRestoration.isReady {
             await startupViewModel.bootstrap(
@@ -186,11 +192,16 @@ final class AppRuntime {
                     authorizationService: authorizationService, playbackController: playbackController)
             )
         }
-        let deadline = ContinuousClock.now + timeout
-        while !libraryRestoration.isReady, startupViewModel.libraryPreparationError == nil, ContinuousClock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(100))
+        let state = await VoiceActions.awaitLibrary(attempts: Int(timeout / VoiceActions.libraryPollInterval)) {
+            VoiceActions.libraryState(
+                isLibraryReady: libraryRestoration.isReady,
+                readiness: authorizationService.readiness,
+                isSettingUp: startupViewModel.isSettingUp,
+                preparationFailed: startupViewModel.libraryPreparationError != nil
+            )
         }
-        return libraryRestoration.isReady ? context : nil
+        backgroundLibraryState = state
+        return state == .ready ? context : nil
     }
 
     func makeModelContext() -> ModelContext? {

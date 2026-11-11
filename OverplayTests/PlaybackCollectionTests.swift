@@ -478,19 +478,54 @@ struct PlaybackCollectionTests {
             == "Couldn't add Album Song 1: You're offline. Check your connection and try again.")
     }
 
-    @Test func oneTruePlaylistAddRefusesALibraryOnlySong() async throws {
+    @Test func oneTruePlaylistAddSavesALibraryOnlySongAsALibrarySong() async throws {
         let fixture = try PlaybackFixture()
         defer { fixture.cleanUp() }
         _ = try await playingUnknownSong(fixture)
         fixture.controller.webLibrarySongIDs = { $0 }
-        var remoteAdds = 0
-        fixture.controller.addCatalogSongToPlaylist = { _, _, _ in remoteAdds += 1 }
+        var catalogAdds = 0
+        var libraryAdds: [String] = []
+        fixture.controller.addCatalogSongToPlaylist = { _, _, _ in catalogAdds += 1 }
+        fixture.controller.addLibrarySongToPlaylist = { id, _, _ in libraryAdds.append(id) }
 
         await fixture.controller.addCurrentToOneTruePlaylist(context: fixture.context)
 
-        #expect(remoteAdds == 0)
+        #expect(catalogAdds == 0)
+        #expect(libraryAdds == ["alb-1"])
+        #expect(fixture.controller.statusMessage == "Added to the One True Playlist.")
+        let trackID = try #require(fixture.controller.currentMember?.trackID)
+        let track = try #require(try TrackRecordRepository.track(id: trackID, in: fixture.context))
+        #expect(track.libraryID == "alb-1" && track.catalogID == nil)
+    }
+
+    @Test func aFailedLibraryAddSavesNothing() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        _ = try await playingUnknownSong(fixture)
+        fixture.controller.webLibrarySongIDs = { $0 }
+        fixture.controller.addLibrarySongToPlaylist = { _, _, _ in throw URLError(.notConnectedToInternet) }
+
+        await fixture.controller.addCurrentToOneTruePlaylist(context: fixture.context)
+
         #expect(try TrackRecordRepository.allTracks(in: fixture.context).count == 3)
-        #expect(fixture.controller.statusMessage?.hasPrefix("Couldn't add Album Song 1") == true)
+        #expect(fixture.controller.statusMessage
+            == "Couldn't add Album Song 1: You're offline. Check your connection and try again.")
+    }
+
+    @Test func oneTruePlaylistAddRefusesASongNeitherDomainKnows() async throws {
+        let fixture = try PlaybackFixture()
+        defer { fixture.cleanUp() }
+        _ = try await playingUnknownSong(fixture)
+        fixture.controller.webLibrarySongIDs = { _ in [] }
+        var adds = 0
+        fixture.controller.addCatalogSongToPlaylist = { _, _, _ in adds += 1 }
+        fixture.controller.addLibrarySongToPlaylist = { _, _, _ in adds += 1 }
+
+        await fixture.controller.addCurrentToOneTruePlaylist(context: fixture.context)
+
+        #expect(adds == 0)
+        #expect(fixture.controller.statusMessage
+            == "Couldn't add Album Song 1: Apple Music doesn't recognise this song, so Overplay can't save it.")
     }
 
     // MARK: - Afterwards

@@ -110,16 +110,18 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
                 snapshot.remotePosition = position
                 snapshots.append(snapshot)
             }
-            snapshots = try await identityResolver.enrich(snapshots, includeCandidates: false)
+            let identified = try await identify(snapshots, resolved: resolved)
+            snapshots = identified.snapshots
             return PlaylistSourceFetchResult(
                 snapshots: snapshots,
                 skippedCount: tracks.count - snapshots.count,
-                skippedReason: !resolved.unresolvedIDs.isEmpty ? "unresolvedSongs"
+                skippedReason: !identified.unresolvedIDs.isEmpty ? "unresolvedSongs"
                     : tracks.count == snapshots.count ? nil : "nonSongEntries",
                 remoteLastModifiedAt: playlist.lastModifiedDate,
                 didFetchTracks: true,
                 videoMusicItemIDs: AppleMusicPlaylistTrackLoader.videoMusicItemIDs(from: tracks),
-                unresolvedSongIDs: resolved.unresolvedIDs
+                unresolvedSongIDs: identified.unresolvedIDs,
+                unresolvedLookupName: identified.lookupName
             )
         }
 
@@ -149,18 +151,40 @@ struct AppleMusicPlaylistSourceSync: PlaylistSourceSyncing {
         }
         // Identity is required for import, not optional metadata enrichment.
         // A failed or incomplete lookup must not create a new shared track.
-        snapshots = try await identityResolver.enrich(snapshots, includeCandidates: false)
+        let identified = try await identify(snapshots, resolved: resolved)
+        snapshots = identified.snapshots
         return PlaylistSourceFetchResult(
             snapshots: snapshots,
             skippedCount: entries.count - snapshots.count,
-            skippedReason: !resolved.unresolvedIDs.isEmpty ? "unresolvedSongs"
+            skippedReason: !identified.unresolvedIDs.isEmpty ? "unresolvedSongs"
                 : entries.count == snapshots.count ? nil : "nonSongEntries",
             remoteLastModifiedAt: playlist.lastModifiedDate,
             didFetchTracks: true,
             didFetchEntries: true,
             videoMusicItemIDs: AppleMusicPlaylistTrackLoader.videoMusicItemIDs(from: tracks),
-            unresolvedSongIDs: resolved.unresolvedIDs
+            unresolvedSongIDs: identified.unresolvedIDs,
+            unresolvedLookupName: identified.lookupName
         )
+    }
+
+    /// The identity step of a fetch. A song its lookup answers nothing for
+    /// joins the songs `resolveSongs` could not identify, under the same
+    /// one-fifth limit (`PLAYLIST-010`).
+    private func identify(
+        _ snapshots: [TrackSnapshot], resolved: AppleMusicPlaylistTrackLoader.ResolvedSongs
+    ) async throws -> (snapshots: [TrackSnapshot], unresolvedIDs: [String], lookupName: String?) {
+        let enrichment = try await identityResolver.enrichReportingNotFound(
+            snapshots, includeCandidates: false, catalogAbsenceIsNotFound: true
+        )
+        let unresolvedIDs = resolved.unresolvedIDs + enrichment.notFound.map(\.snapshotID)
+        let lookupName = enrichment.notFound.isEmpty
+            ? nil : MusicIdentityResolver.Lookup.displayNames(enrichment.notFound.map(\.lookup))
+        guard Self.allowsSkipping(unresolvedIDs.count, of: resolved.distinctSongCount) else {
+            throw MusicIdentityResolver.ResolutionError.tooManyNotFound(
+                lookups: lookupName ?? "", count: unresolvedIDs.count, of: resolved.distinctSongCount
+            )
+        }
+        return (enrichment.snapshots.compactMap { $0 }, unresolvedIDs, lookupName)
     }
 
     func loadPlaylist(
@@ -246,10 +270,16 @@ enum AppleMusicPlaylistTrackLoader {
     /// The batched resolver, with its web-library requests in the activity log.
     static let liveResolver: SongBatchResolver = { songs in
         try await MusicLibrarySongResolver.resolveAll(songs, webLibrary: { ids in
-            try await MusicKitActivityLog.shared.measure(
-                .catalogResourceFetch, magnitude: Double(ids.count), detail: "resolver web library batch"
-            ) {
-                try await MusicLibrarySongResolver.webLibrarySongIDs(ids)
+            try await MusicIdentityResolver.naming(.library) {
+                try await MusicKitActivityLog.shared.measure(
+                    .catalogResourceFetch, magnitude: Double(ids.count), detail: "resolver web library batch"
+                ) {
+                    try await AppleMusicSongLookup.fetchWebLibrarySongIDs(ids)
+                }
+            }
+        }, catalog: { ids in
+            try await MusicIdentityResolver.naming(.catalog) {
+                try await AppleMusicSongLookup.catalogSongs(ids.map(\.rawValue), detail: "resolver catalog songs", allPages: true)
             }
         })
     }

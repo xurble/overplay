@@ -78,7 +78,7 @@ Music's global play count or skip count.
 | `PLAYLIST-007` | One item per track app-wide. OTP, the Inbox and global Retired are three top-level collections; every retired item belongs to the bucket. | `Overplay/Persistence/PlaylistItemRepository.swift`, `Overplay/Services/TrackLocationService.swift` |
 | `PLAYLIST-008` | Every retire or duplicate merge out of a managed One True Playlist removes the song from the Apple Music playlist, retried after each sync. A rewrite runs only when the device's copy matches iCloud's; removed or absent songs release suppression and get the retention rule (absent ones even when the load or rewrite fails), and nothing else releases it for a managed playlist: a sync reads this device's copy, which can lag. Promotion does not add a song iCloud already holds. | `Overplay/Services/OneTruePlaylistRemoteMembership.swift`, `OverplayTests/OneTruePlaylistRemoteMembershipTests.swift` |
 | `PLAYLIST-009` | From iPhone or iPad, the user can rebuild the One True Playlist's Apple Music playlist: Overplay creates a new playlist of the active songs in Overplay's order and relinks the same One True Playlist to it, keeping counts, retirements and history. Nothing is deleted from Apple Music. | `Overplay/Services/OneTruePlaylistRebuildService.swift`, `OverplayTests/OneTruePlaylistRebuildTests.swift` |
-| `PLAYLIST-010` | Ordinary sync skips a song no lookup can identify: the rest syncs; the skipped row is untouched; absence-dependent steps are skipped; the playlist keeps an error and retries. More than a fifth unidentifiable, or any in a copy, still stops the fetch. | `Overplay/Services/AppleMusicPlaylistSourceSync.swift`, `OverplayTests/MusicLibraryIdentityImportTests.swift` |
+| `PLAYLIST-010` | Ordinary sync skips a song no lookup can identify, including the identity lookup (an ID missing from a valid response, or a 404 for its batch on any lookup, which is never remembered): the rest syncs; the skipped row is untouched; absence-dependent steps are skipped; the playlist keeps an error naming the lookup and retries. More than a fifth unidentifiable, or any in a copy, still stops the fetch. Every other lookup failure stops the fetch. | `Overplay/Services/AppleMusicPlaylistSourceSync.swift`, `Overplay/Services/MusicIdentityResolver.swift`, `Overplay/Services/AppleMusicSongLookup.swift`, `OverplayTests/MusicLibraryIdentityImportTests.swift`, `OverplayTests/MusicIdentityResolverTests.swift`, `OverplayTests/AppleMusicSongLookupTests.swift` |
 | `PLAYLIST-012` | A song absent from a complete read of an Inbox source loses that source's attachment; an active Inbox song left with no source, no plays or skips (ever, including before a reset) and no explicit keep is deleted, with a history event. A partial read changes nothing; retired and One True Playlist songs are untouched. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
 | `PLAYLIST-011` | The retention rule is re-applied by a sweep at startup and after each background sync cycle, to retired rows and deferred deletions only, with every deletion recorded in history. | `Overplay/Persistence/TrackRetentionPolicy.swift`, `OverplayTests/SyncCleanupTests.swift` |
 | `LOC-001` | A retirement or restore survives another device's stale CloudKit write. After each import and at startup, a song's newest `evicted`/`restored` history event re-applies its decision when it is newer than the row's `locationChangedAt`; promotions are left to the next One True Playlist sync. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/TrackLocationRepairTests.swift` |
@@ -104,7 +104,7 @@ Music's global play count or skip count.
 | `PLAY-014` | Failures are shared across surfaces and recovered by a user Play press, or once when the network returns after dropping, through a bounded ladder (play; prepare and play; resubmit the intent at the current member and position, looking that member's track up again). A play the player accepted but never delivered (reported playing without progress, then paused) is a failure too. A queue whose last prepare failed or has not answered recovers from rung 3, never a bare play; if it plays anyway (a system Play Overplay never sees), it is rebuilt once at the next track change. A rung counts once called, so a press while one hangs escalates. A call unanswered for 8 seconds, with no other answer meanwhile, makes the player stuck: advice to turn mobile data off and on, or else relaunch; one rung-3 attempt, then no more calls from Play until the player answers or the network returns. A rung that answers late ends its press. Pause is never disabled. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-015` | Membership changes never mutate the live queue. Retiring the current track issues Next; a member that left the scope is skipped when reached; additions appear at the next start. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-016` | Overplay does not write `MPNowPlayingInfoCenter` or register transport `MPRemoteCommandCenter` handlers; the `ApplicationMusicPlayer` host owns system Now Playing. A default-off, device-local option, **CarPlay MiniPlayer Controls**, mirrors Now Playing so iOS 27's CarPlay MiniPlayer shows play/pause and skip. | `Overplay/Services/SystemNowPlayingBridge.swift` |
-| `PLAY-017` | Native `Track` objects needed for playback are cached on disk per device; cold launches do not need to re-resolve the whole playlist, a cached track is reused only while it is the song its record names (its library or catalog ID), a library ID that no longer exists in the account library falls back to the record's catalog ID, and unresolvable songs are omitted rather than failing playback, with each omission recorded in the activity log. The cache is emptied only when the Apple Music account or storefront it was filled under changes, never on a relaunch or a failed or offline account check, and a playback lookup gives up after 15 seconds. | `Overplay/Services/DevicePlaybackCache.swift` |
+| `PLAY-017` | Native `Track` objects needed for playback are cached on disk per device; cold launches do not need to re-resolve the whole playlist, a cached track is reused only while it is the song its record names (its library or catalog ID), a library ID that no longer exists in the account library falls back to the record's catalog ID, and unresolvable songs are omitted rather than failing playback, with each omission recorded in the activity log. The cache is emptied only when the Apple Music account or storefront it was filled under changes, never on a relaunch or a failed or offline account check, and a playback lookup gives up after 15 seconds. | `Overplay/Services/DevicePlaybackCache.swift`, `Overplay/Services/AppleMusicSongLookup.swift` |
 | `COUNT-001` | Counting observes playback and never commands, delays or vetoes it. Skips require witnessed listening; playthroughs are position-based; suspended spans never produce skips. | `Overplay/Playback/ListeningSessionTracker.swift`, `Overplay/UseCases/PlaybackSessionEvaluationService.swift` |
 | `COUNT-003` | Ending a song is not a skip when Overplay starts another queue (another playlist or scope, a Search song, an album, artist, deep dive, Made For You mix, Library collection or Siri request), or when the song was paused for a minute or more at any point, including a pause it ends in. Restarting what is playing (Shuffle and Play, Play Album or Play Artist for the album or artist playing) and recovery are not skips either. Skipping within the same queue (Next, a remote or CarPlay skip, selecting another song of the playing playlist, album or other collection, however MusicKit's loaded queue takes it) still counts. A playthrough counts as usual. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/EvictionEngine.swift`, `OverplayTests/PlaybackSkipExceptionTests.swift` |
 | `COUNT-002` | Counted outcomes are immutable ledger events with idempotent session IDs. Displayed counts are derived from the ledger, including absorbed track identities; merges and resets never edit counts. Apple's calculated play count, when higher, is recorded as a floor event that plays never fall below. | `Overplay/Services/ListenLedger.swift`, `Overplay/Models/ListenEvent.swift` |
@@ -112,12 +112,12 @@ Music's global play count or skip count.
 | `CAR-002` | Presented menus retain row and artwork identity. Only changed visible values are published; section replacement requires structural change. Presentation reads never mutate playback or persistence. | `Overplay/CarPlaySupport/CarPlayListRenderer.swift` |
 | `PLAY-018` | Now Playing in the app and CarPlay plays the current song's album from track 1, or its artist's Essentials playlist, else its Top Songs with versions collapsed, through one shared start. Tracked songs are counted and curated as usual; untracked songs offer Add to the Inbox and Add to One True Playlist. A failed lookup changes nothing. | `Overplay/Playback/PlaybackCollection.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/PlaybackCollectionTests.swift` |
 | `PLAY-019` | Recents keeps the 10 most recently played albums and artists, synced through iCloud, one per album or artist, newest first. The main screen shows them as one scrolling row of artwork and CarPlay as a Recents menu; each opens its saved songs with Shuffle and Play, played through the shared selection action and from this device's saved tracks. | `Overplay/Persistence/RecentCollectionRepository.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/RecentsTests.swift` |
-| `PLAY-020` | Shuffle and Play of the playlist and scope already in the intent does not restart it: shuffle is turned on if it is off, then playing carries on, otherwise it is Play. Every surface, Siri included. | `Overplay/Services/PlaybackController.swift`, `OverplayTests/VoiceActionTests.swift` |
+| `PLAY-020` | Shuffle and Play of the playlist and scope already in the intent does not restart it: shuffle is turned on if it is off, then playing carries on, otherwise it is Play. Every surface, Siri and the main screen's Play button included. | `Overplay/Services/PlaybackController.swift`, `OverplayTests/VoiceActionTests.swift` |
 | `MFY-001` | The dashboard's Made For You section lists Apple Music's personal mixes and Replay from the personal recommendations (Friends Mix is not offered by any public API), played like a deep dive and never added to Recent Deep Dives. Mixes are offered as Inbox sources in setup and Inbox Sources, linked by catalog ID and read live from the catalog at each sync; a library copy would stop updating. | `Overplay/Services/MadeForYouLibrary.swift`, `Overplay/Services/AppleMusicPlaylistSourceSync.swift`, `OverplayTests/MadeForYouTests.swift` |
 | `LIB-001` | The Library section browses the user's Apple Music library (Playlists, Albums, Artists, Songs; CarPlay has all but Songs) from the web library, so Overplay's tracks match and show their counts on every device. A collection plays through the shared collection start with this device's own library copies; Songs plays a 100-song window; nothing from Library is added to Recent Deep Dives. Lists are cached per device, never synced. | `Overplay/Services/LibraryBrowser.swift`, `Overplay/Services/LibraryCache.swift`, `Overplay/Views/Library/` |
 | `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing; Play Album and Play Artist add one action list above it (`PLAY-018`), and Recents and each Library category add one level under the root (`PLAY-019`, `LIB-001`). | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
 | `SIRI-001` | Siri, Shortcuts, Spotlight and the Action button offer Play One True Playlist, Play the Inbox, Promote, Retire and Undo, each a thin adapter over the shared action the app and CarPlay use. They run in the background with the phone locked, speak the result of Promote, Retire and Undo, and speak only failures for Play. | `Overplay/Intents/OverplayIntents.swift`, `Overplay/Intents/VoiceActions.swift`, `OverplayTests/VoiceActionTests.swift` |
-| `SIRI-002` | An intent that launches Overplay with no window starts the same startup as CarPlay and waits up to 8 seconds for the library; if it is not ready, the intent says so and changes nothing. | `Overplay/App/AppRuntime.swift` |
+| `SIRI-002` | An intent that launches Overplay with no window starts the same startup as CarPlay and waits up to 8 seconds for a restoration under way. Apple Music not authorised and setup unfinished cannot become ready while it waits: it stops at once and says which. If the library is not ready, the intent says so and changes nothing. | `Overplay/App/AppRuntime.swift` |
 | `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
 | `HISTORY-001` | History is paged. Debug builds add an event filter and the suspended-playback recovery summary above the events; release builds show only the events. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. History is never the source of counts. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
 | `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, the One True Playlist shown with a link to Apple Music, Inbox Sources, display options, Siri phrases, MusicKit diagnostics (including whether the One True Playlist is still editable), and CarPlay MiniPlayer Controls. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
@@ -410,7 +410,12 @@ song, keeping the observed entry as the device's representation of it. Web
 library requests are batched, 25 songs per request (`LOAD-001`): a lagging
 device's library can miss a third of a playlist. An answer for an ID that was
 not requested stops the fetch, because it cannot be attributed. Only
-then does an explicit catalog request resolve songs absent from the library. The web
+then does an explicit catalog request resolve songs absent from the library.
+Native library and catalog requests are batched too, 100 songs per request. A
+song with more than one native match is unresolved. Native library lookups can
+answer a device's own ID (a Mac's persistent ID) under a different, web library
+ID (probe, 2026-09-27); a batched answer like that cannot be attributed, so
+those songs fall back to a per-song native lookup. The web
 library resource and its catalog relationship establish the corresponding shared
 identifiers. Native lookup mappings stay within the import operation; they are
 not persisted as global aliases.
@@ -418,19 +423,34 @@ not persisted as global aliases.
 A missing library resource is unresolved identity. It is not equivalent to a
 returned library song with an explicitly empty catalog relationship. A song that
 none of the native lookup, the web library and the catalog can identify is
-skipped by ordinary sync (`PLAYLIST-010`):
+skipped by ordinary sync (`PLAYLIST-010`). So is a song the identity step then
+finds nothing for: a library song the web library does not return, or a song
+known only by a catalog ID that the catalog does not return. "Finds nothing"
+means an ID absent from a valid response, or a 404 on any identity lookup (web
+library, catalog, equivalents or ISRC), which counts for every song in that
+batch, library songs included. A 404 says nothing about any one song, so it
+holds for that pass only: it is never remembered as absence, and operations
+that need every song (a copy, artwork repair) fail on it. Any other failure (network, 429, 5xx, cancellation, an account
+change) fails the fetch and names the lookup:
 
 - The rest of the playlist syncs. The skipped song creates no track, and its
   existing row is untouched: it is not removed, retired, reset or moved.
 - Reconciliation skips the steps that infer absence from a complete snapshot:
   replacing this source's entry provenance, and, for an incoming-only One True
   Playlist, releasing stale-OTP suppression.
-- The playlist keeps a sync error naming the count. That keeps it retrying each
-  cycle and disables the remote-unchanged skip until every song resolves.
+- The playlist keeps a sync error naming the count and, when the identity step
+  found nothing, the lookup (web library or catalog). That keeps it retrying
+  each cycle and disables the remote-unchanged skip until every song resolves. A
+  library song the web library did not return, and any song a 404 covered, is
+  not remembered, so each retry asks again.
 - When more than a fifth of the playlist's distinct songs are unidentifiable,
-  something wider is wrong, and the fetch stops before reconciliation as before.
+  something wider is wrong, and the fetch stops before reconciliation as before,
+  with an error naming the lookup.
+- Stored sync errors use `UserFacingError`'s wording, never a framework's raw
+  description.
 - Copying a playlist, and any other operation that rewrites from the snapshot,
-  still stops on any unidentifiable song.
+  still stops on any unidentifiable song. A library rebuild whose fetch skipped
+  any song fails and is not recorded as complete.
 
 Optional ISRC/equivalent-recording suggestions
 are resolved by duplicate review, not required for import; an unperformed candidate
@@ -1061,6 +1081,12 @@ library playlist with a MusicKit add and records nothing in Overplay; a
 contributing playlist brings it into the Inbox at its next sync. Failures show a
 clear message.
 
+A song known only by a library ID, such as an upload or a matched song, can be
+promoted and added to the One True Playlist: the write fetches the library song
+by that ID and adds it, through the same "already in iCloud's copy" check as any
+promotion (`PLAYLIST-008`). A song with a catalog ID is still added by catalog
+ID. A song neither the catalog nor the web library knows is refused.
+
 The shared local manual-add boundary also supports the Inbox without a remote
 write. It establishes explicit keep intent, reuses/revives the global item,
 and never demotes an active OTP item. Search's swipes use it. Moving from Retired to the Inbox uses the same explicit keep semantics.
@@ -1361,7 +1387,10 @@ Recents by voice come with Fuller Siri.
 Siri can launch Overplay in the background, with no window to run startup.
 An intent starts the same startup CarPlay uses and waits up to 8 seconds for
 the library. On a device that has restored its library before this is
-immediate. If the library is not ready in time, the intent says Overplay is
+immediate. The wait is only for a real restoration: when Apple Music is not
+authorised or first-run setup is unfinished, nothing can change without the
+user, so the intent stops at once and says to connect Apple Music or to finish
+setting up. If the library is not ready in time, the intent says Overplay is
 still restoring and changes nothing. If the library store could not be opened
 (`STORE-001`), it says so and changes nothing.
 
@@ -1814,7 +1843,10 @@ current entry ID, status and position. It drives witnessed listening and the
 playthrough threshold, and it catches a missed entry change. Nothing in steady
 state enumerates the queue. Paused, stopped and interrupted players are not
 sampled. Observation stays installed, and foregrounding runs one observation
-pass.
+pass. Observation never waits on the player: the two calls it causes (the
+skip of an entry that has left the scope, and the unprepared queue repair)
+are issued from it but answered beside it, so a call that never returns cannot
+stop later changes being observed.
 
 Every Overplay surface renders one observed state:
 
@@ -1887,10 +1919,24 @@ attribute normally.
    `prepareToPlay` once never returned, and an unbounded hold left Overplay
    believing it was playing until relaunch. At the limit Overplay observes
    the player again and records `startTimedOut`; a prepare that returns
-   later does not resume the start, and nothing is retried. Overplay paused
+   later does not resume the start, and nothing is retried. Only a start
+   that reached `play()` clears a failure that was showing; one that timed
+   out or lost its hold to a Play press leaves it alone. A start that timed
+   out does not seek either. A Play press that takes over a resuming start
+   keeps the saved position: once prepare returns, within the hold's limit,
+   the start seeks if observation attributes the player's current entry to
+   the song being resumed, and otherwise does not. Past the limit it does
+   not seek, so audio already playing never jumps. Overplay paused
    the player for the start, so it does not offer Pause while the start is
    held. The first observed entry is attributed by its item. The app and
    CarPlay both use this shared action.
+   A repeat of the start in flight, such as tapping the same song or Shuffle
+   and Play again in the car when nothing is heard yet, makes no player call
+   while the hold lasts: the start is already doing it. Shuffle and Play
+   during a held start that was not going to shuffle is applied by that start
+   once its queue has loaded, as a resubmission keeps shuffle. A real Play
+   press still takes over, and once the hold has ended a repeat tap is Play
+   again.
    Each shuffle or repeat write is listed in the activity log with how far
    the queue had loaded (`loaded=12/97`), to explain a shuffle that does not
    take while a queue is still loading.
@@ -1903,7 +1949,9 @@ goes on, and a queue that Play has to resubmit keeps the shuffle. Then, if the
 player is playing, nothing else changes; otherwise it is Play, with Play's
 recovery and queue-end behaviour. This holds on every surface: the app's Shuffle and Play,
 the main screen, CarPlay and Siri. To shuffle afresh, start another playlist
-or scope first. Selecting a track is unchanged (`SURFACE-003`).
+or scope first. Selecting a track is unchanged (`SURFACE-003`). While a start
+of that intent is still held, this writes nothing to the player (see step 4
+above).
 
 The device playback cache stores encoded native `Track` objects in the caches
 directory, keyed by local track UUID. It survives relaunch, is never synced,
@@ -1916,7 +1964,9 @@ controller action:
 
 - **The selected member is the current member:** resume if paused, never
   restart. With no live queue (after a relaunch or a stop), this resumes the
-  intent at its saved position, exactly like Play.
+  intent at its saved position, exactly like Play. While that member's start
+  is still held, a repeat tap does nothing, so a loading queue is not played
+  early (`PLAY-005`).
 - **The track is a member of the live intent (same playlist and scope):**
   enumerate the player's queue once, find the member's entry by attribution,
   set it as the current entry, and play. If no entry can be found, submit a new
@@ -2037,7 +2087,9 @@ directly (CarPlay or Lock Screen transport) is not seen, so the window bounds
 it. A stuck player is given a fresh queue again. A path that changes
 interface without dropping (Wi-Fi to mobile data) does not count: arriving
 home must not start music in a pocket. The failure's advice says so (owner
-request, 2026-10-24).
+request, 2026-10-24). Only the 2-second wait de-duplicates path updates: a
+recovery that hangs does not block the next return, whose fresh queue
+supersedes it.
 
 **Stuck player (#84).** A player call Overplay waits on (`prepareToPlay`,
 `play`, or the skip that starts Shuffle and Play; from a start, a resume, a
@@ -2118,7 +2170,13 @@ playback stops. The intent stays. Play then resubmits it from its first member.
 If the last observation is stale (the end happened while Overplay was
 suspended), the end is treated the same way and is not a failure. A fresh stop
 mid-track is a failure: the current member and position are kept, so Play
-resumes there. With repeat-all on, MusicKit loops the queue and no queue end is
+resumes there. A queue lost while the session was seen paused and not near its
+end (the system dropped the idle queue, or media services reset) is neither of
+these: the current member and position are kept and saved as the resume point,
+no failure is shown, and Play resumes there, however long the pause lasted. A
+stop reported after that pause is still that pause. A session that pauses
+within the natural-completion tolerance of its end still counts as the queue
+ending. With repeat-all on, MusicKit loops the queue and no queue end is
 observed. Under repeat-all, a wrap from the last entry to the first is
 forward and a move from the first to the last (in a queue of three or more) is
 backward. Without repeat-all, queue order alone decides.
@@ -2153,7 +2211,8 @@ mutate the live MusicKit queue:
   not (`MUT-004`);
 - an entry whose member has left the intent's scope (retired from Active, or
   restored from Retired) is skipped with Next when it is observed becoming
-  current. Its session is marked evaluated without a skip. An entry is
+  current. Observation issues that Next without waiting for its answer. Its
+  session is marked evaluated without a skip. An entry is
   checked each time it becomes current, so a track retired after it played is
   skipped on the next repeat-all lap. It is checked once per visit, never after
   a mid-song carry-over, and skipped at most once per intent, so a wrap over
@@ -2750,6 +2809,30 @@ General and Troubleshooting tabs.
 - Preserve history. Never touch the live playback queue (`SYNC-002`).
 - Publish sync status.
 
+### AppleMusicSongLookup
+
+The one type that turns song IDs into songs, for both questions: what are a
+song's IDs (domain, catalog relationship, ISRC), and what is its playable item.
+Every `MusicCatalogResourceRequest<Song>`, `MusicLibraryRequest<Song>` filtered
+by ID, and request to `/v1/me/library/songs` or `/v1/catalog/{storefront}/songs`
+is made here. One rule set, stated once and tested once:
+
+- The responding endpoint establishes the domain. ID syntax never does.
+- Results are correlated by ID, never by position; an item whose ID was not
+  requested is never attributed to a requested one.
+- A 404, or an ID absent from a valid response, is "not found" for those IDs:
+  a value, not an error. The two are kept apart: a 404 says nothing about any
+  one ID, so it is never cached as a negative answer, and strict callers
+  (copies, artwork, a single playback lookup) throw on it. Every other failure
+  is thrown.
+- Requests are batched: 100 IDs per native, catalog or playback web-library
+  request, 25 per web-library request made to establish identity.
+- Playback callers keep the 15-second timeout (`PLAY-017`).
+
+`MusicIdentityResolver` keeps the identity cache, in-flight coalescing and
+concurrency gate above these requests. Lookups are injected as closures so
+tests need no MusicKit.
+
 ### PlaybackController
 
 The single owner of playback (`PLAY-010`–`PLAY-017`):
@@ -3219,6 +3302,8 @@ CarPlay supports:
 - Promote the current bucket track, whether or not it is retired — deciding to
   keep a track you had set aside is the point of hearing it again.
 - Move the current retired track to the Inbox with explicit keep intent.
+- An alert for a Promote, Retire or Restore that did not happen, with the
+  reason Siri would speak, so a failure is never silent in the car.
 - Return to the root menu from Now Playing.
 
 CarPlay keeps iOS 27's MiniPlayer on (the system default; `allowsMiniPlayer`
@@ -3343,7 +3428,8 @@ featured artists and labels that do not change the recording (Remastered,
 Single Version, Mono…) but never Live, Remix, Acoustic or Edit. Only songs
 joined by name alone are then sent to Apple Music, to find which are the same
 recording; nothing else is. A song Apple Music cannot answer for, or rejects,
-is skipped and counted, without failing the scan. Technical
+is skipped and counted, without failing the scan. A 404 on any lookup leaves
+every song in that batch unchecked, with its stored identifiers unchanged. Technical
 identifiers are used internally and are not displayed in the review screen. Users
 select the recordings to merge and confirm. Mixed collections require choosing One True
 Playlist, the Inbox, or Retired; a shared collection is retained. Canceling performs
@@ -3586,8 +3672,8 @@ normal placeholder: the Overplay logo in white on the app icon's purple,
 shading to a deeper purple. A lookup that succeeds without usable artwork is
 remembered on that device, so the repair stops asking each cycle (#60). It is
 asked again after 30 days, which is how artwork added later is found, or as
-soon as the track's library or catalog ID changes. A failed lookup is never
-remembered as absence.
+soon as the track's library or catalog ID changes. A failed lookup, a 404
+included, is never remembered as absence.
 
 The shared now-playing display prefers the actual player-reported track. Once
 it matches the reconciled current song, its cover uses the same portable

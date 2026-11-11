@@ -19,6 +19,53 @@ enum VoiceActions {
 
     static let notReadyMessage = "Overplay is still restoring your library. Open Overplay to finish."
     static let storeUnavailableMessage = "Overplay can't open your library. Open Overplay for details."
+    static let notAuthorizedMessage = "Overplay isn't connected to Apple Music. Open Overplay to connect it."
+    static let setupUnfinishedMessage = "Overplay isn't set up yet. Open Overplay to finish setting it up."
+
+    /// Where the library stands for an intent launched with no window (`SIRI-002`).
+    enum LibraryState: Equatable, Sendable {
+        case ready
+        /// Only this can still become ready while an intent waits.
+        case restoring
+        case notAuthorized
+        case setupUnfinished
+        case preparationFailed
+    }
+
+    static func libraryState(
+        isLibraryReady: Bool, readiness: AppleMusicReadiness, isSettingUp: Bool, preparationFailed: Bool
+    ) -> LibraryState {
+        if isLibraryReady { return .ready }
+        if !readiness.isReady { return .notAuthorized }
+        if isSettingUp { return .setupUnfinished }
+        return preparationFailed ? .preparationFailed : .restoring
+    }
+
+    /// Waits while the library is restoring, for `attempts` pauses at most.
+    static func awaitLibrary(
+        attempts: Int,
+        state: () -> LibraryState,
+        pause: () async -> Void = { try? await Task.sleep(for: libraryPollInterval) }
+    ) async -> LibraryState {
+        for _ in 0..<attempts {
+            let current = state()
+            guard current == .restoring else { return current }
+            await pause()
+        }
+        return state()
+    }
+
+    static let libraryPollInterval = Duration.milliseconds(100)
+
+    /// What Siri says when the library is not ready; nil when it is.
+    static func spokenReason(for state: LibraryState) -> String? {
+        switch state {
+        case .ready: nil
+        case .notAuthorized: notAuthorizedMessage
+        case .setupUnfinished: setupUnfinishedMessage
+        case .restoring, .preparationFailed: notReadyMessage
+        }
+    }
 
     /// Shuffle and Play, which carries on with a playlist already playing
     /// (`PLAY-020`). Nil once it plays: the music answers for itself.

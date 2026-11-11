@@ -229,7 +229,9 @@ struct PlaylistSyncService {
         }
         if !isComplete {
             // Not fully synced: the error keeps the playlist retrying each cycle.
-            playlistRecord.lastSyncError = Self.unresolvedSongsMessage(fetchResult.unresolvedSongIDs.count)
+            playlistRecord.lastSyncError = Self.unresolvedSongsMessage(
+                fetchResult.unresolvedSongIDs.count, lookupName: fetchResult.unresolvedLookupName
+            )
         }
         summary.skippedCount += fetchResult.skippedCount
         summary.skippedReason = fetchResult.skippedReason
@@ -297,7 +299,7 @@ struct PlaylistSyncService {
             } catch {
                 // One unreachable contributor must not hide the tracks the
                 // others delivered, so record it and carry on.
-                source.lastSyncError = error.localizedDescription
+                source.lastSyncError = UserFacingError.message(for: error)
                 source.updatedAt = .now
                 firstError = firstError ?? error
             }
@@ -410,8 +412,8 @@ struct PlaylistSyncService {
     static let syncYieldStride = 25
 
     @discardableResult
-    static func unresolvedSongsMessage(_ count: Int) -> String {
-        let songs = count == 1 ? "1 song" : "\(count) songs"
+    static func unresolvedSongsMessage(_ count: Int, lookupName: String? = nil) -> String {
+        let songs = (count == 1 ? "1 song" : "\(count) songs") + (lookupName.map { " (\($0) lookup)" } ?? "")
         return "Synced, but Apple Music couldn't identify \(songs), so \(count == 1 ? "it was" : "they were") skipped. Overplay will try again on the next sync."
     }
 
@@ -451,10 +453,13 @@ struct PlaylistSyncService {
         var processedSnapshots: [TrackSnapshot] = []
         var processedTrackIDs = Set<UUID>()
         var insertedOrderTrackIDs = Set<String>()
+        let aliasIndex = TrackAliasIndex(in: context)
 
         for (sortOrder, snapshot) in snapshots.enumerated() {
             if sortOrder > 0, sortOrder.isMultiple(of: Self.syncYieldStride) {
                 try await yieldDuringReconciliation()
+                // Another task may have merged tracks while this pass yielded.
+                aliasIndex.invalidate()
                 guard playlistRecord.isActive, playlistRecord.triageLinkedAt == reconciliationLinkDate else {
                     summary.fetchedCount = sortOrder
                     summary.skippedCount += snapshots.count - sortOrder
@@ -494,6 +499,7 @@ struct PlaylistSyncService {
                         sourcePlaylist: playlistRecord,
                         contributedSourceMusicPlaylistID: contributedSourceMusicPlaylistID,
                         syncedAt: syncedAt,
+                        aliasIndex: aliasIndex,
                         in: context
                     )
                     for localTrackID in replayedTrackIDs
@@ -516,6 +522,7 @@ struct PlaylistSyncService {
                 let existingTrack = try TrackRecordRepository.track(
                     catalogID: snapshotIdentity.catalogID,
                     libraryID: snapshotIdentity.libraryID,
+                    aliasIndex: aliasIndex,
                     in: context
                 )
                 let existingItem = try existingTrack.flatMap {
@@ -535,7 +542,7 @@ struct PlaylistSyncService {
             }
 
             do {
-                let trackResult = try TrackRecordRepository.upsertWithResult(snapshot, in: context)
+                let trackResult = try TrackRecordRepository.upsertWithResult(snapshot, aliasIndex: aliasIndex, in: context)
                 if try sourceExcludesDeletedTrack(trackResult.record.id, source: playlistRecord, in: context) {
                     summary.skippedCount += 1
                     continue
@@ -678,10 +685,11 @@ struct PlaylistSyncService {
         sourcePlaylist: PlaylistRecord,
         contributedSourceMusicPlaylistID: String?,
         syncedAt: Date,
+        aliasIndex: TrackAliasIndex,
         in context: ModelContext
     ) throws -> [String] {
         try snapshots.compactMap { snapshot in
-            let trackResult = try TrackRecordRepository.upsertWithResult(snapshot, in: context)
+            let trackResult = try TrackRecordRepository.upsertWithResult(snapshot, aliasIndex: aliasIndex, in: context)
             if try sourceExcludesDeletedTrack(trackResult.record.id, source: sourcePlaylist, in: context) {
                 return nil
             }

@@ -55,6 +55,31 @@ struct LibraryArtworkServiceTests {
 
     private func noArtwork(_ snapshots: [TrackSnapshot]) -> [TrackSnapshot] { snapshots }
 
+    /// Review of #115, finding 4: a catalog 404 is not an answer, so the
+    /// repair fails and records no absence, as before #115.
+    @Test func aCatalog404FailsTheRepairAndRecordsNoAbsence() async throws {
+        struct Transport404: Error {}
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let tracks = [TrackRecord(catalogID: "5", title: "Five", artistName: "Band"),
+                      TrackRecord(catalogID: "6", title: "Six", artistName: "Band")]
+        for track in tracks { context.insert(track) }
+        try context.save()
+        let (store, cleanUp) = absenceStore(); defer { cleanUp() }
+        let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "a") }, fetch: { kind, ids, scope in
+            try await AppleMusicSongLookup.fetchResources(kind, ids: ids, scope: scope, perform: { _ in throw Transport404() },
+                                                           isNotFound: { $0 is Transport404 })
+        })
+
+        await #expect(throws: MusicIdentityResolver.ResolutionError.self) {
+            try await LibraryArtworkService.repair(in: context, absences: store) {
+                try await resolver.enrich($0, includeCandidates: false)
+            }
+        }
+        #expect(store.entries().isEmpty)
+        #expect(tracks.allSatisfy { $0.artworkURLTemplate == nil })
+    }
+
     @Test func aConfirmedAbsenceIsNotAskedAgainAcrossCyclesOrRestart() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext

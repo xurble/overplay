@@ -34,6 +34,28 @@ enum CarPlayLibrarySnapshot {
         ).trackSummaries(forPlaylistID: playlistID, scope: scope)
     }
 
+    /// The rows `CurrentPlaylistItemMatcher` calls current, reading their
+    /// tracks once for the whole list, and not at all when nothing here can
+    /// be current. A row whose track cannot be read is not current.
+    static func currentRowIDs(
+        among rows: some Collection<TrackSummaryPresentation>,
+        in playlist: PlaylistRecord,
+        currentPlaylistID: String?,
+        currentPlaylistItem: PlaylistItemRecord?,
+        currentTrack: CurrentPlaybackTrack?,
+        loadTracks: ([UUID]) -> [TrackRecord]
+    ) -> Set<UUID> {
+        guard playlist.musicPlaylistID == currentPlaylistID, currentPlaylistItem != nil || currentTrack != nil else { return [] }
+        let tracksByID = loadTracks(rows.compactMap(\.trackID)).firstValueDictionary(keyedBy: \.id)
+        return Set(rows.filter { row in
+            guard let trackID = row.trackID, let track = tracksByID[trackID] else { return false }
+            return CurrentPlaylistItemMatcher.isCurrent(
+                itemID: row.id, track: track, playlist: playlist, currentPlaylistID: currentPlaylistID,
+                currentPlaylistItem: currentPlaylistItem, currentTrack: currentTrack
+            )
+        }.map(\.id))
+    }
+
     /// Active playback surfaces consume the controller-owned snapshot so a
     /// write performed in another SwiftData context is visible immediately.
     static func trackSummaries(
@@ -69,5 +91,44 @@ enum CarPlayLibrarySnapshot {
                     isRetired: row.isEvicted
                 )
             }
+    }
+}
+
+/// The root list's playlist summaries, rebuilt only when something the root
+/// shows has changed. Saves land at every track change with play counts and
+/// the like, which the root does not show, so whether to rebuild is read from
+/// the library each time rather than from which records a save touched.
+struct CarPlayRootSummaries {
+    /// Everything the root shows from a summary, and its order.
+    private struct Shown: Equatable {
+        var id: UUID
+        var musicPlaylistID: String
+        var name: String
+        var role: PlaylistRole
+        var activeCount: Int
+    }
+
+    private var shown: [Shown]?
+    private var summaries: [PlaylistSummaryPresentation] = []
+
+    mutating func current(
+        in context: ModelContext,
+        load: (ModelContext) throws -> [PlaylistSummaryPresentation] = { try CarPlayLibrarySnapshot.playlistSummaries(in: $0) }
+    ) throws -> [PlaylistSummaryPresentation] {
+        let latest = try Self.shown(in: context)
+        if latest == shown { return summaries }
+        summaries = try load(context)
+        shown = latest
+        return summaries
+    }
+
+    private static func shown(in context: ModelContext) throws -> [Shown] {
+        try PlaylistRepository.activePlaylists(in: context).map { playlist in
+            let id = playlist.id
+            // Sources have no row of their own, and Retired's row shows no count.
+            let active = FetchDescriptor<PlaylistItemRecord>(predicate: #Predicate { $0.playlistID == id && $0.evictedAt == nil })
+            return Shown(id: id, musicPlaylistID: playlist.musicPlaylistID, name: playlist.name, role: playlist.role,
+                         activeCount: playlist.role.isPlaybackContext ? try context.fetchCount(active) : 0)
+        }
     }
 }

@@ -73,7 +73,9 @@ enum LibraryRebuildService {
         for link in configuration.playlists.sorted(by: { $0.musicPlaylistID < $1.musicPlaylistID }) {
             let result = try await fetch(link)
             try Task.checkCancellation()
-            guard result.didFetchTracks, result.didFetchEntries,
+            // A fetch that skipped songs (`PLAYLIST-010`) is partial: a
+            // rebuild rewrites from it, so it must not count as complete.
+            guard result.didFetchTracks, result.didFetchEntries, result.unresolvedSongIDs.isEmpty,
                   result.snapshots.allSatisfy({ $0.hasDocumentedIdentity && ($0.libraryID != nil || $0.catalogID != nil) }) else {
                 throw RebuildError.incompleteSource(link.name)
             }
@@ -93,6 +95,8 @@ enum LibraryRebuildService {
                                         writePolicy: .incomingOnly)
             staging.insert(bucket)
             let now = Date.now
+            // Nothing suspends while staging, so one index serves every source.
+            let aliasIndex = TrackAliasIndex(in: staging)
             // OTP goes first. Shared repository identity matching then attaches
             // all later source occurrences to the already-owned membership.
             fetched.sort {
@@ -115,7 +119,7 @@ enum LibraryRebuildService {
                     settings.selectedPlaylistName = link.name
                 }
                 for (position, snapshot) in result.snapshots.enumerated() {
-                    let track = try TrackRecordRepository.upsert(snapshot, in: staging)
+                    let track = try TrackRecordRepository.upsert(snapshot, aliasIndex: aliasIndex, in: staging)
                     let item: PlaylistItemRecord
                     if let existing = try PlaylistItemRepository.item(trackID: track.id, in: staging) {
                         item = existing

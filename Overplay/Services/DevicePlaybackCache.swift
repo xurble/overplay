@@ -12,8 +12,11 @@ nonisolated final class DevicePlaybackCache: Sendable {
         var errorDescription: String? { message }
     }
 
+    /// Memory only while hosting unit tests, so tests never fill or read
+    /// the device's cache directory.
     static let shared = DevicePlaybackCache(
-        directory: URL.cachesDirectory.appendingPathComponent("Overplay/PlaybackTracks", isDirectory: true)
+        directory: TestHost.isHostingUnitTests
+            ? nil : URL.cachesDirectory.appendingPathComponent("Overplay/PlaybackTracks", isDirectory: true)
     )
     /// Keyed by track UUID, or by `catalog-<song ID>` for album and artist
     /// songs Overplay does not track (`PLAY-018`).
@@ -35,6 +38,14 @@ nonisolated final class DevicePlaybackCache: Sendable {
     func data(forCatalogSongID id: String) -> Data? { data(forKey: "catalog-\(id)") }
 
     func set(_ data: Data?, forCatalogSongID id: String) { set(data, forKey: "catalog-\(id)") }
+
+    /// For a whole-library scan: the payload, without keeping it resident,
+    /// so one pass does not hold every track's data for the process (PF-9).
+    func dataWithoutCaching(for id: UUID) -> Data? {
+        let key = id.uuidString
+        if let cached = resources.withLock({ $0[key] }) { return cached }
+        return fileURL(for: key).flatMap { try? Data(contentsOf: $0) }
+    }
 
     private func data(forKey key: String) -> Data? {
         if let cached = resources.withLock({ $0[key] }) { return cached }
@@ -161,24 +172,10 @@ nonisolated final class DevicePlaybackCache: Sendable {
     @MainActor static func loadCatalogSongs(
         _ ids: [String],
         lookup: ([String]) async throws -> [Song] = { batch in
-            let request = MusicCatalogResourceRequest<Song>(matching: \.id, memberOf: batch.map { MusicItemID($0) })
-            return try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, magnitude: Double(batch.count),
-                                                         detail: "playback catalog songs") {
-                Array(try await request.response().items)
-            }
+            try await AppleMusicSongLookup.catalogSongs(batch, detail: "playback catalog songs")
         }
     ) async throws -> [String: Song] {
-        var result: [String: Song] = [:]
-        let ids = Array(Set(ids)).sorted()
-        for start in stride(from: 0, to: ids.count, by: 100) {
-            try Task.checkCancellation()
-            let batch = Array(ids[start..<min(start + 100, ids.count)])
-            let grouped = Dictionary(grouping: try await lookup(batch), by: { $0.id.rawValue })
-            for id in batch {
-                if let matches = grouped[id], matches.count == 1 { result[id] = matches[0] }
-            }
-        }
-        return result
+        try await AppleMusicSongLookup.playableCatalogSongs(Array(Set(ids)).sorted(), fetch: lookup)
     }
 
     @MainActor static func prepare(
@@ -232,51 +229,14 @@ nonisolated final class DevicePlaybackCache: Sendable {
     /// trip per song. Correlate by resource ID, never response position.
     @MainActor static func loadLibrarySongs(
         _ ids: [String],
-        nativeLookup: ([String]) async throws -> [Song] = nativeLibrarySongs,
+        nativeLookup: ([String]) async throws -> [Song] = { batch in
+            try await AppleMusicSongLookup.nativeLibrarySongs(batch, detail: "playback library songs", limit: batch.count)
+        },
         request: (URL) async throws -> Data = { url in
-            try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, detail: "playback web library songs") {
-                try await MusicDataRequest(urlRequest: playbackRequest(url)).response().data
-            }
+            try await AppleMusicSongLookup.playbackWebLibraryData(url, detail: "playback web library songs")
         }
     ) async throws -> [String: Song] {
-        let ids = Array(Set(ids)).sorted()
-        var result: [String: Song] = [:]
-        for start in stride(from: 0, to: ids.count, by: 100) {
-            try Task.checkCancellation()
-            let batch = Array(ids[start..<min(start + 100, ids.count)])
-            let native = try await nativeLookup(batch)
-            try Task.checkCancellation()
-            let grouped = Dictionary(grouping: native, by: { $0.id.rawValue })
-            for id in batch {
-                if let matches = grouped[id], matches.count == 1 { result[id] = matches[0] }
-            }
-            let missing = batch.filter { result[$0] == nil }
-            guard !missing.isEmpty else { continue }
-            var url = URLComponents(string: "https://api.music.apple.com/v1/me/library/songs")!
-            url.queryItems = [URLQueryItem(name: "ids", value: missing.joined(separator: ","))]
-            let data = try await request(url.url!)
-            try Task.checkCancellation()
-            let response = try JSONDecoder().decode(LibrarySongResponse.self, from: data)
-            let resources = Dictionary(grouping: response.data, by: { $0.song.id.rawValue })
-            // Unresolved IDs are left out; each such track then fails on its own.
-            for id in missing {
-                let matches = resources[id] ?? []
-                guard matches.count == 1, let resource = matches.first,
-                      resource.type == "library-songs", resource.song.playParameters != nil else { continue }
-                result[id] = resource.song
-            }
-        }
-        return result
-    }
-
-    @MainActor private static func nativeLibrarySongs(_ ids: [String]) async throws -> [Song] {
-        var request = MusicLibraryRequest<Song>()
-        request.filter(matching: \.id, memberOf: ids.map { MusicItemID($0) })
-        request.limit = ids.count
-        return try await MusicKitActivityLog.shared.measure(.libraryTrackQuery, magnitude: Double(ids.count),
-                                                     detail: "playback library songs") {
-            Array(try await request.response().items)
-        }
+        try await AppleMusicSongLookup.playableLibrarySongs(Array(Set(ids)).sorted(), native: nativeLookup, request: request)
     }
 
     /// A persisted web-library ID need not be queryable in the device's native
@@ -284,24 +244,28 @@ nonisolated final class DevicePlaybackCache: Sendable {
     /// parameters even for uploads that have no catalog equivalent.
     @MainActor static func loadLibrarySong(
         _ id: String,
-        nativeLookup: (String) async throws -> Song? = nativeLibrarySong,
+        nativeLookup: (String) async throws -> Song? = AppleMusicSongLookup.nativeLibrarySong,
         request: (URL) async throws -> Data = { url in
-            try await MusicKitActivityLog.shared.measure(.catalogResourceFetch, magnitude: 1, detail: "playback web library song") {
-                try await MusicDataRequest(urlRequest: playbackRequest(url)).response().data
-            }
+            try await AppleMusicSongLookup.playbackWebLibraryData(url, detail: "playback web library song")
         }
     ) async throws -> Song {
         let native = try await nativeLookup(id)
         try Task.checkCancellation()
         if let native, native.id.rawValue == id { return native }
 
-        var url = URLComponents(string: "https://api.music.apple.com/v1/me/library/songs")!
-        url.queryItems = [URLQueryItem(name: "ids", value: id)]
-        let data = try await request(url.url!)
-        try Task.checkCancellation()
-        let response = try JSONDecoder().decode(LibrarySongResponse.self, from: data)
-        try validateLookup(.library(id), returnedIDs: response.data.map { $0.song.id.rawValue }, hasNextBatch: response.next != nil)
-        let resource = response.data[0]
+        var hasNextBatch = false
+        let answer = try await AppleMusicSongLookup.correlated([id], id: \AppleMusicSongLookup.WebLibraryResource.song.id.rawValue) { batch in
+            let response = try await AppleMusicSongLookup.webLibraryResources(batch, request: request)
+            hasNextBatch = response.next != nil
+            return response.data
+        }
+        // Strict: a 404 is not an answer about this song, so say which it was.
+        if !answer.notFoundByStatus.isEmpty {
+            throw PreparationError(message: "Apple Music web library answered 404 (not found) for \(id).")
+        }
+        let resources = answer.matches[id] ?? []
+        try validateLookup(.library(id), returnedIDs: resources.map(\.song.id.rawValue) + answer.unrequested, hasNextBatch: hasNextBatch)
+        let resource = resources[0]
         guard resource.type == "library-songs" else {
             throw PreparationError(message: "Apple Music web library returned resource type \(resource.type); expected library-songs.")
         }
@@ -309,34 +273,6 @@ nonisolated final class DevicePlaybackCache: Sendable {
             throw PreparationError(message: "Apple Music web library returned song \(id) without playback parameters.")
         }
         return resource.song
-    }
-
-    @MainActor private static func nativeLibrarySong(_ id: String) async throws -> Song? {
-        var request = MusicLibraryRequest<Song>()
-        request.filter(matching: \.id, equalTo: MusicItemID(id))
-        request.limit = 2
-        let items = try await MusicKitActivityLog.shared.measure(.libraryTrackQuery, magnitude: 1, detail: "playback library song") {
-            try await request.response().items
-        }
-        guard items.count == 1, !items.hasNextBatch else { return nil }
-        return items.first
-    }
-
-    private struct LibrarySongResponse: Decodable {
-        var data: [Resource]
-        var next: String?
-
-        struct Resource: Decodable {
-            let type: String
-            let song: Song
-
-            private enum CodingKeys: String, CodingKey { case type }
-
-            init(from decoder: any Decoder) throws {
-                type = try decoder.container(keyedBy: CodingKeys.self).decode(String.self, forKey: .type)
-                song = try Song(from: decoder)
-            }
-        }
     }
 
     private static func lookupDescription(_ reference: MusicResourceReference) -> String {
