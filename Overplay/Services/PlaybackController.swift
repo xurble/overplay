@@ -1746,24 +1746,20 @@ final class PlaybackController {
         let selected = catalogSongID.flatMap { id in
             intent?.collection?.groupKey == collection.groupKey ? intent?.members.first { $0.catalogSongID == id } : nil
         }
-        // The caller's tracks go into the cache before selecting, for a
-        // selection that has to resubmit from it. Selecting in place fills
-        // only songs the cache lost, so a tap inside a playing collection
-        // writes nothing (PB-10). A new start writes each track that differs
-        // from the cached copy, so the caller's copy is the one queued: a
-        // library browser passes this device's local copies.
+        // The caller's tracks go into the cache before selecting or starting,
+        // and each is written only when it differs from the cached copy, so a
+        // tap inside a playing collection normally writes nothing (PB-10).
+        // The caller's copy is the one queued: by a new start, and by a
+        // selection that has to rebuild the queue from the cache (after a
+        // relaunch or a failure). A library browser passes this device's
+        // local copies.
         // Sorted keys, so an unchanged track encodes to the same data and is
         // not written again.
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         for (id, track) in tracks {
-            let cached = collectionTrackCache.data(forCatalogSongID: id)
-            if selected != nil {
-                if cached == nil { collectionTrackCache.set(try? encoder.encode(track), forCatalogSongID: id) }
-            } else {
-                let data = try? encoder.encode(track)
-                if data != cached { collectionTrackCache.set(data, forCatalogSongID: id) }
-            }
+            let data = try? encoder.encode(track)
+            if data != collectionTrackCache.data(forCatalogSongID: id) { collectionTrackCache.set(data, forCatalogSongID: id) }
         }
         let shuffle = catalogSongID == nil
         if let member = selected, let intent {
