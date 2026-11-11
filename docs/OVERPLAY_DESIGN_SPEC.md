@@ -76,7 +76,7 @@ Music's global play count or skip count.
 | `PLAYLIST-004` | Sources contribute attachments, not duplicate rows. A deliberate source link/re-link revives older retirements into the Inbox; ordinary sync never revives them. Active OTP takes precedence over source intake. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
 | `PLAYLIST-005` | Last-source unlink deletes untouched, non-explicit active Inbox rows and unowned retired 0/0 rows. Active explicit keep or prior listening (even reset) survives. Nonzero counts and necessary OTP suppression always survive. | `Overplay/Persistence/TrackRetentionPolicy.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
 | `PLAYLIST-007` | One item per track app-wide. OTP, the Inbox and global Retired are three top-level collections; every retired item belongs to the bucket. | `Overplay/Persistence/PlaylistItemRepository.swift`, `Overplay/Services/TrackLocationService.swift` |
-| `PLAYLIST-008` | Every retire or duplicate merge out of a managed One True Playlist removes the song from the Apple Music playlist, retried after each sync. A rewrite runs only when the device's copy matches iCloud's; removed or absent songs release suppression and get the retention rule. Promotion does not add a song iCloud already holds. | `Overplay/Services/OneTruePlaylistRemoteMembership.swift`, `OverplayTests/OneTruePlaylistRemoteMembershipTests.swift` |
+| `PLAYLIST-008` | Every retire or duplicate merge out of a managed One True Playlist removes the song from the Apple Music playlist, retried after each sync. A rewrite runs only when the device's copy matches iCloud's; removed or absent songs release suppression and get the retention rule, and nothing else releases it for a managed playlist: a sync reads this device's copy, which can lag. Promotion does not add a song iCloud already holds. | `Overplay/Services/OneTruePlaylistRemoteMembership.swift`, `OverplayTests/OneTruePlaylistRemoteMembershipTests.swift` |
 | `PLAYLIST-009` | From iPhone or iPad, the user can rebuild the One True Playlist's Apple Music playlist: Overplay creates a new playlist of the active songs in Overplay's order and relinks the same One True Playlist to it, keeping counts, retirements and history. Nothing is deleted from Apple Music. | `Overplay/Services/OneTruePlaylistRebuildService.swift`, `OverplayTests/OneTruePlaylistRebuildTests.swift` |
 | `PLAYLIST-010` | Ordinary sync skips a song no lookup can identify: the rest syncs; the skipped row is untouched; absence-dependent steps are skipped; the playlist keeps an error and retries. More than a fifth unidentifiable, or any in a copy, still stops the fetch. | `Overplay/Services/AppleMusicPlaylistSourceSync.swift`, `OverplayTests/MusicLibraryIdentityImportTests.swift` |
 | `PLAYLIST-012` | A song absent from a complete read of an Inbox source loses that source's attachment; an active Inbox song left with no source, no plays or skips (ever, including before a reset) and no explicit keep is deleted, with a history event. A partial read changes nothing; retired and One True Playlist songs are untouched. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
@@ -423,8 +423,8 @@ skipped by ordinary sync (`PLAYLIST-010`):
 - The rest of the playlist syncs. The skipped song creates no track, and its
   existing row is untouched: it is not removed, retired, reset or moved.
 - Reconciliation skips the steps that infer absence from a complete snapshot:
-  replacing this source's entry provenance, and releasing stale-OTP
-  suppression.
+  replacing this source's entry provenance, and, for an incoming-only One True
+  Playlist, releasing stale-OTP suppression.
 - The playlist keeps a sync error naming the count. That keeps it retrying each
   cycle and disables the remote-unchanged skip until every song resolves.
 - When more than a fifth of the playlist's distinct songs are unidentifiable,
@@ -571,7 +571,13 @@ deleted elsewhere or drop songs added elsewhere. So:
   after the next sync.
 - A song that is removed, or already absent from iCloud's copy, releases its
   suppression and gets the retention rule at once, so a retired source-free
-  0/0 row is deleted.
+  0/0 row is deleted. iCloud's copy is the only proof for a managed playlist.
+  A sync reads this device's copy, which can lag: a song the device does not
+  list yet stays suppressed, so a retirement made on that device is neither
+  undone nor forgotten.
+- An incoming-only One True Playlist has no iCloud read and no removals. Its
+  suppression is still released by a complete read of the device's copy, so
+  the lag above applies there (**Known Defects and Verification Gaps**).
 - A song being promoted also carries the suppression while its add is in
   flight, but it is not being held outside the playlist: from before the add
   queues for the remote gate until its local move, removals neither remove it
@@ -1060,8 +1066,9 @@ and never demotes an active OTP item. Search's swipes use it. Moving from Retire
 OTP sync can promote an active bucket item, logging `promoted` with source
 `sync`. It cannot revive retired rows or override stale-OTP suppression. An OTP
 retirement, including failed or incoming-only remote removal, keeps suppression
-until a complete successful OTP snapshot proves absence, or explicit promotion
-supersedes it. Missing MusicKit track relationships or promised next pages are
+until absence is proven, or explicit promotion supersedes it. For a managed
+playlist only iCloud's copy proves absence (`PLAYLIST-008`); for an incoming-only
+one, a complete successful OTP snapshot does. Missing MusicKit track relationships or promised next pages are
 errors, not complete empty snapshots. Reviving into the Inbox does not clear that protection.
 
 ## Play Album and Play Artist
@@ -2946,6 +2953,14 @@ Inserted only, never edited. Deleted only by Nuke Database.
 - `createdAt: Date`
 - `updatedAt: Date`
 
+Exactly one row exists per library, made only by first-time setup, Nuke
+Database, a rebuild, or selecting a playlist in a store that has none. Reading
+settings never creates one: a read of a store without a row, as a device can
+have in the middle of a CloudKit import, gets unsaved defaults, so playback and
+every other surface carry on. Duplicates come only from two devices creating a
+library at once, or from builds before this rule. See **Generation 2: first launch
+on another device** for how they converge.
+
 The obsolete `protectKeptTracks` setting and playlist-item `protected` flag
 have been removed, along with the controller and presentation paths that read
 them. They existed only to shield tracks from automatic eviction, which no
@@ -3067,6 +3082,12 @@ The following are not requirements of the current product:
   are dropped. Rolling back after ledger events exist leaves rows marked as
   derived, and upgrading again re-derives them from the ledger. There is no
   supported rollback once events are written.
+- **Incoming-only suppression trusts the device's copy.** An incoming-only One
+  True Playlist has no iCloud read, so a complete sync of a device whose copy
+  lags can still release a retirement's suppression, and delete a 0/0 row that
+  later re-imports as active. New playlists are always managed (`PLAYLIST-002`),
+  so only an older incoming-only link can reach this. Managed playlists do not
+  (`PLAYLIST-008`).
 - In a two-entry queue under repeat-all, Previous from the second entry cannot
   be told apart from Next wrapping to the first. It is judged forward, so it can
   count a skip.
@@ -3442,8 +3463,15 @@ restored, shown and played before restoration completes (`PLAY-010`).
 On an unrecognised local store, require a successful import event for that
 store and a usable configuration: exactly one settings record, its selected
 Overplay playlist, an Inbox, and valid track/playlist references for
-all memberships currently delivered. Do not repair incomplete references or
-choose arbitrarily between competing settings records. One exception: a
+all memberships currently delivered. Do not repair incomplete references.
+Competing settings records are not a reason to wait: CloudKit cannot enforce a
+single row, and nothing else would ever resolve them, so each restoration
+attempt first converges them. The oldest `createdAt`, then lowest UUID, is
+kept, as for Inbox buckets, so every device chooses the same row. It takes the
+oldest selection that names a One True Playlist present in the store, or else
+the oldest selection at all, and any rebuild receipt or Mac playlist request it
+lacks; its own thresholds stand. The other rows are deleted, and a device
+whose receipt named one moves it to the kept row. One exception: a
 membership whose track is missing and named as a donor by a merge lineage
 event does not wait for that track, which is gone for good, once the track
 that survived the merge is here; the location repair then moves it to that
