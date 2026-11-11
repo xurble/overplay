@@ -95,6 +95,8 @@ enum LibraryRebuildService {
                                         writePolicy: .incomingOnly)
             staging.insert(bucket)
             let now = Date.now
+            // Nothing suspends while staging, so one index serves every source.
+            let aliasIndex = try TrackAliasIndex(in: staging)
             // OTP goes first. Shared repository identity matching then attaches
             // all later source occurrences to the already-owned membership.
             fetched.sort {
@@ -117,7 +119,7 @@ enum LibraryRebuildService {
                     settings.selectedPlaylistName = link.name
                 }
                 for (position, snapshot) in result.snapshots.enumerated() {
-                    let track = try TrackRecordRepository.upsert(snapshot, in: staging)
+                    let track = try TrackRecordRepository.upsert(snapshot, aliasIndex: aliasIndex, in: staging)
                     let item: PlaylistItemRecord
                     if let existing = try PlaylistItemRepository.item(trackID: track.id, in: staging) {
                         item = existing

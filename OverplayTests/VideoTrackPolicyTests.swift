@@ -118,6 +118,41 @@ struct VideoTrackPolicyTests {
         #expect(try PlaylistItemRepository.allItems(in: context).count == 1)
     }
 
+    /// PF-9: each track's playback data is decoded once per launch, read
+    /// without filling the shared cache; a new launch inspects it again.
+    @Test("The playback-data scan inspects each track once per launch and keeps nothing resident")
+    func scanOncePerLaunchWithoutCaching() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let directory = URL.temporaryDirectory.appendingPathComponent("VideoScan-\(UUID())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let writer = DevicePlaybackCache(directory: directory)
+        let track = TrackRecord(catalogID: "later-video", title: "Song", artistName: "Artist")
+        context.insert(track)
+        try context.save()
+        writer.set(try JSONEncoder().encode(makeSong()), for: track.id)
+
+        let reader = DevicePlaybackCache(directory: directory)
+        let launch = VideoPlaybackScan(cache: reader)
+        #expect(try await VideoTrackCleanupService.removeVideos(in: context, scan: launch) == 0)
+        // The scan read the file but kept nothing: with the file gone, so is the data.
+        writer.set(nil, for: track.id)
+        #expect(reader.data(for: track.id) == nil)
+
+        // Already inspected this launch: not decoded again.
+        writer.set(try JSONEncoder().encode(makeVideo()), for: track.id)
+        #expect(try await VideoTrackCleanupService.removeVideos(in: context, scan: launch) == 0)
+        #expect(try TrackRecordRepository.allTracks(in: context).count == 1)
+        // A track first seen later in the launch is inspected.
+        let late = TrackRecord(catalogID: "late", title: "Late", artistName: "Artist")
+        context.insert(late)
+        writer.set(try JSONEncoder().encode(makeVideo()), for: late.id)
+        #expect(try await VideoTrackCleanupService.removeVideos(in: context, scan: launch) == 1)
+        // The next launch inspects everything again.
+        #expect(try await VideoTrackCleanupService.removeVideos(in: context, scan: VideoPlaybackScan(cache: reader)) == 1)
+        #expect(try TrackRecordRepository.allTracks(in: context).isEmpty)
+    }
+
     @Test("Song-only copies preserve duplicates and video tracks cannot enter cached playback queues")
     func copiesAndCachedPlayback() throws {
         let video = try makeVideo()

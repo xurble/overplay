@@ -39,6 +39,14 @@ nonisolated final class DevicePlaybackCache: Sendable {
 
     func set(_ data: Data?, forCatalogSongID id: String) { set(data, forKey: "catalog-\(id)") }
 
+    /// For a whole-library scan: the payload, without keeping it resident,
+    /// so one pass does not hold every track's data for the process (PF-9).
+    func dataWithoutCaching(for id: UUID) -> Data? {
+        let key = id.uuidString
+        if let cached = resources.withLock({ $0[key] }) { return cached }
+        return fileURL(for: key).flatMap { try? Data(contentsOf: $0) }
+    }
+
     private func data(forKey key: String) -> Data? {
         if let cached = resources.withLock({ $0[key] }) { return cached }
         guard let url = fileURL(for: key), let data = try? Data(contentsOf: url) else { return nil }
