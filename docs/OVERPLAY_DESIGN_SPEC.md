@@ -3321,8 +3321,13 @@ offset 0.6%). Grids and covers with black or white borders have no drop shadow.
 The arrangement is persisted and the completed 1024 × 1024 image is cached as PNG,
 shared by SwiftUI and CarPlay. It stays stable for 24 hours, refreshing on the next
 view afterward, on changed settings, or on manual regeneration. Cache eviction
-re-renders the saved arrangement. Unavailable artwork does not become a permanent
-completed cache entry. Empty playlists show a placeholder and can generate as soon
+re-renders the saved arrangement. Rendering a Pile loads only covers that can be
+seen: covers wholly hidden by later ones are not fetched, the 32 with the largest
+visible area use the 512 px variant and the rest use 128 px. A cover that fails
+exposes what it hid, which is then drawn instead. Unavailable artwork does not
+become a permanent completed cache entry. An incomplete image is kept in memory
+for the session rather than recomposed on each appearance; it is replaced once the
+covers it lacks are cached, or by a later launch, refresh or regeneration. Empty playlists show a placeholder and can generate as soon
 as artwork arrives. Retired views use only retired tracks, with a separate saved
 arrangement and PNG cache from active the Inbox. Layout, borders, regeneration, and
 daily refresh are independent for active the Inbox and Retired. Each defaults to Pile

@@ -304,8 +304,81 @@ struct PlaylistCollageTests {
         let collage = PlaylistCollage.make(covers: covers(40), layout: .pile, stroke: .none, using: &random)
         #expect(await renderer.image(for: collage, playlistID: "bounded") != nil)
         #expect(maximumActive <= 4)
-        #expect(loads.count == 40)
+        #expect(Set(loads.keys) == Set(collage.renderPlan().coverSizes.keys))
         #expect(loads.values.allSatisfy { $0 == 1 })
+    }
+
+    @Test func pilePlanLeavesOutCoversNothingCanSee() {
+        let collage = PlaylistCollage(id: UUID(), generatedAt: .now, layout: .pile, stroke: .none, placements: [
+            .init(url: "hidden", x: 0.5, y: 0.5, side: 0.4, rotation: 2),
+            .init(url: "sliver", x: 0.502, y: 0.5, side: 0.5, rotation: 0),
+            .init(url: "top", x: 0.5, y: 0.5, side: 0.5, rotation: 0)
+        ])
+        let plan = collage.renderPlan()
+        #expect(plan.placements.map(\.url) == ["sliver", "top"])
+        #expect(plan.coverSizes == ["sliver": 512, "top": 512])
+        // Without the top cover the one beneath it is what shows.
+        #expect(collage.renderPlan(excluding: ["top", "sliver"]).placements.map(\.url) == ["hidden"])
+    }
+
+    @Test func gridsDrawEveryPlacementAtTheirUsualSize() {
+        var random = CollageTestRandom(state: 3)
+        for (layout, size) in [(PlaylistCollageLayout.grid3, 512), (.grid8, 128)] {
+            let collage = PlaylistCollage.make(covers: covers(100), layout: layout, stroke: .none, using: &random)
+            let plan = collage.renderPlan()
+            #expect(plan.placements == collage.placements)
+            #expect(Set(plan.coverSizes.values) == [size])
+        }
+    }
+
+    @Test func aLargePileLoadsFewFullSizeCoversAndNoHiddenOnes() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = try #require(CGImageSourceCreateWithData(artworkTestData() as CFData, nil))
+        let artwork = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        var sizes: [String: [Int]] = [:]
+        let renderer = PlaylistCollageService(cacheDirectory: directory) { url, size, _ in
+            sizes[url, default: []].append(size)
+            return artwork
+        }
+        var random = CollageTestRandom(state: 11)
+        let collage = PlaylistCollage.make(covers: covers(1_000), layout: .pile, stroke: .none, using: &random)
+        #expect(await renderer.image(for: collage, playlistID: "large") != nil)
+        #expect(sizes.values.allSatisfy { $0.count == 1 })
+        #expect(sizes.filter { $0.value == [512] }.count == PlaylistCollage.maxFullSizePileCovers)
+        #expect(sizes.count < 500)
+        // The covers a viewer looks at: the top one and its four runners-up.
+        for cover in 995...999 { #expect(sizes["cover-\(cover)"] == [512]) }
+    }
+
+    @Test func aFailedCoverRevealsWhatItHidOnceAndIsNotAskedForAgain() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = try #require(CGImageSourceCreateWithData(artworkTestData() as CFData, nil))
+        let artwork = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        var loads: [String: Int] = [:]
+        let renderer = PlaylistCollageService(
+            cacheDirectory: directory,
+            loadImage: { url, _, _ in
+                loads[url, default: 0] += 1
+                return url == "top" ? nil : artwork
+            },
+            isCoverUnreachable: { $0 == "top" }
+        )
+        let collage = PlaylistCollage(id: UUID(), generatedAt: .now, layout: .pile, stroke: .none, placements: [
+            .init(url: "hidden", x: 0.5, y: 0.5, side: 0.4, rotation: 0),
+            .init(url: "corner", x: 0.1, y: 0.1, side: 0.1, rotation: 0),
+            .init(url: "top", x: 0.5, y: 0.5, side: 0.5, rotation: 0)
+        ])
+        let rendered = try #require(await renderer.image(for: collage, playlistID: "revealed"))
+        #expect(loads["top"] == 1)
+        #expect(loads["hidden"] == 1)
+        // A gap that can never fill is a finished image, drawn from what shows.
+        let centre = try #require(rendered.cropping(to: CGRect(x: 512, y: 512, width: 1, height: 1)))
+        let sample = try #require(CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8,
+            bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        sample.draw(centre, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        #expect(try #require(sample.data).assumingMemoryBound(to: UInt8.self)[0] != 31) // Not the empty canvas.
     }
 
     @Test func aPermanentlyMissingCoverStillProducesACachedCollage() async throws {
@@ -354,10 +427,46 @@ struct PlaylistCollageTests {
         )
         var random = SystemRandomNumberGenerator()
         let collage = PlaylistCollage.make(covers: covers(4), layout: .grid3, stroke: .none, using: &random)
-        #expect(await renderer.image(for: collage, playlistID: "offline") != nil)
+        let first = try #require(await renderer.image(for: collage, playlistID: "offline"))
         #expect(!FileManager.default.fileExists(atPath: directory.path))
-        #expect(await renderer.image(for: collage, playlistID: "offline") != nil)
-        #expect(loads == 8) // Re-rendered, so the offline cover gets another try.
+        let second = try #require(await renderer.image(for: collage, playlistID: "offline"))
+        #expect(first === second)
+        #expect(loads == 4) // Held for the session, so appearing again costs nothing.
+    }
+
+    @Test func aHeldIncompleteRenderIsReplacedOnceItsMissingCoversAreCached() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = try #require(CGImageSourceCreateWithData(artworkTestData() as CFData, nil))
+        let artwork = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        var loads = 0
+        var cached = false
+        var checked: [String] = []
+        let renderer = PlaylistCollageService(
+            cacheDirectory: directory,
+            loadImage: { url, _, _ in
+                loads += 1
+                return url == "cover-0" && !cached ? nil : artwork
+            },
+            isCoverUnreachable: { _ in false },
+            isCoverCached: { url, _ in
+                checked.append(url)
+                return cached
+            }
+        )
+        var random = SystemRandomNumberGenerator()
+        let collage = PlaylistCollage.make(covers: covers(4), layout: .grid3, stroke: .none, using: &random)
+        let incomplete = try #require(await renderer.image(for: collage, playlistID: "healed"))
+        #expect(await renderer.image(for: collage, playlistID: "healed") === incomplete)
+        #expect(loads == 4)
+        #expect(checked == ["cover-0"]) // Only the missing cover, and only the cache.
+        cached = true
+        let complete = try #require(await renderer.image(for: collage, playlistID: "healed"))
+        #expect(complete !== incomplete)
+        #expect(loads == 8)
+        #expect(FileManager.default.fileExists(atPath: directory.path)) // The finished image is kept on disk.
+        #expect(await renderer.image(for: collage, playlistID: "healed") === complete)
+        #expect(loads == 8)
     }
 
     /// On iPhone the caches path is `/var/…` but directory listings report
