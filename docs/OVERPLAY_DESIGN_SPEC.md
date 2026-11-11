@@ -2812,7 +2812,10 @@ is made here. One rule set, stated once and tested once:
 - Results are correlated by ID, never by position; an item whose ID was not
   requested is never attributed to a requested one.
 - A 404, or an ID absent from a valid response, is "not found" for those IDs:
-  a value, not an error. Every other failure is thrown.
+  a value, not an error. The two are kept apart: a 404 says nothing about any
+  one ID, so it is never cached as a negative answer, and strict callers
+  (copies, artwork, a single playback lookup) throw on it. Every other failure
+  is thrown.
 - Requests are batched: 100 IDs per native, catalog or playback web-library
   request, 25 per web-library request made to establish identity.
 - Playback callers keep the 15-second timeout (`PLAY-017`).

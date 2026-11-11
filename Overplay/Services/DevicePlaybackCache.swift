@@ -259,6 +259,10 @@ nonisolated final class DevicePlaybackCache: Sendable {
             hasNextBatch = response.next != nil
             return response.data
         }
+        // Strict: a 404 is not an answer about this song, so say which it was.
+        if !answer.notFoundByStatus.isEmpty {
+            throw PreparationError(message: "Apple Music web library answered 404 (not found) for \(id).")
+        }
         let resources = answer.matches[id] ?? []
         try validateLookup(.library(id), returnedIDs: resources.map(\.song.id.rawValue) + answer.unrequested, hasNextBatch: hasNextBatch)
         let resource = resources[0]

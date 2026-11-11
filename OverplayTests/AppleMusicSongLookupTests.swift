@@ -35,17 +35,23 @@ struct AppleMusicSongLookupTests {
             return batch
         }
         #expect(answer.matches == ["c": ["c"]])
+        #expect(answer.notFoundByStatus == ["a", "b"])
         #expect(answer.unrequested.isEmpty)
     }
 
-    @Test func anIDAbsentFromAValidResponseIsNotFound() async throws {
+    /// Review of #115: an omitted ID and a 404 must not be conflated.
+    @Test func anIDAbsentFromAValidResponseIsNotFoundButNotA404() async throws {
         let answer = try await correlated(["a", "b"]) { _ in ["a"] }
         #expect(answer.matches == ["a": ["a"]])
+        #expect(answer.notFoundByStatus.isEmpty)
     }
 
     @Test func aNamedLookupFailureStillReadsAsNotFound() {
         let wrapped = MusicIdentityResolver.ResolutionError.lookupFailed(.library, underlying: Transport404())
         #expect(AppleMusicSongLookup.isNotFound(wrapped, status: { $0 is Transport404 }))
+        #expect(AppleMusicSongLookup.isNotFound(
+            MusicIdentityResolver.ResolutionError.notFound(.catalog, underlying: Transport404()), status: { _ in false }
+        ))
         #expect(!AppleMusicSongLookup.isNotFound(
             MusicIdentityResolver.ResolutionError.lookupFailed(.library, underlying: URLError(.badServerResponse)),
             status: { $0 is Transport404 }

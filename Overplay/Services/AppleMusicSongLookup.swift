@@ -10,7 +10,9 @@ import Foundation
 /// - Results are correlated by ID, never by position, and an item whose ID was
 ///   not requested is never attributed to a requested one.
 /// - A 404, or an ID absent from a valid response, is "not found" for those
-///   IDs: a value, not an error. Every other failure is thrown.
+///   IDs: a value, not an error. The two stay distinct: a 404 says nothing
+///   about any one ID, so it is never remembered as an answer, and a strict
+///   caller can throw on it. Every other failure is thrown.
 /// - Requests are batched within the limits below. No caller issues one
 ///   request per song where a batched form exists.
 ///
@@ -25,11 +27,14 @@ enum AppleMusicSongLookup {
     static let webLibraryIdentityBatchSize = 25
 
     /// What a batched lookup found, keyed by requested ID. An ID with no key
-    /// was not found. `unrequested` holds IDs nobody asked about: they are
+    /// was not found. `notFoundByStatus` holds the IDs of batches answered
+    /// 404, apart from IDs a valid response omitted: never cache them as a
+    /// negative answer. `unrequested` holds IDs nobody asked about: they are
     /// never attributed to a requested ID, and each caller decides whether
     /// one stops its fetch.
     struct Answer<Item> {
         var matches: [String: [Item]] = [:]
+        var notFoundByStatus: [String] = []
         var unrequested: [String] = []
     }
 
@@ -54,6 +59,7 @@ enum AppleMusicSongLookup {
             do {
                 items = try await fetch(batch)
             } catch where isNotFound(error) {
+                answer.notFoundByStatus += batch
                 items = []
             }
             try Task.checkCancellation()
@@ -76,6 +82,7 @@ enum AppleMusicSongLookup {
     /// into a failure. The status check is injected because MusicKit's error
     /// type cannot be built outside MusicKit.
     nonisolated static func isNotFound(_ error: Error, status: (Error) -> Bool) -> Bool {
+        if case MusicIdentityResolver.ResolutionError.notFound = error { return true }
         if case MusicIdentityResolver.ResolutionError.lookupFailed(_, let underlying) = error {
             return isNotFound(underlying, status: status)
         }
