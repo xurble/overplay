@@ -93,6 +93,28 @@ struct LibraryRebuildTests {
         #expect(try container.mainContext.fetchCount(FetchDescriptor<TrackRecord>()) == 0)
     }
 
+    /// `PLAYLIST-010`: a fetch that skipped songs is partial, so a rebuild
+    /// from it must not record completion and must be retried in full.
+    @Test func fetchWithUnresolvedSongsDoesNotCompleteTheRebuild() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let config = configuration()
+        var partial = result([snapshot("i.found")])
+        partial.unresolvedSongIDs = ["i.skipped"]
+        do {
+            try await LibraryRebuildService.rebuild(config, in: container.mainContext) { _ in partial }
+            Issue.record("A partial fetch must not complete the rebuild")
+        } catch {}
+        #expect(try container.mainContext.fetchCount(FetchDescriptor<TrackRecord>()) == 0)
+        #expect(try container.mainContext.fetchCount(FetchDescriptor<PlaylistRecord>()) == 0)
+        var fetches = 0
+        let didBuild = try await LibraryRebuildService.rebuild(config, in: container.mainContext) { _ in
+            fetches += 1
+            return result([snapshot("i.found"), snapshot("i.skipped")])
+        }
+        #expect(didBuild && fetches == 2)
+        #expect(try container.mainContext.fetchCount(FetchDescriptor<TrackRecord>()) == 2)
+    }
+
     @Test func existingGraphCannotBeResetByAConfigurationFile() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         container.mainContext.insert(TrackRecord(catalogID: "123", title: "Existing", artistName: "Artist"))

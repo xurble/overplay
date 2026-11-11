@@ -73,7 +73,9 @@ enum LibraryRebuildService {
         for link in configuration.playlists.sorted(by: { $0.musicPlaylistID < $1.musicPlaylistID }) {
             let result = try await fetch(link)
             try Task.checkCancellation()
-            guard result.didFetchTracks, result.didFetchEntries,
+            // A fetch that skipped songs (`PLAYLIST-010`) is partial: a
+            // rebuild rewrites from it, so it must not count as complete.
+            guard result.didFetchTracks, result.didFetchEntries, result.unresolvedSongIDs.isEmpty,
                   result.snapshots.allSatisfy({ $0.hasDocumentedIdentity && ($0.libraryID != nil || $0.catalogID != nil) }) else {
                 throw RebuildError.incompleteSource(link.name)
             }
