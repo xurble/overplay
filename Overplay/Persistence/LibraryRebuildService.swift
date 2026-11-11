@@ -96,7 +96,7 @@ enum LibraryRebuildService {
             staging.insert(bucket)
             let now = Date.now
             // Nothing suspends while staging, so one index serves every source.
-            let aliasIndex = try TrackAliasIndex(in: staging)
+            let aliasIndex = TrackAliasIndex(in: staging)
             // OTP goes first. Shared repository identity matching then attaches
             // all later source occurrences to the already-owned membership.
             fetched.sort {

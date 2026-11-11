@@ -453,13 +453,13 @@ struct PlaylistSyncService {
         var processedSnapshots: [TrackSnapshot] = []
         var processedTrackIDs = Set<UUID>()
         var insertedOrderTrackIDs = Set<String>()
-        var aliasIndex = try TrackAliasIndex(in: context)
+        let aliasIndex = TrackAliasIndex(in: context)
 
         for (sortOrder, snapshot) in snapshots.enumerated() {
             if sortOrder > 0, sortOrder.isMultiple(of: Self.syncYieldStride) {
                 try await yieldDuringReconciliation()
                 // Another task may have merged tracks while this pass yielded.
-                aliasIndex = try TrackAliasIndex(in: context)
+                aliasIndex.invalidate()
                 guard playlistRecord.isActive, playlistRecord.triageLinkedAt == reconciliationLinkDate else {
                     summary.fetchedCount = sortOrder
                     summary.skippedCount += snapshots.count - sortOrder

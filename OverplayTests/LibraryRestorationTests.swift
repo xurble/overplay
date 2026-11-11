@@ -202,7 +202,7 @@ struct LibraryRestorationTests {
         context.insert(PlaylistItemRecord(playlistID: playlist.id, trackID: UUID()))
         try context.save()
         let service = LibraryRestorationService(defaults: local)
-        await #expect(throws: (any Error).self) {
+        await #expect(throws: LibraryRestorationService.RestorationError.waitingForCloud) {
             try await service.prepare(in: context, hasLegacyStore: true, locallyRebuiltID: nil, attempts: 1)
         }
         #expect(!service.isReady)
