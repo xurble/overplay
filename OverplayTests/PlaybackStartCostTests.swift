@@ -150,6 +150,11 @@ struct PlaybackStartCostTests {
         #expect(cache.track(for: id)?.title == "A")
         #expect(cache.track(for: id)?.title == "A")
         #expect(counter.counts([id]) == [3])
+        // The next start decodes afresh: nothing was held over.
+        cache.beginDecoding()
+        defer { cache.endDecoding() }
+        #expect(cache.track(for: id)?.title == "A")
+        #expect(counter.counts([id]) == [4])
     }
 
     @Test func settingDataDropsItsDecode() throws {
