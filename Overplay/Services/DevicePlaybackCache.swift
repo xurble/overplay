@@ -21,6 +21,17 @@ nonisolated final class DevicePlaybackCache: Sendable {
     /// The account and storefront fingerprint the tracks were filled under.
     private let scope = Mutex<String?>(nil)
     private let directory: URL?
+    /// Decoded tracks, kept only while a start holds a decoding scope, so one
+    /// start decodes each cached track once (PB-9). Outside a scope nothing
+    /// is kept: `resources` already holds every track's data for the life of
+    /// the process. Invalidated in `set`.
+    private let decoding = Mutex<Decoding>(Decoding())
+    private struct Decoding {
+        var scopes = 0
+        var tracks: [String: Track?] = [:]
+    }
+    /// Tests count decodes through this; told each decoded key.
+    let decodeObserver = Mutex<(@Sendable (String) -> Void)?>(nil)
 
     init(directory: URL? = nil) {
         self.directory = directory
@@ -45,6 +56,7 @@ nonisolated final class DevicePlaybackCache: Sendable {
 
     private func set(_ data: Data?, forKey key: String) {
         resources.withLock { $0[key] = data }
+        decoding.withLock { _ = $0.tracks.removeValue(forKey: key) }
         guard let url = fileURL(for: key) else { return }
         if let data {
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -54,8 +66,37 @@ nonisolated final class DevicePlaybackCache: Sendable {
         }
     }
 
+    /// The cached track, decoded. Within a decoding scope each key is decoded
+    /// at most once until it is set again.
+    func track(for id: UUID) -> Track? {
+        let key = id.uuidString
+        if let memo = decoding.withLock({ $0.scopes > 0 ? $0.tracks[key] : nil }) { return memo }
+        guard let data = data(forKey: key) else { return nil }
+        decodeObserver.withLock { $0 }?(key)
+        let track = try? JSONDecoder().decode(Track.self, from: data)
+        // Keep it only if no `set` replaced the data meanwhile. Lock order is
+        // always `decoding`, then `resources`.
+        decoding.withLock { state in
+            guard state.scopes > 0, resources.withLock({ $0[key] }) == data else { return }
+            state.tracks[key] = .some(track)
+        }
+        return track
+    }
+
+    /// Opens a decoding scope; every `beginDecoding` needs one `endDecoding`.
+    /// The last one to close drops the decoded tracks.
+    func beginDecoding() { decoding.withLock { $0.scopes += 1 } }
+
+    func endDecoding() {
+        decoding.withLock { state in
+            state.scopes = max(state.scopes - 1, 0)
+            if state.scopes == 0 { state.tracks.removeAll() }
+        }
+    }
+
     func removeAll() {
         resources.withLock { $0.removeAll() }
+        decoding.withLock { $0.tracks.removeAll() }
         if let directory { try? FileManager.default.removeItem(at: directory) }
     }
 
@@ -82,10 +123,10 @@ nonisolated final class DevicePlaybackCache: Sendable {
     /// A cached track is current only when it decodes and is the song its
     /// record now names. Removing and re-adding a song, or a sync that
     /// re-matches the record, changes that ID while the disk cache keeps the
-    /// old play parameters across launches.
+    /// old play parameters across launches. Only the decode is shared within a
+    /// start; the ID check runs against the record every time.
     @MainActor static func hasCurrentData(for track: TrackRecord) -> Bool {
-        guard let data = shared.data(for: track.id),
-              let cached = try? JSONDecoder().decode(Track.self, from: data) else { return false }
+        guard let cached = shared.track(for: track.id) else { return false }
         // A catalog song prepared because the library ID was gone is current too.
         return [track.libraryID, track.catalogID].contains(cached.id.rawValue)
     }
@@ -104,6 +145,8 @@ nonisolated final class DevicePlaybackCache: Sendable {
         libraryLookup: ([String]) async throws -> [String: Song] = { try await loadLibrarySongs($0) },
         catalogLookup: ([String]) async throws -> [String: Song] = { try await loadCatalogSongs($0) }
     ) async throws {
+        shared.beginDecoding()
+        defer { shared.endDecoding() }
         let uncached = tracks.filter { refreshing.contains($0.id) || !hasCurrentData(for: $0) }
         let libraryIDs = Array(Set(uncached.compactMap(\.libraryID))).sorted()
         let catalogIDs = Array(Set(uncached.filter { $0.libraryID == nil }.compactMap(\.catalogID))).sorted()
@@ -174,6 +217,9 @@ nonisolated final class DevicePlaybackCache: Sendable {
     ) async throws {
         var failures: [String] = []
         for track in tracks {
+            // Within the caller's decoding scope this reuses the decode that
+            // built `uncached`; it is checked again here so a record listed
+            // twice is loaded once.
             if !refreshing.contains(track.id), hasCurrentData(for: track) { continue }
             try Task.checkCancellation()
             let reference: MusicResourceReference

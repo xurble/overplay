@@ -141,6 +141,10 @@ final class PlaybackController {
     @ObservationIgnored var playbackCatalog = PlaybackCatalog.live
     /// Album and artist songs' native tracks on this device (`PLAY-019`); injectable for tests.
     @ObservationIgnored var collectionTrackCache = DevicePlaybackCache.shared
+    /// Resubmission's record fetch; tests count calls through it.
+    @ObservationIgnored var fetchTrackRecords: @MainActor ([UUID], ModelContext) throws -> [TrackRecord] = {
+        try TrackRecordRepository.tracks(ids: $0, in: $1)
+    }
     /// Adds a catalog song to an Apple Music playlist; injectable for tests.
     @ObservationIgnored var addCatalogSongToPlaylist: @MainActor (String, PlaylistRecord, ModelContext) async throws -> Void = {
         try await PlaylistMutationService().addCatalogSong(id: $0, to: $1, in: $2)
@@ -1277,14 +1281,9 @@ final class PlaybackController {
         }
         startGeneration &+= 1
         let generation = startGeneration
-        let resolved = await resolvePlayableTracks(records)
+        let playable = await playableMembers(records, items: items)
         // A newer start or selection happened while this one prepared.
         guard generation == startGeneration else { return }
-        let itemsByTrackID = items.firstValueDictionary(keyedBy: \.trackID)
-        let playable = records.compactMap { record -> (PlaybackIntent.Member, Track)? in
-            guard let track = resolved[record.id] else { return nil }
-            return (Self.member(for: record, item: itemsByTrackID[record.id], track: track), track)
-        }
         guard !playable.isEmpty else {
             statusMessage = "None of the tracks in \(playlist.name) could be prepared for playback."
             return
@@ -1337,10 +1336,11 @@ final class PlaybackController {
             // An album or artist is looked up in the catalog again (`PLAY-018`).
             resolved = await resolveCollectionTracks(intent.members)
         } else {
-            let records = intent.members.compactMap { member -> TrackRecord? in
-                guard let id = member.trackID, let context = countingContext() else { return nil }
-                return try? TrackRecordRepository.track(id: id, in: context)
-            }
+            // One batched fetch, in member order (PB-9).
+            let ids = intent.members.compactMap(\.trackID)
+            let fetched = countingContext().flatMap { try? fetchTrackRecords(ids, $0) } ?? []
+            let byID = fetched.firstValueDictionary(keyedBy: \.id)
+            let records = ids.compactMap { byID[$0] }
             var refreshing: Set<UUID> = []
             if refreshingStart, let id = member?.trackID { refreshing.insert(id) }
             let tracks = await resolvePlayableTracks(records, refreshing: refreshing,
@@ -1511,11 +1511,29 @@ final class PlaybackController {
         }
     }
 
+    /// A playlist start's members and tracks, in record order, decoding each
+    /// cached track once (PB-9).
+    private func playableMembers(_ records: [TrackRecord], items: [PlaylistItemRecord]) async -> [(PlaybackIntent.Member, Track)] {
+        let cache = DevicePlaybackCache.shared
+        cache.beginDecoding()
+        defer { cache.endDecoding() }
+        let resolved = await resolvePlayableTracks(records)
+        let itemsByTrackID = items.firstValueDictionary(keyedBy: \.trackID)
+        return records.compactMap { record -> (PlaybackIntent.Member, Track)? in
+            guard let track = resolved[record.id] else { return nil }
+            return (Self.member(for: record, item: itemsByTrackID[record.id], track: track), track)
+        }
+    }
+
     /// Native tracks from the device cache, preparing any that are missing.
     /// Unresolvable tracks are simply absent from the result (`PLAY-017`).
+    /// Preparation and resolution share one decode per cached track (PB-9).
     private func resolvePlayableTracks(
         _ records: [TrackRecord], refreshing: Set<UUID> = [], fallbackLocalTrackIDs: [String] = []
     ) async -> [UUID: Track] {
+        let cache = DevicePlaybackCache.shared
+        cache.beginDecoding()
+        defer { cache.endDecoding() }
         if !records.isEmpty {
             do {
                 try await preparePlaybackTracks(records, refreshing)
@@ -1530,9 +1548,7 @@ final class PlaybackController {
         var resolved: [UUID: Track] = [:]
         let ids = Set(records.map(\.id) + fallbackLocalTrackIDs.compactMap(UUID.init(uuidString:)))
         for id in ids {
-            if let data = DevicePlaybackCache.shared.data(for: id),
-               let track = try? JSONDecoder().decode(Track.self, from: data),
-               Self.isQueueable(track) {
+            if let track = cache.track(for: id), Self.isQueueable(track) {
                 resolved[id] = track
             }
         }
@@ -1650,7 +1666,10 @@ final class PlaybackController {
         adopt(context)
         let startToken = beginStart()
         defer { endStart(startToken) }
-        for (id, track) in tracks {
+        // Only songs not yet cached are written, so tapping another song of
+        // a playing collection writes nothing (PB-10). They are still filled
+        // before selecting, for a selection that has to resubmit.
+        for (id, track) in tracks where collectionTrackCache.data(forCatalogSongID: id) == nil {
             collectionTrackCache.set(try? JSONEncoder().encode(track), forCatalogSongID: id)
         }
         let shuffle = catalogSongID == nil
@@ -1772,7 +1791,10 @@ final class PlaybackController {
     /// song without one, its library ID.
     private func collectionPlayable(_ tracks: [(String, Track)]) -> [(PlaybackIntent.Member, Track)] {
         let context = countingContext()
-        let tracked = context.flatMap { try? TrackRecordRepository.tracksByCatalogID(in: $0) } ?? [:]
+        // One fetch serves both lookups, not one or more per song (PB-10).
+        let records = context.flatMap { try? TrackRecordRepository.allTracks(in: $0) } ?? []
+        let tracked = TrackRecordRepository.tracksByCatalogID(records)
+        let byLibraryID = Self.tracksByLibraryID(records)
         var seen: Set<String> = []
         return tracks.compactMap { catalogID, track in
             if collectionTrackCache.data(forCatalogSongID: catalogID) == nil {
@@ -1780,7 +1802,7 @@ final class PlaybackController {
             }
             var member: PlaybackIntent.Member
             // A library song is keyed by its library ID.
-            if let record = tracked[catalogID] ?? context.flatMap({ try? TrackRecordRepository.track(musicItemID: catalogID, in: $0) }),
+            if let record = tracked[catalogID] ?? byLibraryID[catalogID],
                let context,
                let item = try? PlaylistItemRepository.item(trackID: record.id, in: context) {
                 member = Self.member(for: record, item: item, track: track)
@@ -1801,6 +1823,25 @@ final class PlaybackController {
             guard seen.insert(member.localTrackID).inserted else { return nil }
             return (member, track)
         }
+    }
+
+    /// What `TrackRecordRepository.track(musicItemID:)` finds for a song ID
+    /// no record has as its catalog ID or catalog alias: the first record, in
+    /// `allTracks` order, with that library ID in the current library scope,
+    /// else with it as a confirmed library alias there.
+    static func tracksByLibraryID(_ records: [TrackRecord]) -> [String: TrackRecord] {
+        let scope = MusicResourceReference.currentLibraryScope
+        var byLibraryID: [String: TrackRecord] = [:]
+        for record in records where record.libraryScope == scope {
+            if let id = record.libraryID, byLibraryID[id] == nil { byLibraryID[id] = record }
+        }
+        for record in records {
+            for alias in record.confirmedAliases where alias.domain == .librarySong && alias.scope == scope
+                && byLibraryID[alias.value] == nil {
+                byLibraryID[alias.value] = record
+            }
+        }
+        return byLibraryID
     }
 
     /// The current song is one Overplay does not track, playing from an
