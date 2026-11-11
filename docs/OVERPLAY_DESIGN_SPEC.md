@@ -78,7 +78,7 @@ Music's global play count or skip count.
 | `PLAYLIST-007` | One item per track app-wide. OTP, the Inbox and global Retired are three top-level collections; every retired item belongs to the bucket. | `Overplay/Persistence/PlaylistItemRepository.swift`, `Overplay/Services/TrackLocationService.swift` |
 | `PLAYLIST-008` | Every retire or duplicate merge out of a managed One True Playlist removes the song from the Apple Music playlist, retried after each sync. A rewrite runs only when the device's copy matches iCloud's; removed or absent songs release suppression and get the retention rule. Promotion does not add a song iCloud already holds. | `Overplay/Services/OneTruePlaylistRemoteMembership.swift`, `OverplayTests/OneTruePlaylistRemoteMembershipTests.swift` |
 | `PLAYLIST-009` | From iPhone or iPad, the user can rebuild the One True Playlist's Apple Music playlist: Overplay creates a new playlist of the active songs in Overplay's order and relinks the same One True Playlist to it, keeping counts, retirements and history. Nothing is deleted from Apple Music. | `Overplay/Services/OneTruePlaylistRebuildService.swift`, `OverplayTests/OneTruePlaylistRebuildTests.swift` |
-| `PLAYLIST-010` | Ordinary sync skips a song no lookup can identify: the rest syncs; the skipped row is untouched; absence-dependent steps are skipped; the playlist keeps an error and retries. More than a fifth unidentifiable, or any in a copy, still stops the fetch. | `Overplay/Services/AppleMusicPlaylistSourceSync.swift`, `OverplayTests/MusicLibraryIdentityImportTests.swift` |
+| `PLAYLIST-010` | Ordinary sync skips a song no lookup can identify, including the identity lookup (an ID missing from a valid response, or a 404 for its batch on any lookup, which is never remembered): the rest syncs; the skipped row is untouched; absence-dependent steps are skipped; the playlist keeps an error naming the lookup and retries. More than a fifth unidentifiable, or any in a copy, still stops the fetch. Every other lookup failure stops the fetch. | `Overplay/Services/AppleMusicPlaylistSourceSync.swift`, `Overplay/Services/MusicIdentityResolver.swift`, `OverplayTests/MusicLibraryIdentityImportTests.swift`, `OverplayTests/MusicIdentityResolverTests.swift` |
 | `PLAYLIST-012` | A song absent from a complete read of an Inbox source loses that source's attachment; an active Inbox song left with no source, no plays or skips (ever, including before a reset) and no explicit keep is deleted, with a history event. A partial read changes nothing; retired and One True Playlist songs are untouched. | `Overplay/Services/PlaylistSyncService.swift`, `OverplayTests/GlobalTrackOwnershipTests.swift` |
 | `PLAYLIST-011` | The retention rule is re-applied by a sweep at startup and after each background sync cycle, to retired rows and deferred deletions only, with every deletion recorded in history. | `Overplay/Persistence/TrackRetentionPolicy.swift`, `OverplayTests/SyncCleanupTests.swift` |
 | `LOC-001` | A retirement or restore survives another device's stale CloudKit write. After each import and at startup, a song's newest `evicted`/`restored` history event re-applies its decision when it is newer than the row's `locationChangedAt`; promotions are left to the next One True Playlist sync. | `Overplay/Services/TrackLocationService.swift`, `OverplayTests/TrackLocationRepairTests.swift` |
@@ -418,19 +418,34 @@ not persisted as global aliases.
 A missing library resource is unresolved identity. It is not equivalent to a
 returned library song with an explicitly empty catalog relationship. A song that
 none of the native lookup, the web library and the catalog can identify is
-skipped by ordinary sync (`PLAYLIST-010`):
+skipped by ordinary sync (`PLAYLIST-010`). So is a song the identity step then
+finds nothing for: a library song the web library does not return, or a song
+known only by a catalog ID that the catalog does not return. "Finds nothing"
+means an ID absent from a valid response, or a 404 on any identity lookup (web
+library, catalog, equivalents or ISRC), which counts for every song in that
+batch, library songs included. A 404 says nothing about any one song, so it
+holds for that pass only: it is never remembered as absence, and operations
+that need every song (a copy, artwork repair) fail on it. Any other failure (network, 429, 5xx, cancellation, an account
+change) fails the fetch and names the lookup:
 
 - The rest of the playlist syncs. The skipped song creates no track, and its
   existing row is untouched: it is not removed, retired, reset or moved.
 - Reconciliation skips the steps that infer absence from a complete snapshot:
   replacing this source's entry provenance, and releasing stale-OTP
   suppression.
-- The playlist keeps a sync error naming the count. That keeps it retrying each
-  cycle and disables the remote-unchanged skip until every song resolves.
+- The playlist keeps a sync error naming the count and, when the identity step
+  found nothing, the lookup (web library or catalog). That keeps it retrying
+  each cycle and disables the remote-unchanged skip until every song resolves. A
+  library song the web library did not return, and any song a 404 covered, is
+  not remembered, so each retry asks again.
 - When more than a fifth of the playlist's distinct songs are unidentifiable,
-  something wider is wrong, and the fetch stops before reconciliation as before.
+  something wider is wrong, and the fetch stops before reconciliation as before,
+  with an error naming the lookup.
+- Stored sync errors use `UserFacingError`'s wording, never a framework's raw
+  description.
 - Copying a playlist, and any other operation that rewrites from the snapshot,
-  still stops on any unidentifiable song.
+  still stops on any unidentifiable song. A library rebuild whose fetch skipped
+  any song fails and is not recorded as complete.
 
 Optional ISRC/equivalent-recording suggestions
 are resolved by duplicate review, not required for import; an unperformed candidate
@@ -1052,6 +1067,12 @@ retired song restored. Add to Playlist adds the song to any other Apple Music
 library playlist with a MusicKit add and records nothing in Overplay; a
 contributing playlist brings it into the Inbox at its next sync. Failures show a
 clear message.
+
+A song known only by a library ID, such as an upload or a matched song, can be
+promoted and added to the One True Playlist: the write fetches the library song
+by that ID and adds it, through the same "already in iCloud's copy" check as any
+promotion (`PLAYLIST-008`). A song with a catalog ID is still added by catalog
+ID. A song neither the catalog nor the web library knows is refused.
 
 The shared local manual-add boundary also supports the Inbox without a remote
 write. It establishes explicit keep intent, reuses/revives the global item,
@@ -3289,7 +3310,8 @@ featured artists and labels that do not change the recording (Remastered,
 Single Version, Mono…) but never Live, Remix, Acoustic or Edit. Only songs
 joined by name alone are then sent to Apple Music, to find which are the same
 recording; nothing else is. A song Apple Music cannot answer for, or rejects,
-is skipped and counted, without failing the scan. Technical
+is skipped and counted, without failing the scan. A 404 on any lookup leaves
+every song in that batch unchecked, with its stored identifiers unchanged. Technical
 identifiers are used internally and are not displayed in the review screen. Users
 select the recordings to merge and confirm. Mixed collections require choosing One True
 Playlist, the Inbox, or Retired; a shared collection is retained. Canceling performs
@@ -3500,8 +3522,8 @@ normal placeholder: the Overplay logo in white on the app icon's purple,
 shading to a deeper purple. A lookup that succeeds without usable artwork is
 remembered on that device, so the repair stops asking each cycle (#60). It is
 asked again after 30 days, which is how artwork added later is found, or as
-soon as the track's library or catalog ID changes. A failed lookup is never
-remembered as absence.
+soon as the track's library or catalog ID changes. A failed lookup, a 404
+included, is never remembered as absence.
 
 The shared now-playing display prefers the actual player-reported track. Once
 it matches the reconciled current song, its cover uses the same portable

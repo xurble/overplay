@@ -1,4 +1,5 @@
 import Foundation
+import MusicKit
 import SwiftData
 import Testing
 @testable import Overplay
@@ -299,6 +300,107 @@ struct PlaylistMutationServiceTests {
         #expect(history.first?.trackID == track.id)
         #expect(history.first?.eventType == .remoteMutation)
         #expect(history.first?.remoteMutationStatus == .failed)
+    }
+
+    // MARK: - #111: songs known only by a library ID
+
+    private func librarySong(_ id: String) throws -> Song {
+        try JSONDecoder().decode(Song.self, from: JSONSerialization.data(withJSONObject: [
+            "id": id, "type": "library-songs",
+            "attributes": ["name": "Upload", "artistName": "Sample Artist", "albumName": "Fixture", "genreNames": []]
+        ]))
+    }
+
+    private func inboxItem(
+        catalogID: String? = nil, libraryID: String?, in context: ModelContext
+    ) throws -> (source: PlaylistItemRecord, oneTruePlaylist: PlaylistRecord) {
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let oneTruePlaylist = PlaylistRecord(musicPlaylistID: "main-playlist", name: "Main", role: .oneTruePlaylist)
+        let track = TrackRecord(catalogID: catalogID, libraryID: libraryID, title: "Upload", artistName: "Sample Artist")
+        let item = PlaylistItemRecord(playlistID: bucket.id, trackID: track.id)
+        context.insert(oneTruePlaylist); context.insert(track); context.insert(item)
+        try context.save()
+        return (item, oneTruePlaylist)
+    }
+
+    private func entry(_ id: String) -> AppleMusicLibraryPlaylistResources.Entry {
+        .init(id: id, type: "library-songs")
+    }
+
+    @Test("promoting a song with only a library ID adds the library song and moves it")
+    func promotingLibraryOnlySongAddsTheLibrarySong() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let (item, oneTruePlaylist) = try inboxItem(libraryID: "i.upload", in: context)
+        var lookups: [String] = []
+        var written: [String] = []
+        var service = PlaylistMutationService()
+        service.remoteMembership.cloudEntries = { _ in [] }
+        service.librarySong = { id in lookups.append(id); return try librarySong(id) }
+        service.writeSong = { song, _, _ in written.append(song.id.rawValue) }
+
+        let promoted = try await service.promote(item: item, in: context)
+
+        #expect(lookups == ["i.upload"])
+        #expect(written == ["i.upload"])
+        #expect(promoted.playlistID == oneTruePlaylist.id)
+    }
+
+    @Test("a library-only song already in the playlist is not added again, and still moves")
+    func libraryOnlySongAlreadyPresentIsNotAddedAgain() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let (item, oneTruePlaylist) = try inboxItem(libraryID: "i.upload", in: context)
+        var written = 0
+        var service = PlaylistMutationService()
+        service.remoteMembership.cloudEntries = { _ in [entry("i.upload")] }
+        service.librarySong = { id in try librarySong(id) }
+        service.writeSong = { _, _, _ in written += 1 }
+
+        let promoted = try await service.promote(item: item, in: context)
+
+        #expect(written == 0)
+        #expect(promoted.playlistID == oneTruePlaylist.id)
+    }
+
+    @Test("a song with a catalog ID is not looked up in the library")
+    func catalogIDIsPreferred() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let (item, _) = try inboxItem(catalogID: "123", libraryID: "i.upload", in: context)
+        var lookups = 0
+        var service = PlaylistMutationService()
+        service.remoteMembership.cloudEntries = { _ in [] }
+        service.librarySong = { id in lookups += 1; return try librarySong(id) }
+        service.writeSong = { _, _, _ in }
+
+        _ = try? await service.promote(item: item, in: context)
+
+        #expect(lookups == 0)
+    }
+
+    @Test("adding a library song writes it once, and not when it is already there")
+    func addLibrarySongIsAddedOnce() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let oneTruePlaylist = PlaylistRecord(musicPlaylistID: "main-playlist", name: "Main", role: .oneTruePlaylist)
+        context.insert(oneTruePlaylist)
+        try context.save()
+        var written: [String] = []
+        var cloud: [AppleMusicLibraryPlaylistResources.Entry] = []
+        var service = PlaylistMutationService()
+        service.remoteMembership.cloudEntries = { _ in cloud }
+        service.librarySong = { id in try librarySong(id) }
+        service.writeSong = { song, _, _ in written.append(song.id.rawValue) }
+
+        try await service.addLibrarySong(id: "i.upload", to: oneTruePlaylist, in: context)
+        #expect(written == ["i.upload"])
+
+        cloud = [entry("i.upload")]
+        try await service.addLibrarySong(id: "i.upload", to: oneTruePlaylist, in: context)
+        #expect(written == ["i.upload"])
+        // The carrier record never reaches the store.
+        #expect(try TrackRecordRepository.allTracks(in: context).isEmpty)
     }
 
     @Test("successful manual add creates active item for one true playlist")

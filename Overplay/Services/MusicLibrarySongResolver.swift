@@ -27,7 +27,7 @@ enum MusicLibrarySongResolver {
 
         var errorDescription: String? {
             switch self {
-            case .unresolved(let id): "Apple Music could not resolve playlist song \(id). The playlist was not imported."
+            case .unresolved(let id): "Apple Music's library, web library and catalog could not identify playlist song \(id). The playlist was not imported."
             }
         }
     }

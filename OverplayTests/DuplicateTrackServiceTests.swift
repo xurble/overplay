@@ -87,6 +87,41 @@ struct DuplicateTrackServiceTests {
         #expect(gone.hasDocumentedIdentity == false)
     }
 
+    /// Review of #115, finding 3: a 404 on a catalog-side lookup leaves the
+    /// songs in its batch unchecked and their stored identity alone. A 404
+    /// on the ISRC lookup alone used to clear `equivalentCatalogIDs`.
+    @Test(arguments: [MusicIdentityResolver.Lookup.catalog, .isrc])
+    func aCatalogSide404LeavesSongsUncheckedAndTheirEquivalentsAlone(failing: MusicIdentityResolver.Lookup) async throws {
+        struct Transport404: Error {}
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        _ = try fixture(context)
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let remaster = TrackRecord(catalogID: "3", title: "Other - Remastered 2011", artistName: "Band")
+        let original = TrackRecord(catalogID: "4", title: "Other", artistName: "Band")
+        remaster.equivalentCatalogIDs = ["903"]
+        original.equivalentCatalogIDs = ["904"]
+        for track in [remaster, original] {
+            context.insert(track)
+            context.insert(PlaylistItemRecord(playlistID: bucket.id, trackID: track.id, sourceMusicPlaylistIDs: ["source"]))
+        }
+        try context.save()
+        let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "a") }, fetch: { kind, ids, scope in
+            try await MusicIdentityResolver.fetchResources(kind, ids: ids, scope: scope, perform: { _ in
+                if kind == failing { throw Transport404() }
+                let entries = kind == .catalog
+                    ? ids.map { #"{"id":"\#($0)","type":"songs","attributes":{"isrc":"ISRC-\#($0)"}}"# } : []
+                return Data(#"{"data":[\#(entries.joined(separator: ","))]}"#.utf8)
+            }, isNotFound: { $0 is Transport404 })
+        })
+
+        let result = try await DuplicateTrackService.scan(in: context, resolver: resolver)
+
+        #expect(result.checkedCount == 2 && result.uncheckedCount == 2)
+        #expect(remaster.equivalentCatalogIDs == ["903"] && original.equivalentCatalogIDs == ["904"])
+        #expect(remaster.isrc == nil && original.isrc == nil)
+    }
+
     @Test func namesMatchAcrossNeutralLabelsButNotAcrossDifferentRecordings() {
         let key = { DuplicateNameKey.make(title: $0, artist: $1) }
         #expect(key("Bohemian Rhapsody - Remastered 2011", "Queen") == key("Bohemian Rhapsody", "Queen"))
