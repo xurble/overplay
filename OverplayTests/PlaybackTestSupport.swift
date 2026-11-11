@@ -7,8 +7,9 @@ import Testing
 /// An adversarial stand-in for MusicKit's player (spec: Acceptance gate).
 ///
 /// It can re-issue entry IDs, report another identifier domain, hydrate late or
-/// never, fail or block commands, change entries with no Overplay command, and
-/// report a shuffled queue order. A fake without these hides the failures that
+/// never, fail, block or ignore commands, change entries with no Overplay
+/// command, report queue and state changes apart, and report a shuffled queue
+/// order. A fake without these hides the failures that
 /// matter on device.
 @MainActor
 final class FakePlaybackPlayer: PlaybackPlayer {
@@ -52,6 +53,16 @@ final class FakePlaybackPlayer: PlaybackPlayer {
     private var loadedCount: Int?
     var prepareFailuresRemaining = 0
     var nextFailuresRemaining = 0
+    var previousFailuresRemaining = 0
+    /// Thrown by `selectEntry` for an entry the queue holds: a failure other
+    /// than `entryNotInQueue`.
+    var selectFailure: Error?
+    /// `pause()` is heard but playback carries on (2026-10-19).
+    var ignoresPause = false
+    /// Shuffle and repeat writes are heard but the reported modes stay put.
+    var ignoresModeWrites = false
+    /// The next submissions do not take: the player keeps the queue it had.
+    var submitFailuresRemaining = 0
 
     private(set) var commands: [String] = []
     private(set) var submittedTitles: [[String]] = []
@@ -79,6 +90,7 @@ final class FakePlaybackPlayer: PlaybackPlayer {
 
     func setShuffleMode(_ mode: MusicPlayer.ShuffleMode) {
         commands.append("shuffle=\(mode)")
+        guard !ignoresModeWrites else { return }
         reportedShuffleMode = mode
         let loaded = min(loadedCount ?? entries.count, entries.count)
         if mode == .songs, reordersUpcomingOnShuffle, let currentIndex, currentIndex + 1 < loaded {
@@ -88,6 +100,7 @@ final class FakePlaybackPlayer: PlaybackPlayer {
 
     func setRepeatMode(_ mode: MusicPlayer.RepeatMode) {
         commands.append("repeat=\(mode)")
+        guard !ignoresModeWrites else { return }
         reportedRepeatMode = mode
     }
 
@@ -95,6 +108,10 @@ final class FakePlaybackPlayer: PlaybackPlayer {
         commands.append("submit")
         submittedTitles.append(tracks.map(\.title))
         submittedStartIndices.append(index)
+        if submitFailuresRemaining > 0 {
+            submitFailuresRemaining -= 1
+            return
+        }
         hiddenItems = [:]
         loadedCount = nil
         entries = tracks.map { track in
@@ -138,7 +155,7 @@ final class FakePlaybackPlayer: PlaybackPlayer {
 
     func pause() {
         commands.append("pause")
-        if playbackStatus == .playing { playbackStatus = .paused }
+        if !ignoresPause, playbackStatus == .playing { playbackStatus = .paused }
     }
 
     func skipToNextEntry() async throws {
@@ -153,6 +170,10 @@ final class FakePlaybackPlayer: PlaybackPlayer {
 
     func skipToPreviousEntry() async throws {
         commands.append("previous")
+        if previousFailuresRemaining > 0 {
+            previousFailuresRemaining -= 1
+            throw Failure.commandFailed
+        }
         guard let currentIndex else { return }
         self.currentIndex = max(currentIndex - 1, 0)
         playbackTime = 0
@@ -163,6 +184,7 @@ final class FakePlaybackPlayer: PlaybackPlayer {
         guard let index = entries.firstIndex(where: { $0.entryID == entryID }) else {
             throw PlaybackQueueEntryError.entryNotInQueue
         }
+        if let selectFailure { throw selectFailure }
         currentIndex = index
         playbackTime = 0
     }
@@ -238,14 +260,9 @@ final class FakePlaybackPlayer: PlaybackPlayer {
         entries[index].item = item
     }
 
-    func reverseQueueOrder() {
-        let currentID = currentEntryID
-        entries.reverse()
-        currentIndex = entries.firstIndex { $0.entryID == currentID }
-    }
-
-    func notify() async {
-        await observationHandler?([.queue, .state])
+    /// MusicKit reports queue and state changes separately as well as together.
+    func notify(_ changes: Set<PlaybackPlayerChange> = [.queue, .state]) async {
+        await observationHandler?(changes)
     }
 
     private func advance() {
