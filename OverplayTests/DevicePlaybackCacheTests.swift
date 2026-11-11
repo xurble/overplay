@@ -50,7 +50,7 @@ struct DevicePlaybackCacheTests {
                 try await DevicePlaybackCache.loadLibrarySongs(ids, nativeLookup: { _ in [] }, request: { _ in
                     try Self.libraryResponse(id: "i.first")
                 })
-            }, catalogSearch: { _ in [] })
+            }, storefront: { "gb" }, catalogSearch: { _, _ in [] })
         }
         #expect(tracks[0].musicKitPlaybackData != nil)
         #expect(tracks[1].musicKitPlaybackData == nil)
@@ -114,7 +114,7 @@ struct DevicePlaybackCacheTests {
         await #expect(throws: DevicePlaybackCache.PreparationError.self) {
             try await DevicePlaybackCache.prepare([upload], libraryLookup: { _ in [:] }, catalogLookup: { _ in
                 Issue.record("catalog consulted without a catalog ID"); return [:]
-            }, catalogSearch: { _ in [] })
+            }, storefront: { "gb" }, catalogSearch: { _, _ in [] })
         }
         #expect(DevicePlaybackCache.shared.data(for: upload.id) == nil)
     }

@@ -1,5 +1,6 @@
 import Foundation
 @preconcurrency import MusicKit
+import Synchronization
 
 /// The one place Overplay turns Apple Music song IDs into songs, for both
 /// questions: what are this song's IDs (domain, catalog relationship, ISRC),
@@ -193,28 +194,63 @@ enum AppleMusicSongLookup {
         case none
     }
 
+    /// What the strict rule matches on, or nil when it can never match: an
+    /// empty title or artist, or no finite stored duration. Such a track is
+    /// never searched for.
+    static func strictMatchRule(title: String, artist: String, durationSeconds: Double?) -> (key: String, durationSeconds: Double)? {
+        guard let key = PlaybackAttribution.metadataKey(title: title, artist: artist),
+              let durationSeconds, durationSeconds.isFinite else { return nil }
+        return (key, durationSeconds)
+    }
+
     /// The strict rule for playing a library-only song from a catalog
     /// search (`PLAY-017`): exactly one playable result whose normalised title
-    /// and artist equal the track's and whose duration is within 2 seconds of
-    /// the track's stored duration. Without a stored duration nothing
-    /// matches, so the search can never play a different song.
+    /// and artist equal the track's and whose finite duration is within 2
+    /// seconds of the track's finite stored duration. Without a stored
+    /// duration nothing matches, so the search can never play a different
+    /// song. Several matches that all share one ISRC are one recording (a
+    /// single and its album, say): one is picked, preferring the copy on the
+    /// track's album, then the lowest ID. Different or missing ISRCs stay
+    /// ambiguous.
     static func strictCatalogMatch(
-        title: String, artist: String, durationSeconds: Double?, in candidates: [Song]
+        title: String, artist: String, durationSeconds: Double?, albumTitle: String? = nil, in candidates: [Song]
     ) -> CatalogSearchMatch {
-        guard let key = PlaybackAttribution.metadataKey(title: title, artist: artist),
-              let durationSeconds else { return .none }
+        guard let rule = strictMatchRule(title: title, artist: artist, durationSeconds: durationSeconds) else { return .none }
         var seen = Set<String>()
         let matches = candidates.filter { song in
+            // `durationsAgree` lets a non-finite duration through for
+            // attribution; the strict rule does not.
             guard song.playParameters != nil,
-                  PlaybackAttribution.metadataKey(title: song.title, artist: song.artistName) == key,
-                  let duration = song.duration,
-                  PlaybackAttribution.durationsAgree(durationSeconds, duration) else { return false }
+                  PlaybackAttribution.metadataKey(title: song.title, artist: song.artistName) == rule.key,
+                  let duration = song.duration, duration.isFinite,
+                  PlaybackAttribution.durationsAgree(rule.durationSeconds, duration) else { return false }
             return seen.insert(song.id.rawValue).inserted
         }
         switch matches.count {
         case 0: return .none
         case 1: return .unique(matches[0])
-        default: return .ambiguous(count: matches.count)
+        default:
+            guard let recording = sameRecording(matches, albumTitle: albumTitle) else { return .ambiguous(count: matches.count) }
+            return .unique(recording)
+        }
+    }
+
+    /// One of several catalog copies of the same recording, when every copy
+    /// has the same non-empty ISRC; otherwise nil.
+    private static func sameRecording(_ matches: [Song], albumTitle: String?) -> Song? {
+        let codes = Set(matches.map { $0.isrc?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? "" })
+        guard codes.count == 1, codes.first?.isEmpty == false else { return nil }
+        func folded(_ value: String?) -> String? {
+            let result = value?.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
+                .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            return result?.isEmpty == false ? result : nil
+        }
+        let album = folded(albumTitle)
+        let onAlbum = album == nil ? [] : matches.filter { folded($0.albumTitle) == album }
+        return (onAlbum.isEmpty ? matches : onAlbum).min { left, right in
+            let a = left.id.rawValue, b = right.id.rawValue
+            if let x = Int(a), let y = Int(b), x != y { return x < y }
+            return a < b
         }
     }
 
@@ -245,13 +281,59 @@ enum AppleMusicSongLookup {
 
     // MARK: - Live requests
 
-    /// One playback catalog search, keeping the playback request timeout.
-    static func playbackCatalogSearch(term: String) async throws -> [Song] {
-        let storefront = try await MusicDataRequest.currentCountryCode
-        return try await catalogSearchSongs(term: term, storefront: storefront) { url in
+    /// One playback catalog search in a known storefront, keeping the
+    /// playback request timeout.
+    static func playbackCatalogSearch(term: String, storefront: String) async throws -> [Song] {
+        try await catalogSearchSongs(term: term, storefront: storefront) { url in
             try await MusicKitActivityLog.shared.measure(.catalogSearch, detail: "playback catalog search") {
                 try await MusicDataRequest(urlRequest: DevicePlaybackCache.playbackRequest(url)).response().data
             }
+        }
+    }
+
+    struct TimedOut: LocalizedError {
+        let what: String
+        var errorDescription: String? { "\(what) did not answer in time." }
+    }
+
+    /// The account's storefront for a playback search, bounded by the
+    /// playback request timeout: `currentCountryCode` has none of its own.
+    static func playbackStorefront() async throws -> String {
+        try await bounded(by: .seconds(DevicePlaybackCache.playbackRequestTimeout), what: "The Apple Music storefront lookup") {
+            try await MusicDataRequest.currentCountryCode
+        }
+    }
+
+    /// The operation's result, or `TimedOut` once `timeout` passes. Returns
+    /// at the deadline even if the operation ignores cancellation; it is
+    /// cancelled and its late result dropped.
+    nonisolated static func bounded<T: Sendable>(
+        by timeout: Duration, what: String, _ operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        let pending = Mutex<CheckedContinuation<T, Error>?>(nil)
+        let tasks = Mutex<[Task<Void, Never>]>([])
+        @Sendable func finish(_ result: Result<T, Error>) {
+            guard let continuation = pending.withLock({ $0.take() }) else { return }
+            for task in tasks.withLock({ $0 }) { task.cancel() }
+            continuation.resume(with: result)
+        }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                pending.withLock { $0 = continuation }
+                let work = Task {
+                    do { finish(.success(try await operation())) } catch { finish(.failure(error)) }
+                }
+                let timer = Task {
+                    try? await Task.sleep(for: timeout)
+                    finish(.failure(TimedOut(what: what)))
+                }
+                tasks.withLock { $0 = [work, timer] }
+                // Finished before the tasks were stored: stop the timer.
+                if pending.withLock({ $0 == nil }) { work.cancel(); timer.cancel() }
+                if Task.isCancelled { finish(.failure(CancellationError())) }
+            }
+        } onCancel: {
+            finish(.failure(CancellationError()))
         }
     }
 
