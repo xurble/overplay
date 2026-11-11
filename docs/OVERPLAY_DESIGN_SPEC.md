@@ -2695,9 +2695,12 @@ Troubleshooting, in this order:
   contents; and nuke all Overplay SwiftData records locally and save those
   deletions for iCloud propagation, then recreate default settings and clear
   local playback state. Apple Music playlists are not deleted.
-- Debug builds only, after Start Over: Apple Music call activity, then
-  MusicKit authorization, playlist-access, and playback-readiness diagnostics.
-  Release builds leave both out.
+- After Start Over, in every build: Apple Music call activity, with its Full
+  Activity Report, Share Activity Log and Clear Recorded Activity. TestFlight
+  testers report stalls with it. Whether it stays this visible on the App
+  Store is still to decide (`docs/TODO.md`, 1.6).
+- Debug builds only, after that: MusicKit authorization, playlist-access, and
+  playback-readiness diagnostics. Release builds leave them out.
 
 There is no separate reset-local-playback-state control. On the Mac,
 Settings opens in its own window from the standard Settings command, with
