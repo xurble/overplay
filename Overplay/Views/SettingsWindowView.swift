@@ -165,14 +165,21 @@ final class MacWindowHandle {
 /// reports so.
 @MainActor
 enum MacAppKitWindow {
+    /// `value(forKey:)` on an object without the key raises an exception
+    /// Swift cannot catch. `NSApp.windows` also holds windows that host no
+    /// UIKit content, such as tooltips and popovers.
+    private static func checkedValue(_ key: String, of object: NSObject) -> Any? {
+        object.responds(to: NSSelectorFromString(key)) ? object.value(forKey: key) : nil
+    }
+
     static func nsWindow(for window: UIWindow) -> NSObject? {
         (NSClassFromString("NSApplication")?.value(forKeyPath: "sharedApplication.windows") as? [NSObject])?
-            .first { ($0.value(forKey: "uiWindows") as? [UIWindow])?.contains(window) == true }
+            .first { (checkedValue("uiWindows", of: $0) as? [UIWindow])?.contains(window) == true }
     }
 
     /// The AppKit frame, in Mac points.
     static func frame(of window: UIWindow) -> CGRect? {
-        nsWindow(for: window).flatMap { ($0.value(forKey: "frame") as? NSValue)?.cgRectValue }
+        nsWindow(for: window).flatMap { (checkedValue("frame", of: $0) as? NSValue)?.cgRectValue }
     }
 
     /// Resizes with AppKit's animation, keeping the top edge (AppKit frames
@@ -180,7 +187,7 @@ enum MacAppKitWindow {
     static func animateResize(of window: UIWindow, to size: CGSize) -> Bool {
         let selector = NSSelectorFromString("setFrame:display:animate:")
         guard let nsWindow = nsWindow(for: window), nsWindow.responds(to: selector),
-              let frame = (nsWindow.value(forKey: "frame") as? NSValue)?.cgRectValue else { return false }
+              let frame = (checkedValue("frame", of: nsWindow) as? NSValue)?.cgRectValue else { return false }
         let target = CGRect(x: frame.minX, y: frame.maxY - size.height, width: size.width, height: size.height)
         typealias SetFrame = @convention(c) (NSObject, Selector, CGRect, Bool, Bool) -> Void
         unsafeBitCast(nsWindow.method(for: selector), to: SetFrame.self)(nsWindow, selector, target, true, true)
@@ -230,8 +237,10 @@ private struct MacWindowConfigurator: UIViewRepresentable {
             typealias ButtonGetter = @convention(c) (NSObject, Selector, Int) -> NSObject?
             let getButton = unsafeBitCast(nsWindow.method(for: selector), to: ButtonGetter.self)
             // NSWindow.ButtonType: 1 minimize, 2 zoom.
+            let setEnabled = NSSelectorFromString("setEnabled:")
             for kind in [1, 2] {
-                getButton(nsWindow, selector, kind)?.setValue(false, forKey: "enabled")
+                guard let button = getButton(nsWindow, selector, kind), button.responds(to: setEnabled) else { continue }
+                button.setValue(false, forKey: "enabled")
             }
         }
 #endif
