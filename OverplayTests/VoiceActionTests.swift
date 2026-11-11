@@ -10,6 +10,89 @@ import Testing
 @MainActor
 @Suite("Voice actions and undo", .serialized)
 struct VoiceActionTests {
+    // MARK: - Library wait for a launch with no window (`SIRI-002`)
+
+    private let authorized = AppleMusicReadiness.authorized(canPlayCatalogContent: true, hasCloudLibraryEnabled: true)
+
+    private func wait(
+        attempts: Int = 80, states: [VoiceActions.LibraryState]
+    ) async -> (state: VoiceActions.LibraryState, pauses: Int) {
+        var remaining = states[...]
+        var pauses = 0
+        let state = await VoiceActions.awaitLibrary(
+            attempts: attempts,
+            state: { remaining.count > 1 ? remaining.removeFirst() : remaining[remaining.startIndex] },
+            pause: { pauses += 1 }
+        )
+        return (state, pauses)
+    }
+
+    private func state(
+        isLibraryReady: Bool = false, readiness: AppleMusicReadiness? = nil, isSettingUp: Bool = false,
+        preparationFailed: Bool = false
+    ) -> VoiceActions.LibraryState {
+        VoiceActions.libraryState(isLibraryReady: isLibraryReady, readiness: readiness ?? authorized,
+                                  isSettingUp: isSettingUp, preparationFailed: preparationFailed)
+    }
+
+    @Test func everyUnauthorisedStateStopsTheWaitAtOnceWithItsOwnMessage() async {
+        let unauthorised: [AppleMusicReadiness] = [
+            .notDetermined, .denied, .restricted, .failed("offline"),
+            .authorized(canPlayCatalogContent: false, hasCloudLibraryEnabled: true),
+            .authorized(canPlayCatalogContent: true, hasCloudLibraryEnabled: false),
+        ]
+        for readiness in unauthorised {
+            let result = await wait(states: [state(readiness: readiness)])
+
+            #expect(result.state == .notAuthorized, "\(readiness)")
+            #expect(result.pauses == 0, "\(readiness)")
+            #expect(VoiceActions.spokenReason(for: result.state) == VoiceActions.notAuthorizedMessage)
+        }
+    }
+
+    @Test func unfinishedSetupStopsTheWaitAtOnceWithItsOwnMessage() async {
+        let result = await wait(states: [state(isSettingUp: true)])
+
+        #expect(result.state == .setupUnfinished)
+        #expect(result.pauses == 0)
+        #expect(VoiceActions.spokenReason(for: result.state) == VoiceActions.setupUnfinishedMessage)
+    }
+
+    @Test func setupFoundDuringTheWaitStopsItOnTheNextLook() async {
+        let result = await wait(states: [state(), state(isSettingUp: true)])
+
+        #expect(result.state == .setupUnfinished)
+        #expect(result.pauses == 1)
+    }
+
+    @Test func aPreparationErrorStopsTheWaitAsItAlwaysDid() async {
+        let result = await wait(states: [state(preparationFailed: true)])
+
+        #expect(result.state == .preparationFailed)
+        #expect(result.pauses == 0)
+        #expect(VoiceActions.spokenReason(for: result.state) == VoiceActions.notReadyMessage)
+    }
+
+    @Test func realRestorationIsWaitedForUpToTheLimitThenSaysSo() async {
+        let result = await wait(attempts: 80, states: [state()])
+
+        #expect(result.state == .restoring)
+        #expect(result.pauses == 80)
+        #expect(VoiceActions.spokenReason(for: result.state) == VoiceActions.notReadyMessage)
+    }
+
+    @Test func aRestorationThatFinishesDuringTheWaitIsReady() async {
+        let result = await wait(states: [state(), state(), state(isLibraryReady: true)])
+
+        #expect(result.state == .ready)
+        #expect(result.pauses == 2)
+        #expect(VoiceActions.spokenReason(for: result.state) == nil)
+    }
+
+    @Test func aReadyLibraryIsReadyWhateverElseIsTrue() {
+        #expect(state(isLibraryReady: true, readiness: .denied, isSettingUp: true) == .ready)
+    }
+
     // MARK: - Shuffle and Play resumes the current playlist (`PLAY-020`)
 
     @Test func shuffleAndPlayResumesThePausedPlaylistInsteadOfRestarting() async throws {

@@ -117,7 +117,7 @@ Music's global play count or skip count.
 | `LIB-001` | The Library section browses the user's Apple Music library (Playlists, Albums, Artists, Songs; CarPlay has all but Songs) from the web library, so Overplay's tracks match and show their counts on every device. A collection plays through the shared collection start with this device's own library copies; Songs plays a 100-song window; nothing from Library is added to Recent Deep Dives. Lists are cached per device, never synced. | `Overplay/Services/LibraryBrowser.swift`, `Overplay/Services/LibraryCache.swift`, `Overplay/Views/Library/` |
 | `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing; Play Album and Play Artist add one action list above it (`PLAY-018`), and Recents and each Library category add one level under the root (`PLAY-019`, `LIB-001`). | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
 | `SIRI-001` | Siri, Shortcuts, Spotlight and the Action button offer Play One True Playlist, Play the Inbox, Promote, Retire and Undo, each a thin adapter over the shared action the app and CarPlay use. They run in the background with the phone locked, speak the result of Promote, Retire and Undo, and speak only failures for Play. | `Overplay/Intents/OverplayIntents.swift`, `Overplay/Intents/VoiceActions.swift`, `OverplayTests/VoiceActionTests.swift` |
-| `SIRI-002` | An intent that launches Overplay with no window starts the same startup as CarPlay and waits up to 8 seconds for the library; if it is not ready, the intent says so and changes nothing. | `Overplay/App/AppRuntime.swift` |
+| `SIRI-002` | An intent that launches Overplay with no window starts the same startup as CarPlay and waits up to 8 seconds for a restoration under way. Apple Music not authorised and setup unfinished cannot become ready while it waits: it stops at once and says which. If the library is not ready, the intent says so and changes nothing. | `Overplay/App/AppRuntime.swift` |
 | `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
 | `HISTORY-001` | History is paged. Debug builds add an event filter and the suspended-playback recovery summary above the events; release builds show only the events. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. History is never the source of counts. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
 | `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, the One True Playlist shown with a link to Apple Music, Inbox Sources, display options, Siri phrases, MusicKit diagnostics (including whether the One True Playlist is still editable), and CarPlay MiniPlayer Controls. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
@@ -1352,7 +1352,10 @@ Recents by voice come with Fuller Siri.
 Siri can launch Overplay in the background, with no window to run startup.
 An intent starts the same startup CarPlay uses and waits up to 8 seconds for
 the library. On a device that has restored its library before this is
-immediate. If the library is not ready in time, the intent says Overplay is
+immediate. The wait is only for a real restoration: when Apple Music is not
+authorised or first-run setup is unfinished, nothing can change without the
+user, so the intent stops at once and says to connect Apple Music or to finish
+setting up. If the library is not ready in time, the intent says Overplay is
 still restoring and changes nothing. If the library store could not be opened
 (`STORE-001`), it says so and changes nothing.
 
