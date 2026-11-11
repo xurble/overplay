@@ -283,35 +283,36 @@ enum PlaylistRepository {
         writePolicy: PlaylistWritePolicy = .managed,
         in context: ModelContext
     ) throws -> PlaylistRecord {
-        let demotedPlaylists = try activePlaylists(in: context)
-            .filter {
-                $0.role == .oneTruePlaylist
-                    && $0.musicPlaylistID != appleMusicPlaylist.id
-            }
-
-        if !demotedPlaylists.isEmpty {
-            let bucket = try triageBucket(in: context)
-            for existingPlaylist in demotedPlaylists {
-                try PlaylistItemRepository.reparentItems(
-                    from: existingPlaylist.id,
-                    to: bucket.id,
-                    sourceMusicPlaylistID: existingPlaylist.musicPlaylistID,
-                    in: context
-                )
-            }
-        }
-
-        for existingPlaylist in demotedPlaylists {
-            existingPlaylist.role = .triageSource
-            existingPlaylist.updatedAt = .now
-        }
-
+        try demoteOneTruePlaylists(except: appleMusicPlaylist.id, in: context)
         return try upsert(
             remotePlaylist: RemotePlaylistLink(appleMusicPlaylist),
             role: .oneTruePlaylist,
             writePolicy: writePolicy,
             in: context
         )
+    }
+
+    /// Every other active One True Playlist becomes an Inbox source, and its
+    /// songs move into the Inbox, so each song stays in exactly one bucket.
+    @discardableResult
+    static func demoteOneTruePlaylists(except musicPlaylistID: String, in context: ModelContext) throws -> [PlaylistRecord] {
+        let demotedPlaylists = try activePlaylists(in: context)
+            .filter { $0.role == .oneTruePlaylist && $0.musicPlaylistID != musicPlaylistID }
+        guard !demotedPlaylists.isEmpty else { return [] }
+        let bucket = try triageBucket(in: context)
+        for existingPlaylist in demotedPlaylists {
+            try PlaylistItemRepository.reparentItems(
+                from: existingPlaylist.id,
+                to: bucket.id,
+                sourceMusicPlaylistID: existingPlaylist.musicPlaylistID,
+                in: context
+            )
+        }
+        for existingPlaylist in demotedPlaylists {
+            existingPlaylist.role = .triageSource
+            existingPlaylist.updatedAt = .now
+        }
+        return demotedPlaylists
     }
 
     /// Links an Apple Music playlist as a contributor to the triage bucket.

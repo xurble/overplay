@@ -90,6 +90,13 @@ final class AppRuntime {
                 guard let self else { return }
                 self.libraryRestoration.cloudImportFinished(error: error)
                 guard error == nil, let context = self.makeModelContext() else { return }
+                // Duplicate settings rows are deleted only here, once an
+                // import has settled on a ready device.
+                do {
+                    try self.libraryRestoration.convergeSettingsAfterImport(in: context)
+                } catch {
+                    StartupProfiler.mark("Settings convergence after import failed: \(error.localizedDescription)")
+                }
                 // Imported listen events from other devices change derived
                 // counts; the cache is recomputed rather than synced.
                 do {
