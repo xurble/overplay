@@ -82,20 +82,93 @@ struct VideoTrackPolicyTests {
         context.insert(PlaylistItemRecord(playlistID: UUID(), trackID: alsoKept))
         try context.save()
 
-        #expect(try await VideoTrackCleanupService.removeVideos(knownVideoIDs: ["video"], in: context) == 1)
+        #expect(try await VideoTrackCleanupService.removeVideos(knownVideoIDs: ["video", "i.video"], in: context) == 1)
         #expect(try PlaylistItemRepository.allItems(in: context).map(\.trackID) == [alsoKept])
         #expect(try context.fetch(FetchDescriptor<HistoryEvent>()).isEmpty)
     }
 
-    @Test("Remote video identities remove legacy rows without playback data, including aliases")
+    @Test("Remote video identities remove legacy rows by their own IDs, with or without playback data")
     func cleanupUsingRemoteEvidence() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let video = TrackRecord(libraryID: "i.video", title: "Video", artistName: "Artist")
         video.confirmedAliases = [.catalog("video")]
+        let withPayload = TrackRecord(catalogID: "c.video", title: "Video", artistName: "Artist",
+            musicKitPlaybackData: try JSONEncoder().encode(makeVideo()))
         context.insert(video)
-        #expect(try await VideoTrackCleanupService.removeVideos(knownVideoIDs: ["video"], in: context) == 1)
+        context.insert(withPayload)
+        #expect(try await VideoTrackCleanupService.removeVideos(knownVideoIDs: ["i.video", "c.video"],
+            inspectPlaybackData: false, in: context) == 2)
         #expect(try TrackRecordRepository.allTracks(in: context).isEmpty)
+    }
+
+    /// A confirmed duplicate merge keeps the donor video's IDs as the song
+    /// keeper's aliases. A later sync naming that video must not delete the
+    /// song (data loss); a row that is the video itself still goes.
+    @Test("A song that absorbed a video by a duplicate merge survives that video's remote evidence")
+    func songKeeperHoldingVideoAliasSurvives() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let ids = [UUID(), UUID()].sorted { $0.uuidString < $1.uuidString }
+        // No payload on this device, so only the ID rule can keep it.
+        let song = TrackRecord(id: ids[0], catalogID: "song", libraryID: "i.song", title: "Song", artistName: "Artist")
+        let donor = TrackRecord(id: ids[1], catalogID: "video", libraryID: "i.video", title: "Song", artistName: "Artist")
+        for track in [song, donor] {
+            context.insert(track)
+            context.insert(PlaylistItemRecord(playlistID: bucket.id, trackID: track.id, playthroughCount: 2))
+            context.insert(HistoryEvent(trackID: track.id, eventType: .trackAdded, source: .user))
+        }
+        try context.save()
+        let merged = try DuplicateTrackService.merge(try DuplicateTrackService.candidates(in: context), destination: nil, in: context)
+        #expect(merged.trackID == song.id)
+        #expect(Set(song.identityAliases).isSuperset(of: ["video", "i.video"]))
+        // Another device's legacy row of the video itself.
+        let video = TrackRecord(catalogID: "video", title: "Video", artistName: "Artist")
+        context.insert(video)
+        context.insert(PlaylistItemRecord(playlistID: UUID(), trackID: video.id))
+        try context.save()
+
+        let playlist = PlaylistRecord(musicPlaylistID: "source", name: "Source", role: .triageSource)
+        context.insert(playlist)
+        let adapter = VideoEvidenceSource(result: PlaylistSourceFetchResult(snapshots: [], skippedCount: 1,
+            skippedReason: "remoteUnchanged", didFetchTracks: false, videoMusicItemIDs: ["video", "i.video"]))
+        let service = PlaylistSyncService(sourceRegistry: PlaylistSourceSyncRegistry(adapters: [.appleMusic: adapter]))
+        _ = try await service.syncPlaylist(playlist, in: context, runIdentityMerge: false, skipWhenRemoteUnchanged: true)
+
+        let reloaded = ModelContext(container)
+        #expect(try TrackRecordRepository.allTracks(in: reloaded).map(\.id) == [song.id])
+        let items = try PlaylistItemRepository.allItems(in: reloaded)
+        #expect(items.map(\.trackID) == [song.id])
+        #expect(items.first?.playlistID == bucket.id)
+        #expect(!(try reloaded.fetch(FetchDescriptor<HistoryEvent>()).isEmpty))
+        #expect(try reloaded.fetch(FetchDescriptor<HistoryEvent>()).allSatisfy { $0.trackID == song.id })
+    }
+
+    /// A merge gives a keeper with no catalog ID the donor's, so a song can
+    /// hold a video's ID as its own. Its stored song payload keeps it.
+    @Test("A song keeper given a video's catalog ID by a merge survives that ID's remote evidence")
+    func songKeeperWithInheritedVideoIDSurvives() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let ids = [UUID(), UUID()].sorted { $0.uuidString < $1.uuidString }
+        let song = TrackRecord(id: ids[0], libraryID: "i.song", title: "Song", artistName: "Artist",
+            musicKitPlaybackData: try JSONEncoder().encode(makeSong()))
+        let donor = TrackRecord(id: ids[1], catalogID: "video", title: "Song", artistName: "Artist",
+            musicKitPlaybackData: try JSONEncoder().encode(makeVideo()))
+        for track in [song, donor] {
+            context.insert(track)
+            context.insert(PlaylistItemRecord(playlistID: bucket.id, trackID: track.id))
+        }
+        try context.save()
+        let merged = try DuplicateTrackService.merge(try DuplicateTrackService.candidates(in: context), destination: nil, in: context)
+        #expect(merged.trackID == song.id)
+        #expect(song.catalogID == "video")
+
+        #expect(try await VideoTrackCleanupService.removeVideos(knownVideoIDs: ["video"], inspectPlaybackData: false, in: context) == 0)
+        #expect(try TrackRecordRepository.allTracks(in: context).map(\.id) == [song.id])
+        #expect(try PlaylistItemRepository.allItems(in: context).map(\.trackID) == [song.id])
     }
 
     @Test("Mixed sync ignores videos and deletes legacy videos while importing songs", arguments: [PlaylistRole.oneTruePlaylist, .triageSource])

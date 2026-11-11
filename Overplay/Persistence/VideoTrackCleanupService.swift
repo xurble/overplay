@@ -14,6 +14,12 @@ nonisolated enum VideoTrackPolicy {
         if case .musicVideo = track { return true }
         return false
     }
+
+    static func isSong(playbackData: Data?) -> Bool {
+        guard let playbackData,
+              let track = try? JSONDecoder().decode(Track.self, from: playbackData) else { return false }
+        return isSong(track)
+    }
 }
 
 enum TrackImportError: LocalizedError {
@@ -61,8 +67,14 @@ enum VideoTrackCleanupService {
         guard inspectPlaybackData || !knownVideoIDs.isEmpty else { return 0 }
         var videoIDs: Set<UUID> = []
         if !knownVideoIDs.isEmpty {
+            // A confirmed duplicate merge keeps the donor's IDs as the
+            // keeper's aliases, so a song that absorbed a legacy video holds
+            // that video's IDs: match a track's own IDs only. A merge can
+            // also give a keeper missing a catalog or library ID the donor's,
+            // so a stored song payload is never deleted on ID evidence.
             videoIDs = Set(try TrackRecordRepository.allTracks(in: context).filter { track in
-                !knownVideoIDs.isDisjoint(with: [track.catalogID, track.libraryID].compactMap { $0 } + track.identityAliases)
+                !knownVideoIDs.isDisjoint(with: [track.catalogID, track.libraryID].compactMap { $0 })
+                    && !VideoTrackPolicy.isSong(playbackData: track.musicKitPlaybackData)
             }.map(\.id))
         }
         if inspectPlaybackData {
