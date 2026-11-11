@@ -292,21 +292,36 @@ struct CarPlayActionRoutingTests {
         #expect(result.carPlay.currentTitle == "Song 1")
     }
 
-    /// PA-1: the dashboard's Play button resumes without `playPlaylist`, so a
-    /// paused, unshuffled One True Playlist stays unshuffled there
-    /// (`DashboardView.swift:241-245`) while CarPlay turns shuffle on. The app
-    /// side makes the call that view's branch makes.
-    @Test func pinsPA1DashboardPlayResumesWithoutTheShuffleCarPlayTurnsOn() async throws {
+    /// What the dashboard's Play button runs (`DashboardView.play`).
+    private func dashboardPlays(_ fixture: PlaybackFixture) async {
+        await DashboardView.play(fixture.playlist, settings: fixture.settings, controller: fixture.controller,
+                                 context: fixture.context)
+    }
+
+    /// `PLAY-020` on the main screen: a paused, unshuffled One True Playlist
+    /// gets shuffle turned on and plays, as it does from CarPlay and Siri.
+    @Test func dashboardPlayOnThePausedUnshuffledPlaylistShufflesAndResumesLikeCarPlay() async throws {
         let result = try await compare(
             arrange: { await paused(1, in: $0) },
             carPlay: { .shuffleAndPlay($0.playlist, scope: .active) },
-            app: { await $0.controller.play(context: $0.context) }
+            app: { await dashboardPlays($0) }
         )
 
-        #expect(result.carPlay.commands == ["shuffle=songs", "play"])
-        #expect(result.app.commands == ["play"])
-        #expect(result.carPlay.shuffleEnabled)
-        #expect(!result.app.shuffleEnabled)
+        #expect(result.carPlay == result.app)
+        #expect(result.app.commands == ["shuffle=songs", "play"])
+        #expect(result.app.shuffleEnabled)
+        #expect(result.app.submittedTitles.isEmpty)
+    }
+
+    @Test func dashboardPlayOfAnotherPlaylistStartsItShuffledLikeCarPlay() async throws {
+        let result = try await compare(
+            carPlay: { .shuffleAndPlay($0.playlist, scope: .active) },
+            app: { await dashboardPlays($0) }
+        )
+
+        #expect(result.carPlay == result.app)
+        #expect(result.app.commands.contains("submit"))
+        #expect(result.app.commands.contains("shuffle=songs"))
     }
 
     @Test func shuffleRowThatStartsNothingReportsIt() async throws {
