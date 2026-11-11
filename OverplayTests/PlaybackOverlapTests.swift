@@ -403,6 +403,145 @@ struct PlaybackOverlapTests {
         #expect(fixture.controller.playbackFailure?.kind == .command)
     }
 
+    // MARK: - PB-3: a Play press that takes over a resume
+
+    /// Song 1 at 0:40, its queue lost while paused: Play resumes with no failure.
+    private func songLostWhilePaused(_ fixture: PlaybackFixture) async {
+        await select(fixture, 1)
+        await fixture.listen(seconds: 40)
+        fixture.player.playbackStatus = .paused
+        await fixture.player.notify()
+        await fixture.player.abandonQueue()
+    }
+
+    /// Presses Play, then presses it again while the resume's prepare is held.
+    private func pressPlayDuringResume(_ fixture: PlaybackFixture, prepare: Gate) async throws -> Task<Void, Never> {
+        fixture.player.onPrepare = { await prepare.wait() }
+        let resuming = Task { await fixture.controller.play(context: fixture.context) }
+        try await waitUntil { prepare.waiting == 1 }
+        await fixture.controller.play(context: fixture.context)
+        return resuming
+    }
+
+    @Test func playDuringAResumeKeepsTheSongAndPosition() async throws {
+        let (fixture, _) = try fixture()
+        defer { fixture.cleanUp() }
+        await songLostWhilePaused(fixture)
+        let playsBefore = fixture.player.playCount
+        let prepare = Gate()
+
+        let resuming = try await pressPlayDuringResume(fixture, prepare: prepare)
+        #expect(fixture.player.playCount == playsBefore + 1)
+        prepare.open()
+        await resuming.value
+
+        #expect(fixture.player.playbackTime == 40)
+        #expect(fixture.controller.elapsedSeconds == 40)
+        #expect(fixture.controller.currentTrack?.title == "Song 1")
+        #expect(fixture.controller.isPlaying)
+        #expect(fixture.controller.playbackFailure == nil)
+        #expect(fixture.player.submitCount == 2)
+        #expect(fixture.player.playCount == playsBefore + 1)
+        let resume = try #require(fixture.intentStore.loadResumePoint())
+        #expect(resume.localTrackID == fixture.tracks[1].id.uuidString)
+        #expect(resume.positionSeconds == 40)
+    }
+
+    @Test(arguments: [false, true])
+    func aTakeoverDoesNotSeekWhenThePlayerHasMovedToAnotherSong(observed: Bool) async throws {
+        let (fixture, _) = try fixture()
+        defer { fixture.cleanUp() }
+        await songLostWhilePaused(fixture)
+        let prepare = Gate()
+        let resuming = try await pressPlayDuringResume(fixture, prepare: prepare)
+
+        fixture.player.silentlyAdvance(to: 7)
+        if observed {
+            // Paused, or this song change would rebuild the unprepared queue.
+            fixture.player.playbackStatus = .paused
+            await fixture.player.notify()
+        }
+        prepare.open()
+        await resuming.value
+
+        #expect(fixture.player.playbackTime == 7)
+        #expect(fixture.controller.currentTrack?.title == "Song 2")
+    }
+
+    @Test func aFailedPlayPressDuringAResumeKeepsItsFailureAndThePosition() async throws {
+        let (fixture, _) = try fixture()
+        defer { fixture.cleanUp() }
+        await songLostWhilePaused(fixture)
+        let prepare = Gate()
+        fixture.player.playFailuresRemaining = 1
+
+        let resuming = try await pressPlayDuringResume(fixture, prepare: prepare)
+        #expect(fixture.controller.playbackFailure?.kind == .command)
+        prepare.open()
+        await resuming.value
+
+        #expect(fixture.controller.playbackFailure?.kind == .command)
+        #expect(fixture.player.playbackTime == 40)
+    }
+
+    @Test func aTakeoverWhosePrepareAnswersPastTheLimitDoesNotJump() async throws {
+        let (fixture, log) = try fixture()
+        defer { fixture.cleanUp() }
+        await songLostWhilePaused(fixture)
+        fixture.controller.startHoldLimit = .milliseconds(50)
+        let prepare = Gate()
+        let resuming = try await pressPlayDuringResume(fixture, prepare: prepare)
+        try await waitUntil { events(log, .playbackSelectionPath).contains("startTakeoverExpired") }
+
+        // The song has been playing from the top meanwhile.
+        fixture.player.playbackTime = 30
+        prepare.open()
+        await resuming.value
+
+        #expect(fixture.player.playbackTime == 30)
+    }
+
+    @Test(arguments: [false, true])
+    func aHoldLostDuringTheFinalPlayOnlySeeksTheSameSong(movedOn: Bool) async throws {
+        let (fixture, log) = try fixture()
+        defer { fixture.cleanUp() }
+        await songLostWhilePaused(fixture)
+        fixture.controller.startHoldLimit = .milliseconds(50)
+        let play = Gate()
+        fixture.player.onPlay = { await play.wait() }
+
+        let resuming = Task { await fixture.controller.play(context: fixture.context) }
+        try await waitUntil { events(log, .playbackSelectionPath).contains("startTimedOut") }
+        if movedOn { fixture.player.silentlyAdvance(to: 7) }
+        play.open()
+        await resuming.value
+
+        #expect(fixture.player.playbackTime == (movedOn ? 7 : 40))
+        #expect(fixture.controller.currentTrack?.title == (movedOn ? "Song 2" : "Song 1"))
+        #expect(fixture.controller.playbackFailure == nil)
+    }
+
+    @Test func aStartThatPlaysAfterItsHoldEndedStillClearsTheFailure() async throws {
+        let (fixture, log) = try fixture()
+        defer { fixture.cleanUp() }
+        await select(fixture, 1)
+        await fixture.listen(seconds: 40)
+        await fixture.player.abandonQueue()
+        #expect(fixture.controller.playbackFailure != nil)
+        fixture.controller.startHoldLimit = .milliseconds(50)
+        let play = Gate()
+        fixture.player.onPlay = { await play.wait() }
+
+        // Play recovers with a fresh queue, whose final play() outlasts the hold.
+        let starting = Task { await fixture.controller.play(context: fixture.context) }
+        try await waitUntil { events(log, .playbackSelectionPath).contains("startTimedOut") }
+        play.open()
+        await starting.value
+
+        #expect(fixture.controller.playbackFailure == nil)
+        #expect(fixture.controller.statusMessage == nil)
+    }
+
     // MARK: - PB-4: network return
 
     @Test func aHungNetworkRecoveryDoesNotLatchOffLaterReturns() async throws {

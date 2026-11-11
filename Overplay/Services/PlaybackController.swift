@@ -193,6 +193,9 @@ final class PlaybackController {
     /// plays, when a newer start replaces it, when the user presses Play, or
     /// at the limit.
     @ObservationIgnored private var startHold: Int?
+    /// The start whose hold a Play press took over: it still owes its resume
+    /// seek, until the hold's limit.
+    @ObservationIgnored private var startTakenOver: Int?
     /// The start whose held observation has been recorded, so it is listed once.
     @ObservationIgnored private var recordedHeldStart: Int?
     /// The display last recorded, so only changes are listed.
@@ -1050,6 +1053,7 @@ final class PlaybackController {
         adopt(context)
         playWantedAt = .now
         // Play takes over from a start still preparing.
+        if isHoldingStart { startTakenOver = startHold }
         startHold = nil
         if playbackFailure != nil {
             await recover()
@@ -1437,14 +1441,25 @@ final class PlaybackController {
         player.pause()
         player.submitQueue(tracks, startingAt: startIndex)
         do {
-            let reachedPlay = try await startLoaded(trackCount: tracks.count, shuffle: shuffle, keepsShuffle: keepsShuffle,
-                                                    generation: generation)
+            let outcome = try await startLoaded(trackCount: tracks.count, shuffle: shuffle, keepsShuffle: keepsShuffle,
+                                                generation: generation)
             // A newer start replaced this queue while play was in flight.
             guard generation == startGeneration else { return }
-            if reachedPlay {
-                if let duration = currentMember?.durationSeconds, position > 5, position < duration - 5 {
-                    player.playbackTime = position
+            switch outcome {
+            case .played:
+                seekToResumePosition(position)
+            case .playedAfterHoldEnded, .takenOverByPlay:
+                // Observation is running again, so the player may have moved on.
+                await observePlayer()
+                if intent.members.indices.contains(startIndex),
+                   currentMember?.localTrackID == intent.members[startIndex].localTrackID {
+                    seekToResumePosition(position)
                 }
+            case .holdLost:
+                break
+            }
+            // Only this start's own play settles a failure; a Play press reports its own.
+            if outcome == .played || outcome == .playedAfterHoldEnded {
                 clearFailure()
                 statusMessage = nil
             }
@@ -1455,6 +1470,24 @@ final class PlaybackController {
         saveResumePoint(force: true)
     }
 
+    private func seekToResumePosition(_ position: Double) {
+        guard let duration = currentMember?.durationSeconds, position > 5, position < duration - 5 else { return }
+        player.playbackTime = position
+        elapsedSeconds = position
+    }
+
+    /// How a held start ended, which decides what `submit` still does for it.
+    private enum StartOutcome {
+        /// Reached `play()` with the hold intact.
+        case played
+        /// Reached `play()`, but the hold ended during that call.
+        case playedAfterHoldEnded
+        /// A Play press took the hold before this start reached `play()`.
+        case takenOverByPlay
+        /// The hold timed out or was given up, and nothing played.
+        case holdLost
+    }
+
     /// Every start (#76): load the queue without playing, wait until MusicKit
     /// has loaded every entry, then play. Played sooner, MusicKit reports and
     /// briefly plays track 1 until it reaches the start entry (device probe,
@@ -1462,9 +1495,8 @@ final class PlaybackController {
     /// and skips to a random song first; shuffle written earlier mixes only
     /// the first few songs. Nothing is heard or shown before the chosen song.
     /// A resubmission that keeps shuffle reshuffles the loaded queue the same
-    /// way but stays on its start song. Returns whether it reached `play()`:
-    /// false means the hold was lost, to a Play press, a newer start or the limit.
-    private func startLoaded(trackCount: Int, shuffle: Bool, keepsShuffle: Bool = false, generation: Int) async throws -> Bool {
+    /// way but stays on its start song.
+    private func startLoaded(trackCount: Int, shuffle: Bool, keepsShuffle: Bool = false, generation: Int) async throws -> StartOutcome {
         startHold = generation
         shuffleWhenHeldStartLoads = false
         // The player was paused for this start; never offer Pause meanwhile.
@@ -1473,7 +1505,14 @@ final class PlaybackController {
         // controller believing it was playing until relaunch.
         let watchdog = Task { [weak self, limit = startHoldLimit] in
             try? await Task.sleep(for: limit)
-            guard !Task.isCancelled, let self, self.startHold == generation else { return }
+            guard !Task.isCancelled, let self else { return }
+            if self.startTakenOver == generation {
+                // Prepare answering later must not jump audio already playing.
+                self.startTakenOver = nil
+                activityLog.record(.playbackSelectionPath, detail: "startTakeoverExpired")
+                return
+            }
+            guard self.startHold == generation else { return }
             // Stop hiding the player; Play recovers as usual, and a late
             // prepare does not resume this start.
             self.startHold = nil
@@ -1488,29 +1527,33 @@ final class PlaybackController {
         try await awaitPlayer("prepare start=\(generation)") { try await player.prepareToPlay() }
         // A late answer for an older queue says nothing about the current one.
         if generation == startGeneration { queueNeedsFreshStart = false }
-        guard isHoldingStart(generation) else { return false }
+        guard isHoldingStart(generation) else { return lostHold(generation) }
         // Nothing is playing yet; past the limit, start anyway.
         let clock = ContinuousClock()
         let limit = clock.now.advanced(by: queueLoadLimit)
         while player.loadedEntryCount < trackCount, clock.now < limit {
             try? await Task.sleep(for: .milliseconds(50))
-            guard isHoldingStart(generation) else { return false }
+            guard isHoldingStart(generation) else { return lostHold(generation) }
         }
-        guard isHoldingStart(generation) else { return false }
+        guard isHoldingStart(generation) else { return lostHold(generation) }
         if shuffle {
             player.setShuffleMode(.off)
             player.setShuffleMode(.songs)
             if trackCount > 1 {
                 try await awaitPlayer("shuffle skip start=\(generation)") { try await player.skipToNextEntry() }
             }
-            guard isHoldingStart(generation) else { return false }
+            guard isHoldingStart(generation) else { return lostHold(generation) }
         } else if keepsShuffle || shuffleWhenHeldStartLoads {
             player.setShuffleMode(.off)
             player.setShuffleMode(.songs)
             observeModes()
         }
         try await awaitPlayer("play start=\(generation)") { try await player.play() }
-        return true
+        return isHoldingStart(generation) ? .played : .playedAfterHoldEnded
+    }
+
+    private func lostHold(_ generation: Int) -> StartOutcome {
+        startTakenOver == generation ? .takenOverByPlay : .holdLost
     }
 
     private func isHoldingStart(_ generation: Int) -> Bool {

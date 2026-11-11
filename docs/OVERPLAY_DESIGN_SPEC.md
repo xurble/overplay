@@ -1869,9 +1869,13 @@ attribute normally.
    believing it was playing until relaunch. At the limit Overplay observes
    the player again and records `startTimedOut`; a prepare that returns
    later does not resume the start, and nothing is retried. Only a start
-   that reached `play()` seeks to its resume position and clears a failure
-   that was showing; one that timed out or lost its hold to a Play press
-   leaves both alone. Overplay paused
+   that reached `play()` clears a failure that was showing; one that timed
+   out or lost its hold to a Play press leaves it alone. A start that timed
+   out does not seek either. A Play press that takes over a resuming start
+   keeps the saved position: once prepare returns, within the hold's limit,
+   the start seeks if observation attributes the player's current entry to
+   the song being resumed, and otherwise does not. Past the limit it does
+   not seek, so audio already playing never jumps. Overplay paused
    the player for the start, so it does not offer Pause while the start is
    held. The first observed entry is attributed by its item. The app and
    CarPlay both use this shared action.
