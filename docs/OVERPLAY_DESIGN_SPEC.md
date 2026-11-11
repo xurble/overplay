@@ -1584,6 +1584,8 @@ Shared playback reconciliation immediately requests a focused lookup when a
 track starts playing with an unknown count, including externally initiated track
 changes. This does not wait for the bulk refresh or its discovery cooldown.
 It queries the track's IDs, then paginates a title search if still unresolved.
+It never pages a playlist: playlist-entry counts come from the bulk refresh, so
+a song known only from one shows its count after that refresh (`LOAD-001`).
 Title searches require identity or complete metadata matching; only a full scan
 can prove ISRC uniqueness. Concurrent requests for the same track are coalesced,
 and repeated misses retry at most once per minute. Playback is not blocked by

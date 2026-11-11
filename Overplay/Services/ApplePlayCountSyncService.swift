@@ -173,7 +173,8 @@ final class ApplePlayCountSyncService {
         } catch {
             TrackMetadataDiagnostics.log("Current-track Apple play count lookup failed: \(error.localizedDescription)")
         }
-        changed += await refreshPlaylistCounts(in: context, startedAt: now, trackID: trackID)
+        // No playlist evidence here: it pages whole playlists, and this runs
+        // during playback. The bulk refresh collects it later (`LOAD-001`).
         changed += await refreshRecentCounts(in: context, startedAt: now, trackID: trackID)
         return changed
     }
@@ -241,14 +242,13 @@ final class ApplePlayCountSyncService {
     /// Fetch only source playlists needed by tracks without a library counter
     /// or already using playlist evidence. Do not trust playlist modification
     /// dates: listening can change a count without changing its membership.
-    private func refreshPlaylistCounts(in context: ModelContext, startedAt: Date, trackID: UUID? = nil) async -> Int {
+    private func refreshPlaylistCounts(in context: ModelContext, startedAt: Date) async -> Int {
         guard !Task.isCancelled else { return 0 }
         var changed = 0
         do {
             let candidates = try PlaylistItemRepository.allItems(in: context)
             let items = ApplePlayCountRepository.withSnapshot(for: candidates, in: context) {
                 candidates.filter { item in
-                    guard trackID == nil || item.trackID == trackID else { return false }
                     let counters = item.applePlayCountState?.counters ?? []
                     return counters.isEmpty || counters.contains { $0.isAlternativeCount }
                 }
