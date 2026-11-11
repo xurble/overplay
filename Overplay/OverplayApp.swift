@@ -12,10 +12,7 @@ import SwiftUI
 @main
 @MainActor
 struct OverplayApp: App {
-    private static var isRunningTests: Bool {
-        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-            || NSClassFromString("XCTestCase") != nil
-    }
+    private static var isRunningTests: Bool { TestHost.isHostingUnitTests }
 
     private static func makeModelContainer() throws -> ModelContainer {
         AppPersistence.resetFirstRunIfRequested()
@@ -73,13 +70,18 @@ struct OverplayApp: App {
 
     var body: some Scene {
         WindowGroup {
-            requiringLibraryStore { ContentView(runtime: .shared) }
-                .hidesMacTitlebar()
-                .macSinglePlayerWindow()
-                // The window as the owner sized it (owner request,
-                // 2026-10-31).
-                .macMinimumWindowSize(CGSize(width: 619, height: 576))
-                .appliesAppearancePreference()
+            if Self.isRunningTests {
+                // Hosting unit tests: no ContentView, so no startup bootstrap.
+                Color.clear
+            } else {
+                requiringLibraryStore { ContentView(runtime: .shared) }
+                    .hidesMacTitlebar()
+                    .macSinglePlayerWindow()
+                    // The window as the owner sized it (owner request,
+                    // 2026-10-31).
+                    .macMinimumWindowSize(CGSize(width: 619, height: 576))
+                    .appliesAppearancePreference()
+            }
         }
         .commands { OverplayCommands() }
         .onChange(of: scenePhase) { _, newPhase in

@@ -1,0 +1,4 @@
+// Unit-test bundle: the local signing team only, which Mac Catalyst needs
+// to sign the bundle it injects into the app. The target's own settings
+// (bundle identifier, product name) override anything else Local sets.
+#include? "Local.xcconfig"
