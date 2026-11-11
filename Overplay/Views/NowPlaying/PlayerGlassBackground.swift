@@ -203,6 +203,8 @@ final class PlayerGlassMotion {
 /// background colour (as CarPlay darkens its art, but in the theme colour).
 struct PlayerGlassArtBackground: View {
     var tint: Color
+    /// How much of `tint` lies over the art.
+    var washOpacity: Double = Self.wash
 
     @Environment(\.playerGlassArtwork) private var artwork
     @Environment(\.playerGlassBackdrop) private var backdrop
@@ -263,7 +265,7 @@ struct PlayerGlassArtBackground: View {
                             y: frame.minY + tilt.height * margin * Self.parallax
                         )
                 }
-                tint.opacity(Self.wash)
+                tint.opacity(washOpacity)
             }
             .frame(width: size.width, height: size.height, alignment: .topLeading)
             .clipped()
@@ -285,6 +287,64 @@ struct PlayerGlassArtBackground: View {
     }
 }
 
+/// What the full player draws behind itself.
+nonisolated enum PlayerBackdropStyle: Equatable {
+    /// The plain background: nothing playing, or a track without art.
+    case plain
+    /// The blurred art under a neutral wash: the track has art, but its
+    /// theme is not ready (or never will be).
+    case neutralArt
+    /// The blurred art under the theme's colour.
+    case themedArt(AlbumArtworkRGBColor)
+
+    /// Heavier than the theme's wash: text keeps the system's primary and
+    /// secondary colours, which must read over the brightest or darkest
+    /// art, as no colour is chosen for what lies under it. Light mode's
+    /// secondary grey needs more cover than dark mode's.
+    static func neutralWash(isDark: Bool) -> Double {
+        isDark ? 0.75 : 0.9
+    }
+
+    static func style(for theme: AlbumArtworkTheme, hasArtwork: Bool) -> PlayerBackdropStyle {
+        if !theme.isFallback { return .themedArt(theme.backgroundRGB) }
+        return hasArtwork ? .neutralArt : .plain
+    }
+}
+
+/// The full player's background, by `PlayerBackdropStyle`. The neutral and
+/// themed art are one view, so the wash eases from one to the other when
+/// the theme arrives. Reduce Transparency and the Theme Colour background
+/// show the wash colour alone, as `PlayerGlassArtBackground` does.
+struct PlayerBackdropView: View {
+    var artworkTheme: AlbumArtworkTheme
+
+    @Environment(\.playerGlassArtwork) private var artwork
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let style = PlayerBackdropStyle.style(for: artworkTheme, hasArtwork: artwork != nil)
+        if style == .plain {
+            Rectangle().fill(.background)
+        } else {
+            PlayerGlassArtBackground(tint: Self.tint(for: style), washOpacity: washOpacity(for: style))
+        }
+    }
+
+    private static func tint(for style: PlayerBackdropStyle) -> Color {
+        if case .themedArt(let colour) = style { colour.color } else { Color(uiColor: .systemBackground) }
+    }
+
+    private func washOpacity(for style: PlayerBackdropStyle) -> Double {
+        if case .themedArt = style { PlayerGlassArtBackground.wash } else { PlayerBackdropStyle.neutralWash(isDark: colorScheme == .dark) }
+    }
+}
+
 #Preview {
     PlayerGlassArtBackground(tint: .indigo)
+}
+
+#Preview("Theme pending") {
+    PlayerBackdropView(artworkTheme: .fallback)
+        .environment(\.playerGlassArtwork, PlayerGlassArtwork(urlString: "https://example.com/{w}x{h}bb.jpg"))
+        .preferredColorScheme(.dark)
 }

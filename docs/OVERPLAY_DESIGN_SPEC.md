@@ -2565,6 +2565,22 @@ Show:
   level from the hidden system volume view five times a second, so it follows
   the volume buttons: the app's own audio session is never active, so it is
   never told. In the background it does not check.
+- Background, on every device: the album art filling the player, blurred,
+  under a wash of the track's theme colour. Until the theme is ready, the
+  blurred art shows under a heavier neutral wash in the system background
+  colour, with text in the system's colours; when the theme arrives the wash
+  eases into the theme colour. Only a track without art (or nothing playing)
+  has the plain background.
+- The theme comes from the cover's colours, with text recognition on the
+  cover (Vision) choosing an accent from its lettering where it can. Text
+  recognition is optional and bounded: a theme waits for it at most three
+  seconds, and on a time-out or failure uses the colours alone. A cover has
+  one recognition at a time. A theme made without recognition's answer is
+  used but not cached, so the cover tries again later. On a Mac the first
+  recognition after each new build of the app waited about 66 seconds for the
+  Neural Engine to compile Vision's model (measured 2026-11-11, M1 Pro,
+  macOS 27.0.1); before this bound, no theme, and so no blurred art, showed
+  until it finished.
 
 Now Playing displays the player-reported track (`PLAY-011`). When the
 current entry is unattributed, the curation actions are disabled rather than
@@ -2604,8 +2620,9 @@ Platform notes:
   scroll view does, so a swipe that started on a button never presses it. A
   swipe the system interrupts (Control Center, a call) puts the player back
   open. Behind the
-  blurred art is a solid pane of the theme colour, which is all that shows
-  until the art arrives.
+  blurred art is a solid pane of the wash colour (the theme colour, or the
+  neutral one while the theme is pending), which is all that shows until the
+  art arrives.
   A drag handle at the top, clear of the Dynamic Island, closes it on a tap.
   The system zoom transition was tried and dropped: its swipe down missed
   about half of first attempts and lost to the controls. Regular width shows
@@ -3282,7 +3299,8 @@ settings, through system controls where possible:
   name and explanation.
 - Reduce Motion: the full player fades instead of growing from the mini
   player, and the art does not move with the phone's tilt.
-- Reduce Transparency: the full player shows the theme colour, not the art.
+- Reduce Transparency: the full player shows the theme colour, not the art
+  (the plain background while the theme is pending).
 - The mini player's text stops at the largest standard size, as its bar has a
   fixed height; it and the transport buttons offer the Large Content Viewer.
 - CarPlay's own templates provide its accessibility; its art badges cannot be
