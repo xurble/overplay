@@ -169,12 +169,12 @@ nonisolated final class MusicKitActivityLog: Sendable {
             startedAt: startedAt,
             durationMilliseconds: duration.map(Self.milliseconds(of:)),
             magnitude: magnitude,
-            detail: detail,
+            detail: detail?.withoutURLQueries,
             notes: notes,
             origin: Self.currentOrigin,
             errorDomain: nsError?.domain,
             errorCode: nsError?.code,
-            errorDescription: nsError?.localizedDescription,
+            errorDescription: nsError?.localizedDescription.withoutURLQueries,
             errorDetail: error.map(MusicKitActivityEvent.detail(of:))
         )
         append(event)
@@ -513,7 +513,11 @@ nonisolated final class MusicKitActivityLog: Sendable {
         // log that motivated recording origin at all.
         let via = event.origin?.rawValue ?? "-"
 
+        // `detail` and `chain` can hold track titles, so a sysdiagnose from a
+        // Release build hides them. Debug keeps them readable in `log show`.
+        // The privacy argument must be a literal, hence the repeated calls.
         if event.didFail {
+            #if DEBUG
             logger.error(
                 """
                 op=\(operation, privacy: .public) outcome=failed dur=\(duration, privacy: .public) \
@@ -525,6 +529,19 @@ nonisolated final class MusicKitActivityLog: Sendable {
                 chain=\(event.errorDetail ?? "-", privacy: .public)
                 """
             )
+            #else
+            logger.error(
+                """
+                op=\(operation, privacy: .public) outcome=failed dur=\(duration, privacy: .public) \
+                size=\(magnitude, privacy: .public) notes=\(notes, privacy: .public) \
+                via=\(via, privacy: .public) domain=\(event.errorDomain ?? "nil", privacy: .public) \
+                code=\(event.errorCode ?? 0, privacy: .public) \
+                error=\(event.errorDescription ?? "nil", privacy: .public) \
+                detail=\(event.detail ?? "-", privacy: .private(mask: .hash)) \
+                chain=\(event.errorDetail ?? "-", privacy: .private(mask: .hash))
+                """
+            )
+            #endif
         } else if event.operation.isHighFrequency {
             // Exact per-minute counts already cover these, so keep them out
             // of the unified log's in-memory ring where they would evict the
@@ -536,6 +553,7 @@ nonisolated final class MusicKitActivityLog: Sendable {
                 """
             )
         } else {
+            #if DEBUG
             logger.info(
                 """
                 op=\(operation, privacy: .public) outcome=ok dur=\(duration, privacy: .public) \
@@ -543,6 +561,15 @@ nonisolated final class MusicKitActivityLog: Sendable {
                 via=\(via, privacy: .public) detail=\(event.detail ?? "-", privacy: .public)
                 """
             )
+            #else
+            logger.info(
+                """
+                op=\(operation, privacy: .public) outcome=ok dur=\(duration, privacy: .public) \
+                size=\(magnitude, privacy: .public) notes=\(notes, privacy: .public) \
+                via=\(via, privacy: .public) detail=\(event.detail ?? "-", privacy: .private(mask: .hash))
+                """
+            )
+            #endif
         }
     }
 

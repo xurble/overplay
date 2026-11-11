@@ -208,7 +208,7 @@ private func diagnosticDescription(for error: Error) -> String {
         return "\(nsError.domain) \(nsError.code): \(nsError.localizedDescription)"
     }
 
-    return "\(nsError.domain) \(nsError.code): \(nsError.localizedDescription) userInfo=\(nsError.userInfo)"
+    return "\(nsError.domain) \(nsError.code): \(nsError.localizedDescription) userInfo=\(nsError.userInfo)".withoutURLQueries
 }
 
 /// Whether Overplay can still edit the One True Playlist's Apple Music
