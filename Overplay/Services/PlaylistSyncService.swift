@@ -451,10 +451,13 @@ struct PlaylistSyncService {
         var processedSnapshots: [TrackSnapshot] = []
         var processedTrackIDs = Set<UUID>()
         var insertedOrderTrackIDs = Set<String>()
+        var aliasIndex = try TrackAliasIndex(in: context)
 
         for (sortOrder, snapshot) in snapshots.enumerated() {
             if sortOrder > 0, sortOrder.isMultiple(of: Self.syncYieldStride) {
                 try await yieldDuringReconciliation()
+                // Another task may have merged tracks while this pass yielded.
+                aliasIndex = try TrackAliasIndex(in: context)
                 guard playlistRecord.isActive, playlistRecord.triageLinkedAt == reconciliationLinkDate else {
                     summary.fetchedCount = sortOrder
                     summary.skippedCount += snapshots.count - sortOrder
@@ -494,6 +497,7 @@ struct PlaylistSyncService {
                         sourcePlaylist: playlistRecord,
                         contributedSourceMusicPlaylistID: contributedSourceMusicPlaylistID,
                         syncedAt: syncedAt,
+                        aliasIndex: aliasIndex,
                         in: context
                     )
                     for localTrackID in replayedTrackIDs
@@ -516,6 +520,7 @@ struct PlaylistSyncService {
                 let existingTrack = try TrackRecordRepository.track(
                     catalogID: snapshotIdentity.catalogID,
                     libraryID: snapshotIdentity.libraryID,
+                    aliasIndex: aliasIndex,
                     in: context
                 )
                 let existingItem = try existingTrack.flatMap {
@@ -535,7 +540,7 @@ struct PlaylistSyncService {
             }
 
             do {
-                let trackResult = try TrackRecordRepository.upsertWithResult(snapshot, in: context)
+                let trackResult = try TrackRecordRepository.upsertWithResult(snapshot, aliasIndex: aliasIndex, in: context)
                 if try sourceExcludesDeletedTrack(trackResult.record.id, source: playlistRecord, in: context) {
                     summary.skippedCount += 1
                     continue
@@ -674,10 +679,11 @@ struct PlaylistSyncService {
         sourcePlaylist: PlaylistRecord,
         contributedSourceMusicPlaylistID: String?,
         syncedAt: Date,
+        aliasIndex: TrackAliasIndex,
         in context: ModelContext
     ) throws -> [String] {
         try snapshots.compactMap { snapshot in
-            let trackResult = try TrackRecordRepository.upsertWithResult(snapshot, in: context)
+            let trackResult = try TrackRecordRepository.upsertWithResult(snapshot, aliasIndex: aliasIndex, in: context)
             if try sourceExcludesDeletedTrack(trackResult.record.id, source: sourcePlaylist, in: context) {
                 return nil
             }
