@@ -437,7 +437,12 @@ struct PlaybackOverlapTests {
     }
 
     @Test func aBurstOfPathUpdatesRunsOneRecovery() async throws {
-        let (fixture, log) = try fixture()
+        // The recovery is held open: one that finished at once would clear the
+        // failure, and a second run would stop for that reason instead.
+        let prepare = Gate(passing: 1)
+        let player = FakePlaybackPlayer()
+        player.onPrepare = { await prepare.wait() }
+        let (fixture, log) = try fixture(player: player)
         defer { fixture.cleanUp() }
         fixture.controller.networkSettleDelay = .milliseconds(200)
         await select(fixture, 0)
@@ -445,10 +450,14 @@ struct PlaybackOverlapTests {
 
         let first = Task { await fixture.controller.networkReturned() }
         let second = Task { await fixture.controller.networkReturned() }
-        await first.value
-        await second.value
+        try await waitUntil { prepare.waiting >= 1 }
+        try await Task.sleep(for: .milliseconds(100))
 
         #expect(events(log, .playbackRecoveryAttempt) == ["network returned"])
+
+        prepare.open()
+        await first.value
+        await second.value
     }
 
     // MARK: - PB-5: a queue lost while paused
