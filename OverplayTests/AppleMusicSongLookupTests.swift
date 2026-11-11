@@ -203,4 +203,23 @@ struct AppleMusicSongLookupTests {
         let songs = try await AppleMusicSongLookup.playableCatalogSongs(["1", "2"]) { _ in [duplicated, other, duplicated] }
         #expect(Set(songs.keys) == ["2"])
     }
+
+    // MARK: Rebuild (API-2)
+
+    @Test func rebuildAsksForMissingSongsInChunks() async throws {
+        let records = (0..<250).map { TrackRecord(catalogID: "cat-\($0)", title: "Song", artistName: "Artist") }
+        var sizes: [Int] = []
+        let tracks = await OneTruePlaylistRebuildService.catalogTracks(for: records) { ids in
+            sizes.append(ids.count)
+            return try ids.map { try Self.song($0) }
+        }
+        #expect(sizes == [100, 100, 50])
+        #expect(tracks.count == 250)
+    }
+
+    @Test func aFailedRebuildLookupCostsThoseSongsNotTheRebuild() async throws {
+        let records = [TrackRecord(catalogID: "1", title: "Song", artistName: "Artist")]
+        let tracks = await OneTruePlaylistRebuildService.catalogTracks(for: records) { _ in throw URLError(.timedOut) }
+        #expect(tracks.isEmpty)
+    }
 }
