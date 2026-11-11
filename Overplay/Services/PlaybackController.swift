@@ -154,6 +154,8 @@ final class PlaybackController {
         }
     }
     @ObservationIgnored private let sleep: @MainActor (Duration) async -> Void
+    /// What the limits and delays below run on; injectable for tests.
+    @ObservationIgnored var clock = PlaybackClock.continuous
     /// Where the controller's decisions are recorded; injectable for tests.
     @ObservationIgnored var activityLog = MusicKitActivityLog.shared
 
@@ -230,7 +232,7 @@ final class PlaybackController {
     /// failure's business, and playback may recover around it. A start still
     /// looking up its tracks counts however long that takes.
     var isStartingPlayback: Bool {
-        let cutoff = ContinuousClock.now - (stuckCallLimit + startHoldLimit)
+        let cutoff = clock.now() - (stuckCallLimit + startHoldLimit)
         let latestStuckCall = startsInFlight.values.filter { $0.isPlayerCall && $0.began <= cutoff }.map(\.began).max()
         return startsInFlight.values.contains { work in
             if work.isPlayerCall { return work.began > cutoff }
@@ -241,7 +243,7 @@ final class PlaybackController {
     /// Marks a start or player call as under way until `endStart`.
     private func beginStart(isPlayerCall: Bool = false) -> Int {
         lastStartToken &+= 1
-        startsInFlight[lastStartToken] = (.now, isPlayerCall)
+        startsInFlight[lastStartToken] = (clock.now(), isPlayerCall)
         return lastStartToken
     }
 
@@ -793,8 +795,8 @@ final class PlaybackController {
         defer { endStart(startToken) }
         let outcome = outcome ?? PlayerCallOutcome()
         let answersAtStart = playerAnswers
-        let watchdog = Task { [weak self, limit = stuckCallLimit] in
-            try? await Task.sleep(for: limit)
+        let watchdog = Task { [weak self, limit = stuckCallLimit, sleep = clock.sleep] in
+            await sleep(limit)
             guard !Task.isCancelled, let self, self.playerAnswers == answersAtStart else { return }
             outcome.wentStuck = true
             self.playerCallBecameStuck(call)
@@ -1503,8 +1505,8 @@ final class PlaybackController {
         isPlaying = false
         // On 2026-10-07 prepareToPlay never returned, and the hold left the
         // controller believing it was playing until relaunch.
-        let watchdog = Task { [weak self, limit = startHoldLimit] in
-            try? await Task.sleep(for: limit)
+        let watchdog = Task { [weak self, limit = startHoldLimit, sleep = clock.sleep] in
+            await sleep(limit)
             guard !Task.isCancelled, let self else { return }
             if self.startTakenOver == generation {
                 // Prepare answering later must not jump audio already playing.
@@ -1529,10 +1531,9 @@ final class PlaybackController {
         if generation == startGeneration { queueNeedsFreshStart = false }
         guard isHoldingStart(generation) else { return lostHold(generation) }
         // Nothing is playing yet; past the limit, start anyway.
-        let clock = ContinuousClock()
-        let limit = clock.now.advanced(by: queueLoadLimit)
-        while player.loadedEntryCount < trackCount, clock.now < limit {
-            try? await Task.sleep(for: .milliseconds(50))
+        let limit = clock.now().advanced(by: queueLoadLimit)
+        while player.loadedEntryCount < trackCount, clock.now() < limit {
+            await clock.sleep(.milliseconds(50))
             guard isHoldingStart(generation) else { return lostHold(generation) }
         }
         guard isHoldingStart(generation) else { return lostHold(generation) }
@@ -2139,7 +2140,7 @@ final class PlaybackController {
         // A hung recovery must not block the next return; its fresh queue
         // supersedes the hung one.
         isRecoveringForNetworkReturn = true
-        try? await Task.sleep(for: networkSettleDelay)
+        await clock.sleep(networkSettleDelay)
         isRecoveringForNetworkReturn = false
         // Recovered, or paused, while the connections settled.
         guard playbackFailure != nil, self.playWantedAt != nil else { return }
