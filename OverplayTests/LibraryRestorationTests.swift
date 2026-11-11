@@ -503,9 +503,13 @@ struct LibraryRestorationTests {
         try context.save()
         func rowCount() throws -> Int { try settingsRows(ModelContext(container)).count }
 
+        // Not ready, even after a clean import of a complete library.
+        let notReady = LibraryRestorationService(defaults: defaults())
+        notReady.cloudImportFinished(error: nil)
+        #expect(try notReady.convergeSettingsAfterImport(in: context) == nil)
+        #expect(try rowCount() == 2)
+
         let service = LibraryRestorationService(defaults: defaults())
-        // Not ready.
-        #expect(try service.convergeSettingsAfterImport(in: context) == nil)
         try await service.prepare(in: context, cloudEnabled: false, hasLegacyStore: true, locallyRebuiltID: nil, attempts: 1)
         #expect(service.isReady)
         #expect(try rowCount() == 2)
