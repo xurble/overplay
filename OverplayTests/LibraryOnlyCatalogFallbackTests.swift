@@ -272,6 +272,9 @@ struct LibraryOnlyCatalogFallbackTests {
         }
         defer { fixture.cleanUp() }
         let gone = fixture.tracks[1]
+        // A documented identity takes no IDs from the cache, so the queued
+        // catalog ID must come from the queued track itself.
+        gone.hasDocumentedIdentity = true
         await fixture.controller.playPlaylist(fixture.playlist, startingAt: gone,
                                               settings: fixture.settings, context: fixture.context)
 
