@@ -10,7 +10,9 @@ import Synchronization
 /// A cover has at most one recognition at a time: a second request for it
 /// waits on the first. Recognitions that outlive their limit keep running,
 /// as Vision cannot be cancelled; while `maximumInFlight` are running, more
-/// are skipped rather than queued behind them.
+/// are skipped rather than queued behind them. The last `maximumRecent`
+/// answers are kept, so an answer that came too late for one request is
+/// used by the next one for that cover instead of running Vision again.
 nonisolated final class AlbumArtworkTextRecognition: Sendable {
     typealias Recognizer = @Sendable (CGImage) async throws -> [AlbumArtworkRecognizedText]
 
@@ -36,14 +38,27 @@ nonisolated final class AlbumArtworkTextRecognition: Sendable {
 
     static let shared = AlbumArtworkTextRecognition()
     static let defaultTimeLimit: Duration = .seconds(3)
-    /// Room for the player and theme warm-up (two at a time) in normal use;
-    /// only a stall fills it.
+    /// Room for the player's requests plus a few stalled runs; only a stall
+    /// fills it.
     static let maximumInFlight = 4
+    static let maximumRecent = 16
 
     private let recognizer: Recognizer
     private let timeLimit: Duration
     private let sleep: @Sendable (Duration) async -> Void
-    private let inFlight = Mutex<[String: Task<Outcome, Never>]>([:])
+    private let state = Mutex(State())
+
+    private nonisolated enum Work {
+        case running(Task<Outcome, Never>)
+        case answered(Outcome)
+        case skipped
+    }
+
+    private nonisolated struct State {
+        var inFlight: [String: Task<Outcome, Never>] = [:]
+        /// Answers by cover, oldest first.
+        var recent: [(coverKey: String, outcome: Outcome)] = []
+    }
 
     init(
         recognizer: @escaping Recognizer = AlbumArtworkTextRecognition.vision,
@@ -56,9 +71,10 @@ nonisolated final class AlbumArtworkTextRecognition: Sendable {
     }
 
     func recognize(in image: CGImage, coverKey: String) async -> Outcome {
-        let work: Task<Outcome, Never>? = inFlight.withLock { tasks in
-            if let running = tasks[coverKey] { return running }
-            guard tasks.count < Self.maximumInFlight else { return nil }
+        let work: Work = state.withLock { state in
+            if let answer = state.recent.last(where: { $0.coverKey == coverKey }) { return .answered(answer.outcome) }
+            if let running = state.inFlight[coverKey] { return .running(running) }
+            guard state.inFlight.count < Self.maximumInFlight else { return .skipped }
             let task = Task.detached(priority: .utility) { [recognizer] in
                 let outcome: Outcome
                 do {
@@ -67,25 +83,40 @@ nonisolated final class AlbumArtworkTextRecognition: Sendable {
                     AlbumArtworkThemeDiagnostics.log("builder ocr failed: \(error.localizedDescription)")
                     outcome = .failed
                 }
-                self.finish(coverKey)
+                self.finish(coverKey, with: outcome)
                 return outcome
             }
-            tasks[coverKey] = task
-            return task
+            state.inFlight[coverKey] = task
+            return .running(task)
         }
-        guard let work else {
+        switch work {
+        case .answered(let answer):
+            AlbumArtworkThemeDiagnostics.log("builder ocr reused an earlier answer")
+            return answer
+        case .running(let work):
+            let outcome = await Self.first(of: work, orTimedOutAfter: timeLimit, sleep: sleep)
+            if outcome == .timedOut {
+                AlbumArtworkThemeDiagnostics.log("builder ocr timed out after \(self.timeLimit); using the cover's colours")
+            }
+            return outcome
+        case .skipped:
             AlbumArtworkThemeDiagnostics.log("builder ocr skipped: \(Self.maximumInFlight) recognitions still running")
             return .skipped
         }
-        let outcome = await Self.first(of: work, orTimedOutAfter: timeLimit, sleep: sleep)
-        if outcome == .timedOut {
-            AlbumArtworkThemeDiagnostics.log("builder ocr timed out after \(self.timeLimit); using the cover's colours")
-        }
-        return outcome
     }
 
-    private func finish(_ coverKey: String) {
-        inFlight.withLock { _ = $0.removeValue(forKey: coverKey) }
+    /// Whether an answer for this cover is kept for the next request.
+    func hasRecentAnswer(for coverKey: String) -> Bool {
+        state.withLock { state in state.recent.contains { $0.coverKey == coverKey } }
+    }
+
+    private func finish(_ coverKey: String, with outcome: Outcome) {
+        state.withLock { state in
+            state.inFlight[coverKey] = nil
+            state.recent.removeAll { $0.coverKey == coverKey }
+            state.recent.append((coverKey, outcome))
+            if state.recent.count > Self.maximumRecent { state.recent.removeFirst() }
+        }
     }
 
     /// The recognition's outcome, or `.timedOut` once the limit passes,
@@ -99,12 +130,16 @@ nonisolated final class AlbumArtworkTextRecognition: Sendable {
             let answer = FirstAnswer(continuation)
             let timer = Task.detached {
                 await sleep(limit)
+                // Cancelled: the answer came first. A cancelled sleep returns
+                // at once, so without this it could still claim a time-out.
+                guard !Task.isCancelled else { return }
                 answer.resume(with: .timedOut)
             }
             Task.detached {
                 let outcome = await work.value
-                timer.cancel()
+                // Answer before waking the timer, so the timer cannot win.
                 answer.resume(with: outcome)
+                timer.cancel()
             }
         }
     }

@@ -23,11 +23,17 @@ actor AlbumArtworkThemeProvider: AlbumArtworkThemeProviding {
 
     private let store: AlbumArtworkThemeStore
     private let textRecognition: AlbumArtworkTextRecognition
+    private let artworkCache: ArtworkCacheService
     private var inFlightTasks: [String: Task<AlbumArtworkTheme, Never>] = [:]
 
-    init(store: AlbumArtworkThemeStore, textRecognition: AlbumArtworkTextRecognition = .shared) {
+    init(
+        store: AlbumArtworkThemeStore,
+        textRecognition: AlbumArtworkTextRecognition = .shared,
+        artworkCache: ArtworkCacheService = .shared
+    ) {
         self.store = store
         self.textRecognition = textRecognition
+        self.artworkCache = artworkCache
     }
 
     func cachedTheme(
@@ -201,7 +207,7 @@ actor AlbumArtworkThemeProvider: AlbumArtworkThemeProviding {
             "provider prepare miss: key=\(cacheKey) playlistID=\(playlistID ?? "nil") contrast=\(requiresIncreasedContrast) url=\(normalizedArtworkURL)"
         )
 
-        guard let fileURL = await ArtworkCacheService.shared.artworkFileURL(
+        guard let fileURL = await artworkCache.artworkFileURL(
             for: normalizedArtworkURL,
             pixelSize: Self.artworkPixelSize,
             playlistID: playlistID,
@@ -247,7 +253,8 @@ actor AlbumArtworkThemeProvider: AlbumArtworkThemeProviding {
 
         let theme = result.0
         // A theme made without text recognition's answer is used now but
-        // not kept, so the cover gets another try at it.
+        // not kept, so the cover gets another try at it (with the answer, if
+        // the recognition has finished since).
         if result.1 != nil, result.2, theme != cachedRecord?.theme || result.1 != cachedRecord?.artworkDataHash {
             await store.setTheme(
                 theme,

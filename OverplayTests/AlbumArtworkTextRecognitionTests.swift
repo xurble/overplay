@@ -1,4 +1,5 @@
 import CoreGraphics
+import Dispatch
 import Foundation
 import ImageIO
 import Synchronization
@@ -34,9 +35,10 @@ struct AlbumArtworkTextRecognitionTests {
 
     @Test("a failed recognition yields a colour-only theme", .timeLimit(.minutes(1)))
     func failedRecognitionYieldsColourTheme() async throws {
+        let timer = TimerProbe()
         let recognition = AlbumArtworkTextRecognition(
-            recognizer: { _ in throw RecognitionError.failed },
-            sleep: { _ in try? await Task.sleep(for: .seconds(3600)) }
+            recognizer: { _ in await timer.sleeping.wait(); throw RecognitionError.failed },
+            sleep: { _ in await timer.sleep() }
         )
 
         let result = await AlbumArtworkThemeBuilder.theme(
@@ -44,6 +46,7 @@ struct AlbumArtworkTextRecognitionTests {
             coverKey: "cover",
             textRecognition: recognition
         )
+        timer.answerReceived()
 
         #expect(result.textRecognition == .failed)
         #expect(result.textRecognition?.isFinal == true)
@@ -53,13 +56,18 @@ struct AlbumArtworkTextRecognitionTests {
 
     @Test("a recognition that answers in time is used", .timeLimit(.minutes(1)))
     func answeredRecognitionIsUsed() async throws {
-        let text = AlbumArtworkRecognizedText(text: "Song", confidence: 0.9, boundingBox: CGRect(x: 0, y: 0, width: 1, height: 1))
+        let text = Self.text("Song")
+        let timer = TimerProbe()
+        // The answer arrives while the timer sleeps, and waking the timer
+        // holds the waiter until the test has the answer: a timer that could
+        // still claim a time-out after being cancelled would always win.
         let recognition = AlbumArtworkTextRecognition(
-            recognizer: { _ in [text] },
-            sleep: { _ in try? await Task.sleep(for: .seconds(3600)) }
+            recognizer: { _ in await timer.sleeping.wait(); return [text] },
+            sleep: { _ in await timer.sleep() }
         )
 
         let outcome = await recognition.recognize(in: try Self.coverImage(), coverKey: "cover")
+        timer.answerReceived()
 
         #expect(outcome == .recognized([text]))
     }
@@ -68,26 +76,92 @@ struct AlbumArtworkTextRecognitionTests {
     func coverInFlightIsNotRecognisedAgain() async throws {
         let gate = RecognitionGate()
         let calls = CallCount()
+        let sleeps = CallCount()
+        // The first run waits for the gate; any later run answers at once
+        // with its own text, so a second run would show in the answer.
+        let recognition = AlbumArtworkTextRecognition(
+            recognizer: { _ in
+                let call = calls.increment()
+                if call == 1 { await gate.wait() }
+                return [Self.text("run \(call)")]
+            },
+            sleep: { _ in
+                // The first request's limit passes at once. The second
+                // request is waiting by the time its timer starts, so only
+                // then may the first run finish; its limit never passes.
+                if sleeps.increment() == 1 { return }
+                gate.open()
+                await Self.sleepUntilCancelled()
+            }
+        )
+        let image = try Self.coverImage()
+
+        let first = await recognition.recognize(in: image, coverKey: "cover")
+        let second = await recognition.recognize(in: image, coverKey: "cover")
+
+        #expect(first == .timedOut)
+        #expect(second == .recognized([Self.text("run 1")]))
+        #expect(calls.value == 1)
+    }
+
+    @Test("a different cover gets its own recognition", .timeLimit(.minutes(1)))
+    func otherCoverIsRecognised() async throws {
+        let calls = CallCount()
+        let recognition = AlbumArtworkTextRecognition(
+            recognizer: { _ in [Self.text("run \(calls.increment())")] },
+            sleep: { _ in await Self.sleepUntilCancelled() }
+        )
+        let image = try Self.coverImage()
+
+        let first = await recognition.recognize(in: image, coverKey: "cover")
+        let other = await recognition.recognize(in: image, coverKey: "other cover")
+
+        #expect(first == .recognized([Self.text("run 1")]))
+        #expect(other == .recognized([Self.text("run 2")]))
+        #expect(calls.value == 2)
+    }
+
+    @Test("an answer that came too late is used by the next request", .timeLimit(.minutes(1)))
+    func lateAnswerIsUsedNextTime() async throws {
+        let gate = RecognitionGate()
+        let calls = CallCount()
         let recognition = AlbumArtworkTextRecognition(
             recognizer: { _ in
                 calls.increment()
                 await gate.wait()
-                return []
+                return [Self.text("Song")]
             },
             sleep: { _ in }
         )
         let image = try Self.coverImage()
 
         let first = await recognition.recognize(in: image, coverKey: "cover")
-        let second = await recognition.recognize(in: image, coverKey: "cover")
-        let other = await recognition.recognize(in: image, coverKey: "other cover")
-        await waitUntil { calls.value >= 2 }
         gate.open()
+        await waitUntil { recognition.hasRecentAnswer(for: "cover") }
+        let next = await recognition.recognize(in: image, coverKey: "cover")
 
         #expect(first == .timedOut)
-        #expect(second == .timedOut)
-        #expect(other == .timedOut)
-        #expect(calls.value == 2)
+        #expect(next == .recognized([Self.text("Song")]))
+        #expect(next.isFinal)
+        #expect(calls.value == 1)
+    }
+
+    @Test("only the most recent answers are kept", .timeLimit(.minutes(1)))
+    func recentAnswersAreBounded() async throws {
+        let recognition = AlbumArtworkTextRecognition(
+            recognizer: { _ in [] },
+            sleep: { _ in await Self.sleepUntilCancelled() }
+        )
+        let image = try Self.coverImage()
+
+        for index in 0...AlbumArtworkTextRecognition.maximumRecent {
+            _ = await recognition.recognize(in: image, coverKey: "cover \(index)")
+            await waitUntil { recognition.hasRecentAnswer(for: "cover \(index)") }
+        }
+
+        #expect(!recognition.hasRecentAnswer(for: "cover 0"))
+        #expect(recognition.hasRecentAnswer(for: "cover 1"))
+        #expect(recognition.hasRecentAnswer(for: "cover \(AlbumArtworkTextRecognition.maximumRecent)"))
     }
 
     @Test("stalled recognitions are not queued behind", .timeLimit(.minutes(1)))
@@ -112,6 +186,15 @@ struct AlbumArtworkTextRecognitionTests {
     // MARK: - Helpers
 
     private enum RecognitionError: Error { case failed }
+
+    private nonisolated static func text(_ value: String) -> AlbumArtworkRecognizedText {
+        AlbumArtworkRecognizedText(text: value, confidence: 0.9, boundingBox: CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
+
+    /// A time limit that never passes: it returns only when cancelled.
+    private nonisolated static func sleepUntilCancelled() async {
+        await CancellableWait().wait()
+    }
 
     /// A two-colour cover: deep blue with a yellow block.
     private static func coverImage() throws -> CGImage {
@@ -144,10 +227,56 @@ struct AlbumArtworkTextRecognitionTests {
     }
 }
 
+/// Waits until its task is cancelled; `onCancel` runs in the cancelling call.
+private nonisolated final class CancellableWait: Sendable {
+    private let state = Mutex<(cancelled: Bool, waiter: CheckedContinuation<Void, Never>?)>((false, nil))
+
+    func wait(whileWaiting: @Sendable () -> Void = {}, onCancel: @Sendable () -> Void = {}) async {
+        await withTaskCancellationHandler {
+            whileWaiting()
+            await withCheckedContinuation { continuation in
+                let resumeNow = state.withLock { state in
+                    if state.cancelled { return true }
+                    state.waiter = continuation
+                    return false
+                }
+                if resumeNow { continuation.resume() }
+            }
+        } onCancel: {
+            let waiter = state.withLock { state in
+                state.cancelled = true
+                defer { state.waiter = nil }
+                return state.waiter
+            }
+            waiter?.resume()
+            onCancel()
+        }
+    }
+}
+
+/// A recognition's time limit that never passes on its own. `sleeping` opens
+/// once the limit is being waited on. Cancelling it holds the canceller until
+/// `answerReceived()`, so anything the timer does after its cancelled sleep
+/// happens before the waiter's next step.
+private nonisolated final class TimerProbe: Sendable {
+    let sleeping = RecognitionGate()
+    private let answer = DispatchSemaphore(value: 0)
+    private let wait = CancellableWait()
+
+    func sleep() async {
+        await wait.wait(whileWaiting: { sleeping.open() }, onCancel: { [answer] in
+            // Bounded, so a timer that rightly stays silent cannot hang the test.
+            _ = answer.wait(timeout: .now() + 5)
+        })
+    }
+
+    func answerReceived() { answer.signal() }
+}
+
 private nonisolated final class CallCount: Sendable {
     private let count = Mutex(0)
     var value: Int { count.withLock { $0 } }
-    func increment() { count.withLock { $0 += 1 } }
+    @discardableResult func increment() -> Int { count.withLock { $0 += 1; return $0 } }
 }
 
 /// Holds recognitions until the test opens it.

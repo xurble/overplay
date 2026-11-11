@@ -2576,7 +2576,10 @@ Show:
   recognition is optional and bounded: a theme waits for it at most three
   seconds, and on a time-out or failure uses the colours alone. A cover has
   one recognition at a time. A theme made without recognition's answer is
-  used but not cached, so the cover tries again later. On a Mac the first
+  used but not cached, so the cover tries again later. A recognition that
+  outlives its wait keeps running, and the last few answers are kept, so
+  the cover's next request uses that answer rather than running Vision
+  again. On a Mac the first
   recognition after each new build of the app waited about 66 seconds for the
   Neural Engine to compile Vision's model (measured 2026-11-11, M1 Pro,
   macOS 27.0.1); before this bound, no theme, and so no blurred art, showed
