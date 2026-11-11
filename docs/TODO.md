@@ -110,6 +110,11 @@ decision.
 - Background modes: `audio`, `fetch` and `remote-notification` (CloudKit
   pushes, #54) are declared. Confirm on device whether `audio` is needed for
   MusicKit and CarPlay. Keep the other two.
+- Push entitlement: the 2026-10-30 archive had no `aps-environment`, so
+  CloudKit's silent pushes could not arrive. Both entitlements files now
+  declare it. Confirm that a signed build carries it (`codesign -d
+  --entitlements -`), that the App ID has Push Notifications, and that a change
+  on the Mac reaches a backgrounded phone.
 
 ### 1.6 Decide which diagnostics ship
 
