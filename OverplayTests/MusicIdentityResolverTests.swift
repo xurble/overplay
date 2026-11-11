@@ -20,7 +20,7 @@ struct MusicIdentityResolverTests {
 
     @Test func documentedLibraryRelationship() throws {
         let json = #"{"data":[{"id":"i.a","type":"library-songs","relationships":{"catalog":{"data":[{"id":"10","type":"songs","attributes":{"isrc":"ABC"}}]}}}]}"#
-        let values = try MusicIdentityResolver.decode(Data(json.utf8), kind: .library, ids: ["i.a"])
+        let values = try AppleMusicSongLookup.decode(Data(json.utf8), kind: .library, ids: ["i.a"])
         #expect(values["i.a"]?.first?.id == "i.a")
         #expect(values["i.a"]?.first?.catalog?.first?.id == "10")
         #expect(values["i.a"]?.first?.catalog?.first?.attributes?.isrc == "ABC")
@@ -28,7 +28,7 @@ struct MusicIdentityResolverTests {
 
     @Test func equivalentCorrelationUsesMetadataNotOrder() throws {
         let json = #"{"data":[{"id":"20","type":"songs"},{"id":"10","type":"songs"}],"meta":{"filters":{"equivalents":{"old-a":[{"id":"10","type":"songs"}],"old-b":[{"id":"20","type":"songs"}]}}}}"#
-        let values = try MusicIdentityResolver.decode(Data(json.utf8), kind: .equivalents, ids: ["old-a", "old-b"])
+        let values = try AppleMusicSongLookup.decode(Data(json.utf8), kind: .equivalents, ids: ["old-a", "old-b"])
         #expect(values["old-a"]?.first?.id == "10")
         #expect(values["old-b"]?.first?.id == "20")
     }
@@ -36,7 +36,7 @@ struct MusicIdentityResolverTests {
     @Test func incompleteRelationshipIsNotNegativeEvidence() {
         let json = #"{"data":[{"id":"i.a","type":"library-songs"}]}"#
         #expect(throws: MusicIdentityResolver.ResolutionError.self) {
-            try MusicIdentityResolver.decode(Data(json.utf8), kind: .library, ids: ["i.a"])
+            try AppleMusicSongLookup.decode(Data(json.utf8), kind: .library, ids: ["i.a"])
         }
     }
 
@@ -165,7 +165,7 @@ struct MusicIdentityResolverTests {
         let json = #"{"data":[{"id":"i.upload","type":"library-songs","attributes":{"artwork":{"url":"https://example.com/library/{w}x{h}.jpg"}},"relationships":{"catalog":{"data":[]}}},{"id":"i.ambiguous","type":"library-songs","attributes":{"artwork":{"url":"https://example.com/custom/{w}x{h}.jpg"}},"relationships":{"catalog":{"data":[{"id":"1","type":"songs"},{"id":"2","type":"songs"}]}}}]}"#
         let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "a") }, fetch: { kind, ids, _ in
             #expect(kind == .library)
-            return try MusicIdentityResolver.decode(Data(json.utf8), kind: kind, ids: ids)
+            return try AppleMusicSongLookup.decode(Data(json.utf8), kind: kind, ids: ids)
         })
         let results = try await resolver.enrich([snapshot("i.upload"), snapshot("i.ambiguous")], includeCandidates: false)
         #expect(results.allSatisfy { $0.catalogID == nil && $0.artworkURLTemplate != nil })
@@ -178,7 +178,7 @@ struct MusicIdentityResolverTests {
     private let scope = MusicIdentityResolver.Scope(storefront: "gb", account: "a")
 
     private func fetch(_ kind: MusicIdentityResolver.Lookup, ids: [String], throwing error: Error) async throws -> [String: [MusicIdentityResolver.Resource]] {
-        try await MusicIdentityResolver.fetchResources(kind, ids: ids, scope: scope, perform: { _ in throw error }, isNotFound: { $0 is Transport404 })
+        try await AppleMusicSongLookup.fetchResources(kind, ids: ids, scope: scope, perform: { _ in throw error }, isNotFound: { $0 is Transport404 })
     }
 
     /// A 404 is about the batch, not any one ID: it is kept apart from an
@@ -203,7 +203,7 @@ struct MusicIdentityResolverTests {
     ) -> MusicIdentityResolver.Fetch {
         { kind, ids, scope in
             asked(kind)
-            return try await MusicIdentityResolver.fetchResources(kind, ids: ids, scope: scope, perform: { _ in
+            return try await AppleMusicSongLookup.fetchResources(kind, ids: ids, scope: scope, perform: { _ in
                 if notFound().contains(kind) { throw Transport404() }
                 let entries: [String] = switch kind {
                 case .library: ids.map { #"{"id":"\#($0)","type":"library-songs","relationships":{"catalog":{"data":[{"id":"\#($0.dropFirst(2))","type":"songs"}]}}}"# }
@@ -274,8 +274,8 @@ struct MusicIdentityResolverTests {
     }
 
     @Test func aDataRequestStatusOf404IsTheOnlyNotFound() {
-        #expect(!MusicIdentityResolver.isNotFoundResponse(URLError(.notConnectedToInternet)))
-        #expect(!MusicIdentityResolver.isNotFoundResponse(NSError(domain: "MusicKit.MusicDataRequest.Error", code: 404)))
+        #expect(!AppleMusicSongLookup.isNotFoundResponse(URLError(.notConnectedToInternet)))
+        #expect(!AppleMusicSongLookup.isNotFoundResponse(NSError(domain: "MusicKit.MusicDataRequest.Error", code: 404)))
     }
 
     @Test func aMissingLibraryIDIsReportedAndOthersStillResolve() async throws {

@@ -95,10 +95,10 @@ struct MusicLibraryIdentityImportTests {
     @Test("A missing library resource is unresolved; an explicit empty catalog relationship is valid")
     func absentResourceDiffersFromNoCatalogMatch() throws {
         // Exact empty response returned for every native numeric ID in the probe.
-        let absent = try MusicIdentityResolver.decode(Data(#"{"data":[]}"#.utf8), kind: .library, ids: [samples[0].nativeID])
+        let absent = try AppleMusicSongLookup.decode(Data(#"{"data":[]}"#.utf8), kind: .library, ids: [samples[0].nativeID])
         #expect(absent[samples[0].nativeID] == [])
         let upload = samples[1]
-        let result = try MusicIdentityResolver.decode(try libraryResponse([upload]), kind: .library, ids: [upload.libraryID])
+        let result = try AppleMusicSongLookup.decode(try libraryResponse([upload]), kind: .library, ids: [upload.libraryID])
         #expect(result[upload.libraryID]?.first?.catalog == [])
     }
 
@@ -109,7 +109,7 @@ struct MusicLibraryIdentityImportTests {
         let record = PlaylistRecord(musicPlaylistID: "web-miss", name: "Probe", role: .oneTruePlaylist)
         context.insert(record)
         let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "fixture") }, fetch: { kind, ids, _ in
-            try MusicIdentityResolver.decode(Data(#"{"data":[]}"#.utf8), kind: kind, ids: ids)
+            try AppleMusicSongLookup.decode(Data(#"{"data":[]}"#.utf8), kind: kind, ids: ids)
         })
         let adapter = try makeAdapter(playlistID: record.musicPlaylistID, identityResolver: resolver, resolve: { observed in
             let id = observed.id
@@ -206,11 +206,11 @@ struct MusicLibraryIdentityImportTests {
 
     @Test("Web library responses count only returned library-song resources")
     func webLibraryResponseParsing() throws {
-        #expect(try MusicLibrarySongResolver.webLibrarySongIDs(from: Data(#"{"data":[]}"#.utf8)).isEmpty)
-        let ids = try MusicLibrarySongResolver.webLibrarySongIDs(from: libraryResponse(Array(samples.prefix(2))))
+        #expect(try AppleMusicSongLookup.webLibrarySongIDs(from: Data(#"{"data":[]}"#.utf8)).isEmpty)
+        let ids = try AppleMusicSongLookup.webLibrarySongIDs(from: libraryResponse(Array(samples.prefix(2))))
         #expect(ids == [samples[0].libraryID, samples[1].libraryID])
         let other = Data(#"{"data":[{"id":"878984806","type":"songs"}]}"#.utf8)
-        #expect(try MusicLibrarySongResolver.webLibrarySongIDs(from: other).isEmpty)
+        #expect(try AppleMusicSongLookup.webLibrarySongIDs(from: other).isEmpty)
     }
 
     @Test("Playlist sync succeeds when entries carry web library IDs absent from the on-device library")
@@ -365,7 +365,7 @@ struct MusicLibraryIdentityImportTests {
         MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "fixture") }, fetch: { kind, ids, _ in
             if kind == .library {
                 let returned = samples.filter { ids.contains($0.libraryID) && !omitted().contains($0.libraryID) }
-                return try MusicIdentityResolver.decode(libraryResponse(returned), kind: kind, ids: ids)
+                return try AppleMusicSongLookup.decode(libraryResponse(returned), kind: kind, ids: ids)
             }
             return Dictionary(uniqueKeysWithValues: ids.map { ($0, [MusicIdentityResolver.Resource(id: $0, type: "songs", attributes: .init(isrc: "fixture"))]) })
         })
@@ -427,7 +427,7 @@ struct MusicLibraryIdentityImportTests {
         context.insert(record)
         try context.save()
         let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "fixture") }, fetch: { kind, ids, scope in
-            try await MusicIdentityResolver.fetchResources(kind, ids: ids, scope: scope, perform: { _ in
+            try await AppleMusicSongLookup.fetchResources(kind, ids: ids, scope: scope, perform: { _ in
                 if ids == [missing] { throw NotFound() }
                 if kind == .library { return try libraryResponse(samples.filter { ids.contains($0.libraryID) }) }
                 return Data(#"{"data":[]}"#.utf8)
@@ -507,7 +507,7 @@ struct MusicLibraryIdentityImportTests {
         let resolver = MusicIdentityResolver(currentScope: { .init(storefront: "gb", account: "fixture") }, fetch: { kind, ids, scope in
             #expect(kind == .catalog)
             catalogRequests += 1
-            return try await MusicIdentityResolver.fetchResources(kind, ids: ids, scope: scope, perform: { _ in
+            return try await AppleMusicSongLookup.fetchResources(kind, ids: ids, scope: scope, perform: { _ in
                 if failing, ids == failingBatch { throw NotFound() }
                 let entries = ids.map { #"{"id":"\#($0)","type":"songs","attributes":{"isrc":"ISRC-\#($0)"}}"# }
                 return Data(#"{"data":[\#(entries.joined(separator: ","))]}"#.utf8)
@@ -617,7 +617,7 @@ struct MusicLibraryIdentityImportTests {
             // Duplicate-review suggestions are not a prerequisite for import.
             #expect(kind != .isrc && kind != .equivalents)
             if kind == .library {
-                return try MusicIdentityResolver.decode(libraryResponse(samples.filter { ids.contains($0.libraryID) }), kind: kind, ids: ids)
+                return try AppleMusicSongLookup.decode(libraryResponse(samples.filter { ids.contains($0.libraryID) }), kind: kind, ids: ids)
             }
             return Dictionary(uniqueKeysWithValues: ids.map { id in
                 (id, kind == .catalog ? [MusicIdentityResolver.Resource(id: id, type: "songs", attributes: .init(isrc: "fixture-recording"))] : [])

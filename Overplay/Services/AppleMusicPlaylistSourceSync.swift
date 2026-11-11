@@ -274,11 +274,13 @@ enum AppleMusicPlaylistTrackLoader {
                 try await MusicKitActivityLog.shared.measure(
                     .catalogResourceFetch, magnitude: Double(ids.count), detail: "resolver web library batch"
                 ) {
-                    try await MusicLibrarySongResolver.webLibrarySongIDs(ids)
+                    try await AppleMusicSongLookup.fetchWebLibrarySongIDs(ids)
                 }
             }
-        }, catalog: { id in
-            try await MusicIdentityResolver.naming(.catalog) { try await MusicLibrarySongResolver.catalogSongs(id) }
+        }, catalog: { ids in
+            try await MusicIdentityResolver.naming(.catalog) {
+                try await AppleMusicSongLookup.catalogSongs(ids.map(\.rawValue), detail: "resolver catalog songs", allPages: true)
+            }
         })
     }
 

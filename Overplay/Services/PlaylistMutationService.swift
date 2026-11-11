@@ -322,16 +322,7 @@ struct PlaylistMutationService {
     }
 
     private func song(id: String) async throws -> Song {
-        var request = MusicCatalogResourceRequest<Song>(matching: \.id, equalTo: MusicItemID(id))
-        request.limit = 1
-        let items = try await MusicKitActivityLog.shared.measure(
-            .catalogResourceFetch,
-            detail: "song by id",
-            resultMagnitude: { Double($0.count) }
-        ) {
-            try await request.response().items
-        }
-        guard let song = items.first else {
+        guard let song = try await AppleMusicSongLookup.catalogSong(id: id, detail: "song by id", limit: 1) else {
             throw PlaylistMutationError.musicItemMissing
         }
         return song
