@@ -151,18 +151,12 @@ final class CarPlayCoordinator: NSObject {
     // Shuffle and repeat are player modes; they work before the library is restored.
     private lazy var shuffleButton = CPNowPlayingShuffleButton { [weak self] _ in
         Task { @MainActor in
-            guard let self, let modelContext = self.modelContext else { return }
-            await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-                await self.playbackController?.toggleShuffle(context: modelContext)
-            }
+            await self?.run(.toggleShuffle, refreshesLists: false)
         }
     }
     private lazy var repeatButton = CPNowPlayingRepeatButton { [weak self] _ in
         Task { @MainActor in
-            guard let self, let modelContext = self.modelContext else { return }
-            await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-                await self.playbackController?.toggleRepeatAll(context: modelContext)
-            }
+            await self?.run(.toggleRepeat, refreshesLists: false)
         }
     }
 
@@ -522,17 +516,8 @@ final class CarPlayCoordinator: NSObject {
     /// The shared Library action (`LIB-001`, `SURFACE-003`); CarPlay only
     /// presents the outcome.
     private func playLibraryItem(startingAt catalogSongID: String?) async {
-        guard let item = visibleLibraryItem, let playbackController, let modelContext else { return }
-        let entries = visibleLibraryEntries
-        let started = await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-            await item.play(entries, catalogSongID, playbackController, modelContext)
-        }
-        refreshAfterTrackAction()
-        if started {
-            showNowPlaying()
-        } else if playbackController.playbackFailure == nil {
-            showPlaybackFailure(title: "Playback failed")
-        }
+        guard let item = visibleLibraryItem else { return }
+        await run(item.action(visibleLibraryEntries, catalogSongID))
     }
 
     /// A Library collection or a Made For You mix, open from the root: its
@@ -543,8 +528,7 @@ final class CarPlayCoordinator: NSObject {
         var artworkURL: String?
         var collection: PlaybackCollection
         var songs: () async throws -> [LibraryBrowser.Entry]
-        var play: (_ entries: [LibraryBrowser.Entry], _ startingAt: String?,
-                   _ controller: PlaybackController, _ context: ModelContext) async -> Bool
+        var action: (_ entries: [LibraryBrowser.Entry], _ startingAt: String?) -> CarPlayAction
 
         init(_ item: LibraryBrowser.Item) {
             title = item.title
@@ -552,7 +536,7 @@ final class CarPlayCoordinator: NSObject {
             artworkURL = item.artworkURL
             collection = item.collection
             songs = { try await LibraryBrowser.songs(in: item) }
-            play = { await LibraryBrowser.play(item, entries: $0, startingAt: $1, controller: $2, context: $3) }
+            action = { .playLibraryItem(item, entries: $0, startingAt: $1) }
         }
 
         init(_ item: MadeForYouLibrary.Item) {
@@ -561,7 +545,7 @@ final class CarPlayCoordinator: NSObject {
             artworkURL = item.artworkURL
             collection = item.collection
             songs = { try await MadeForYouLibrary.songs(in: item) }
-            play = { await MadeForYouLibrary.play(item, entries: $0, startingAt: $1, controller: $2, context: $3) }
+            action = { .playMadeForYou(item, entries: $0, startingAt: $1) }
         }
     }
 
@@ -639,15 +623,13 @@ final class CarPlayCoordinator: NSObject {
     private func updateRecentList(_ template: CPListTemplate, recent: RecentCollectionRecord) {
         guard let modelContext, let playbackController else { return }
         typealias Row = CarPlayListPresentation.Row
-        let recentID = recent.id
         let playlistID = recent.collection.reservedPlaylistID
-        var actions: [String: @MainActor () async -> Void] = [
-            "shuffle": { [weak self] in await self?.playRecent(recentID, startingAt: nil) }
-        ]
         let songs = RecentCollectionPresentation.songs(for: recent, in: modelContext)
-        let rows: [Row] = songs.prefix(max(0, CPListTemplate.maximumItemCount - 1)).map { song in
-            actions[song.catalogID] = { [weak self] in await self?.playRecent(recentID, startingAt: song.catalogID) }
-            return Row(id: song.catalogID, title: song.summary.title, detail: song.summary.detailText,
+        let shownSongs = songs.prefix(max(0, CPListTemplate.maximumItemCount - 1))
+        let actions = CarPlayAction.recentRows(recentID: recent.id, catalogSongIDs: shownSongs.map(\.catalogID))
+            .mapValues(recentRowHandler)
+        let rows: [Row] = shownSongs.map { song in
+            Row(id: song.catalogID, title: song.summary.title, detail: song.summary.detailText,
                 isPlaying: RecentCollectionPresentation.isCurrent(song, in: recent, controller: playbackController),
                 artwork: .track(url: song.summary.artworkURLString, playlistID: playlistID))
         }
@@ -664,20 +646,14 @@ final class CarPlayCoordinator: NSObject {
     }
 
     /// The shared Recents action (`SURFACE-003`); CarPlay only presents the outcome.
-    private func playRecent(_ id: UUID, startingAt catalogSongID: String?) async {
-        guard runtime?.libraryRestoration.isReady == true, let playbackController, let modelContext,
-              let recent = try? RecentCollectionRepository.recent(id: id, in: modelContext) else {
-            refreshLibraryLists()
-            return
-        }
-        let started = await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-            await playbackController.playRecent(recent, startingAt: catalogSongID, context: modelContext)
-        }
-        refreshAfterTrackAction()
-        if started {
-            showNowPlaying()
-        } else if playbackController.playbackFailure == nil {
-            showPlaybackFailure(title: "Playback failed")
+    private func recentRowHandler(_ action: CarPlayAction) -> @MainActor () async -> Void {
+        { [weak self] in
+            guard let self else { return }
+            guard self.runtime?.libraryRestoration.isReady == true else {
+                self.refreshLibraryLists()
+                return
+            }
+            await self.run(action)
         }
     }
 
@@ -845,13 +821,10 @@ final class CarPlayCoordinator: NSObject {
         }
 
         typealias Row = CarPlayListPresentation.Row
-        var actions: [String: @MainActor () async -> Void] = [
-            "shuffle": { [weak self] in await self?.shuffleAndPlay(playlist, scope: scope) }
-        ]
-        let rows: [Row] = tracks.prefix(max(0, CPListTemplate.maximumItemCount - 1)).map { summary in
-            let id = summary.id.uuidString
-            actions[id] = { [weak self] in await self?.play(summary, in: playlist, scope: scope) }
-            return Row(id: id, title: summary.title, detail: summary.detailText,
+        let shownTracks = tracks.prefix(max(0, CPListTemplate.maximumItemCount - 1))
+        let actions = CarPlayAction.playlistRows(shownTracks, in: playlist, scope: scope).mapValues(playlistRowHandler)
+        let rows: [Row] = shownTracks.map { summary in
+            Row(id: summary.id.uuidString, title: summary.title, detail: summary.detailText,
                 isPlaying: isCurrentTrack(summary, in: playlist), isEnabled: summary.isPlayable,
                 artwork: .track(url: summary.artworkURLString, playlistID: playlist.musicPlaylistID))
         }
@@ -876,73 +849,40 @@ final class CarPlayCoordinator: NSObject {
         visiblePlaylistID == playlist.id ? visiblePlaylistScope : .active
     }
 
-    private func play(
-        _ summary: TrackSummaryPresentation,
-        in playlist: PlaylistRecord,
-        scope: PlaylistPlaybackScope = .active
-    ) async {
-        guard runtime?.libraryRestoration.isReady == true, let playbackController, let modelContext else { return }
-
-        do {
-            guard let trackID = summary.trackID,
-                  let track = try TrackRecordRepository.track(id: trackID, in: modelContext) else {
-                refreshLibraryLists()
+    private func playlistRowHandler(_ action: CarPlayAction) -> @MainActor () async -> Void {
+        { [weak self] in
+            guard let self else { return }
+            guard self.runtime?.libraryRestoration.isReady == true else {
+                if case .shuffleAndPlay = action {
+                    MusicKitActivityLog.shared.record(.diagnosticNote, detail: "CarPlay shuffle ignored: library not ready")
+                }
                 return
             }
-
-            let settings = try SettingsRepository.settings(in: modelContext)
-            await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-                await playbackController.playPlaylist(
-                    playlist, startingAt: track, scope: scope, settings: settings, context: modelContext
-                )
-            }
-
-            refreshAfterTrackAction()
-            presentPlaybackOutcome(for: playlist, scope: scope)
-        } catch {
-            showError(title: "Playback failed", message: UserFacingError.message(for: error))
-        }
-    }
-
-    /// The controller decides success (`SURFACE-003`): a shared failure shows
-    /// its own alert with Try Again; a start that never happened reports why;
-    /// anything else, including a non-blocking note, goes to Now Playing.
-    private func presentPlaybackOutcome(for playlist: PlaylistRecord, scope: PlaylistPlaybackScope) {
-        guard let playbackController else { return }
-        switch CarPlayPlaybackOutcome.decide(
-            hasPlaybackFailure: playbackController.playbackFailure != nil,
-            current: playbackController.currentPlaylistContext,
-            requested: playlist.playbackContext(scope)
-        ) {
-        case .nowPlaying: showNowPlaying()
-        case .sharedFailure: break
-        case .notStarted: showPlaybackFailure(title: "Playback failed")
-        }
-    }
-
-    private func shuffleAndPlay(_ playlist: PlaylistRecord, scope: PlaylistPlaybackScope) async {
-        guard runtime?.libraryRestoration.isReady == true, let playbackController, let modelContext else {
-            MusicKitActivityLog.shared.record(.diagnosticNote, detail: "CarPlay shuffle ignored: library not ready")
-            return
-        }
-        do {
-            let settings = try SettingsRepository.settings(in: modelContext)
-            await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-                await playbackController.playPlaylist(playlist, scope: scope, settings: settings, context: modelContext)
-            }
-            refreshAfterTrackAction()
-            presentPlaybackOutcome(for: playlist, scope: scope)
-        } catch {
-            showError(title: "Playback failed", message: UserFacingError.message(for: error))
+            await self.run(action)
         }
     }
 
     private func resumeBeforeRestoration() async {
+        await run(.resumeBeforeRestoration, refreshesLists: false)
+    }
+
+    /// Calls the action's shared entry point and shows what it leaves behind.
+    private func run(_ action: CarPlayAction, refreshesLists: Bool = true) async {
         guard let playbackController, let modelContext else { return }
-        await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-            await playbackController.play(context: modelContext)
+        let followUp = await action.perform(controller: playbackController, context: modelContext)
+        present(followUp, refreshesLists: refreshesLists)
+    }
+
+    private func present(_ followUp: CarPlayActionFollowUp, refreshesLists: Bool) {
+        if refreshesLists, followUp.reachedController { refreshAfterTrackAction() }
+        switch followUp {
+        case .staleLists: refreshLibraryLists()
+        case .blocked(let title, let message): showError(title: title, message: message)
+        case .nowPlaying: showNowPlaying()
+        case .playbackFailed: showPlaybackFailure(title: "Playback failed")
+        case .couldNotAdd(let message): showError(title: "Couldn't add", message: message)
+        case .nothing: break
         }
-        if playbackController.playbackFailure == nil { showNowPlaying() }
     }
 
     private func showNowPlaying() {
@@ -1119,10 +1059,7 @@ final class CarPlayCoordinator: NSObject {
         let retry = CPAlertAction(title: "Try Again", style: .default) { [weak self, weak interfaceController] _ in
             interfaceController?.dismissTemplate(animated: true, completion: nil)
             Task { @MainActor in
-                guard let self, let controller = self.playbackController, let context = self.modelContext else { return }
-                await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-                    await controller.play(context: context)
-                }
+                await self?.run(.tryAgainAfterFailure, refreshesLists: false)
             }
         }
         let dismiss = CPAlertAction(title: "OK", style: .cancel) { [weak interfaceController] _ in
@@ -1202,7 +1139,7 @@ final class CarPlayCoordinator: NSObject {
     private func makeRestoreButton() -> CPNowPlayingImageButton {
         let button = CPNowPlayingImageButton(image: buttonImage(systemImage: "tray.and.arrow.down")) { [weak self] _ in
             Task { @MainActor in
-                self?.restoreCurrentTrack()
+                await self?.restoreCurrentTrack()
             }
         }
         button.isEnabled = playbackController?.currentTrack != nil
@@ -1239,42 +1176,18 @@ final class CarPlayCoordinator: NSObject {
     }
 
     private func evictCurrentTrack() async {
-        guard runtime?.libraryRestoration.isReady == true, let playbackController, let modelContext else { return }
-
-        do {
-            let settings = try SettingsRepository.settings(in: modelContext)
-            await playbackController.evictCurrent(settings: settings, context: modelContext)
-            refreshAfterTrackAction()
-        } catch {
-            showError(title: "Track action failed", message: UserFacingError.message(for: error))
-        }
+        guard runtime?.libraryRestoration.isReady == true else { return }
+        await run(.retire)
     }
 
     private func promoteCurrentTrack() async {
-        guard runtime?.libraryRestoration.isReady == true, let playbackController, let modelContext else { return }
-
-        do {
-            let settings = try SettingsRepository.settings(in: modelContext)
-            await playbackController.promoteCurrent(settings: settings, context: modelContext)
-            refreshAfterTrackAction()
-        } catch {
-            showError(title: "Track action failed", message: UserFacingError.message(for: error))
-        }
+        guard runtime?.libraryRestoration.isReady == true else { return }
+        await run(.promote)
     }
 
     private func addCurrentTrack(toOneTruePlaylist: Bool) async {
-        guard runtime?.libraryRestoration.isReady == true, let playbackController, let modelContext else { return }
-        await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-            if toOneTruePlaylist {
-                await playbackController.addCurrentToOneTruePlaylist(context: modelContext)
-            } else {
-                await playbackController.addCurrentToTriage(context: modelContext)
-            }
-        }
-        refreshAfterTrackAction()
-        if playbackController.canAddCurrentToOverplay {
-            showError(title: "Couldn't add", message: playbackController.statusMessage ?? "Apple Music didn't respond.")
-        }
+        guard runtime?.libraryRestoration.isReady == true else { return }
+        await run(toOneTruePlaylist ? .addToOneTruePlaylist : .addToTriage)
     }
 
     // MARK: - Play Album and Play Artist (`PLAY-018`)
@@ -1313,23 +1226,18 @@ final class CarPlayCoordinator: NSObject {
 
     private func playCollection(_ request: PlaybackCollection.Request) async {
         guard let playbackController, let modelContext, let interfaceController else { return }
-        let started = await MusicKitActivityLog.shared.withOrigin(.carPlay) {
-            await playbackController.playCurrentCollection(request, context: modelContext)
-        }
+        let followUp = await CarPlayAction.playCurrentCollection(request)
+            .perform(controller: playbackController, context: modelContext)
         if interfaceController.topTemplate !== CPNowPlayingTemplate.shared {
             interfaceController.popTemplate(animated: true, completion: nil)
         }
         // A shared failure presents its own alert with Try Again.
-        if !started, playbackController.playbackFailure == nil {
-            showPlaybackFailure(title: "Playback failed")
-        }
+        present(followUp, refreshesLists: false)
     }
 
-    private func restoreCurrentTrack() {
-        guard runtime?.libraryRestoration.isReady == true, let playbackController, let modelContext else { return }
-
-        _ = playbackController.restoreCurrent(context: modelContext)
-        refreshAfterTrackAction()
+    private func restoreCurrentTrack() async {
+        guard runtime?.libraryRestoration.isReady == true else { return }
+        await run(.restore)
     }
 
     private func refreshAfterTrackAction() {
