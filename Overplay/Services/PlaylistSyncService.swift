@@ -622,7 +622,11 @@ struct PlaylistSyncService {
 
         // Only a complete snapshot can release stale remote-membership
         // protection. A failed/partial fetch must never resurrect a retirement.
-        if isComplete, playlistRecord.role == .oneTruePlaylist {
+        // A managed playlist's snapshot proves nothing either: this device's
+        // copy can lag iCloud, so only `removeSongsHeldOutside`, which reads
+        // iCloud's, releases there (`PLAYLIST-008`).
+        if isComplete, playlistRecord.role == .oneTruePlaylist,
+           !OneTruePlaylistRemoteMembership.managesRemoteMembership(of: playlistRecord) {
             for item in try PlaylistItemRepository.allItems(in: context)
             where item.suppressedOTPMusicPlaylistIDs.contains(playlistRecord.musicPlaylistID)
                 && !processedTrackIDs.contains(item.trackID) {
