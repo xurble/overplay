@@ -88,7 +88,15 @@ enum VideoTrackCleanupService {
         }
         guard !videoIDs.isEmpty else { return 0 }
         // Re-read after the await: a sync or merge may have changed the store.
-        let videos = try TrackRecordRepository.allTracks(in: context).filter { videoIDs.contains($0.id) }
+        let matched = try TrackRecordRepository.allTracks(in: context).filter { videoIDs.contains($0.id) }
+        // A merge keeper holds the merged tracks' memberships and history.
+        // Whether it is a video is per-device evidence (the payload cache is
+        // not synced), but its lineage is synced, so every device agrees to
+        // keep it: a song merged into an unrecognised video row is never lost.
+        let videos = matched.filter { $0.absorbedTrackIDs.isEmpty }
+        for kept in matched where !kept.absorbedTrackIDs.isEmpty {
+            TrackMetadataDiagnostics.log("video cleanup kept merge keeper track=\(kept.id) absorbed=\(kept.absorbedTrackIDs.count)")
+        }
         guard !videos.isEmpty else { return 0 }
         let trackIDs = Set(videos.map(\.id))
         let localIDs = Set(trackIDs.map(\.uuidString))

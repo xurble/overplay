@@ -442,6 +442,121 @@ struct VideoTrackPolicyTests {
         #expect(try PlaylistItemRepository.allItems(in: reloaded).map(\.trackID) == [song.id])
     }
 
+    /// Review of #134: a video row this device does not know is a video can
+    /// be the merge keeper, holding the video's IDs as its own. A device
+    /// without the song payload the merge copied must not delete it on a
+    /// sync's video IDs, or the merged song's rows go with it everywhere.
+    @Test("An unrecognised video kept by a merge survives the video's remote IDs, with the merged song's rows")
+    func unrecognisedVideoKeeperSurvivesRemoteEvidence() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let ids = [UUID(), UUID()].sorted { $0.uuidString < $1.uuidString }
+        // The video row is first by UUID and has no payload here, so it is kept.
+        let video = TrackRecord(id: ids[0], catalogID: "video", libraryID: "i.video", title: "Song", artistName: "Artist")
+        let song = TrackRecord(id: ids[1], catalogID: "song", libraryID: "i.song", title: "Song", artistName: "Artist",
+            musicKitPlaybackData: try JSONEncoder().encode(makeSong()))
+        for track in [video, song] {
+            context.insert(track)
+            context.insert(PlaylistItemRecord(playlistID: bucket.id, trackID: track.id, playthroughCount: 2))
+            context.insert(HistoryEvent(trackID: track.id, eventType: .trackAdded, source: .user))
+        }
+        try context.save()
+        let merged = try DuplicateTrackService.merge(try DuplicateTrackService.candidates(in: context), destination: nil, in: context)
+        #expect(merged.trackID == video.id)
+        #expect(video.catalogID == "video" && video.libraryID == "i.video")
+        #expect(video.absorbedTrackIDs == [song.id.uuidString])
+        // Another device: the copied song payload is not here.
+        video.musicKitPlaybackData = nil
+
+        let playlist = PlaylistRecord(musicPlaylistID: "source", name: "Source", role: .triageSource)
+        context.insert(playlist)
+        let adapter = VideoEvidenceSource(result: PlaylistSourceFetchResult(snapshots: [], skippedCount: 1,
+            skippedReason: "remoteUnchanged", didFetchTracks: false, videoMusicItemIDs: ["video", "i.video"]))
+        let service = PlaylistSyncService(sourceRegistry: PlaylistSourceSyncRegistry(adapters: [.appleMusic: adapter]))
+        _ = try await service.syncPlaylist(playlist, in: context, runIdentityMerge: false, skipWhenRemoteUnchanged: true)
+
+        let reloaded = ModelContext(container)
+        #expect(try TrackRecordRepository.allTracks(in: reloaded).map(\.id) == [video.id])
+        let items = try PlaylistItemRepository.allItems(in: reloaded)
+        #expect(items.map(\.trackID) == [video.id])
+        #expect(items.first?.playlistID == bucket.id)
+        let events = try reloaded.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(!events.isEmpty && events.allSatisfy { $0.trackID == video.id })
+    }
+
+    /// The playback-data scan on a device that does know the keeper is a
+    /// video must not delete it either: the merged song's rows are its rows.
+    @Test("The playback-data scan keeps a video row that absorbed a song by a merge")
+    func playbackScanKeepsVideoKeeperThatAbsorbedSong() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let bucket = try PlaylistRepository.triageBucket(in: context)
+        let ids = [UUID(), UUID()].sorted { $0.uuidString < $1.uuidString }
+        let video = TrackRecord(id: ids[0], catalogID: "video", title: "Song", artistName: "Artist")
+        let song = TrackRecord(id: ids[1], catalogID: "song", title: "Song", artistName: "Artist")
+        for track in [video, song] {
+            context.insert(track)
+            context.insert(PlaylistItemRecord(playlistID: bucket.id, trackID: track.id, playthroughCount: 2))
+            context.insert(HistoryEvent(trackID: track.id, eventType: .trackAdded, source: .user))
+        }
+        try context.save()
+        // Merged where the video was unknown; this device has its video payload.
+        let merged = try DuplicateTrackService.merge(try DuplicateTrackService.candidates(in: context), destination: nil, in: context)
+        #expect(merged.trackID == video.id)
+        video.musicKitPlaybackData = try JSONEncoder().encode(makeVideo())
+        defer { video.musicKitPlaybackData = nil }
+        // A video row that absorbed nothing still goes.
+        let plain = TrackRecord(catalogID: "other-video", title: "Video", artistName: "Artist",
+            musicKitPlaybackData: try JSONEncoder().encode(makeVideo()))
+        context.insert(plain)
+        try context.save()
+
+        #expect(try await VideoTrackCleanupService.removeVideos(in: context, scan: VideoPlaybackScan(cache: .shared)) == 1)
+        let reloaded = ModelContext(container)
+        #expect(try TrackRecordRepository.allTracks(in: reloaded).map(\.id) == [video.id])
+        #expect(try PlaylistItemRepository.allItems(in: reloaded).map(\.trackID) == [video.id])
+        let events = try reloaded.fetch(FetchDescriptor<HistoryEvent>())
+        #expect(!events.isEmpty && events.allSatisfy { $0.trackID == video.id })
+    }
+
+    /// Review of #134: the merge keeps the song over a known video row that
+    /// is already in the One True Playlist, so the remote add must follow
+    /// the keeper rather than skip because some selected row is there.
+    @Test("A merge into the One True Playlist that keeps a song over a known video there adds the song to Apple Music")
+    func otpMergeKeepingSongOverKnownVideoAddsSong() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        let context = fixture.context
+        let video = TrackRecord(catalogID: "video", title: "Dup", artistName: "Artist",
+            musicKitPlaybackData: try JSONEncoder().encode(makeVideo()))
+        defer { video.musicKitPlaybackData = nil }
+        let song = TrackRecord(catalogID: "song", libraryID: "i.song", title: "Dup", artistName: "Artist")
+        video.isrc = "SAME-RECORDING"
+        song.isrc = "SAME-RECORDING"
+        context.insert(video)
+        context.insert(song)
+        context.insert(PlaylistItemRecord(playlistID: fixture.playlist.id, trackID: video.id))
+        let songItem = PlaylistItemRecord(playlistID: try PlaylistRepository.triageBucket(in: context).id, trackID: song.id)
+        context.insert(songItem)
+        try context.save()
+        let added = AddedTracks()
+        var mutations = PlaylistMutationService(addRemotely: { track, playlist, _ in
+            added.entries.append("\(playlist.musicPlaylistID):\(track.id)")
+        })
+        mutations.remoteMembership.cloudEntries = { _ in [] }
+        fixture.controller.playlistMutations = mutations
+        fixture.controller.remoteMembership.cloudEntries = { _ in [] }
+        fixture.controller.remoteMembership.canEditPlaylists = { false }
+        let selected = try DuplicateTrackService.candidates(in: context).filter { $0.isrc == "SAME-RECORDING" }
+        try #require(selected.count == 2)
+
+        _ = try await fixture.controller.mergeDuplicateTracks(selected, destination: .otp, context: context)
+
+        #expect(added.entries == ["\(fixture.playlist.musicPlaylistID):\(song.id)"])
+        #expect(try TrackRecordRepository.track(id: video.id, in: context) == nil)
+        #expect(songItem.playlistID == fixture.playlist.id && songItem.evictedAt == nil)
+    }
+
     private func makeVideo() throws -> Track {
         let json = #"{"id":"video","type":"music-videos","attributes":{"name":"Video","artistName":"Artist","genreNames":[],"durationInMillis":100000}}"#
         return .musicVideo(try JSONDecoder().decode(MusicVideo.self, from: Data(json.utf8)))
@@ -464,4 +579,9 @@ private struct VideoEvidenceSource: PlaylistSourceSyncing {
         skipWhenRemoteUnchanged: Bool, in context: ModelContext) async throws -> PlaylistSourceFetchResult {
         result
     }
+}
+
+@MainActor
+private final class AddedTracks {
+    var entries: [String] = []
 }

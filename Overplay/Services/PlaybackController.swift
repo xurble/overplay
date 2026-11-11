@@ -2602,8 +2602,14 @@ final class PlaybackController {
             return try DuplicateTrackService.merge(selected, destination: target, in: context)
         }
         let result: DuplicateTrackService.Result
-        if target == .otp, !selected.contains(where: { $0.destination == .otp }) {
-            result = try await DuplicateTrackService.prepareOTPMembership(selected, in: context, commit: commit)
+        // Decide on the keeper the merge will keep, not on any selected row:
+        // a song kept over a known video already in the One True Playlist
+        // still needs adding to Apple Music.
+        if target == .otp,
+           try DuplicateTrackService.keeperOrder(selected, destination: .otp, in: context).first?.destination != .otp {
+            result = try await DuplicateTrackService.prepareOTPMembership(
+                selected, in: context, mutation: playlistMutations, commit: commit
+            )
         } else {
             result = try commit()
         }

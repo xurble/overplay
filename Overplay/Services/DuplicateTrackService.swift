@@ -266,7 +266,7 @@ enum DuplicateTrackService {
         commit: () throws -> Committed
     ) async throws -> Committed {
         guard let otp = try PlaylistRepository.oneTruePlaylist(in: context),
-              let first = try keeperOrder(selected, destination: nil, in: context).first,
+              let first = try keeperOrder(selected, destination: .otp, in: context).first,
               let track = try TrackRecordRepository.track(id: first.id, in: context),
               let item = try PlaylistItemRepository.item(id: first.itemID, in: context) else { throw MergeError.missingOTP }
         let otpID = otp.id
