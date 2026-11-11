@@ -321,8 +321,32 @@ struct ApplePlayCountMatchingTests {
         #expect(restored == joined)
     }
 
-    @Test("Playlist-only songs resolve during playback or bulk refresh without a library match", arguments: [false, true])
-    func playlistFallback(priority: Bool) async throws {
+    @Test("The current-track lookup never pages a playlist; the bulk refresh does")
+    func currentTrackDoesNotPagePlaylists() async throws {
+        let container = try OverplayTestSupport.makeModelContainer()
+        let context = container.mainContext
+        let (track, item) = try fixture(context)
+        let owner = PlaylistRecord(musicPlaylistID: "p.owner", name: "Owner")
+        context.insert(owner)
+        item.playlistID = owner.id
+        item.sourceMusicPlaylistIDs = ["p.source"]
+        try context.save()
+        var paged: [String] = []
+        let service = ApplePlayCountSyncService(fetchPlaylist: { id in
+            paged.append(id)
+            return [playlistObservation(count: 10)]
+        }, fetchLibrary: { _ in [] }, fetch: { _ in [] })
+        #expect(await service.refreshCurrentTrack(track.id, in: context) == 0)
+        #expect(paged.isEmpty)
+        #expect(item.applePlayCount == nil)
+
+        _ = await service.refresh(in: context)
+        #expect(Set(paged) == ["p.owner", "p.source"])
+        #expect(item.applePlayCount == 2)
+    }
+
+    @Test("Playlist-only songs resolve in the bulk refresh without a library match")
+    func playlistFallback() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
         let (track, item) = try fixture(context)
@@ -332,7 +356,7 @@ struct ApplePlayCountMatchingTests {
             queried.append(id)
             return [playlistObservation(count: 10)]
         }, fetchLibrary: { _ in [] }, fetch: { _ in [] })
-        let changed = priority ? await service.refreshCurrentTrack(track.id, in: context) : await service.refresh(in: context)
+        let changed = await service.refresh(in: context)
         #expect(changed == 1)
         #expect(queried == ["p.tiktok"])
         #expect(item.applePlayCount == 2)
@@ -355,17 +379,17 @@ struct ApplePlayCountMatchingTests {
     func playlistNilAndLibraryFailure() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let (track, item) = try fixture(context)
+        let (_, item) = try fixture(context)
         item.sourceMusicPlaylistIDs = ["p.tiktok"]
-        var count: Int?
-        let service = ApplePlayCountSyncService(fetchPlaylist: { _ in
-            [playlistObservation(count: count)]
-        }, fetchLibrary: { _ in [] }, fetch: { _ in throw PlaylistSyncError.playlistNotFound })
-        let now = Date.now
-        _ = await service.refreshCurrentTrack(track.id, in: context, now: now)
+        func refresh(count: Int?) async {
+            let service = ApplePlayCountSyncService(fetchPlaylist: { _ in
+                [playlistObservation(count: count)]
+            }, fetchLibrary: { _ in [] }, fetch: { _ in throw PlaylistSyncError.playlistNotFound })
+            _ = await service.refresh(in: context)
+        }
+        await refresh(count: nil)
         #expect(item.applePlayCount == nil)
-        count = 0
-        _ = await service.refreshCurrentTrack(track.id, in: context, now: now.addingTimeInterval(61))
+        await refresh(count: 0)
         #expect(item.applePlayCount == 2)
     }
 
@@ -373,14 +397,14 @@ struct ApplePlayCountMatchingTests {
     func playlistCacheAndReset() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
-        let (track, item) = try fixture(context)
+        let (_, item) = try fixture(context)
         item.sourceMusicPlaylistIDs = ["p.tiktok"]
         var requests = 0
         let service = ApplePlayCountSyncService(fetchPlaylist: { _ in
             requests += 1
             return [playlistObservation(count: 10)]
         }, fetchLibrary: { _ in [] }, fetch: { _ in [] })
-        _ = await service.refreshCurrentTrack(track.id, in: context)
+        _ = await service.refresh(in: context)
         _ = await service.refresh(in: context)
         #expect(requests == 1)
         #expect(item.applePlayCount == 2)

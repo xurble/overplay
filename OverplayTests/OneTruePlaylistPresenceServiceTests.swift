@@ -60,7 +60,7 @@ struct OneTruePlaylistPresenceServiceTests {
         #expect(found)
         #expect(requested.map(\.absoluteString) == [
             "https://api.music.apple.com/v1/me/library/playlists?limit=100",
-            "https://api.music.apple.com/v1/me/library/playlists?offset=1"
+            "https://api.music.apple.com/v1/me/library/playlists?offset=1&limit=100"
         ])
         var absentPages = 0
         let absent = try await AppleMusicLibraryPlaylistResources.exists(playlistID: "p.overplay") { _ in

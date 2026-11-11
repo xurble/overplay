@@ -1584,6 +1584,8 @@ Shared playback reconciliation immediately requests a focused lookup when a
 track starts playing with an unknown count, including externally initiated track
 changes. This does not wait for the bulk refresh or its discovery cooldown.
 It queries the track's IDs, then paginates a title search if still unresolved.
+It never pages a playlist: playlist-entry counts come from the bulk refresh, so
+a song known only from one shows its count after that refresh (`LOAD-001`).
 Title searches require identity or complete metadata matching; only a full scan
 can prove ISRC uniqueness. Concurrent requests for the same track are coalesced,
 and repeated misses retry at most once per minute. Playback is not blocked by
@@ -3319,8 +3321,13 @@ offset 0.6%). Grids and covers with black or white borders have no drop shadow.
 The arrangement is persisted and the completed 1024 × 1024 image is cached as PNG,
 shared by SwiftUI and CarPlay. It stays stable for 24 hours, refreshing on the next
 view afterward, on changed settings, or on manual regeneration. Cache eviction
-re-renders the saved arrangement. Unavailable artwork does not become a permanent
-completed cache entry. Empty playlists show a placeholder and can generate as soon
+re-renders the saved arrangement. Rendering a Pile loads only covers that can be
+seen: covers wholly hidden by later ones are not fetched, the 32 with the largest
+visible area use the 512 px variant and the rest use 128 px. A cover that fails
+exposes what it hid, which is then drawn instead. Unavailable artwork does not
+become a permanent completed cache entry. An incomplete image is kept in memory
+for the session rather than recomposed on each appearance; it is replaced once the
+covers it lacks are cached, or by a later launch, refresh or regeneration. Empty playlists show a placeholder and can generate as soon
 as artwork arrives. Retired views use only retired tracks, with a separate saved
 arrangement and PNG cache from active the Inbox. Layout, borders, regeneration, and
 daily refresh are independent for active the Inbox and Retired. Each defaults to Pile

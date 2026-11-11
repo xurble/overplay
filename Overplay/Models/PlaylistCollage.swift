@@ -162,4 +162,61 @@ nonisolated struct PlaylistCollage: Codable, Equatable {
         }
         return Self(id: UUID(), generatedAt: date, layout: layout, stroke: stroke, placements: placements)
     }
+
+    /// What a render has to load, in draw order, and at which size.
+    struct RenderPlan: Equatable {
+        var placements: [Placement]
+        var coverSizes: [String: Int]
+    }
+
+    /// Enough for the covers that fill almost all of a large pile; the small
+    /// remnants of the rest come from the far more durable 128 px cache.
+    static let maxFullSizePileCovers = 32
+    /// 256 samples a side is 4 px apart on the 1024 px canvas.
+    private static let visibilitySamples = 256
+
+    /// A large pile hides almost every cover, and the arrangement stays as
+    /// saved, so what cannot be seen is simply not loaded. Works from the top
+    /// layer down over a sample grid. Both tests allow for the distance to
+    /// the nearest sample, so a sliver between samples is never dropped. A
+    /// hidden cover's soft shadow is the one thing not accounted for: it
+    /// falls where the cover over it casts its own.
+    func renderPlan(excluding unavailable: Set<String> = []) -> RenderPlan {
+        let placements = placements.filter { !unavailable.contains($0.url) }
+        guard layout == .pile else {
+            let size = layout == .grid8 ? 128 : 512
+            return RenderPlan(placements: placements, coverSizes: Dictionary(placements.map { ($0.url, size) }, uniquingKeysWith: { first, _ in first }))
+        }
+        let count = Self.visibilitySamples
+        let spacing = 1 / Double(count)
+        let reach = spacing * 0.5.squareRoot()
+        var exposed = (0..<count * count).map { (x: (Double($0 % count) + 0.5) * spacing, y: (Double($0 / count) + 0.5) * spacing) }
+        var kept = Set<Int>()
+        var visibleArea: [String: Int] = [:]
+        for index in placements.indices.reversed() where !exposed.isEmpty {
+            let placement = placements[index]
+            let half = placement.side / 2
+            let radians = placement.rotation * .pi / 180
+            let (cosine, sine) = (cos(radians), sin(radians))
+            var touched = false
+            var seen = 0
+            exposed.removeAll { point in
+                let (dx, dy) = (point.x - placement.x, point.y - placement.y)
+                let (along, across) = (abs(cosine * dx + sine * dy), abs(cosine * dy - sine * dx))
+                if along <= half + reach, across <= half + reach { touched = true }
+                if along <= half, across <= half { seen += 1 }
+                return along <= half - reach && across <= half - reach
+            }
+            if touched {
+                kept.insert(index)
+                visibleArea[placement.url, default: 0] += seen
+            }
+        }
+        let fullSize = Set(visibleArea.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+            .prefix(Self.maxFullSizePileCovers).map(\.key))
+        return RenderPlan(
+            placements: placements.indices.filter(kept.contains).map { placements[$0] },
+            coverSizes: Dictionary(uniqueKeysWithValues: visibleArea.keys.map { ($0, fullSize.contains($0) ? 512 : 128) })
+        )
+    }
 }

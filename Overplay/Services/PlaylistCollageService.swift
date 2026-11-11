@@ -10,6 +10,9 @@ final class PlaylistCollageService {
     static let shared = PlaylistCollageService()
     private let images = NSCache<NSUUID, DecodedArtworkImage>()
     private var inFlight: [UUID: Task<CGImage?, Never>] = [:]
+    /// Renders held in `images` that lack covers which may yet load: each
+    /// missing cover's URL and the size that render wanted it at.
+    private var incompleteRenders: [UUID: [String: Int]] = [:]
     private var libraryObserver: NSObjectProtocol?
     private var maintenanceTask: Task<Void, Never>?
 
@@ -48,6 +51,7 @@ final class PlaylistCollageService {
     private let cacheDirectory: URL
     private let loadImage: @MainActor (String, Int, String) async -> CGImage?
     private let isCoverUnreachable: @MainActor (String) async -> Bool
+    private let isCoverCached: @MainActor (String, Int) async -> Bool
 
     init(
         cacheDirectory: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -57,11 +61,15 @@ final class PlaylistCollageService {
         },
         isCoverUnreachable: @escaping @MainActor (String) async -> Bool = { url in
             await ArtworkCacheService.shared.hasPermanentlyFailed(url)
+        },
+        isCoverCached: @escaping @MainActor (String, Int) async -> Bool = { url, size in
+            await ArtworkCacheService.shared.cachedArtworkFileURL(for: url, pixelSize: size) != nil
         }
     ) {
         self.cacheDirectory = cacheDirectory
         self.loadImage = loadImage
         self.isCoverUnreachable = isCoverUnreachable
+        self.isCoverCached = isCoverCached
         images.totalCostLimit = 24 * 1024 * 1024
     }
 
@@ -113,13 +121,27 @@ final class PlaylistCollageService {
     }
 
     func image(for collage: PlaylistCollage, playlistID: String, scope: PlaylistPlaybackScope = .active) async -> CGImage? {
-        if let image = images.object(forKey: collage.id as NSUUID) { return image.image }
+        let held = images.object(forKey: collage.id as NSUUID)
+        if let held, await !canCompleteIncompleteRender(collage.id) { return held.image }
         if let task = inFlight[collage.id] { return await task.value }
         let task = Task { await render(collage, playlistID: playlistID, scope: scope) }
         inFlight[collage.id] = task
         let result = await task.value
         inFlight[collage.id] = nil
-        return result
+        return result ?? held?.image
+    }
+
+    /// An incomplete render stands for the session, so appearing again costs
+    /// nothing. It is recomposed only once every cover it lacks has reached
+    /// the disk cache some other way, such as a track row: that needs no
+    /// request for those covers. A later launch, the daily refresh or
+    /// Regenerate otherwise starts afresh.
+    private func canCompleteIncompleteRender(_ id: UUID) async -> Bool {
+        guard let missing = incompleteRenders[id] else { return false }
+        for (url, size) in missing {
+            guard await isCoverCached(url, size) else { return false }
+        }
+        return true
     }
 
     private func render(_ collage: PlaylistCollage, playlistID: String, scope: PlaylistPlaybackScope) async -> CGImage? {
@@ -138,38 +160,37 @@ final class PlaylistCollageService {
             images.setObject(cached, forKey: collage.id as NSUUID, cost: cached.image.bytesPerRow * cached.image.height)
             return cached.image
         }
-        guard let renderer = PlaylistCollageCanvas(collage: collage) else { return nil }
-        let size = collage.layout == .grid8 ? 128 : 512
-        var covers: [String: DecodedArtworkImage] = [:]
-        var failedURLs = Set<String>()
-        var loadedAny = false
-        // Bound retained decoded images as well as concurrent requests. A large
-        // pile must not hold every album cover in memory at once.
-        for start in stride(from: 0, to: collage.placements.count, by: 16) {
-            let placements = Array(collage.placements[start..<min(start + 16, collage.placements.count)])
-            let urls = Set(placements.map(\.url))
-            covers = covers.filter { urls.contains($0.key) }
-            let missing = urls.filter { covers[$0] == nil && !failedURLs.contains($0) }.sorted()
-            let loaded = await loadCovers(missing, size: size, playlistID: playlistID)
-            covers.merge(loaded) { _, new in new }
-            failedURLs.formUnion(missing.filter { loaded[$0] == nil })
-            loadedAny = loadedAny || !covers.isEmpty
-            await renderer.draw(placements, covers: covers)
+        guard var renderer = PlaylistCollageCanvas(collage: collage) else { return nil }
+        let plan = await Self.renderPlan(of: collage, excluding: [])
+        let first = await draw(plan, on: renderer, playlistID: playlistID)
+        guard first.loadedAny else { return nil }
+        var failed = first.failed
+        if !failed.isEmpty {
+            // A cover that failed no longer hides what lay under it. Draw once
+            // more with that revealed, never asking again for a failed cover.
+            let revealed = await Self.renderPlan(of: collage, excluding: Set(failed.keys))
+            if !Set(revealed.coverSizes.keys).isSubset(of: plan.coverSizes.keys),
+               let canvas = PlaylistCollageCanvas(collage: collage) {
+                let second = await draw(revealed, on: canvas, playlistID: playlistID)
+                failed.merge(second.failed) { earlier, _ in earlier }
+                if second.loadedAny { renderer = canvas }
+            }
         }
-        guard loadedAny else { return nil }
         // Do not freeze a transient network failure into the daily cache. A
         // cover that is permanently gone is a different matter: it will not
         // resolve on a re-render, so refusing to cache only buys a full
         // recomposition of every other cover each time the collage appears.
-        var recoverableGap = false
-        for url in failedURLs where !recoverableGap {
-            if await !isCoverUnreachable(url) { recoverableGap = true }
+        var recoverable: [String: Int] = [:]
+        for (url, size) in failed {
+            if await !isCoverUnreachable(url) { recoverable[url] = size }
         }
-        let complete = !recoverableGap
         let result = await renderer.image()?.image
-        if complete, let result {
+        if let result {
             images.setObject(DecodedArtworkImage(result), forKey: collage.id as NSUUID,
                              cost: result.bytesPerRow * result.height)
+            incompleteRenders[collage.id] = recoverable.isEmpty ? nil : recoverable
+        }
+        if recoverable.isEmpty, let result {
             let image = DecodedArtworkImage(result)
             await Task.detached(priority: .utility) {
                 do {
@@ -191,17 +212,44 @@ final class PlaylistCollageService {
         }
         return result
     }
+
+    private static func renderPlan(of collage: PlaylistCollage, excluding unavailable: Set<String>) async -> PlaylistCollage.RenderPlan {
+        await Task.detached(priority: .utility) { collage.renderPlan(excluding: unavailable) }.value
+    }
+
+    private func draw(
+        _ plan: PlaylistCollage.RenderPlan, on renderer: PlaylistCollageCanvas, playlistID: String
+    ) async -> (loadedAny: Bool, failed: [String: Int]) {
+        var covers: [String: DecodedArtworkImage] = [:]
+        var failed: [String: Int] = [:]
+        var loadedAny = false
+        // Bound retained decoded images as well as concurrent requests. A large
+        // pile must not hold every album cover in memory at once.
+        for start in stride(from: 0, to: plan.placements.count, by: 16) {
+            let placements = Array(plan.placements[start..<min(start + 16, plan.placements.count)])
+            let urls = Set(placements.map(\.url))
+            covers = covers.filter { urls.contains($0.key) }
+            let missing = urls.filter { covers[$0] == nil && failed[$0] == nil }.sorted()
+            let loaded = await loadCovers(missing, sizes: plan.coverSizes, playlistID: playlistID)
+            covers.merge(loaded) { _, new in new }
+            for url in missing where loaded[url] == nil { failed[url] = plan.coverSizes[url] ?? 512 }
+            loadedAny = loadedAny || !covers.isEmpty
+            await renderer.draw(placements, covers: covers)
+        }
+        return (loadedAny, failed)
+    }
+
     private func loadCover(_ url: String, size: Int, playlistID: String) async -> DecodedArtworkImage? {
         await loadImage(url, size, playlistID).map(DecodedArtworkImage.init)
     }
 
-    private func loadCovers(_ urls: [String], size: Int, playlistID: String) async -> [String: DecodedArtworkImage] {
+    private func loadCovers(_ urls: [String], sizes: [String: Int], playlistID: String) async -> [String: DecodedArtworkImage] {
         return await withTaskGroup(of: (String, DecodedArtworkImage?).self) { group in
             var next = min(4, urls.count)
             var loaded: [String: DecodedArtworkImage] = [:]
             for url in urls.prefix(4) {
                 group.addTask {
-                    (url, await self.loadCover(url, size: size, playlistID: playlistID))
+                    (url, await self.loadCover(url, size: sizes[url] ?? 512, playlistID: playlistID))
                 }
             }
             for await (url, image) in group {
@@ -210,7 +258,7 @@ final class PlaylistCollageService {
                     let url = urls[next]
                     next += 1
                     group.addTask {
-                        (url, await self.loadCover(url, size: size, playlistID: playlistID))
+                        (url, await self.loadCover(url, size: sizes[url] ?? 512, playlistID: playlistID))
                     }
                 }
             }
