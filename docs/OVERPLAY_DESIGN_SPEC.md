@@ -104,7 +104,7 @@ Music's global play count or skip count.
 | `PLAY-014` | Failures are shared across surfaces and recovered by a user Play press, or once when the network returns after dropping, through a bounded ladder (play; prepare and play; resubmit the intent at the current member and position, looking that member's track up again). A play the player accepted but never delivered (reported playing without progress, then paused) is a failure too. A queue whose last prepare failed or has not answered recovers from rung 3, never a bare play; if it plays anyway (a system Play Overplay never sees), it is rebuilt once at the next track change. A rung counts once called, so a press while one hangs escalates. A call unanswered for 8 seconds, with no other answer meanwhile, makes the player stuck: advice to turn mobile data off and on, or else relaunch; one rung-3 attempt, then no more calls from Play until the player answers or the network returns. A rung that answers late ends its press. Pause is never disabled. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-015` | Membership changes never mutate the live queue. Retiring the current track issues Next; a member that left the scope is skipped when reached; additions appear at the next start. | `Overplay/Services/PlaybackController.swift` |
 | `PLAY-016` | Overplay does not write `MPNowPlayingInfoCenter` or register transport `MPRemoteCommandCenter` handlers; the `ApplicationMusicPlayer` host owns system Now Playing. A default-off, device-local option, **CarPlay MiniPlayer Controls**, mirrors Now Playing so iOS 27's CarPlay MiniPlayer shows play/pause and skip. | `Overplay/Services/SystemNowPlayingBridge.swift` |
-| `PLAY-017` | Native `Track` objects needed for playback are cached on disk per device; cold launches do not need to re-resolve the whole playlist, a cached track is reused only while it is the song its record names (its library or catalog ID), a library ID that no longer exists in the account library falls back to the record's catalog ID, and unresolvable songs are omitted rather than failing playback, with each omission recorded in the activity log. The cache is emptied only when the Apple Music account or storefront it was filled under changes, never on a relaunch or a failed or offline account check, and a playback lookup gives up after 15 seconds. | `Overplay/Services/DevicePlaybackCache.swift`, `Overplay/Services/AppleMusicSongLookup.swift` |
+| `PLAY-017` | Native `Track` objects needed for playback are cached on disk per device; cold launches do not need to re-resolve the whole playlist, a cached track is reused only while it is the song its record names (its library or catalog ID, or a strict title-and-artist match for a library-only record), a library ID that no longer exists in the account library falls back to the record's catalog ID or, for a library-only record with no catalog ID, to a catalog search by title and artist that plays only a strict match (exactly one playable catalog song whose normalised title and artist equal the record's and whose duration is within 2 seconds of the record's stored duration; no stored duration, no match or more than one match leaves the song out) on this device only, never stored as the song's identity, and unresolvable songs are omitted rather than failing playback, with each omission recorded in the activity log. The cache is emptied only when the Apple Music account or storefront it was filled under changes, never on a relaunch or a failed or offline account check, and a playback lookup gives up after 15 seconds. | `Overplay/Services/DevicePlaybackCache.swift`, `Overplay/Services/AppleMusicSongLookup.swift` |
 | `COUNT-001` | Counting observes playback and never commands, delays or vetoes it. Skips require witnessed listening; playthroughs are position-based; suspended spans never produce skips. | `Overplay/Playback/ListeningSessionTracker.swift`, `Overplay/UseCases/PlaybackSessionEvaluationService.swift` |
 | `COUNT-003` | Ending a song is not a skip when Overplay starts another queue (another playlist or scope, a Search song, an album, artist, deep dive, Made For You mix, Library collection or Siri request), or when the song was paused for a minute or more at any point, including a pause it ends in. Restarting what is playing (Shuffle and Play, Play Album or Play Artist for the album or artist playing) and recovery are not skips either. Skipping within the same queue (Next, a remote or CarPlay skip, selecting another song of the playing playlist, album or other collection, however MusicKit's loaded queue takes it) still counts. A playthrough counts as usual. | `Overplay/Services/PlaybackController.swift`, `Overplay/Services/EvictionEngine.swift`, `OverplayTests/PlaybackSkipExceptionTests.swift` |
 | `COUNT-002` | Counted outcomes are immutable ledger events with idempotent session IDs. Displayed counts are derived from the ledger, including absorbed track identities; merges and resets never edit counts. Apple's calculated play count, when higher, is recorded as a floor event that plays never fall below. | `Overplay/Services/ListenLedger.swift`, `Overplay/Models/ListenEvent.swift` |
@@ -1882,7 +1882,22 @@ attribute normally.
    (`PLAY-017`), fetching missing library and catalog tracks in one batch
    each. A member whose library ID no longer exists in the account library
    (not on device, not in iCloud) is resolved from its catalog ID in one more
-   batch; only a definite miss falls back, never a failed request. Members that
+   batch; only a definite miss falls back, never a failed request. A
+   library-only member (no catalog ID) whose library ID is a definite miss is
+   searched for in the catalog by title and artist: one request per song, at
+   most 10 per preparation, each with the 15-second playback timeout, and a
+   failed search is not repeated for the rest of that preparation. It plays
+   only on a strict match: exactly one playable catalog song whose normalised
+   title and artist (`PlaybackAttribution.metadataKey`) equal the member's
+   and whose duration is within 2 seconds of the member's stored duration. A
+   member with no stored duration never matches. No match, more than one
+   match or a failed search leaves the song out, as before; the activity log
+   names the song when the search is used and when it is ambiguous. The match
+   is written to the device playback cache only, never to the record's
+   catalog ID, aliases or any synced field, and stays current while it still
+   meets the strict match and the record has no catalog ID. The queued
+   catalog ID joins the member's `musicItemIDs`, so the play is attributed to
+   the member (`PLAY-012`). Members that
    cannot be resolved are left out of the queue and the intent, with an
    activity-log error naming them and a non-blocking status message. Starting fails only when the requested start
    member, or every member, cannot be resolved.
@@ -2946,7 +2961,9 @@ SwiftData and CloudKit. `musicKitPlaybackData` reads the device playback cache
 (`PLAY-017`), which is stored on disk in the caches directory. Queue preparation
 reloads missing native objects from the typed library or catalog endpoint in
 batches. A cached object whose ID is no longer the record's library ID (or,
-without one, its catalog ID) is outdated, because a song removed and re-added
+without one, its catalog ID), and is not a catalog song found by title and
+artist for a library-only record that still meets the strict match
+(`PLAY-017`), is outdated, because a song removed and re-added
 or re-matched by sync gets a new ID, and is reloaded the same way; if that
 fails, the outdated object is still used. Songs that cannot be resolved are omitted from the queue with a
 diagnostic and a status message.
