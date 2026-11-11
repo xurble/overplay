@@ -2899,7 +2899,7 @@ final class PlaybackController {
         return context
     }
 
-    private func settings(in context: ModelContext) -> OverplaySettings? {
+    func settings(in context: ModelContext) -> OverplaySettings? {
         if let cachedSettings, !cachedSettings.isDeleted { return cachedSettings }
         cachedSettings = try? SettingsRepository.settings(in: context)
         return cachedSettings

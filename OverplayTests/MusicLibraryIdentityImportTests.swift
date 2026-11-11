@@ -288,7 +288,9 @@ struct MusicLibraryIdentityImportTests {
         let samples = fiveSamples
         let (record, items) = try seededOTP(samples, in: context)
         // A retired song absent from the remote playlist: only a complete
-        // snapshot may release its stale-membership protection.
+        // snapshot may release its stale-membership protection. Incoming-only,
+        // the one kind of playlist a snapshot may release for (DI-2).
+        record.writePolicy = .incomingOnly
         let bucket = try PlaylistRepository.triageBucket(in: context)
         let retiredTrack = TrackRecord(catalogID: "999", title: "Retired", artistName: "Band")
         let retired = PlaylistItemRecord(playlistID: bucket.id, trackID: retiredTrack.id, skipCount: 2)

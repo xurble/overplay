@@ -74,6 +74,106 @@ struct OneTruePlaylistRemoteMembershipTests {
         return item
     }
 
+    // MARK: - Finding DI-2: what proves a song has left
+
+    private static func deviceSnapshots(_ indexes: [Int]) -> [TrackSnapshot] {
+        indexes.map {
+            TrackSnapshot(id: "i.lib-\($0)", catalogID: "cat-\($0)", libraryID: "i.lib-\($0)", playlistEntryID: nil,
+                          playlistID: nil, title: "Song \($0)", artistName: "Artist \($0)", albumTitle: nil,
+                          artworkURLTemplate: nil, durationSeconds: 180)
+        }
+    }
+
+    private static let allThree = ["i.lib-0", "i.lib-1", "i.lib-2"]
+
+    /// The reported trigger, for a 0/0 row and a played one: X was promoted
+    /// on the phone, this device's copy does not list it yet, and the user
+    /// retires it here.
+    @Test("A device whose copy lags iCloud keeps a retirement until iCloud proves the song gone", arguments: [0, 3])
+    func laggingDeviceKeepsRetirement(skipCount: Int) async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        let context = fixture.context
+        let retired = try retire(0, in: fixture, skipCount: skipCount)
+        let retiredID = retired.id
+        let sync = PlaylistSyncService()
+        func row() throws -> PlaylistItemRecord? { try PlaylistItemRepository.item(id: retiredID, in: context) }
+
+        _ = try await sync.reconcile(snapshots: Self.deviceSnapshots([1, 2]), playlistRecord: fixture.playlist,
+                                     syncedAt: .now, in: context)
+        let afterSync = try #require(try row(), "A read of this device's copy deleted the row")
+        #expect(afterSync.suppressedOTPMusicPlaylistIDs == ["playlist-main"])
+
+        // iCloud still holds the song, and this device can never edit it.
+        let recorder = Recorder()
+        var mac = Self.membership(cloud: { Self.entries(Self.allThree) }, device: Self.allThree, recorder: recorder)
+        mac.canEditPlaylists = { false }
+        let waiting = try await mac.removeSongsHeldOutside(fixture.playlist, in: context)
+        #expect(waiting.notEditableHereItemIDs == [retiredID])
+        #expect(recorder.written.isEmpty)
+        #expect(afterSync.suppressedOTPMusicPlaylistIDs == ["playlist-main"])
+
+        // The copy catches up: the song does not come back as active.
+        _ = try await sync.reconcile(snapshots: Self.deviceSnapshots([0, 1, 2]), playlistRecord: fixture.playlist,
+                                     syncedAt: .now, in: context)
+        let caughtUp = try #require(try row())
+        #expect(caughtUp.evictedAt != nil && caughtUp.playlistID != fixture.playlist.id)
+
+        // A device that can edit takes it out of Apple Music.
+        try await Self.membership(cloud: { Self.entries(Self.allThree) }, device: Self.allThree, recorder: recorder)
+            .removeSongsHeldOutside(fixture.playlist, in: context)
+        #expect(recorder.written == [["i.lib-1", "i.lib-2"]])
+        if skipCount == 0 {
+            #expect(try row() == nil)
+        } else {
+            let kept = try #require(try row())
+            #expect(kept.evictedAt != nil && kept.suppressedOTPMusicPlaylistIDs.isEmpty)
+        }
+    }
+
+    @Test("iCloud's copy, not this device's, proves a song gone, on any device", arguments: [0, 3], [true, false])
+    func iCloudAbsenceReleases(skipCount: Int, canEdit: Bool) async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        let context = fixture.context
+        let retired = try retire(0, in: fixture, skipCount: skipCount)
+        let retiredID = retired.id
+        _ = try await PlaylistSyncService().reconcile(snapshots: Self.deviceSnapshots([1, 2]), playlistRecord: fixture.playlist,
+                                                      syncedAt: .now, in: context)
+        let held = try #require(try PlaylistItemRepository.item(id: retiredID, in: context))
+        #expect(held.suppressedOTPMusicPlaylistIDs == ["playlist-main"], "Sync released it before iCloud was asked")
+
+        let recorder = Recorder()
+        var membership = Self.membership(cloud: { Self.entries(["i.lib-1", "i.lib-2"]) }, device: ["i.lib-1", "i.lib-2"],
+                                         recorder: recorder)
+        membership.canEditPlaylists = { canEdit }
+        let outcome = try await membership.removeSongsHeldOutside(fixture.playlist, in: context)
+
+        #expect(outcome.absentItemIDs == [retiredID])
+        #expect(recorder.written.isEmpty)
+        if skipCount == 0 {
+            #expect(try PlaylistItemRepository.item(id: retiredID, in: context) == nil)
+        } else {
+            #expect(held.evictedAt != nil && held.suppressedOTPMusicPlaylistIDs.isEmpty)
+        }
+    }
+
+    /// Nothing can read an incoming-only playlist's iCloud copy on its behalf,
+    /// so its complete sync remains the only evidence, as it always was.
+    @Test("An incoming-only One True Playlist still releases on a complete read, and only then")
+    func incomingOnlyStillReleasesOnCompleteRead() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        fixture.playlist.writePolicy = .incomingOnly
+        let retired = try retire(0, in: fixture, skipCount: 2)
+        let sync = PlaylistSyncService()
+
+        _ = try await sync.reconcile(snapshots: Self.deviceSnapshots([1, 2]), playlistRecord: fixture.playlist,
+                                     syncedAt: .now, isComplete: false, in: fixture.context)
+        #expect(retired.suppressedOTPMusicPlaylistIDs == ["playlist-main"])
+
+        _ = try await sync.reconcile(snapshots: Self.deviceSnapshots([1, 2]), playlistRecord: fixture.playlist,
+                                     syncedAt: .now, in: fixture.context)
+        #expect(retired.suppressedOTPMusicPlaylistIDs.isEmpty && retired.evictedAt != nil)
+    }
+
     // MARK: - The shared operation
 
     @Test("iPhone: entries carrying web library IDs are rewritten without the retired song, which is then deleted as 0/0")

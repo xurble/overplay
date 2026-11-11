@@ -166,7 +166,7 @@ struct GlobalTrackOwnershipTests {
         #expect(item.evictedAt == nil && item.skipCount == 3)
     }
 
-    @Test("Stale OTP cannot resurrect a retired or explicitly restored song; proven absence releases suppression")
+    @Test("Stale OTP cannot resurrect a retired or explicitly restored song; only iCloud's copy proves absence and releases suppression")
     func staleOTPProtection() async throws {
         let container = try OverplayTestSupport.makeModelContainer()
         let context = container.mainContext
@@ -184,7 +184,13 @@ struct GlobalTrackOwnershipTests {
         try TrackActionService.restoreTrack(item, playlist: bucket, in: context)
         _ = try await sync.reconcile(snapshots: [snapshot("song")], playlistRecord: otp, syncedAt: .now, in: context)
         #expect(item.playlistID == bucket.id && item.evictedAt == nil)
+        // A managed playlist: this device's copy can lag iCloud, so its
+        // complete read proves nothing.
         _ = try await sync.reconcile(snapshots: [], playlistRecord: otp, syncedAt: .now, in: context)
+        #expect(item.suppressedOTPMusicPlaylistIDs == ["otp"])
+        var membership = OneTruePlaylistRemoteMembership()
+        membership.cloudEntries = { _ in [] }
+        try await membership.removeSongsHeldOutside(otp, in: context)
         #expect(item.suppressedOTPMusicPlaylistIDs.isEmpty)
         item.skipCount = 2
         _ = try await sync.reconcile(snapshots: [snapshot("song")], playlistRecord: otp, syncedAt: .now, in: context)
