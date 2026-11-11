@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>Overplay needs access to your Apple Music library so it can play and manage your selected playlist.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Overplay saves a playlist's artwork to Photos so you can use it as the playlist's artwork in the Music app.</string>
 	<key>OverplayCloudKitContainerIdentifier</key>
 	<string>$(ICLOUD_CONTAINER_IDENTIFIER)</string>
 	<key>UIApplicationSceneManifest</key>

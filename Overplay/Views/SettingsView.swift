@@ -294,7 +294,6 @@ struct SettingsView: View {
                 .font(.caption)
         }
 
-#if DEBUG
         Section {
             if let musicKitActivityReport = viewModel.musicKitActivityReport {
                 MusicKitActivityReportView(summary: musicKitActivityReport)
@@ -330,6 +329,7 @@ struct SettingsView: View {
                 .font(.caption)
         }
 
+#if DEBUG
         Section {
             Button {
                 Task { await runMusicKitDiagnostics() }
@@ -679,7 +679,6 @@ extension SettingsView {
             Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
             MacSettingsNote("Both ask first, and neither can be undone. Your Apple Music playlists are never deleted.")
         }
-#if DEBUG
         GridRow {
             MacSettingsLabel("Apple Music calls:")
             VStack(alignment: .leading, spacing: 10) {
@@ -706,6 +705,7 @@ extension SettingsView {
                 MacSettingsNote("Every Overplay call into Apple Music is recorded with its size, duration, and outcome, and kept across launches. Reach for this after Apple Music misbehaves system-wide. Share Activity Log sends the summary and a full log for each of the last 10 launches, as of the last refresh.")
             }
         }
+#if DEBUG
         GridRow {
             MacSettingsLabel("Diagnostics:")
             VStack(alignment: .leading, spacing: 10) {
