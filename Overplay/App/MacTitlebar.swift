@@ -5,17 +5,11 @@ extension View {
     /// On a Mac the window shows no title: in the Mac idiom each screen's bar
     /// sits in the window's toolbar, beside the window controls. Does nothing
     /// elsewhere.
-    ///
-    /// In full screen the toolbar hides with the menu bar and slides in over
-    /// the window when the pointer reaches the top. Kept shown, it sat in a
-    /// window of its own that the Mac fills with a solid band, and the
-    /// sidebar's glass and the player's art stopped short below it.
     func hidesMacTitlebar() -> some View {
         onAppear {
 #if targetEnvironment(macCatalyst)
             for case let scene as UIWindowScene in UIApplication.shared.connectedScenes {
                 scene.titlebar?.titleVisibility = .hidden
-                scene.titlebar?.autoHidesToolbarInFullScreen = true
             }
 #endif
         }
