@@ -15,4 +15,9 @@ INFOPLIST_FILE[sdk=macosx*] = Config/Info-MacCatalyst.plist
 
 ICLOUD_CONTAINER_IDENTIFIER = iCloud.com.example.Overplay
 
+// Siri matches App Shortcut phrases exactly. With flexible matching on,
+// "Start Overplay Inbox" sometimes ran the One True Playlist's "Start
+// Overplay" (iOS 27, 2026-11-14).
+APP_SHORTCUTS_ENABLE_FLEXIBLE_MATCHING = NO
+
 #include? "Local.xcconfig"
