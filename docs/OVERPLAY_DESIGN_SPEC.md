@@ -118,6 +118,7 @@ Music's global play count or skip count.
 | `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing; Play Album and Play Artist add one action list above it (`PLAY-018`), and Recents and each Library category add one level under the root (`PLAY-019`, `LIB-001`). | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
 | `SIRI-001` | Siri, Shortcuts, Spotlight and the Action button offer Play One True Playlist, Play the Inbox, Promote, Retire, Undo, Restore, Add, Play This Album, Play This Artist and What's This, each a thin adapter over the shared action the app and CarPlay use. They run in the background with the phone locked, speak the result of Promote, Retire, Undo, Restore and Add, say what is playing for What's This, and speak only failures for the play actions. | `Overplay/Intents/OverplayIntents.swift`, `Overplay/Intents/VoiceActions.swift`, `OverplayTests/VoiceActionTests.swift` |
 | `SIRI-002` | An intent that launches Overplay with no window starts the same startup as CarPlay and waits up to 8 seconds for a restoration under way. Apple Music not authorised and setup unfinished cannot become ready while it waits: it stops at once and says which. If the library is not ready, the intent says so and changes nothing. | `Overplay/App/AppRuntime.swift` |
+| `SIRI-003` | On iOS 27, "Play *anything* in Overplay" searches the Apple Music catalogue and plays what Siri picks: a song on its own, an album in order from its first track, or an artist's Essentials or top songs, shuffled when asked, through the shared `playCatalogItem`. Adding to the queue is refused. Nothing of it exists on iOS 26, and no other voice action changes. | `Overplay/Intents/AppleMusicSearchIntents.swift`, `Overplay/Services/AppleMusicCatalogSearch.swift`, `OverplayTests/AppleMusicSearchPlaybackTests.swift` |
 | `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
 | `HISTORY-001` | History is paged. Debug builds add an event filter and the suspended-playback recovery summary above the events; release builds show only the events. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. History is never the source of counts. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
 | `SETTINGS-001` | Current settings cover tracking thresholds, statistics reset, shared database reset, the One True Playlist shown with a link to Apple Music, Inbox Sources, display options, Siri phrases, MusicKit diagnostics (including whether the One True Playlist is still editable), and CarPlay MiniPlayer Controls. | `Overplay/Views/SettingsView.swift`, `Overplay/ViewModels/SettingsViewModel.swift` |
@@ -1409,9 +1410,39 @@ Recents by voice come with Fuller Siri.
   Inbox, Retired, or not in Overplay) and Overplay's own play and skip counts,
   which are best-effort.
 - The same intents appear in Shortcuts, Spotlight and the Action button.
-- The iOS 27 audio schemas (`AppSchema.audio.playAudio` and others) are not
-  adopted: they need iOS 27, above the 26.4 deployment target. Revisit them
-  with Fuller Siri.
+- Only Apple Music search uses the iOS 27 audio schema (`SIRI-003`); the
+  App Shortcuts above use none, and behave the same on iOS 26 and 27.
+
+### Apple Music search by voice (`SIRI-003`)
+
+A way to play something not in Overplay while driving or running: "Play
+Radiohead in Overplay", "Play OK Computer in Overplay".
+
+- **iOS 27 only.** The play intent adopts Apple's `audio.playAudio` schema,
+  with song, album and artist entities on the `audio` entity schemas. They are
+  gated `@available(iOS 27.0, *)`; on iOS 26 none of it exists. It needs no
+  App Shortcut, so the ten above are unchanged.
+- **Search.** Siri passes what was said to each entity's string query. One
+  Apple Music catalogue search (songs, albums and artists, five of each)
+  answers all three, kept for a minute; Siri chooses among them. Lookups by ID
+  read what a search returned before asking Apple Music.
+- **Playing,** through the shared `playCatalogItem`:
+  - a **song** plays on its own, as search's Play Now does, and is not a
+    Recent Deep Dive;
+  - an **album** plays in order from its first track, and an **artist** plays
+    its Essentials or top songs, as Play Album and Play Artist do
+    (`PLAY-018`), and both are recorded in Recent Deep Dives (`PLAY-019`);
+  - **shuffle**, when Siri asks for it, starts an album or artist shuffled.
+    Repeat is ignored.
+  - Play Next and Play Last (the schema's queue position) are refused with a
+    spoken reason: Overplay only starts things.
+- Nothing is replaced until the lookup succeeds; a failure is spoken and
+  playback carries on. Music found this way is outside Overplay and is never
+  counted, as with any deep dive.
+- **Device evidence still open:** that Siri on iOS 27.1 routes "Play … in
+  Overplay" to this intent rather than to Apple Music or to opening the app,
+  what it does with no search term ("Play Overplay"), and how it chooses
+  between a song, an album and an artist.
 
 ### Launch without a window (`SIRI-002`)
 

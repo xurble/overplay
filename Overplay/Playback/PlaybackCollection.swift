@@ -68,6 +68,14 @@ nonisolated struct PlaybackCollection: Codable, Equatable, Sendable {
     var reservedPlaylistID: String { "overplay.collection.\(kind.rawValue).\(catalogID)" }
 }
 
+/// Something an Apple Music search found, to play (`SIRI-003`).
+nonisolated enum CatalogPlayItem: Equatable, Sendable {
+    /// Played on its own, as search's Play Now.
+    case song(PlaybackCollectionSong)
+    case album(id: String, title: String)
+    case artist(id: String, name: String)
+}
+
 /// The songs a collection lookup found, in play order.
 struct PlaybackCollectionContents {
     var collection: PlaybackCollection
@@ -152,10 +160,16 @@ struct PlaybackCatalog {
     var collection: (PlaybackCollection.Request, String) async throws -> PlaybackCollectionContents
     /// Catalog songs by ID, for resuming or recovering a collection intent.
     var songs: ([String]) async throws -> [String: Track]
+    /// The collection for a catalog album or artist ID, found by search
+    /// rather than from a song (`SIRI-003`).
+    var collectionByID: (PlaybackCollection.Request, String) async throws -> PlaybackCollectionContents = { request, _ in
+        throw request == .album ? PlaybackCollectionError.albumNotFound : PlaybackCollectionError.artistNotFound
+    }
 
     static let live = PlaybackCatalog(
         collection: { request, songID in try await MusicKitPlaybackCatalog.collection(request, songID: songID) },
-        songs: { try await MusicKitPlaybackCatalog.songs(ids: $0) }
+        songs: { try await MusicKitPlaybackCatalog.songs(ids: $0) },
+        collectionByID: { request, id in try await MusicKitPlaybackCatalog.collection(request, id: id) }
     )
 }
 
@@ -170,48 +184,75 @@ private enum MusicKitPlaybackCatalog {
         switch request {
         case .album:
             guard let album = song.albums?.first else { throw PlaybackCollectionError.albumNotFound }
-            let detailed = try await measure("album tracks") { try await album.with([.tracks]) }
-            let tracks = try await allTracks(detailed.tracks)
-            return PlaybackCollectionContents(
-                collection: PlaybackCollection(kind: .album, catalogID: album.id.rawValue, title: album.title),
-                tracks: tracks,
-                artworkURLTemplate: artworkURL(album.artwork)
-            )
+            return try await contents(of: album)
         case .artist:
             guard let artist = song.artists?.first else { throw PlaybackCollectionError.artistNotFound }
-            let detailed = try await measure("artist playlists and top songs") {
-                try await artist.with([.featuredPlaylists, .playlists, .topSongs])
-            }
-            let playlists = Array(detailed.featuredPlaylists ?? []) + Array(detailed.playlists ?? [])
-            if let essentials = playlists.first(where: {
-                PlaybackCollectionPolicy.isEssentials(
-                    playlistName: $0.name, curatorName: $0.curatorName,
-                    isEditorial: $0.kind.map { $0 == .editorial }, artistName: artist.name
-                )
-            }) {
-                let withTracks = try await measure("essentials tracks") { try await essentials.with([.tracks]) }
-                let tracks = try await allTracks(withTracks.tracks)
-                if !tracks.isEmpty {
-                    return PlaybackCollectionContents(
-                        collection: PlaybackCollection(kind: .artistEssentials, catalogID: artist.id.rawValue, title: artist.name),
-                        tracks: tracks,
-                        artworkURLTemplate: artworkURL(artist.artwork)
-                    )
-                }
-            }
-            var songs = Array(detailed.topSongs ?? [])
-            var batch = detailed.topSongs
-            while songs.count < topSongsTarget, batch?.hasNextBatch == true {
-                batch = try await measure("top songs page") { try await batch?.nextBatch() }
-                songs += Array(batch ?? [])
-            }
-            let collapsed = PlaybackCollectionPolicy.collapsingVersions(songs, title: \.title, isrc: \.isrc)
-            return PlaybackCollectionContents(
-                collection: PlaybackCollection(kind: .artistTopSongs, catalogID: artist.id.rawValue, title: artist.name),
-                tracks: collapsed.map(Track.song),
-                artworkURLTemplate: artworkURL(artist.artwork)
-            )
+            return try await contents(of: artist)
         }
+    }
+
+    /// An album or artist by its catalog ID.
+    static func collection(_ request: PlaybackCollection.Request, id: String) async throws -> PlaybackCollectionContents {
+        let musicID = MusicItemID(id)
+        switch request {
+        case .album:
+            let response = try await measure("album by id") {
+                try await MusicCatalogResourceRequest<Album>(matching: \.id, equalTo: musicID).response()
+            }
+            guard let album = response.items.first else { throw PlaybackCollectionError.albumNotFound }
+            return try await contents(of: album)
+        case .artist:
+            let response = try await measure("artist by id") {
+                try await MusicCatalogResourceRequest<Artist>(matching: \.id, equalTo: musicID).response()
+            }
+            guard let artist = response.items.first else { throw PlaybackCollectionError.artistNotFound }
+            return try await contents(of: artist)
+        }
+    }
+
+    private static func contents(of album: Album) async throws -> PlaybackCollectionContents {
+        let detailed = try await measure("album tracks") { try await album.with([.tracks]) }
+        let tracks = try await allTracks(detailed.tracks)
+        return PlaybackCollectionContents(
+            collection: PlaybackCollection(kind: .album, catalogID: album.id.rawValue, title: album.title),
+            tracks: tracks,
+            artworkURLTemplate: artworkURL(album.artwork)
+        )
+    }
+
+    private static func contents(of artist: Artist) async throws -> PlaybackCollectionContents {
+        let detailed = try await measure("artist playlists and top songs") {
+            try await artist.with([.featuredPlaylists, .playlists, .topSongs])
+        }
+        let playlists = Array(detailed.featuredPlaylists ?? []) + Array(detailed.playlists ?? [])
+        if let essentials = playlists.first(where: {
+            PlaybackCollectionPolicy.isEssentials(
+                playlistName: $0.name, curatorName: $0.curatorName,
+                isEditorial: $0.kind.map { $0 == .editorial }, artistName: artist.name
+            )
+        }) {
+            let withTracks = try await measure("essentials tracks") { try await essentials.with([.tracks]) }
+            let tracks = try await allTracks(withTracks.tracks)
+            if !tracks.isEmpty {
+                return PlaybackCollectionContents(
+                    collection: PlaybackCollection(kind: .artistEssentials, catalogID: artist.id.rawValue, title: artist.name),
+                    tracks: tracks,
+                    artworkURLTemplate: artworkURL(artist.artwork)
+                )
+            }
+        }
+        var songs = Array(detailed.topSongs ?? [])
+        var batch = detailed.topSongs
+        while songs.count < topSongsTarget, batch?.hasNextBatch == true {
+            batch = try await measure("top songs page") { try await batch?.nextBatch() }
+            songs += Array(batch ?? [])
+        }
+        let collapsed = PlaybackCollectionPolicy.collapsingVersions(songs, title: \.title, isrc: \.isrc)
+        return PlaybackCollectionContents(
+            collection: PlaybackCollection(kind: .artistTopSongs, catalogID: artist.id.rawValue, title: artist.name),
+            tracks: collapsed.map(Track.song),
+            artworkURLTemplate: artworkURL(artist.artwork)
+        )
     }
 
     static func songs(ids: [String]) async throws -> [String: Track] {

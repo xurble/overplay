@@ -11,6 +11,8 @@ final class FakePlaybackCatalog {
     var failure: Error?
     private(set) var requests: [(PlaybackCollection.Request, String)] = []
     private(set) var songRequests: [[String]] = []
+    /// Lookups by album or artist ID, as a search found them (`SIRI-003`).
+    private(set) var idRequests: [(PlaybackCollection.Request, String)] = []
 
     var catalog: PlaybackCatalog {
         PlaybackCatalog(
@@ -25,6 +27,12 @@ final class FakePlaybackCatalog {
                 if let failure { throw failure }
                 let tracks = contents.values.flatMap(\.tracks)
                 return Dictionary(tracks.map { ($0.id.rawValue, $0) }, uniquingKeysWith: { first, _ in first })
+            },
+            collectionByID: { [self] request, id in
+                idRequests.append((request, id))
+                if let failure { throw failure }
+                guard let contents = contents[request] else { throw PlaybackCollectionError.albumNotFound }
+                return contents
             }
         )
     }

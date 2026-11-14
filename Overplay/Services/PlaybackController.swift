@@ -1715,12 +1715,42 @@ final class PlaybackController {
             return false
         }
         activityLog.record(.playbackSelectionPath, detail: "playCollection request=\(request.rawValue)")
-        // Nothing is replaced until the lookup succeeds, so a start in
-        // progress is not disturbed by one that fails.
+        let catalog = playbackCatalog
+        return await startLookedUpCollection(request, shuffle: false) { try await catalog.collection(request, songID) }
+    }
+
+    /// Plays something an Apple Music search found (`SIRI-003`): a song on
+    /// its own, as search's Play Now does, or an album or artist as Play
+    /// Album and Play Artist do, shuffled when asked. Nothing changes when
+    /// the lookup fails. Returns whether playback started.
+    @discardableResult
+    func playCatalogItem(_ item: CatalogPlayItem, shuffle: Bool = false, context: ModelContext) async -> Bool {
+        switch item {
+        case .song(let song):
+            return await playCollection(PlaybackCollection(kind: .searchSong, catalogID: song.catalogID, title: song.title),
+                                        songs: [song], startingAt: song.catalogID, recordsRecent: false, context: context)
+        case .album(let id, _), .artist(let id, _):
+            adopt(context)
+            let startToken = beginStart()
+            defer { endStart(startToken) }
+            let request: PlaybackCollection.Request = if case .album = item { .album } else { .artist }
+            activityLog.record(.playbackSelectionPath, detail: "playCatalogItem request=\(request.rawValue) id=\(id)")
+            let catalog = playbackCatalog
+            return await startLookedUpCollection(request, shuffle: shuffle) { try await catalog.collectionByID(request, id) }
+        }
+    }
+
+    /// Looks a collection up, then starts it through the shared start path
+    /// and records it in Recents. Nothing is replaced until the lookup
+    /// succeeds, so a start in progress is not disturbed by one that fails.
+    private func startLookedUpCollection(
+        _ request: PlaybackCollection.Request, shuffle: Bool,
+        lookup: () async throws -> PlaybackCollectionContents
+    ) async -> Bool {
         let generationBeforeLookup = startGeneration
         let contents: PlaybackCollectionContents
         do {
-            contents = try await playbackCatalog.collection(request, songID)
+            contents = try await lookup()
         } catch {
             if startGeneration == generationBeforeLookup { statusMessage = Self.collectionFailureMessage(request, error) }
             return false
@@ -1732,7 +1762,7 @@ final class PlaybackController {
             statusMessage = Self.collectionFailureMessage(request, PlaybackCollectionError.empty)
             return false
         }
-        let started = await startCollection(contents.collection, playable: playable, startIndex: 0, shuffle: false)
+        let started = await startCollection(contents.collection, playable: playable, startIndex: 0, shuffle: shuffle)
         if started {
             let songs = playable.map { Self.savedSong($0.0) }
             recordRecent(contents.collection, songs: songs,

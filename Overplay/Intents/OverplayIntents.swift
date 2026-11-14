@@ -12,7 +12,7 @@ nonisolated struct VoiceActionError: Error, CustomLocalizedStringResourceConvert
 }
 
 @MainActor
-private enum VoiceIntentRunner {
+enum VoiceIntentRunner {
     static func play(_ target: VoiceActions.Playlist) async throws {
         let runtime = AppRuntime.shared
         guard let context = await runtime.prepareForBackgroundAction() else {
@@ -39,6 +39,17 @@ private enum VoiceIntentRunner {
             throw VoiceActionError(message: runtime.backgroundActionRefusal)
         }
         if let failure = await VoiceActions.diveDeeper(request, controller: runtime.playbackController, context: context) {
+            throw VoiceActionError(message: failure)
+        }
+    }
+
+    static func playCatalogItem(_ item: CatalogPlayItem, shuffle: Bool) async throws {
+        let runtime = AppRuntime.shared
+        guard let context = await runtime.prepareForBackgroundAction() else {
+            throw VoiceActionError(message: runtime.backgroundActionRefusal)
+        }
+        if let failure = await VoiceActions.playCatalogItem(item, shuffle: shuffle,
+                                                            controller: runtime.playbackController, context: context) {
             throw VoiceActionError(message: failure)
         }
     }

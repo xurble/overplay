@@ -167,6 +167,18 @@ enum VoiceActions {
             ?? "Overplay couldn't start this \(request.rawValue)."
     }
 
+    /// Something an Apple Music search found (`SIRI-003`). Nil once it
+    /// plays, as `play`.
+    static func playCatalogItem(
+        _ item: CatalogPlayItem, shuffle: Bool, controller: PlaybackController, context: ModelContext
+    ) async -> String? {
+        let started = await MusicKitActivityLog.shared.withOrigin(.siri) {
+            await controller.playCatalogItem(item, shuffle: shuffle, context: context)
+        }
+        if started { return nil }
+        return controller.playbackFailure?.message ?? controller.statusMessage ?? "Overplay couldn't start that."
+    }
+
     /// What's playing and where it lives. It changes nothing; the counts are
     /// Overplay's own and best-effort.
     static func describeCurrent(controller: PlaybackController, context: ModelContext) -> String {
