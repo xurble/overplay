@@ -103,7 +103,7 @@ nonisolated struct OverplayShortcuts: AppShortcutsProvider {
             "Play \(.applicationName)",
             "Shuffle \(.applicationName)",
             "Play my One True Playlist in \(.applicationName)",
-            // On iOS 27 Siri gives "Play/Shuffle Overplay" to Apple Music, so
+            // On iOS 27 Siri never runs this for "Play/Shuffle Overplay", so
             // these avoid both words. "Start Overplaying" matches the first
             // through the alternative app name in Info.plist.
             "Start \(.applicationName)",
