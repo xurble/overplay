@@ -1363,7 +1363,9 @@ Recents by voice come with Fuller Siri.
 | Undo | "Undo that in Overplay", "Overplay undo that", "Undo in Overplay" | Undo (`MUT-003`) |
 
 - By voice, "Overplay" alone means the One True Playlist.
-- "Overplaying" is an alternative app name (`INAlternativeAppNames`), so
+- "Overplaying" and "Over Play" are alternative app names (`INAlternativeAppNames`),
+  real words Siri hears more reliably than "Overplay" (often misheard, e.g.
+  "Oakley"), so
   "Start Overplaying" matches "Start Overplay". On iOS 27, Siri does not run
   the shortcut for "Play Overplay" (it opened Overplay) or "Shuffle Overplay"
   (it opened Apple Music and played something other than the One True
