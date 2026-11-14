@@ -122,13 +122,55 @@ struct AppleMusicSearchPlaybackTests {
         )
         AppleMusicCatalogSearch.request = { term in terms.append(term); return results }
 
-        let songs = try await AppleMusicCatalogSearch.search("Radiohead").songs
-        let albums = try await AppleMusicCatalogSearch.search("radiohead ").albums
+        let songs = try await AppleMusicCatalogSearch.search("Radio").songs
+        let albums = try await AppleMusicCatalogSearch.search("radio ").albums
         let byID = try await AppleMusicCatalogSearch.artists(ids: ["r1"])
 
-        #expect(terms == ["Radiohead"])
+        #expect(terms == ["Radio"])
         #expect(songs.map(\.id) == ["s1"] && albums.map(\.id) == ["a1"])
         #expect(byID.map(\.name) == ["Radiohead"])
+    }
+
+    // MARK: - One kind offered to Siri
+
+    private let publicEnemy = AppleMusicCatalogSearch.Results(
+        songs: [.init(id: "s1", title: "Fight the Power", artistName: "Public Enemy")],
+        albums: [.init(id: "a1", title: "Fear of a Black Planet", artistName: "Public Enemy")],
+        artists: [.init(id: "r1", name: "Public Enemy"), .init(id: "r2", name: "Public Enemy Tribute")],
+        topKind: .song
+    )
+
+    /// "Play Public Enemy in Overplay" played one song (2026-11-14): an
+    /// exact artist name now offers only that artist.
+    @Test func anExactArtistNameOffersOnlyThatArtist() {
+        let focused = AppleMusicCatalogSearch.focused(publicEnemy, on: "public enemy")
+
+        #expect(focused.artists.map(\.id) == ["r1"])
+        #expect(focused.songs.isEmpty && focused.albums.isEmpty)
+    }
+
+    @Test func anExactAlbumOrSongTitleOffersOnlyThat() {
+        let album = AppleMusicCatalogSearch.focused(publicEnemy, on: "Fear of a Black Planet")
+        let song = AppleMusicCatalogSearch.focused(publicEnemy, on: "Fight the Power by Public Enemy")
+
+        #expect(album.albums.map(\.id) == ["a1"] && album.songs.isEmpty && album.artists.isEmpty)
+        #expect(song.songs.map(\.id) == ["s1"] && song.albums.isEmpty && song.artists.isEmpty)
+    }
+
+    @Test func withoutAnExactMatchAppleMusicsTopKindIsOffered() {
+        var results = publicEnemy
+        results.topKind = .album
+
+        let focused = AppleMusicCatalogSearch.focused(results, on: "black planet")
+
+        #expect(focused.albums.map(\.id) == ["a1"] && focused.songs.isEmpty && focused.artists.isEmpty)
+    }
+
+    @Test func withNoExactMatchOrTopKindEverythingIsOffered() {
+        var results = publicEnemy
+        results.topKind = nil
+
+        #expect(AppleMusicCatalogSearch.focused(results, on: "enemy power") == results)
     }
 
     @Test func anOldSearchIsAskedAgain() async throws {

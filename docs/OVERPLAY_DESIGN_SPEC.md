@@ -1424,8 +1424,13 @@ Radiohead in Overplay", "Play OK Computer in Overplay".
   App Shortcut, so the ten above are unchanged.
 - **Search.** Siri passes what was said to each entity's string query. One
   Apple Music catalogue search (songs, albums and artists, five of each)
-  answers all three, kept for a minute; Siri chooses among them. Lookups by ID
-  read what a search returned before asking Apple Music.
+  answers all three, kept for a minute. Lookups by ID read what a search
+  returned before asking Apple Music.
+- **One kind is offered,** because Siri picks freely among what it is given
+  ("Play Public Enemy" played one song, 2026-11-14): an exact artist name
+  offers only that artist; otherwise an exact album title, then an exact song
+  title (alone or "… by *artist*"), offers only that; otherwise the kind of
+  Apple Music's top result; otherwise everything found.
 - **Playing,** through the shared `playCatalogItem`:
   - a **song** plays on its own, as search's Play Now does, and is not a
     Recent Deep Dive;
