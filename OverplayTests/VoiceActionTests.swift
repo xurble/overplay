@@ -396,7 +396,190 @@ struct VoiceActionTests {
         #expect(try fixture.item(0).playlistID == bucket.id)
     }
 
+    // MARK: - Restore by voice
+
+    @Test func restoringTheRetiredCurrentSongByVoiceMovesItToTheInboxWithoutTouchingPlayback() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        stubAppleMusic(fixture)
+        try keep(0, in: fixture)
+        try fixture.controller.retireTrack(try fixture.item(0), playlist: fixture.playlist, message: "Retired",
+                                           context: fixture.context)
+        let bucket = try PlaylistRepository.triageBucket(in: fixture.context)
+        await fixture.controller.playPlaylist(bucket, startingAt: fixture.tracks[0], scope: .retired,
+                                              settings: fixture.settings, context: fixture.context)
+        let commands = fixture.player.commands
+
+        let outcome = await VoiceActions.curate(.restore, controller: fixture.controller, context: fixture.context)
+
+        #expect(outcome == .moved(title: "Song 0", to: .triage))
+        let item = try fixture.item(0)
+        #expect(item.evictedAt == nil && item.playlistID == bucket.id)
+        #expect(fixture.player.commands == commands)
+    }
+
+    /// The app and CarPlay offer Restore only on a retired song; Siri can ask
+    /// for any, and the shared action refuses the rest.
+    @Test func restoringASongThatIsNotRetiredChangesNothing() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        await play(fixture, startingAt: 0)
+
+        let outcome = await VoiceActions.curate(.restore, controller: fixture.controller, context: fixture.context)
+
+        #expect(outcome == .unavailable("Song 0 isn't retired."))
+        let item = try fixture.item(0)
+        #expect(item.playlistID == fixture.playlist.id && item.evictedAt == nil)
+    }
+
+    @Test func restoringWithNothingPlayingSaysSo() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+
+        let outcome = await VoiceActions.curate(.restore, controller: fixture.controller, context: fixture.context)
+
+        #expect(outcome == .unavailable("Nothing from Overplay is playing."))
+    }
+
+    // MARK: - Add by voice
+
+    @Test func addingTheUntrackedAlbumSongByVoiceAddsItToTheInbox() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        try await playUntrackedAlbumSong(fixture)
+        let commands = fixture.player.commands
+
+        let outcome = await VoiceActions.curate(.add, controller: fixture.controller, context: fixture.context)
+
+        #expect(outcome == .added(title: "Album Song 1"))
+        #expect(outcome.message == "Added Album Song 1 to the Inbox.")
+        #expect(!fixture.controller.canAddCurrentToOverplay)
+        let trackID = try #require(fixture.controller.currentMember?.trackID)
+        let bucket = try PlaylistRepository.triageBucket(in: fixture.context)
+        #expect(try PlaylistItemRepository.item(trackID: trackID, in: fixture.context)?.playlistID == bucket.id)
+        #expect(fixture.player.commands == commands)
+    }
+
+    @Test func addingASongOverplayAlreadyTracksSaysSo() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        await play(fixture, startingAt: 0)
+
+        let outcome = await VoiceActions.curate(.add, controller: fixture.controller, context: fixture.context)
+
+        #expect(outcome == .unavailable("Song 0 is already in Overplay."))
+    }
+
+    @Test func addingWithNothingPlayingSaysSo() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+
+        let outcome = await VoiceActions.curate(.add, controller: fixture.controller, context: fixture.context)
+
+        #expect(outcome == .unavailable("Nothing is playing."))
+    }
+
+    // MARK: - Play this album or artist by voice (`PLAY-018`)
+
+    @Test func playingThisAlbumByVoiceStartsItThroughTheSharedAction() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        let catalog = try albumCatalog(fixture)
+        await play(fixture, startingAt: 0)
+
+        let failure = await VoiceActions.diveDeeper(.album, controller: fixture.controller, context: fixture.context)
+
+        #expect(failure == nil)
+        #expect(catalog.requests.map(\.0) == [.album])
+        #expect(fixture.controller.currentTrack?.title == "Song 0")
+        #expect(fixture.controller.canAddCurrentToOverplay == false)
+        #expect(fixture.player.submitCount == 2)
+    }
+
+    @Test func playingThisAlbumWithNothingPlayingSaysSoAndLooksNothingUp() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        let catalog = try albumCatalog(fixture)
+
+        let failure = await VoiceActions.diveDeeper(.album, controller: fixture.controller, context: fixture.context)
+
+        #expect(failure == "Nothing is playing.")
+        #expect(catalog.requests.isEmpty)
+    }
+
+    @Test func aFailedAlbumLookupByVoiceSaysWhyAndKeepsPlaying() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        let catalog = try albumCatalog(fixture)
+        catalog.failure = URLError(.notConnectedToInternet)
+        await play(fixture, startingAt: 1)
+
+        let failure = await VoiceActions.diveDeeper(.album, controller: fixture.controller, context: fixture.context)
+
+        #expect(failure != nil)
+        #expect(fixture.controller.currentTrack?.title == "Song 1")
+        #expect(fixture.player.submitCount == 1)
+    }
+
+    // MARK: - What's this (`SIRI-001`)
+
+    @Test func whatsThisSaysTheSongWhereItIsAndItsCounts() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        try fixture.item(0).playthroughCount = 3
+        try fixture.item(0).skipCount = 1
+        try fixture.context.save()
+        await play(fixture, startingAt: 0)
+        let commands = fixture.player.commands
+
+        let said = VoiceActions.describeCurrent(controller: fixture.controller, context: fixture.context)
+
+        #expect(said == "This is Song 0 by Artist 0. It's in your One True Playlist. "
+            + "You've played it 3 times and skipped it once.")
+        #expect(fixture.player.commands == commands)
+    }
+
+    @Test func whatsThisNamesTheInboxAndRetired() async throws {
+        let fixture = try PlaybackFixture(role: .triageBucket); defer { fixture.cleanUp() }
+        await play(fixture, startingAt: 0)
+        #expect(VoiceActions.describeCurrent(controller: fixture.controller, context: fixture.context)
+            == "This is Song 0 by Artist 0. It's in the Inbox. You haven't played or skipped it yet.")
+
+        try fixture.item(1).evictedAt = .now
+        try fixture.context.save()
+        await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[1], scope: .retired,
+                                              settings: fixture.settings, context: fixture.context)
+        #expect(VoiceActions.describeCurrent(controller: fixture.controller, context: fixture.context)
+            == "This is Song 1 by Artist 1. It's retired. You haven't played or skipped it yet.")
+    }
+
+    @Test func whatsThisSaysWhenASongIsNotInOverplayOrNothingPlays() async throws {
+        let fixture = try PlaybackFixture(); defer { fixture.cleanUp() }
+        #expect(VoiceActions.describeCurrent(controller: fixture.controller, context: fixture.context)
+            == "Nothing is playing.")
+
+        try await playUntrackedAlbumSong(fixture)
+
+        #expect(VoiceActions.describeCurrent(controller: fixture.controller, context: fixture.context)
+            == "This is Album Song 1 by Artist 0. It isn't in Overplay.")
+    }
+
+    @Test func countsAreSpokenNaturally() {
+        #expect(VoiceActions.countsSentence(plays: 1, skips: 0) == "You've played it once and never skipped it.")
+        #expect(VoiceActions.countsSentence(plays: 0, skips: 2)
+            == "You've skipped it twice and never played it through.")
+        #expect(VoiceActions.countsSentence(plays: 2, skips: 5) == "You've played it twice and skipped it 5 times.")
+    }
+
     // MARK: - Helpers
+
+    @discardableResult
+    private func albumCatalog(_ fixture: PlaybackFixture) throws -> FakePlaybackCatalog {
+        let catalog = FakePlaybackCatalog()
+        catalog.contents[.album] = try FakePlaybackCatalog.album()
+        fixture.controller.playbackCatalog = catalog.catalog
+        fixture.controller.collectionTrackCache = DevicePlaybackCache(directory: nil)
+        return catalog
+    }
+
+    /// Song 0's album playing, moved on to a song Overplay does not track.
+    private func playUntrackedAlbumSong(_ fixture: PlaybackFixture) async throws {
+        try albumCatalog(fixture)
+        await play(fixture, startingAt: 0)
+        await fixture.controller.playCurrentCollection(.album, context: fixture.context)
+        await fixture.player.externallyAdvance()
+        #expect(fixture.controller.canAddCurrentToOverplay)
+    }
 
     private func play(_ fixture: PlaybackFixture, startingAt index: Int) async {
         await fixture.controller.playPlaylist(fixture.playlist, startingAt: fixture.tracks[index],

@@ -15,6 +15,11 @@ enum VoiceActions {
         case promote
         case retire
         case undo
+        /// A retired song back to the Inbox.
+        case restore
+        /// A song Overplay does not track, playing from an album or artist,
+        /// to the Inbox.
+        case add
     }
 
     static let notReadyMessage = "Overplay is still restoring your library. Open Overplay to finish."
@@ -112,7 +117,87 @@ enum VoiceActions {
             case .promote: await controller.promoteCurrent(settings: settings, context: context)
             case .retire: await controller.evictCurrent(settings: settings, context: context)
             case .undo: await controller.undoLastCuration(context: context)
+            case .restore: restore(controller: controller, context: context)
+            case .add: await add(controller: controller, context: context)
             }
+        }
+    }
+
+    /// Restore, as the app's and CarPlay's button. The controller decides;
+    /// this only words the result.
+    private static func restore(controller: PlaybackController, context: ModelContext) -> CurationOutcome {
+        guard controller.displayedPlaylistItem(context: context) != nil else {
+            return .unavailable(controller.nothingToCurateMessage)
+        }
+        let title = controller.currentTrack?.title ?? "This song"
+        guard controller.restoreCurrent(context: context) else {
+            return .unavailable(controller.statusMessage ?? "Overplay couldn't restore \(title).")
+        }
+        return .moved(title: title, to: .triage)
+    }
+
+    /// Add to the Inbox, as the app's and CarPlay's button. Success is read
+    /// as CarPlay reads it: the song is no longer one Overplay could add.
+    private static func add(controller: PlaybackController, context: ModelContext) async -> CurationOutcome {
+        guard let title = controller.currentTrack?.title else { return .unavailable("Nothing is playing.") }
+        guard controller.canAddCurrentToOverplay else {
+            if controller.displayedPlaylistItem(context: context) != nil {
+                return .unavailable("\(title) is already in Overplay.")
+            }
+            return .unavailable("Overplay can add a song only while it plays an album or artist.")
+        }
+        await controller.addCurrentToTriage(context: context)
+        guard !controller.canAddCurrentToOverplay else {
+            return .failed(controller.statusMessage ?? "Overplay couldn't add \(title).")
+        }
+        return .added(title: title)
+    }
+
+    /// Play Album or Play Artist for the current song (`PLAY-018`), as Now
+    /// Playing's Dive Deeper. Nil once it plays, as `play`.
+    static func diveDeeper(
+        _ request: PlaybackCollection.Request, controller: PlaybackController, context: ModelContext
+    ) async -> String? {
+        guard controller.currentTrack != nil else { return "Nothing is playing." }
+        let started = await MusicKitActivityLog.shared.withOrigin(.siri) {
+            await controller.playCurrentCollection(request, context: context)
+        }
+        if started { return nil }
+        return controller.playbackFailure?.message ?? controller.statusMessage
+            ?? "Overplay couldn't start this \(request.rawValue)."
+    }
+
+    /// What's playing and where it lives. It changes nothing; the counts are
+    /// Overplay's own and best-effort.
+    static func describeCurrent(controller: PlaybackController, context: ModelContext) -> String {
+        guard let track = controller.currentTrack else { return "Nothing is playing." }
+        let song = "This is \(track.title) by \(track.artistName)."
+        guard let item = controller.displayedPlaylistItem(context: context) else {
+            return "\(song) It isn't in Overplay."
+        }
+        let place: String = if item.evictedAt != nil {
+            "It's retired."
+        } else if controller.currentPlaylistRole(context: context) == .oneTruePlaylist {
+            "It's in your One True Playlist."
+        } else {
+            "It's in the Inbox."
+        }
+        return "\(song) \(place) \(countsSentence(plays: item.playthroughCount, skips: item.skipCount))"
+    }
+
+    static func countsSentence(plays: Int, skips: Int) -> String {
+        func times(_ count: Int) -> String {
+            switch count {
+            case 1: "once"
+            case 2: "twice"
+            default: "\(count) times"
+            }
+        }
+        switch (plays, skips) {
+        case (0, 0): return "You haven't played or skipped it yet."
+        case (_, 0): return "You've played it \(times(plays)) and never skipped it."
+        case (0, _): return "You've skipped it \(times(skips)) and never played it through."
+        default: return "You've played it \(times(plays)) and skipped it \(times(skips))."
         }
     }
 }

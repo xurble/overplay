@@ -37,6 +37,8 @@ struct PlaybackFailure: Equatable, Sendable {
 enum CurationOutcome: Equatable, Sendable {
     /// The song moved; `to` is where it is now.
     case moved(title: String, to: CurationUndoRecord.Location)
+    /// A song Overplay did not track was added to the Inbox.
+    case added(title: String)
     /// Nothing changed, and why.
     case unavailable(String)
     case failed(String)
@@ -46,6 +48,7 @@ enum CurationOutcome: Equatable, Sendable {
         case .moved(let title, .oneTruePlaylist): "Moved \(title) to your One True Playlist."
         case .moved(let title, .triage): "Moved \(title) to the Inbox."
         case .moved(let title, .retired): "Retired \(title)."
+        case .added(let title): "Added \(title) to the Inbox."
         case .unavailable(let message), .failed(let message): message
         }
     }
@@ -2419,7 +2422,7 @@ final class PlaybackController {
     }
 
     /// Why there is no current song to promote or retire.
-    private var nothingToCurateMessage: String {
+    var nothingToCurateMessage: String {
         if let currentTrack { "\(currentTrack.title) isn't in Overplay." } else { "Nothing from Overplay is playing." }
     }
 
@@ -2526,6 +2529,13 @@ final class PlaybackController {
         adopt(context)
         guard let item = displayedPlaylistItem(context: context) else {
             statusMessage = "Choose a retired track to restore."
+            return false
+        }
+        // Only a retired song is restored. The app and CarPlay offer Restore
+        // only for one; Siri can ask for any song, and moving a One True
+        // Playlist song to the Inbox is not what Restore means.
+        guard item.evictedAt != nil else {
+            statusMessage = "\(Self.title(of: item, in: context)) isn't retired."
             return false
         }
         do {

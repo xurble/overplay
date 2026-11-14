@@ -11,6 +11,11 @@ struct SiriShortcutsSectionView: View {
         ("Promote this in Overplay", "arrow.up.circle"),
         ("Retire this in Overplay", "archivebox"),
         ("Undo that in Overplay", "arrow.uturn.backward"),
+        ("Restore this in Overplay", "arrow.uturn.up"),
+        ("Add this to Overplay", "plus.circle"),
+        ("Dive into this album in Overplay", "square.stack"),
+        ("Dive into this artist in Overplay", "music.mic"),
+        ("What's this in Overplay", "info.circle"),
     ]
 
     var body: some View {

@@ -32,6 +32,24 @@ private enum VoiceIntentRunner {
         if case .failed(let message) = outcome { throw VoiceActionError(message: message) }
         return outcome.message
     }
+
+    static func diveDeeper(_ request: PlaybackCollection.Request) async throws {
+        let runtime = AppRuntime.shared
+        guard let context = await runtime.prepareForBackgroundAction() else {
+            throw VoiceActionError(message: runtime.backgroundActionRefusal)
+        }
+        if let failure = await VoiceActions.diveDeeper(request, controller: runtime.playbackController, context: context) {
+            throw VoiceActionError(message: failure)
+        }
+    }
+
+    static func describeCurrent() async throws -> String {
+        let runtime = AppRuntime.shared
+        guard let context = await runtime.prepareForBackgroundAction() else {
+            throw VoiceActionError(message: runtime.backgroundActionRefusal)
+        }
+        return VoiceActions.describeCurrent(controller: runtime.playbackController, context: context)
+    }
 }
 
 nonisolated struct PlayOneTruePlaylistIntent: AudioPlaybackIntent {
@@ -96,7 +114,70 @@ nonisolated struct UndoLastCurationIntent: AppIntent {
     }
 }
 
+nonisolated struct RestoreCurrentTrackIntent: AppIntent {
+    static let title: LocalizedStringResource = "Restore This Song"
+    static let description = IntentDescription("Moves the retired song that is playing back to the Inbox.")
+    static let supportedModes: IntentModes = .background
+    static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        .result(dialog: "\(try await VoiceIntentRunner.curate(.restore))")
+    }
+}
+
+nonisolated struct AddCurrentTrackIntent: AppIntent {
+    static let title: LocalizedStringResource = "Add This Song"
+    static let description = IntentDescription("Adds the song playing from an album or artist to the Inbox.")
+    static let supportedModes: IntentModes = .background
+    static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        .result(dialog: "\(try await VoiceIntentRunner.curate(.add))")
+    }
+}
+
+nonisolated struct PlayCurrentAlbumIntent: AudioPlaybackIntent {
+    static let title: LocalizedStringResource = "Play This Album"
+    static let description = IntentDescription("Plays the album of the song that is playing, from its first track.")
+    static let supportedModes: IntentModes = .background
+    static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        try await VoiceIntentRunner.diveDeeper(.album)
+        return .result()
+    }
+}
+
+nonisolated struct PlayCurrentArtistIntent: AudioPlaybackIntent {
+    static let title: LocalizedStringResource = "Play This Artist"
+    static let description = IntentDescription("Plays the Essentials or top songs of the artist of the song that is playing.")
+    static let supportedModes: IntentModes = .background
+    static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        try await VoiceIntentRunner.diveDeeper(.artist)
+        return .result()
+    }
+}
+
+nonisolated struct DescribeCurrentTrackIntent: AppIntent {
+    static let title: LocalizedStringResource = "What's This Song"
+    static let description = IntentDescription("Says the song that is playing, where it is in Overplay, and how often you've played and skipped it.")
+    static let supportedModes: IntentModes = .background
+    static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        .result(dialog: "\(try await VoiceIntentRunner.describeCurrent())")
+    }
+}
+
 /// Every phrase must name the app; that is Apple's rule for App Shortcuts.
+/// Apple allows 10 App Shortcuts; these are all 10.
 nonisolated struct OverplayShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: PlayOneTruePlaylistIntent(), phrases: [
@@ -138,5 +219,33 @@ nonisolated struct OverplayShortcuts: AppShortcutsProvider {
             "\(.applicationName) undo that",
             "Undo in \(.applicationName)",
         ], shortTitle: "Undo Promote or Retire", systemImageName: "arrow.uturn.backward")
+        AppShortcut(intent: RestoreCurrentTrackIntent(), phrases: [
+            "Restore this in \(.applicationName)",
+            "\(.applicationName) restore this",
+            "Restore this song in \(.applicationName)",
+        ], shortTitle: "Restore This Song", systemImageName: "arrow.uturn.up")
+        AppShortcut(intent: AddCurrentTrackIntent(), phrases: [
+            "Add this to \(.applicationName)",
+            "\(.applicationName) add this",
+            "Add this song to \(.applicationName)",
+            "Save this to \(.applicationName)",
+        ], shortTitle: "Add This Song", systemImageName: "plus.circle")
+        // No "Play": iOS 27 Siri gives "Play …" requests to Apple Music.
+        AppShortcut(intent: PlayCurrentAlbumIntent(), phrases: [
+            "Dive into this album in \(.applicationName)",
+            "Start this album in \(.applicationName)",
+            "\(.applicationName) this album",
+        ], shortTitle: "Play This Album", systemImageName: "square.stack")
+        AppShortcut(intent: PlayCurrentArtistIntent(), phrases: [
+            "Dive into this artist in \(.applicationName)",
+            "Start this artist in \(.applicationName)",
+            "\(.applicationName) this artist",
+        ], shortTitle: "Play This Artist", systemImageName: "music.mic")
+        AppShortcut(intent: DescribeCurrentTrackIntent(), phrases: [
+            "What's this in \(.applicationName)",
+            "What is this in \(.applicationName)",
+            "\(.applicationName) what's this",
+            "What's playing in \(.applicationName)",
+        ], shortTitle: "What's This Song", systemImageName: "info.circle")
     }
 }
