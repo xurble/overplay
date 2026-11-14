@@ -7,7 +7,7 @@ import SwiftUI
 struct SiriShortcutsSectionView: View {
     static let phrases: [(phrase: String, systemImage: String)] = [
         ("Start Overplaying", "play.fill"),
-        ("Play Overplay Inbox", "tray.full"),
+        ("Start Overplay Inbox", "tray.full"),
         ("Promote this in Overplay", "arrow.up.circle"),
         ("Retire this in Overplay", "archivebox"),
         ("Undo that in Overplay", "arrow.uturn.backward"),

@@ -112,6 +112,12 @@ nonisolated struct OverplayShortcuts: AppShortcutsProvider {
             "Play my One True Playlist in \(.applicationName)",
         ], shortTitle: "Play One True Playlist", systemImageName: "play.fill")
         AppShortcut(intent: PlayTriageIntent(), phrases: [
+            // Play-free first, as above. "Start Overplaying the Inbox" matches
+            // the fourth through the alternative app name.
+            "Start \(.applicationName) Inbox",
+            "Start the Inbox in \(.applicationName)",
+            "Put on the Inbox in \(.applicationName)",
+            "Start \(.applicationName) the Inbox",
             "Play \(.applicationName) Inbox",
             "Play the Inbox on \(.applicationName)",
             "Play the Inbox in \(.applicationName)",
