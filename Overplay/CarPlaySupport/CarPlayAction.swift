@@ -198,7 +198,7 @@ enum CarPlayAction {
     /// the car, so it reports the reason Siri speaks.
     private static func curationFollowUp(_ outcome: CurationOutcome) -> CarPlayActionFollowUp {
         switch outcome {
-        case .moved: .nothing
+        case .moved, .added: .nothing
         case .unavailable, .failed: .trackActionFailed(outcome.message)
         }
     }

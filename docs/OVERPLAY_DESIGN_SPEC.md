@@ -116,7 +116,7 @@ Music's global play count or skip count.
 | `MFY-001` | The dashboard's Made For You section lists Apple Music's personal mixes and Replay from the personal recommendations (Friends Mix is not offered by any public API), played like a deep dive and never added to Recent Deep Dives. Mixes are offered as Inbox sources in setup and Inbox Sources, linked by catalog ID and read live from the catalog at each sync; a library copy would stop updating. | `Overplay/Services/MadeForYouLibrary.swift`, `Overplay/Services/AppleMusicPlaylistSourceSync.swift`, `OverplayTests/MadeForYouTests.swift` |
 | `LIB-001` | The Library section browses the user's Apple Music library (Playlists, Albums, Artists, Songs; CarPlay has all but Songs) from the web library, so Overplay's tracks match and show their counts on every device. A collection plays through the shared collection start with this device's own library copies; Songs plays a 100-song window; nothing from Library is added to Recent Deep Dives. Lists are cached per device, never synced. | `Overplay/Services/LibraryBrowser.swift`, `Overplay/Services/LibraryCache.swift`, `Overplay/Views/Library/` |
 | `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing; Play Album and Play Artist add one action list above it (`PLAY-018`), and Recents and each Library category add one level under the root (`PLAY-019`, `LIB-001`). | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
-| `SIRI-001` | Siri, Shortcuts, Spotlight and the Action button offer Play One True Playlist, Play the Inbox, Promote, Retire and Undo, each a thin adapter over the shared action the app and CarPlay use. They run in the background with the phone locked, speak the result of Promote, Retire and Undo, and speak only failures for Play. | `Overplay/Intents/OverplayIntents.swift`, `Overplay/Intents/VoiceActions.swift`, `OverplayTests/VoiceActionTests.swift` |
+| `SIRI-001` | Siri, Shortcuts, Spotlight and the Action button offer Play One True Playlist, Play the Inbox, Promote, Retire, Undo, Restore, Add, Play This Album, Play This Artist and What's This, each a thin adapter over the shared action the app and CarPlay use. They run in the background with the phone locked, speak the result of Promote, Retire, Undo, Restore and Add, say what is playing for What's This, and speak only failures for the play actions. | `Overplay/Intents/OverplayIntents.swift`, `Overplay/Intents/VoiceActions.swift`, `OverplayTests/VoiceActionTests.swift` |
 | `SIRI-002` | An intent that launches Overplay with no window starts the same startup as CarPlay and waits up to 8 seconds for a restoration under way. Apple Music not authorised and setup unfinished cannot become ready while it waits: it stops at once and says which. If the library is not ready, the intent says so and changes nothing. | `Overplay/App/AppRuntime.swift` |
 | `TRACK-001` | Skips require witnessed listening and are never reconstructed from stale or suspended spans. Playthroughs are position-based and can be recovered only from explicit proof. | `Overplay/UseCases/PlaybackSessionEvaluationService.swift`, `Overplay/Services/PlaybackReconciliationService.swift` |
 | `HISTORY-001` | History is paged. Debug builds add an event filter and the suspended-playback recovery summary above the events; release builds show only the events. Ignored-skip events expire after 30 days and other events after 365 days, with bounded cleanup. History is never the source of counts. | `Overplay/Views/HistoryView.swift`, `Overplay/Services/HistoryRetentionService.swift` |
@@ -1356,13 +1356,31 @@ Recents by voice come with Fuller Siri.
 
 | Action | Phrases | Shared action |
 | --- | --- | --- |
-| Play the One True Playlist | "Play Overplay", "Shuffle Overplay", "Play my One True Playlist in Overplay" | Shuffle and Play (`PLAY-020`) |
-| Play the Inbox | "Play Overplay Inbox", "Play the Inbox on Overplay", "Play the Inbox in Overplay", "Shuffle Overplay Inbox" | Shuffle and Play of the bucket's active scope |
+| Play the One True Playlist | "Start Overplaying", "Start Overplay", "Put on Overplay", "Overplay my music", "Play Overplay", "Shuffle Overplay", "Play my One True Playlist in Overplay" | Shuffle and Play (`PLAY-020`) |
+| Play the Inbox | "Start Overplay Inbox", "Start the Inbox in Overplay", "Put on the Inbox in Overplay", "Start Overplaying the Inbox", "Play Overplay Inbox", "Play the Inbox on Overplay", "Play the Inbox in Overplay", "Shuffle Overplay Inbox" | Shuffle and Play of the bucket's active scope |
 | Promote the current song | "Promote this in Overplay", "Overplay promote this", "Promote this song in Overplay" | Promote current, as CarPlay's button |
 | Retire the current song | "Retire this in Overplay", "Overplay retire this", "Retire this song in Overplay" | Retire current, as CarPlay's button |
 | Undo | "Undo that in Overplay", "Overplay undo that", "Undo in Overplay" | Undo (`MUT-003`) |
+| Restore the current song | "Restore this in Overplay", "Overplay restore this", "Restore this song in Overplay" | Restore current, as CarPlay's button |
+| Add the current song | "Add this to Overplay", "Overplay add this", "Add this song to Overplay", "Save this to Overplay" | Add to the Inbox, as CarPlay's button (`PLAY-018`) |
+| Play this album | "Dive into this album in Overplay", "Start this album in Overplay", "Overplay this album" | Play Album (`PLAY-018`) |
+| Play this artist | "Dive into this artist in Overplay", "Start this artist in Overplay", "Overplay this artist" | Play Artist (`PLAY-018`) |
+| What's this | "What's this in Overplay", "What is this in Overplay", "Overplay what's this", "What's playing in Overplay" | Reads the current song; changes nothing |
 
 - By voice, "Overplay" alone means the One True Playlist.
+- "Overplaying" and "Over Play" are alternative app names (`INAlternativeAppNames`),
+  real words Siri hears more reliably than "Overplay" (often misheard, e.g.
+  "Oakley"), so
+  "Start Overplaying" matches "Start Overplay". On iOS 27, Siri does not run
+  the shortcut for "Play Overplay" (it opened Overplay) or "Shuffle Overplay"
+  (it opened Apple Music and played something other than the One True
+  Playlist) (seen 2026-11-14). The "Start", "Put on" and "my music" phrases
+  avoid those words and all worked by voice on iOS 27 the same day; "Start
+  Overplay" is the primary phrase, shown in Siri's tip and on the Shortcuts
+  tile.
+- Siri matches phrases exactly (flexible matching is off): with it on, "Start
+  Overplay Inbox" sometimes ran "Start Overplay". These are all 10 App
+  Shortcuts Apple allows.
 - Apple requires every App Shortcut phrase to name the app. A bare "Promote
   this" works only as a personal shortcut the user names in the Shortcuts
   app.
@@ -1379,6 +1397,17 @@ Recents by voice come with Fuller Siri.
   True Playlist, it is already retired, there is nothing to undo, it is too
   late, or the song has moved since. Retiring a retired song changes nothing
   on any surface; such a song offers Restore and Promote.
+- **Restore** moves only a retired song, to the Inbox; for any other song it
+  says the song isn't retired and changes nothing (the app and CarPlay offer
+  it only on a retired song). It is not undoable; retiring again reverses it.
+- **Add** works only on a song Overplay doesn't track, playing from an album
+  or artist, and adds it to the Inbox. Otherwise it says the song is already
+  in Overplay, or that it can add only from an album or artist.
+- **Play This Album / Artist** say nothing once music starts; a failed lookup
+  says why and leaves playback alone.
+- **What's This** says the song and artist, where it is (One True Playlist,
+  Inbox, Retired, or not in Overplay) and Overplay's own play and skip counts,
+  which are best-effort.
 - The same intents appear in Shortcuts, Spotlight and the Action button.
 - The iOS 27 audio schemas (`AppSchema.audio.playAudio` and others) are not
   adopted: they need iOS 27, above the 26.4 deployment target. Revisit them
