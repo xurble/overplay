@@ -140,7 +140,7 @@ enum SetupPage: Int, CaseIterable, Identifiable {
                 text: "Retiring a song takes it out of rotation without losing it. Its history stays, and you can play it or bring it back at any time.")
         case .carPlay:
             SetupFeature(symbol: "car.fill", tint: .blue, title: "CarPlay and Siri",
-                text: "Promote, retire and undo from CarPlay's Now Playing, or ask Siri to \u{201C}Play Overplay\u{201D}. Your playlists stay tidy with your phone in your pocket.")
+                text: "Promote, retire and undo from CarPlay's Now Playing, or ask Siri to \u{201C}Start Overplaying\u{201D}. Your playlists stay tidy with your phone in your pocket.")
         case .done:
             SetupFeature(symbol: "checkmark.circle.fill", tint: .green, title: "You're Set",
                 text: "Play your One True Playlist or the Inbox from the main screen or CarPlay. Inbox sources can be changed at any time in Settings.")

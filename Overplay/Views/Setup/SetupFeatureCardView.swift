@@ -12,7 +12,7 @@ struct SetupFeature {
 struct SetupFeatureCardView: View {
     let feature: SetupFeature
     var footnote: String? = nil
-    /// Shows Siri's own tip for "Play Overplay" under the text.
+    /// Shows Siri's own tip for the One True Playlist's primary phrase under the text.
     var showsSiriTip = false
     @State private var showsSiriTipCard = true
 

@@ -1367,8 +1367,10 @@ Recents by voice come with Fuller Siri.
   "Start Overplaying" matches "Start Overplay". On iOS 27, Siri does not run
   the shortcut for "Play Overplay" (it opened Overplay) or "Shuffle Overplay"
   (it opened Apple Music and played something other than the One True
-  Playlist) (seen 2026-11-14); the "Start" and "Put on" phrases avoid those
-  words.
+  Playlist) (seen 2026-11-14). The "Start", "Put on" and "my music" phrases
+  avoid those words and all worked by voice on iOS 27 the same day; "Start
+  Overplay" is the primary phrase, shown in Siri's tip and on the Shortcuts
+  tile.
 - Apple requires every App Shortcut phrase to name the app. A bare "Promote
   this" works only as a personal shortcut the user names in the Shortcuts
   app.

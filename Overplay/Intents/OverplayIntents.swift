@@ -100,15 +100,16 @@ nonisolated struct UndoLastCurationIntent: AppIntent {
 nonisolated struct OverplayShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: PlayOneTruePlaylistIntent(), phrases: [
-            "Play \(.applicationName)",
-            "Shuffle \(.applicationName)",
-            "Play my One True Playlist in \(.applicationName)",
-            // On iOS 27 Siri never runs this for "Play/Shuffle Overplay", so
-            // these avoid both words. "Start Overplaying" matches the first
-            // through the alternative app name in Info.plist.
+            // First is the primary phrase. On iOS 27 Siri never runs this for
+            // "Play/Shuffle Overplay", so these avoid both words; all three
+            // worked by voice (2026-11-14). "Start Overplaying" matches the
+            // first through the alternative app name in Info.plist.
             "Start \(.applicationName)",
             "Put on \(.applicationName)",
             "\(.applicationName) my music",
+            "Play \(.applicationName)",
+            "Shuffle \(.applicationName)",
+            "Play my One True Playlist in \(.applicationName)",
         ], shortTitle: "Play One True Playlist", systemImageName: "play.fill")
         AppShortcut(intent: PlayTriageIntent(), phrases: [
             "Play \(.applicationName) Inbox",
