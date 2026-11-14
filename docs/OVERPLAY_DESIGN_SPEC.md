@@ -1356,13 +1356,18 @@ Recents by voice come with Fuller Siri.
 
 | Action | Phrases | Shared action |
 | --- | --- | --- |
-| Play the One True Playlist | "Play Overplay", "Shuffle Overplay", "Play my One True Playlist in Overplay" | Shuffle and Play (`PLAY-020`) |
+| Play the One True Playlist | "Start Overplaying", "Start Overplay", "Put on Overplay", "Overplay my music", "Play Overplay", "Shuffle Overplay", "Play my One True Playlist in Overplay" | Shuffle and Play (`PLAY-020`) |
 | Play the Inbox | "Play Overplay Inbox", "Play the Inbox on Overplay", "Play the Inbox in Overplay", "Shuffle Overplay Inbox" | Shuffle and Play of the bucket's active scope |
 | Promote the current song | "Promote this in Overplay", "Overplay promote this", "Promote this song in Overplay" | Promote current, as CarPlay's button |
 | Retire the current song | "Retire this in Overplay", "Overplay retire this", "Retire this song in Overplay" | Retire current, as CarPlay's button |
 | Undo | "Undo that in Overplay", "Overplay undo that", "Undo in Overplay" | Undo (`MUT-003`) |
 
 - By voice, "Overplay" alone means the One True Playlist.
+- "Overplaying" is an alternative app name (`INAlternativeAppNames`), so
+  "Start Overplaying" matches "Start Overplay". On iOS 27, Siri gives "Play
+  Overplay" and "Shuffle Overplay" to Apple Music, whose One True Playlist is
+  also called Overplay (seen 2026-11-14); the "Start" and "Put on" phrases
+  avoid those words.
 - Apple requires every App Shortcut phrase to name the app. A bare "Promote
   this" works only as a personal shortcut the user names in the Shortcuts
   app.

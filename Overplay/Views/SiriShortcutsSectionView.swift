@@ -6,7 +6,7 @@ import SwiftUI
 /// the app, so this is only for finding them.
 struct SiriShortcutsSectionView: View {
     static let phrases: [(phrase: String, systemImage: String)] = [
-        ("Play Overplay", "play.fill"),
+        ("Start Overplaying", "play.fill"),
         ("Play Overplay Inbox", "tray.full"),
         ("Promote this in Overplay", "arrow.up.circle"),
         ("Retire this in Overplay", "archivebox"),
