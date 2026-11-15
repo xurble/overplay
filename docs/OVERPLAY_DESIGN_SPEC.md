@@ -113,9 +113,10 @@ Music's global play count or skip count.
 | `PLAY-018` | Now Playing in the app and CarPlay plays the current song's album from track 1, or its artist's Essentials playlist, else its Top Songs with versions collapsed, through one shared start. Tracked songs are counted and curated as usual; untracked songs offer Add to the Inbox and Add to One True Playlist. A failed lookup changes nothing. | `Overplay/Playback/PlaybackCollection.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/PlaybackCollectionTests.swift` |
 | `PLAY-019` | Recents keeps the 10 most recently played albums and artists, synced through iCloud, one per album or artist, newest first. The main screen shows them as one scrolling row of artwork and CarPlay as a Recents menu; each opens its saved songs with Shuffle and Play, played through the shared selection action and from this device's saved tracks. | `Overplay/Persistence/RecentCollectionRepository.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/RecentsTests.swift` |
 | `PLAY-020` | Shuffle and Play of the playlist and scope already in the intent does not restart it: shuffle is turned on if it is off, then playing carries on, otherwise it is Play. Every surface, Siri and the main screen's Play button included. | `Overplay/Services/PlaybackController.swift`, `OverplayTests/VoiceActionTests.swift` |
+| `PLAY-021` | An album or artist deep dive shows, between its header and its songs, the artist (on an album's page) and then the artist's full albums from Apple Music, oldest first, with the page's own album marked. A tile plays it through one shared action as Play Album or Play Artist do, recorded in Recent Deep Dives; what is already playing carries on. The phone scrolls them in one row and opens the new page; CarPlay shows a strip whose title opens them as a list. | `Overplay/Presentation/DeepDiveDiscographyPresentation.swift`, `Overplay/Services/PlaybackController.swift`, `OverplayTests/DeepDiveDiscographyTests.swift` |
 | `MFY-001` | The dashboard's Made For You section lists Apple Music's personal mixes and Replay from the personal recommendations (Friends Mix is not offered by any public API), played like a deep dive and never added to Recent Deep Dives. Mixes are offered as Inbox sources in setup and Inbox Sources, linked by catalog ID and read live from the catalog at each sync; a library copy would stop updating. | `Overplay/Services/MadeForYouLibrary.swift`, `Overplay/Services/AppleMusicPlaylistSourceSync.swift`, `OverplayTests/MadeForYouTests.swift` |
 | `LIB-001` | The Library section browses the user's Apple Music library (Playlists, Albums, Artists, Songs; CarPlay has all but Songs) from the web library, so Overplay's tracks match and show their counts on every device. A collection plays through the shared collection start with this device's own library copies; Songs plays a 100-song window; nothing from Library is added to Recent Deep Dives. Lists are cached per device, never synced. | `Overplay/Services/LibraryBrowser.swift`, `Overplay/Services/LibraryCache.swift`, `Overplay/Views/Library/` |
-| `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing; Play Album and Play Artist add one action list above it (`PLAY-018`), and Recents and each Library category add one level under the root (`PLAY-019`, `LIB-001`). | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
+| `CAR-001` | CarPlay is playlists, then the tracks in one, then Now Playing. Every playback and curation action a driver needs is on Now Playing; Play Album and Play Artist add one action list above it (`PLAY-018`), Recents and each Library category add one level under the root (`PLAY-019`, `LIB-001`), and a deep dive's discography list one under its entry (`PLAY-021`). | `Overplay/CarPlaySupport/CarPlayCoordinator.swift`, `Overplay/CarPlaySupport/CarPlayNowPlayingActionPolicy.swift` |
 | `SIRI-001` | Siri, Shortcuts, Spotlight and the Action button offer Play One True Playlist, Play the Inbox, Promote, Retire, Undo, Restore, Add, Play This Album, Play This Artist and What's This, each a thin adapter over the shared action the app and CarPlay use. They run in the background with the phone locked, speak the result of Promote, Retire, Undo, Restore and Add, say what is playing for What's This, and speak only failures for the play actions. | `Overplay/Intents/OverplayIntents.swift`, `Overplay/Intents/VoiceActions.swift`, `OverplayTests/VoiceActionTests.swift` |
 | `SIRI-002` | An intent that launches Overplay with no window starts the same startup as CarPlay and waits up to 8 seconds for a restoration under way. Apple Music not authorised and setup unfinished cannot become ready while it waits: it stops at once and says which. If the library is not ready, the intent says so and changes nothing. | `Overplay/App/AppRuntime.swift` |
 | `SIRI-003` | On iOS 27, "Play *anything* in Overplay" searches the Apple Music catalogue and plays what Siri picks: a song on its own, an album in order from its first track, or an artist's Essentials or top songs, shuffled when asked, through the shared `playCatalogItem`. Adding to the queue is refused. Nothing of it exists on iOS 26, and no other voice action changes. | `Overplay/Intents/AppleMusicSearchIntents.swift`, `Overplay/Services/AppleMusicCatalogSearch.swift`, `OverplayTests/AppleMusicSearchPlaybackTests.swift` |
@@ -1309,6 +1310,39 @@ CloudKit schema.
   after Play Album or Play Artist. When the stack is not already Recents, the
   entry and Now Playing, Overplay rebuilds it without animation, as it does
   for the playing playlist.
+
+### Discography (`PLAY-021`)
+
+Requested 2026-11-15. An album or artist entry offers the rest of the
+artist's work, so one deep dive leads to the next.
+
+- **What:** on an album's page, the album's first catalog artist, then that
+  artist's full albums (Apple Music's full-length albums: no singles, EPs,
+  live albums or compilations), oldest first by release date, undated ones
+  last. On an artist's page, only the albums. A title listed twice is shown
+  once, the explicit copy rather than the clean one. The page's own album is
+  in the list, marked "This Album", and does nothing.
+- **Where:** between the header (with Shuffle and Play) and the first song,
+  titled with the artist's name on an album's page and "Albums" on an
+  artist's. Hidden while the songs are filtered, and until the lookup
+  answers; a failed lookup shows nothing and is tried again when the page
+  next opens. Each tile reads its release year, or "Artist".
+- **A tile** plays it now, through one shared controller action used by the
+  app and CarPlay: as Play Album (from track 1) or Play Artist (Essentials,
+  else Top Songs) do (`PLAY-018`), recorded in Recent Deep Dives. A tile for
+  what is already playing carries on instead of restarting. A failed lookup
+  changes nothing and says why.
+- **Lookup:** one per album or artist page per launch, shared by every
+  surface: the album's artists, or the artist, then its full albums, paged
+  up to 100 (`LOAD-001`). Kept in memory only; never synced or saved.
+- **iPhone and iPad:** one horizontally scrolling row of artwork tiles, as
+  Recent Deep Dives (album covers square, the artist round, a marker on the
+  one playing). Once a tile starts, its Recents page opens on top, so Back
+  returns to the page it came from.
+- **CarPlay:** a strip of tiles after Shuffle and Play, as Recent Deep Dives
+  on the root; the playing tile's subtitle reads "Now Playing". The strip's
+  title opens the same tiles as a list. A tile or row plays it and goes to
+  Now Playing, with Back as for any playing entry.
 
 ## Undo Promote or Retire
 

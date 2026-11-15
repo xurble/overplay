@@ -74,6 +74,33 @@ nonisolated enum CatalogPlayItem: Equatable, Sendable {
     case song(PlaybackCollectionSong)
     case album(id: String, title: String)
     case artist(id: String, name: String)
+
+    /// The Recents entry it plays as; nil for a song, which is never one.
+    var groupKey: String? {
+        switch self {
+        case .song: nil
+        case .album(let id, _): "album:\(id)"
+        case .artist(let id, _): "artist:\(id)"
+        }
+    }
+}
+
+/// An artist and their full albums, oldest first: what an album or artist
+/// deep dive offers next (`PLAY-021`).
+nonisolated struct ArtistDiscography: Equatable, Sendable {
+    struct Album: Equatable, Sendable {
+        var id: String
+        var title: String
+        var artworkURL: String?
+        var releaseDate: Date?
+        /// A clean version, left out when the explicit one is listed.
+        var isClean = false
+    }
+
+    var artistID: String
+    var artistName: String
+    var artistArtworkURL: String?
+    var albums: [Album]
 }
 
 /// The songs a collection lookup found, in play order.
@@ -102,6 +129,30 @@ enum PlaybackCollectionError: LocalizedError, Equatable {
 
 /// Pure choices behind Play Artist, testable without MusicKit.
 enum PlaybackCollectionPolicy {
+    /// Full albums oldest first, those without a release date last, each
+    /// title once: a clean copy is dropped when another version is listed.
+    static func oldestFirst(_ albums: [ArtistDiscography.Album]) -> [ArtistDiscography.Album] {
+        var kept: [String: Int] = [:]
+        var unique: [ArtistDiscography.Album] = []
+        for album in albums {
+            let key = normalized(album.title)
+            if let index = kept[key] {
+                if unique[index].isClean, !album.isClean { unique[index] = album }
+                continue
+            }
+            kept[key] = unique.count
+            unique.append(album)
+        }
+        return unique.enumerated().sorted { lhs, rhs in
+            switch (lhs.element.releaseDate, rhs.element.releaseDate) {
+            case let (left?, right?) where left != right: left < right
+            case (_?, nil): true
+            case (nil, _?): false
+            default: lhs.offset < rhs.offset
+            }
+        }.map(\.element)
+    }
+
     /// MusicKit has no Essentials field: it is the Apple Music playlist named
     /// "<Artist> Essentials". Needs device evidence in other storefront
     /// languages; a miss falls back to Top Songs.
@@ -166,10 +217,17 @@ struct PlaybackCatalog {
         throw request == .album ? PlaybackCollectionError.albumNotFound : PlaybackCollectionError.artistNotFound
     }
 
+    /// The artist and full albums of an album or artist deep dive
+    /// (`PLAY-021`).
+    var discography: (PlaybackCollection) async throws -> ArtistDiscography = { _ in
+        throw PlaybackCollectionError.artistNotFound
+    }
+
     static let live = PlaybackCatalog(
         collection: { request, songID in try await MusicKitPlaybackCatalog.collection(request, songID: songID) },
         songs: { try await MusicKitPlaybackCatalog.songs(ids: $0) },
-        collectionByID: { request, id in try await MusicKitPlaybackCatalog.collection(request, id: id) }
+        collectionByID: { request, id in try await MusicKitPlaybackCatalog.collection(request, id: id) },
+        discography: { try await MusicKitPlaybackCatalog.discography(of: $0) }
     )
 }
 
@@ -252,6 +310,45 @@ private enum MusicKitPlaybackCatalog {
             collection: PlaybackCollection(kind: .artistTopSongs, catalogID: artist.id.rawValue, title: artist.name),
             tracks: collapsed.map(Track.song),
             artworkURLTemplate: artworkURL(artist.artwork)
+        )
+    }
+
+    /// Bounds album paging for a prolific artist (`LOAD-001`).
+    static let maximumAlbums = 100
+
+    /// An album's first artist, or the artist itself, with their full albums.
+    static func discography(of collection: PlaybackCollection) async throws -> ArtistDiscography {
+        let artist: Artist
+        switch collection.kind {
+        case .album:
+            var request = MusicCatalogResourceRequest<Album>(matching: \.id, equalTo: MusicItemID(collection.catalogID))
+            request.properties = [.artists]
+            let response = try await measure("album artist") { try await request.response() }
+            guard let found = response.items.first?.artists?.first else { throw PlaybackCollectionError.artistNotFound }
+            artist = found
+        case .artistEssentials, .artistTopSongs:
+            let request = MusicCatalogResourceRequest<Artist>(matching: \.id, equalTo: MusicItemID(collection.catalogID))
+            let response = try await measure("artist by id") { try await request.response() }
+            guard let found = response.items.first else { throw PlaybackCollectionError.artistNotFound }
+            artist = found
+        default:
+            throw PlaybackCollectionError.artistNotFound
+        }
+        let detailed = try await measure("artist full albums") { try await artist.with([.fullAlbums]) }
+        var albums = Array(detailed.fullAlbums ?? [])
+        var batch = detailed.fullAlbums
+        while albums.count < maximumAlbums, batch?.hasNextBatch == true {
+            batch = try await measure("full albums page") { try await batch?.nextBatch() }
+            albums += Array(batch ?? [])
+        }
+        return ArtistDiscography(
+            artistID: artist.id.rawValue,
+            artistName: artist.name,
+            artistArtworkURL: artworkURL(detailed.artwork ?? artist.artwork),
+            albums: PlaybackCollectionPolicy.oldestFirst(albums.prefix(maximumAlbums).map { album in
+                ArtistDiscography.Album(id: album.id.rawValue, title: album.title, artworkURL: artworkURL(album.artwork),
+                                        releaseDate: album.releaseDate, isClean: album.contentRating == .clean)
+            })
         )
     }
 

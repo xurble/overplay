@@ -145,6 +145,8 @@ final class PlaybackController {
     @ObservationIgnored var playlistRebuild = OneTruePlaylistRebuildService()
     /// The Apple Music catalog behind Play Album and Play Artist (`PLAY-018`); injectable for tests.
     @ObservationIgnored var playbackCatalog = PlaybackCatalog.live
+    /// Discographies looked up this launch, by deep dive group key (`PLAY-021`).
+    private(set) var discographies: [String: ArtistDiscography] = [:]
     /// Album and artist songs' native tracks on this device (`PLAY-019`); injectable for tests.
     @ObservationIgnored var collectionTrackCache = DevicePlaybackCache.shared
     /// Resubmission's record fetch; tests count calls through it.
@@ -1738,6 +1740,28 @@ final class PlaybackController {
             let catalog = playbackCatalog
             return await startLookedUpCollection(request, shuffle: shuffle) { try await catalog.collectionByID(request, id) }
         }
+    }
+
+    /// The artist and full albums an album or artist deep dive offers
+    /// (`PLAY-021`), looked up once a launch and shared by every surface.
+    /// Nil when the lookup fails, which is tried again next time; additive,
+    /// so it never touches playback.
+    @discardableResult
+    func loadDiscography(for collection: PlaybackCollection) async -> ArtistDiscography? {
+        if let cached = discographies[collection.groupKey] { return cached }
+        guard let found = try? await playbackCatalog.discography(collection) else { return nil }
+        discographies[collection.groupKey] = found
+        return found
+    }
+
+    /// A deep dive's album or artist tile (`PLAY-021`), the one action the
+    /// app and CarPlay use: what is already playing carries on; anything
+    /// else plays as Play Album or Play Artist does, and is recorded in
+    /// Recents. Returns whether it is playing.
+    @discardableResult
+    func playDiscographyItem(_ item: CatalogPlayItem, context: ModelContext) async -> Bool {
+        if currentTrack != nil, playingCollectionGroupKey == item.groupKey { return true }
+        return await playCatalogItem(item, context: context)
     }
 
     /// Looks a collection up, then starts it through the shared start path

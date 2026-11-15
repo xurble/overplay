@@ -40,6 +40,8 @@ enum CarPlayAction {
     case playLibraryItem(LibraryBrowser.Item, entries: [LibraryBrowser.Entry], startingAt: String?)
     case playMadeForYou(MadeForYouLibrary.Item, entries: [LibraryBrowser.Entry], startingAt: String?)
     case playCurrentCollection(PlaybackCollection.Request)
+    /// A deep dive's album or artist tile (`PLAY-021`).
+    case playDiscographyItem(CatalogPlayItem)
     case promote
     case retire
     case restore
@@ -125,6 +127,12 @@ enum CarPlayAction {
                 }
                 // Started, it is already on its way to Now Playing.
                 return !started && controller.playbackFailure == nil ? .playbackFailed : .nothing
+
+            case .playDiscographyItem(let item):
+                let started = await fromCarPlay {
+                    await controller.playDiscographyItem(item, context: context)
+                }
+                return Self.startFollowUp(started: started, controller: controller)
 
             case .promote:
                 let settings = try SettingsRepository.settings(in: context)

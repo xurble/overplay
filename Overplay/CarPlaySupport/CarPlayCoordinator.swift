@@ -133,6 +133,10 @@ final class CarPlayCoordinator: NSObject {
     private weak var recentsTemplate: CPListTemplate?
     private weak var visibleRecentTemplate: CPListTemplate?
     private var visibleRecentID: UUID?
+    // The open entry's discography as a list, from its strip's title (`PLAY-021`).
+    private var discographyRenderer = CarPlayListRenderer()
+    private weak var discographyTemplate: CPListTemplate?
+    private var discographyCollection: PlaybackCollection?
     // Library (`LIB-001`): a category's list, and the collection open from it.
     private var libraryCategoryRenderer = CarPlayListRenderer()
     private var libraryItemRenderer = CarPlayListRenderer()
@@ -202,6 +206,7 @@ final class CarPlayCoordinator: NSObject {
         playlistRenderer.stop()
         recentsRenderer.stop()
         recentRenderer.stop()
+        discographyRenderer.stop()
         libraryRefreshTask?.cancel()
         libraryRefreshTask = nil
         refreshTask?.cancel()
@@ -219,6 +224,8 @@ final class CarPlayCoordinator: NSObject {
         recentsTemplate = nil
         visibleRecentTemplate = nil
         visibleRecentID = nil
+        discographyTemplate = nil
+        discographyCollection = nil
         clearLibraryLists()
         lastNowPlayingButtonSignature = nil
         lastNowPlayingContext = nil
@@ -234,9 +241,12 @@ final class CarPlayCoordinator: NSObject {
         visiblePlaylistTemplate = nil
         recentsRenderer.stop()
         recentRenderer.stop()
+        discographyRenderer.stop()
         recentsTemplate = nil
         visibleRecentTemplate = nil
         visibleRecentID = nil
+        discographyTemplate = nil
+        discographyCollection = nil
         clearLibraryLists()
         rootRenderer.stop()
         rootRenderer = CarPlayListRenderer()
@@ -618,7 +628,21 @@ final class CarPlayCoordinator: NSObject {
         visibleRecentID = recent.id
         updateRecentList(template, recent: recent)
         visibleRecentTemplate = template
+        loadDiscography(for: recent.collection, into: template)
         return template
+    }
+
+    /// Adds the discography strip once it is in, if the list is still open.
+    private func loadDiscography(for collection: PlaybackCollection, into template: CPListTemplate) {
+        guard let playbackController, DeepDiveDiscographyPresentation.offersDiscography(collection),
+              playbackController.discographies[collection.groupKey] == nil else { return }
+        Task { [weak self, weak template] in
+            guard await playbackController.loadDiscography(for: collection) != nil,
+                  let self, let template, self.visibleRecentTemplate === template,
+                  let visibleRecentID = self.visibleRecentID, let modelContext = self.modelContext,
+                  let recent = try? RecentCollectionRepository.recent(id: visibleRecentID, in: modelContext) else { return }
+            self.updateRecentList(template, recent: recent)
+        }
     }
 
     /// Shuffle and Play, then the saved songs, like a playlist's list.
@@ -640,11 +664,77 @@ final class CarPlayCoordinator: NSObject {
             subtitle: PlaylistSummaryPresentation.trackCountLabel(songs.count),
             artwork: .track(url: recent.artworkURLTemplate, playlistID: playlistID, size: 512)
         )
-        recentRenderer.update(.init(header: header, sections: [
-            CarPlayShuffleRow.section(enabled: !rows.isEmpty),
-            .init(id: "tracks", rows: rows.isEmpty
-                ? [Row(id: "empty", title: "No songs saved", isEnabled: false)] : rows)
-        ]), on: template, actions: actions)
+        var sections = [CarPlayShuffleRow.section(enabled: !rows.isEmpty)]
+        var allActions = actions
+        if let (strip, stripActions) = discographyStrip(for: recent.collection) {
+            sections.append(strip)
+            allActions.merge(stripActions) { current, _ in current }
+        }
+        sections.append(.init(id: "tracks", rows: rows.isEmpty
+            ? [Row(id: "empty", title: "No songs saved", isEnabled: false)] : rows))
+        recentRenderer.update(.init(header: header, sections: sections), on: template, actions: allActions)
+    }
+
+    // MARK: - Discography (`PLAY-021`)
+
+    private func discographyTiles(for collection: PlaybackCollection) -> [DeepDiveDiscographyPresentation.Tile]? {
+        guard let playbackController, let discography = playbackController.discographies[collection.groupKey] else { return nil }
+        return DeepDiveDiscographyPresentation.tiles(
+            for: collection, discography: discography,
+            playingGroupKey: playbackController.currentTrack == nil ? nil : playbackController.playingCollectionGroupKey
+        )
+    }
+
+    /// The artist and albums as a strip of tiles, as Recent Deep Dives on the
+    /// root: a tile plays it; the title opens them as a list.
+    private func discographyStrip(
+        for collection: PlaybackCollection
+    ) -> (CarPlayListPresentation.Section, [String: @MainActor () async -> Void])? {
+        guard let tiles = discographyTiles(for: collection), !tiles.isEmpty,
+              let discography = playbackController?.discographies[collection.groupKey] else { return nil }
+        typealias Row = CarPlayListPresentation.Row
+        var actions: [String: @MainActor () async -> Void] = [
+            "discography": { [weak self] in self?.showDiscography(collection) }
+        ]
+        let stripTiles = tiles.map { tile -> Row.Tile in
+            let tileID = "discography-tile-\(tile.id)"
+            if !tile.isThisPage { actions[tileID] = recentRowHandler(.playDiscographyItem(tile.item)) }
+            return Row.Tile(id: tileID, title: tile.title, subtitle: tile.isPlaying ? "Now Playing" : tile.subtitle,
+                            artwork: .track(url: tile.artworkURL, playlistID: ArtworkCacheService.libraryPlaylistID),
+                            isPlaying: tile.isPlaying)
+        }
+        let row = Row(id: "discography",
+                      title: DeepDiveDiscographyPresentation.heading(for: collection, discography: discography),
+                      style: .strip(stripTiles))
+        return (.init(id: "discography", rows: [row]), actions)
+    }
+
+    private func showDiscography(_ collection: PlaybackCollection) {
+        guard runtime?.libraryRestoration.isReady == true, let interfaceController,
+              let discography = playbackController?.discographies[collection.groupKey] else { return }
+        discographyRenderer.stop()
+        discographyRenderer = CarPlayListRenderer()
+        let template = CPListTemplate(
+            title: DeepDiveDiscographyPresentation.heading(for: collection, discography: discography), sections: []
+        )
+        discographyCollection = collection
+        discographyTemplate = template
+        updateDiscographyList(template)
+        interfaceController.pushTemplate(template, animated: true, completion: nil)
+    }
+
+    private func updateDiscographyList(_ template: CPListTemplate) {
+        guard let discographyCollection, let tiles = discographyTiles(for: discographyCollection) else { return }
+        typealias Row = CarPlayListPresentation.Row
+        var actions: [String: @MainActor () async -> Void] = [:]
+        let rows = tiles.prefix(CPListTemplate.maximumItemCount).map { tile -> Row in
+            if !tile.isThisPage { actions[tile.id] = recentRowHandler(.playDiscographyItem(tile.item)) }
+            return Row(id: tile.id, title: tile.title, detail: tile.subtitle, isPlaying: tile.isPlaying,
+                       isEnabled: !tile.isThisPage,
+                       artwork: .track(url: tile.artworkURL, playlistID: ArtworkCacheService.libraryPlaylistID))
+        }
+        discographyRenderer.update(.init(sections: [.init(id: "discography", rows: Array(rows))]),
+                                   on: template, actions: actions)
     }
 
     /// The shared Recents action (`SURFACE-003`); CarPlay only presents the outcome.
@@ -1271,6 +1361,10 @@ final class CarPlayCoordinator: NSObject {
         }
         if listTemplate === libraryItemTemplate {
             updateLibraryItemList(listTemplate)
+            return
+        }
+        if listTemplate === discographyTemplate {
+            updateDiscographyList(listTemplate)
             return
         }
         if listTemplate === visibleRecentTemplate {

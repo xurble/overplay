@@ -6,7 +6,7 @@ import SwiftUI
 /// The same header as a playlist (details, Shuffle and Play, artwork),
 /// then the songs; swiping a song right sends it to the One True Playlist and
 /// left to Triage.
-struct CollectionSongListView<Artwork: View>: View {
+struct CollectionSongListView<Artwork: View, BelowHeader: View>: View {
     @Environment(PlaybackController.self) private var playbackController
 
     var title: String
@@ -23,6 +23,9 @@ struct CollectionSongListView<Artwork: View>: View {
     /// Off for an album, whose songs share its artwork.
     var showsRowArtwork = true
     @ViewBuilder var artwork: () -> Artwork
+    /// Between the header and the songs, hidden with it while filtering: a
+    /// deep dive's discography (`PLAY-021`).
+    @ViewBuilder var belowHeader: () -> BelowHeader
     /// Shuffle and Play when the song is nil.
     var onPlay: (RecentCollectionPresentation.Song?) async -> Void
     var onMove: (RecentCollectionPresentation.Song, _ toOneTruePlaylist: Bool) async -> Void
@@ -56,6 +59,10 @@ struct CollectionSongListView<Artwork: View>: View {
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                     .id(ListFilter.headerID)
+
+                    belowHeader()
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets())
                 }
             }
 
@@ -118,6 +125,23 @@ struct CollectionSongListView<Artwork: View>: View {
         .miniPlayerScrollContentInset()
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+extension CollectionSongListView where BelowHeader == EmptyView {
+    /// Nothing between the header and the songs.
+    init(
+        title: String, subtitle: String, systemImage: String, groupKey: String, reservedPlaylistID: String,
+        songs: [RecentCollectionPresentation.Song], placeholder: String? = nil,
+        filterFields: ListFilter.SongFields = .titleOrArtist, showsHeader: Bool = true, showsRowArtwork: Bool = true,
+        @ViewBuilder artwork: @escaping () -> Artwork,
+        onPlay: @escaping (RecentCollectionPresentation.Song?) async -> Void,
+        onMove: @escaping (RecentCollectionPresentation.Song, _ toOneTruePlaylist: Bool) async -> Void
+    ) {
+        self.init(title: title, subtitle: subtitle, systemImage: systemImage, groupKey: groupKey,
+                  reservedPlaylistID: reservedPlaylistID, songs: songs, placeholder: placeholder,
+                  filterFields: filterFields, showsHeader: showsHeader, showsRowArtwork: showsRowArtwork,
+                  artwork: artwork, belowHeader: { EmptyView() }, onPlay: onPlay, onMove: onMove)
     }
 }
 

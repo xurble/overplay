@@ -10,6 +10,8 @@ struct RecentCollectionView: View {
     var recent: RecentCollectionRecord
 
     @State private var songs: [RecentCollectionPresentation.Song] = []
+    /// A deep dive started from the discography, shown as its own page.
+    @State private var openedRecent: RecentCollectionRecord?
 
     var body: some View {
         CollectionSongListView(
@@ -24,12 +26,24 @@ struct RecentCollectionView: View {
         ) {
             ArtworkView(urlString: recent.artworkURLTemplate, pixelSize: 512,
                         playlistID: recent.collection.reservedPlaylistID, cornerRadius: 16)
+        } belowHeader: {
+            if let discography = playbackController.discographies[recent.collection.groupKey] {
+                DeepDiveDiscographyView(collection: recent.collection, discography: discography) { openedRecent = $0 }
+            }
         } onPlay: { song in
             await playbackController.playRecent(recent, startingAt: song?.catalogID, context: modelContext)
         } onMove: { song, toOneTruePlaylist in
             await move(song, toOneTruePlaylist: toOneTruePlaylist)
         }
         .onAppear { shellPlace?.destination = .recent(recent.id) }
+        .navigationDestination(item: $openedRecent) { opened in
+            RecentCollectionView(recent: opened)
+                .nowPlayingColumnToggle()
+        }
+        .task(id: recent.groupKey) {
+            guard DeepDiveDiscographyPresentation.offersDiscography(recent.collection) else { return }
+            await playbackController.loadDiscography(for: recent.collection)
+        }
         .task(id: reloadKey) {
             songs = RecentCollectionPresentation.songs(for: recent, in: modelContext)
         }

@@ -13,6 +13,9 @@ final class FakePlaybackCatalog {
     private(set) var songRequests: [[String]] = []
     /// Lookups by album or artist ID, as a search found them (`SIRI-003`).
     private(set) var idRequests: [(PlaybackCollection.Request, String)] = []
+    /// A deep dive's artist and albums (`PLAY-021`).
+    var discography: ArtistDiscography?
+    private(set) var discographyRequests: [String] = []
 
     var catalog: PlaybackCatalog {
         PlaybackCatalog(
@@ -33,6 +36,12 @@ final class FakePlaybackCatalog {
                 if let failure { throw failure }
                 guard let contents = contents[request] else { throw PlaybackCollectionError.albumNotFound }
                 return contents
+            },
+            discography: { [self] collection in
+                discographyRequests.append(collection.groupKey)
+                if let failure { throw failure }
+                guard let discography else { throw PlaybackCollectionError.artistNotFound }
+                return discography
             }
         )
     }
