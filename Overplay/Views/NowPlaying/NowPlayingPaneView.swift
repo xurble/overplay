@@ -19,8 +19,12 @@ struct NowPlayingPaneView: View {
     /// trailing side, so the art clears the screen's edge (owner request,
     /// 2026-10-30).
     var isBesideSidebar = false
+    /// The Mac's full-screen player: the art at the top, the player below.
+    var isMacFullScreen = false
 
     @State private var isShowingThemeDiagnostics = false
+    /// The full-screen player's height, measured, which the art leaves room for.
+    @State private var macPlayerHeight: CGFloat = 360
     @State private var isThemeDiagnosticsLoading = false
     @State private var themeDebugReport: AlbumArtworkThemeDebugReport?
     @State private var themeDebugErrorMessage: String?
@@ -33,7 +37,9 @@ struct NowPlayingPaneView: View {
             )
             let activeArtworkTheme = artworkTheme?.isFallback == false ? artworkTheme : nil
 
-            if isSideBySide {
+            if isMacFullScreen {
+                macFullScreen(in: proxy.size, presentation: presentation, artworkTheme: activeArtworkTheme)
+            } else if isSideBySide {
                 sideBySide(in: proxy.size, presentation: presentation, artworkTheme: activeArtworkTheme)
             } else {
                 column(in: proxy.size, presentation: presentation, artworkTheme: activeArtworkTheme)
@@ -102,6 +108,42 @@ struct NowPlayingPaneView: View {
         .padding(.trailing, isBesideSidebar ? 36 : 24)
         .padding(.vertical, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+    }
+
+    /// The Mac in full screen: the art at the top centre, as large as fits
+    /// above the player without being drawn past its own resolution, and the
+    /// player at the bottom centre, as wide as the column's at most half as
+    /// wide again, so it never stretches (owner request, 2026-11-17).
+    private func macFullScreen(in size: CGSize, presentation: NowPlayingPresentation, artworkTheme: AlbumArtworkTheme?) -> some View {
+        let margin: CGFloat = 40
+        let gap: CGFloat = 32
+        let playerWidth = min(size.width - 2 * margin, SplitLayoutPolicy.columnPlayerWidth * 1.5)
+        let maxArtSide = min(size.width - 2 * margin, size.height - 2 * margin - gap - macPlayerHeight)
+        return VStack(spacing: 0) {
+            MacFullScreenArtworkView(
+                urlString: playbackController.nowPlayingDisplayTrack?.artworkURLTemplate,
+                playlistID: playbackController.currentPlaylistContext?.musicPlaylistID,
+                maxSide: maxArtSide
+            )
+            Spacer(minLength: gap)
+            VStack(spacing: 18) {
+                NowPlayingTrackTextView(
+                    presentation: presentation,
+                    titleLineLimit: 2,
+                    detailLineLimit: 1,
+                    artworkTheme: artworkTheme,
+                    offersCollectionMenu: true
+                )
+                trackControls(presentation: presentation, artworkTheme: artworkTheme)
+                PlaybackControlsView(settings: settings, controlSize: .regular, artworkTheme: artworkTheme)
+            }
+            .padding(.horizontal, 24)
+            .frame(width: playerWidth)
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { macPlayerHeight = $0 }
+        }
+        .padding(.vertical, margin)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     /// The art, the collection playing and the track.

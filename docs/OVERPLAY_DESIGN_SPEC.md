@@ -233,6 +233,19 @@ The Mac build has its own menus and windows:
   sized to its controls; only Close is enabled.
 - While Now Playing is hidden, a mini player sits in the title bar, with the
   Now Playing toggle inside it.
+- Full screen is a full-screen player (owner request, 2026-11-17): the
+  blurred art fills the screen, cropped on its shorter side; the cover sits
+  at the top centre, as large as fits above the player but never drawn past
+  its own pixels (loaded at the size shown, beyond the artwork cache's 512);
+  the player (track, progress, facts, actions, transport) sits at the bottom
+  centre, as wide as the column's and at most half as wide again. There is
+  no toolbar and no other column: with the pointer at the top, only the menu
+  bar and the traffic lights slide in. The usual layout stays, hidden, so
+  leaving full screen finds every screen as it was (`MacFullScreen`).
+- The player window reopens where it was and at the size it was, kept across
+  launches outside macOS state restoration, which "Close windows when
+  quitting an app" turns off; a full-screen frame is never kept
+  (`MacWindowFrameMemory`).
 - Rows of tiles that scroll sideways (Recent Deep Dives, Made For You and a
   deep dive's discography) show back and forward buttons at their ends while
   the pointer is over them, a page of whole tiles at a time, so a mouse with

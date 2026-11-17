@@ -62,6 +62,10 @@ enum SplitLayoutPolicy {
         return (width * 0.4).rounded()
     }
 
+    /// The player column's width in a wide window, which the Mac's
+    /// full-screen player grows from.
+    static var columnPlayerWidth: CGFloat { playerWidth(for: .greatestFiniteMagnitude) }
+
     /// Whether the list and player sit on either side of a dividing line
     /// (iPhone Duo open as a book, an iPad wider than tall). The player then
     /// always keeps its half.

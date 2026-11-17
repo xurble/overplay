@@ -16,6 +16,8 @@ struct NowPlayingColumnView: View {
     /// Side by side, the art on the trailing side instead of the leading.
     var artworkOnTrailing = false
     var isBesideSidebar = false
+    /// The Mac's full-screen player, which lays out its own transport.
+    var isMacFullScreen = false
 
     var body: some View {
         ThemedPlayerHost { artworkTheme, applyRefreshedTheme in
@@ -27,9 +29,10 @@ struct NowPlayingColumnView: View {
                     onArtworkTopChange: onArtworkTopChange,
                     isSideBySide: isSideBySide,
                     artworkOnTrailing: artworkOnTrailing,
-                    isBesideSidebar: isBesideSidebar
+                    isBesideSidebar: isBesideSidebar,
+                    isMacFullScreen: isMacFullScreen
                 )
-                if !isSideBySide {
+                if !isSideBySide && !isMacFullScreen {
                     PlaybackControlsView(
                         settings: settings,
                         controlSize: .regular,
