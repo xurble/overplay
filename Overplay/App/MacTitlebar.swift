@@ -90,7 +90,6 @@ private struct MacSinglePlayerWindow: UIViewRepresentable {
                 MacFullScreen.shared.start(playerScene: scene)
                 MacWindowFrameMemory.shared.start(playerScene: scene)
                 MacAppKitWindow.disallowAutomaticTabbing()
-                MacAppKitWindow.floatsNewWindowsOverFullScreen(besides: scene)
             }
 #endif
         }

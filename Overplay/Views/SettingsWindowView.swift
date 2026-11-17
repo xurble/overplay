@@ -205,16 +205,9 @@ enum MacAppKitWindow {
     /// full-screen space or tab of its own: an auxiliary full-screen window,
     /// as the Music app's settings are, and never tabbed.
     static func floatsOverFullScreen(_ window: UIWindow) {
-        guard let nsWindow = nsWindow(for: window) else {
-            logger.error("Settings window: no AppKit window")
-            return
-        }
-        floatsOverFullScreen(nsWindow)
-    }
-
-    private static func floatsOverFullScreen(_ nsWindow: NSObject) {
-        guard let behavior = (checkedValue("collectionBehavior", of: nsWindow) as? NSNumber)?.uintValue else {
-            logger.error("Window: no collection behaviour")
+        guard let nsWindow = nsWindow(for: window),
+              let behavior = (checkedValue("collectionBehavior", of: nsWindow) as? NSNumber)?.uintValue else {
+            logger.error("Settings window: no AppKit window or collection behaviour")
             return
         }
         // NSWindow.CollectionBehavior: fullScreenPrimary 1 << 7, auxiliary
@@ -228,45 +221,7 @@ enum MacAppKitWindow {
             nsWindow.setValue(NSNumber(value: 2), forKey: "tabbingMode")
         }
         let tabs = (checkedValue("tabbedWindows", of: nsWindow) as? [NSObject])?.count ?? 0
-        logger.notice("Window: collection behaviour \(behavior, privacy: .public) -> \(floating, privacy: .public), tabs \(tabs, privacy: .public)")
-    }
-
-    /// Every other window (Settings) floats over a full-screen player from
-    /// the start. Set once the window is on screen, it was too late: macOS
-    /// had shown it as an ordinary window, which a full-screen space cannot
-    /// hold, and left full screen to show it. A scene's AppKit window exists,
-    /// still hidden, as the scene connects.
-    static func floatsNewWindowsOverFullScreen(besides playerScene: UIWindowScene) {
-        guard !observesNewScenes else { return }
-        observesNewScenes = true
-        self.playerScene = playerScene
-        NotificationCenter.default.addObserver(forName: UIScene.willConnectNotification, object: nil, queue: .main) { note in
-            // Posted on the main queue, which the observer asks for.
-            nonisolated(unsafe) let object = note.object
-            MainActor.assumeIsolated {
-                guard let scene = object as? UIWindowScene, scene !== Self.playerScene else { return }
-                floatsHiddenWindowsOverFullScreen()
-            }
-        }
-    }
-
-    private static weak var playerScene: UIWindowScene?
-    private static var observesNewScenes = false
-
-    /// Hidden UIKit-hosting windows other than the player's: the one about
-    /// to be shown.
-    private static func floatsHiddenWindowsOverFullScreen() {
-        let playerWindows = playerScene?.windows ?? []
-        let windows = (NSClassFromString("NSApplication")?.value(forKeyPath: "sharedApplication.windows") as? [NSObject]) ?? []
-        var floated = 0
-        for nsWindow in windows {
-            guard let uiWindows = checkedValue("uiWindows", of: nsWindow) as? [UIWindow],
-                  !uiWindows.contains(where: { playerWindows.contains($0) }),
-                  (checkedValue("isVisible", of: nsWindow) as? Bool) == false else { continue }
-            floatsOverFullScreen(nsWindow)
-            floated += 1
-        }
-        logger.notice("New window scene: \(floated, privacy: .public) hidden window(s) set to float over full screen")
+        logger.info("Settings window: collection behaviour \(behavior, privacy: .public) -> \(floating, privacy: .public), tabs \(tabs, privacy: .public)")
     }
 
     private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Overplay", category: "Window")
