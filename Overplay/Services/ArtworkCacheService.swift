@@ -227,6 +227,9 @@ actor ArtworkCacheService {
     }
 
     private static func download(from url: URL) async throws -> Data {
+        #if targetEnvironment(simulator)
+        if let sample = SimulatorDemoArtwork.png(for: url) { return sample }
+        #endif
         let startedAt = Date.now
         let started = ContinuousClock.now
 
