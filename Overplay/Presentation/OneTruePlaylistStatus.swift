@@ -19,7 +19,7 @@ struct OneTruePlaylistStatus: Equatable {
         if isRequested && !canCreatePlaylists {
             return OneTruePlaylistStatus(
                 title: "Waiting for your iPhone",
-                note: "A Mac can’t create Apple Music playlists. Your iPhone or iPad makes it the next time Overplay opens there.",
+                note: "A Mac can’t create Apple Music playlists. Promote and retire here as usual: your iPhone or iPad makes it in Apple Music, with those songs, the next time Overplay opens there.",
                 waitsForAnotherDevice: true
             )
         }

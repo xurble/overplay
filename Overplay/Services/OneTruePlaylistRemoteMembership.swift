@@ -56,6 +56,7 @@ struct OneTruePlaylistRemoteMembership {
 
     static func managesRemoteMembership(of playlist: PlaylistRecord) -> Bool {
         playlist.isActive && playlist.source == .appleMusic && playlist.role == .oneTruePlaylist && playlist.allowsRemoteWrites
+            && !playlist.awaitsAppleMusicPlaylist
     }
 
     /// Removes every song that carries this playlist's stale-OTP suppression,
@@ -175,8 +176,12 @@ struct OneTruePlaylistRemoteMembership {
     /// Whether iCloud's copy already holds this song, so adding it again
     /// would duplicate it.
     func contains(_ track: TrackRecord, in playlist: PlaylistRecord) async throws -> Bool {
-        let cloud = try await cloudEntries(playlist.musicPlaylistID)
-        return !track.identityReferences.isDisjoint(with: cloud.compactMap(\.reference))
+        !track.identityReferences.isDisjoint(with: try await cloudReferences(of: playlist))
+    }
+
+    /// The songs iCloud's copy of the playlist holds, read once.
+    func cloudReferences(of playlist: PlaylistRecord) async throws -> Set<MusicResourceReference> {
+        Set(try await cloudEntries(playlist.musicPlaylistID).compactMap(\.reference))
     }
 
     /// This device's entries as references, or nil when they are not exactly

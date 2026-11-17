@@ -87,6 +87,7 @@ struct PlaylistSyncService {
     private let appleMusicSource: AppleMusicPlaylistSourceSync
     private let yieldDuringReconciliation: @MainActor () async throws -> Void
     private let removeSongsHeldOutside: @MainActor (PlaylistRecord, ModelContext) async throws -> Void
+    private let addSongsAwaitingAppleMusic: @MainActor (PlaylistRecord, ModelContext) async throws -> Void
 
     init(
         sourceRegistry: PlaylistSourceSyncRegistry = PlaylistSourceSyncRegistry(),
@@ -96,22 +97,32 @@ struct PlaylistSyncService {
         },
         removeSongsHeldOutside: @escaping @MainActor (PlaylistRecord, ModelContext) async throws -> Void = { playlist, context in
             try await OneTruePlaylistRemoteMembership().removeSongsHeldOutside(playlist, in: context)
+        },
+        addSongsAwaitingAppleMusic: @escaping @MainActor (PlaylistRecord, ModelContext) async throws -> Void = { playlist, context in
+            try await PlaylistMutationService().addSongsAwaitingAppleMusic(to: playlist, in: context)
         }
     ) {
         self.sourceRegistry = sourceRegistry
         self.appleMusicSource = appleMusicSource
         self.yieldDuringReconciliation = yieldDuringReconciliation
         self.removeSongsHeldOutside = removeSongsHeldOutside
+        self.addSongsAwaitingAppleMusic = addSongsAwaitingAppleMusic
     }
 
     /// `PLAYLIST-008`: a completed sync of the One True Playlist retries
-    /// removals that could not run earlier. Best effort: it never fails the sync.
+    /// removals that could not run earlier, then adds the songs a Mac moved
+    /// in. Best effort: it never fails the sync.
     private func retryRemoteRemovals(after playlistRecord: PlaylistRecord, in context: ModelContext) async {
         guard OneTruePlaylistRemoteMembership.managesRemoteMembership(of: playlistRecord) else { return }
         do {
             try await removeSongsHeldOutside(playlistRecord, context)
         } catch {
             TrackMetadataDiagnostics.log("remote removal retry failed playlist=\(playlistRecord.musicPlaylistID): \(error.localizedDescription)")
+        }
+        do {
+            try await addSongsAwaitingAppleMusic(playlistRecord, context)
+        } catch {
+            TrackMetadataDiagnostics.log("pending adds failed playlist=\(playlistRecord.musicPlaylistID): \(error.localizedDescription)")
         }
     }
 
@@ -160,6 +171,13 @@ struct PlaylistSyncService {
         if runVideoCleanup { try await VideoTrackCleanupService.removeVideos(in: context) }
         guard playlistRecord.isActive else {
             return inactivePlaylistSummary()
+        }
+        // Nothing in Apple Music to read until an iPhone or iPad makes it.
+        guard !playlistRecord.awaitsAppleMusicPlaylist else {
+            var summary = PlaylistSyncSummary()
+            summary.skippedCount = 1
+            summary.skippedReason = "awaitsAppleMusicPlaylist"
+            return summary
         }
 
         // The bucket has no Apple Music playlist of its own, so syncing it
@@ -402,6 +420,44 @@ struct PlaylistSyncService {
             syncedAt: .now,
             in: context
         )
+        try context.save()
+        logSyncSummary(summary, playlistRecord: record)
+        return record
+    }
+
+    /// `SETUP-002`: the One True Playlist on a device that cannot create
+    /// Apple Music playlists (a Mac). It is made locally, empty or with a copy
+    /// of `sourcePlaylistID`'s songs, under a placeholder ID; promotion and
+    /// playback work at once, and an iPhone or iPad makes the Apple Music
+    /// playlist from its active songs later.
+    @discardableResult
+    func createLocalOneTruePlaylist(
+        named name: String,
+        copyingTracksFrom sourcePlaylistID: String? = nil,
+        in context: ModelContext
+    ) async throws -> PlaylistRecord {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let playlistName = trimmedName.isEmpty ? "Overplay" : trimmedName
+        var snapshots: [TrackSnapshot] = []
+        if let sourcePlaylistID {
+            let sourcePlaylist = try await loadPlaylist(id: sourcePlaylistID)
+            let sourceTracks = try await loadTracks(for: sourcePlaylist).filter(VideoTrackPolicy.isSong)
+            // Resolve before changing local roles: an incomplete identity
+            // response must not leave a half-imported copy.
+            snapshots = try await AppleMusicPlaylistTrackLoader.resolveSongs(
+                from: sourceTracks, playlistID: sourcePlaylistID
+            ).requireAll()
+            if !snapshots.isEmpty {
+                snapshots = try await MusicIdentityResolver.shared.enrich(snapshots, includeCandidates: false)
+            }
+        }
+        let record = try PlaylistRepository.setOneTruePlaylist(
+            AppleMusicPlaylist(id: PlaylistRecord.unmadeOneTruePlaylistID(), name: playlistName, trackCount: snapshots.count),
+            writePolicy: .managed,
+            in: context
+        )
+        for index in snapshots.indices { snapshots[index].playlistID = record.musicPlaylistID }
+        let summary = try await reconcile(snapshots: snapshots, playlistRecord: record, syncedAt: .now, in: context)
         try context.save()
         logSyncSummary(summary, playlistRecord: record)
         return record

@@ -52,19 +52,22 @@ struct OneTruePlaylistRebuildService {
     /// from the catalog, as promotion adds it.
     var addableTracks: @MainActor ([TrackRecord], String) async -> [UUID: Track] = { records, playlistID in
         var tracks: [UUID: Track] = [:]
-        do {
-            let playlist = try await PlaylistSyncService().loadPlaylist(id: playlistID)
-            let entries = try await AppleMusicPlaylistTrackLoader.loadTracks(for: playlist).filter(VideoTrackPolicy.isSong)
-            let entriesByID = Dictionary(entries.map { ($0.id.rawValue, $0) }, uniquingKeysWith: { first, _ in first })
-            // On iPhone and iPad, entries report web library IDs.
-            for record in records {
-                if let match = record.identityReferences.lazy
-                    .filter({ $0.domain == .librarySong }).compactMap({ entriesByID[$0.value] }).first {
-                    tracks[record.id] = match
+        // A One True Playlist made on a Mac has no Apple Music playlist yet.
+        if !playlistID.hasPrefix(PlaylistRecord.unmadeOneTruePlaylistIDPrefix) {
+            do {
+                let playlist = try await PlaylistSyncService().loadPlaylist(id: playlistID)
+                let entries = try await AppleMusicPlaylistTrackLoader.loadTracks(for: playlist).filter(VideoTrackPolicy.isSong)
+                let entriesByID = Dictionary(entries.map { ($0.id.rawValue, $0) }, uniquingKeysWith: { first, _ in first })
+                // On iPhone and iPad, entries report web library IDs.
+                for record in records {
+                    if let match = record.identityReferences.lazy
+                        .filter({ $0.domain == .librarySong }).compactMap({ entriesByID[$0.value] }).first {
+                        tracks[record.id] = match
+                    }
                 }
+            } catch {
+                TrackMetadataDiagnostics.log("rebuild could not load the current playlist: \(error.localizedDescription)")
             }
-        } catch {
-            TrackMetadataDiagnostics.log("rebuild could not load the current playlist: \(error.localizedDescription)")
         }
         let missing = records.filter { tracks[$0.id] == nil && $0.catalogID != nil }
         for (id, track) in await OneTruePlaylistRebuildService.catalogTracks(for: missing) { tracks[id] = track }
@@ -151,6 +154,11 @@ struct OneTruePlaylistRebuildService {
             try AppleMusicPlaylistSourceSync().applyHealedMusicPlaylistID(
                 from: previousID, to: newID, playlistRecord: playlist, in: context
             )
+            // Every active song was offered to the new playlist; one that
+            // could not be added stays in Overplay, as the result says.
+            for item in try PlaylistMutationService.itemsAwaitingAppleMusic(in: playlist, context) {
+                item.appleMusicAddPendingAt = nil
+            }
             playlist.writePolicy = .managed
             playlist.remoteEditsRefusedAt = nil
             playlist.remoteLastModifiedAt = nil

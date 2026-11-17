@@ -20,6 +20,11 @@ final class SetupViewModel {
         }
         /// MusicKit cannot create playlists on a Mac.
         var canCreatePlaylists: () -> Bool = { !ProcessInfo.processInfo.isMacCatalystApp }
+        /// Where it cannot: the One True Playlist made locally (`SETUP-002`).
+        var createLocalOneTruePlaylist: (_ name: String, _ sourcePlaylistID: String?, _ context: ModelContext) async throws -> PlaylistRecord = {
+            name, sourcePlaylistID, context in
+            try await PlaylistSyncService().createLocalOneTruePlaylist(named: name, copyingTracksFrom: sourcePlaylistID, in: context)
+        }
 
         static func live(runtime: AppRuntime, playbackController: PlaybackController) -> Dependencies {
             Dependencies { context in
@@ -158,7 +163,11 @@ final class SetupViewModel {
             restoreProgress(context: context, dependencies: dependencies)
             guard !hasChosenOneTruePlaylist else { return }
             guard dependencies.canCreatePlaylists() else {
-                try PendingOneTruePlaylistService.request(copying: source, in: context)
+                // Made here at once, so promotion works now; an iPhone or
+                // iPad makes it in Apple Music later.
+                let local = try await dependencies.createLocalOneTruePlaylist(Self.oneTruePlaylistName, source?.id, context)
+                try PendingOneTruePlaylistService.request(copying: source, local: local, in: context)
+                dependencies.reconcileSelection(local, context)
                 isOneTruePlaylistRequested = true
                 copiedFrom = source?.name
                 return

@@ -24,6 +24,11 @@ final class LibraryMembershipV2 {
     /// Remote OTP memberships superseded by local retirement or movement.
     /// Keep these until a full snapshot proves absence or explicit promotion wins.
     var suppressedOTPMusicPlaylistIDs: [String] = []
+    /// Moved into the One True Playlist on a device that cannot write Apple
+    /// Music playlists (a Mac): an iPhone or iPad adds the song to the Apple
+    /// Music playlist after its next sync, then clears this (`PLAYLIST-008`).
+    /// Meaningful only while the row is active in the One True Playlist.
+    var appleMusicAddPendingAt: Date?
     /// Stored default identifies historical rows; new initializers opt out of
     /// the one-time legacy 0/0 cleanup, including after reinstall/CloudKit delivery.
     var ownershipVersion: Int = 0

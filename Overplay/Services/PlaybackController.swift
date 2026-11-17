@@ -1188,8 +1188,12 @@ final class PlaybackController {
     // MARK: - Starting and selecting (`PLAY-005`, `SURFACE-003`)
 
     func playPlaylist(settings: OverplaySettings, context: ModelContext) async {
-        guard let playlistID = settings.selectedPlaylistID,
-              let playlist = try? PlaylistRepository.playlist(musicPlaylistID: playlistID, in: context) else {
+        // A Mac's local One True Playlist is not selected until an iPhone or
+        // iPad makes it in Apple Music, but it plays (`SETUP-002`).
+        let localOneTruePlaylist = (try? PlaylistRepository.oneTruePlaylist(in: context))
+            .flatMap { $0.awaitsAppleMusicPlaylist ? $0 : nil }
+        guard let playlist = settings.selectedPlaylistID.flatMap({ try? PlaylistRepository.playlist(musicPlaylistID: $0, in: context) })
+                ?? localOneTruePlaylist else {
             statusMessage = "Choose a playlist first."
             return
         }
@@ -2091,7 +2095,8 @@ final class PlaybackController {
     }
 
     /// The shared manual-add boundary: Triage is local with explicit keep;
-    /// the One True Playlist is added in Apple Music first. Playback goes on,
+    /// the One True Playlist is added in Apple Music first, or, on a Mac,
+    /// recorded for an iPhone or iPad to add (`PLAYLIST-008`). Playback goes on,
     /// and counting starts with the song's next listening session; a live
     /// intent member for the song takes the new track.
     private func addUntracked(_ song: SearchSongResult, toOneTruePlaylist: Bool) async {
@@ -2112,12 +2117,13 @@ final class PlaybackController {
             return
         }
         let memberID = PlaybackIntent.Member.untrackedID(catalogID: song.id)
-        let mutations = PlaylistMutationService()
+        let mutations = playlistMutations
+        let addsLocally = toOneTruePlaylist && mutations.addsLocally(to: destination)
         do {
             guard let identity = try await confirmedIdentity(forSongID: song.id) else {
                 throw PlaylistMutationError.songUnknownToAppleMusic
             }
-            if toOneTruePlaylist {
+            if toOneTruePlaylist, !addsLocally {
                 if let catalogID = identity.catalogID {
                     try await addCatalogSongToPlaylist(catalogID, destination, context)
                 } else if let libraryID = identity.libraryID {
@@ -2126,7 +2132,9 @@ final class PlaybackController {
                     throw PlaylistMutationError.musicItemMissing
                 }
             }
-            let item = try mutations.recordSuccessfulManualAdd(song, identity: identity, to: destination, in: context)
+            let item = try mutations.recordSuccessfulManualAdd(
+                song, identity: identity, to: destination, appleMusicAddPending: addsLocally, in: context
+            )
             activityLog.record(.diagnosticNote, detail: "manual add to \(destination.role.rawValue): "
                 + "\(song.title) catalog=\(identity.catalogID ?? "-") library=\(identity.libraryID ?? "-")")
             if session?.play.localTrackID == memberID { markSessionEvaluatedWithoutSkip() }

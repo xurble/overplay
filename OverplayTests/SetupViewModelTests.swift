@@ -11,8 +11,10 @@ struct SetupViewModelTests {
         var restoration: LibraryRestorationService
         var dependencies: SetupViewModel.Dependencies
         var createdBox: Box<(name: String, source: String?)>
+        var createdLocallyBox: Box<(name: String, source: String?)>
         var syncedBox: Box<String>
         var created: [(name: String, source: String?)] { createdBox.values }
+        var createdLocally: [(name: String, source: String?)] { createdLocallyBox.values }
         var synced: [String] { syncedBox.values }
     }
 
@@ -27,7 +29,8 @@ struct SetupViewModelTests {
         }
         let created = Box<(name: String, source: String?)>()
         let synced = Box<String>()
-        let dependencies = SetupViewModel.Dependencies { context in
+        let createdLocally = Box<(name: String, source: String?)>()
+        var dependencies = SetupViewModel.Dependencies { context in
             guard !restoration.isReady else { return }
             try restoration.createLibrary(in: context, hasLegacyStore: false)
         } fetchLibraryPlaylists: {
@@ -42,8 +45,14 @@ struct SetupViewModelTests {
         } syncPlaylist: { playlist, _ in
             synced.values.append(playlist.musicPlaylistID)
         }
+        dependencies.createLocalOneTruePlaylist = { name, source, context in
+            createdLocally.values.append((name, source))
+            return try PlaylistRepository.setOneTruePlaylist(
+                AppleMusicPlaylist(id: PlaylistRecord.unmadeOneTruePlaylistID(), name: name), in: context
+            )
+        }
         return Harness(container: container, restoration: restoration, dependencies: dependencies,
-                       createdBox: created, syncedBox: synced)
+                       createdBox: created, createdLocallyBox: createdLocally, syncedBox: synced)
     }
 
     @Test("TikTok and Shazam playlists are suggested first, never the One True Playlist")
@@ -164,6 +173,11 @@ struct SetupViewModelTests {
         #expect(settings.pendingOneTruePlaylistRequestedAt != nil)
         #expect(settings.pendingOneTruePlaylistSourceID == "p.favourites")
         #expect(settings.selectedPlaylistID == nil)
+        // Made locally at once, with the copy, so promotion works on the Mac.
+        #expect(harness.createdLocally.map(\.source) == ["p.favourites"])
+        let local = try #require(try PlaylistRepository.oneTruePlaylist(in: context))
+        #expect(local.awaitsAppleMusicPlaylist)
+        #expect(settings.pendingOneTruePlaylistLocalID == local.musicPlaylistID)
     }
 
     @Test("a setup screen rebuilt mid-setup picks up its choices and never makes a second playlist")

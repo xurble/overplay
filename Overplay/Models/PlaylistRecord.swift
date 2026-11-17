@@ -9,6 +9,15 @@ final class LibraryPlaylistV2 {
     /// collide with a real Apple Music playlist identifier.
     nonisolated static let triageBucketMusicPlaylistID = "overplay.triage-bucket"
     nonisolated static let triageBucketName = "Inbox"
+    /// Prefix of the `musicPlaylistID` a One True Playlist carries before
+    /// Apple Music has one: a Mac cannot create playlists, so its setup makes
+    /// the One True Playlist locally and an iPhone or iPad makes the Apple
+    /// Music playlist from its songs later (`SETUP-002`). Never a real ID.
+    nonisolated static let unmadeOneTruePlaylistIDPrefix = "overplay.unmade-one-true-playlist."
+
+    nonisolated static func unmadeOneTruePlaylistID() -> String {
+        unmadeOneTruePlaylistIDPrefix + UUID().uuidString
+    }
 
     var id: UUID = UUID()
     var musicPlaylistID: String = ""
@@ -102,7 +111,14 @@ final class LibraryPlaylistV2 {
     /// fetched or synced directly — its contents arrive from contributing
     /// sources instead.
     var hasRemoteSource: Bool {
-        role != .triageBucket
+        role != .triageBucket && !awaitsAppleMusicPlaylist
+    }
+
+    /// A One True Playlist made on a Mac that no iPhone or iPad has made in
+    /// Apple Music yet. It works locally; nothing reads or writes Apple Music
+    /// for it until then (`SETUP-002`).
+    var awaitsAppleMusicPlaylist: Bool {
+        musicPlaylistID.hasPrefix(Self.unmadeOneTruePlaylistIDPrefix)
     }
 
     var writePolicy: PlaylistWritePolicy {

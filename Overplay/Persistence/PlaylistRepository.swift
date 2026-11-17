@@ -301,15 +301,25 @@ enum PlaylistRepository {
         guard !demotedPlaylists.isEmpty else { return [] }
         let bucket = try triageBucket(in: context)
         for existingPlaylist in demotedPlaylists {
-            try PlaylistItemRepository.reparentItems(
-                from: existingPlaylist.id,
-                to: bucket.id,
-                sourceMusicPlaylistID: existingPlaylist.musicPlaylistID,
-                in: context
-            )
+            if existingPlaylist.awaitsAppleMusicPlaylist {
+                try PlaylistItemRepository.reparentItems(from: existingPlaylist.id, to: bucket.id, in: context)
+            } else {
+                try PlaylistItemRepository.reparentItems(
+                    from: existingPlaylist.id,
+                    to: bucket.id,
+                    sourceMusicPlaylistID: existingPlaylist.musicPlaylistID,
+                    in: context
+                )
+            }
         }
         for existingPlaylist in demotedPlaylists {
-            existingPlaylist.role = .triageSource
+            // A local-only One True Playlist has no Apple Music playlist to
+            // become a source of; it simply ends (`SETUP-002`).
+            if existingPlaylist.awaitsAppleMusicPlaylist {
+                existingPlaylist.isActive = false
+            } else {
+                existingPlaylist.role = .triageSource
+            }
             existingPlaylist.updatedAt = .now
         }
         return demotedPlaylists

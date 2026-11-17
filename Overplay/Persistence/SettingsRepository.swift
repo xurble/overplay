@@ -65,6 +65,7 @@ enum SettingsRepository {
             keeper.pendingOneTruePlaylistRequestedAt = request.pendingOneTruePlaylistRequestedAt
             keeper.pendingOneTruePlaylistSourceID = request.pendingOneTruePlaylistSourceID
             keeper.pendingOneTruePlaylistSourceName = request.pendingOneTruePlaylistSourceName
+            keeper.pendingOneTruePlaylistLocalID = request.pendingOneTruePlaylistLocalID
         }
         keeper.updatedAt = .now
         let removedIDs = Set(others.map(\.id))

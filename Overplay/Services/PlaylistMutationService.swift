@@ -39,6 +39,15 @@ struct PlaylistMutationService {
     /// The library song for an ID, and the write. Injected so tests need no MusicKit.
     var librarySong: @MainActor (String) async throws -> Song = PlaylistMutationService.liveLibrarySong
     var writeSong: (@MainActor (Song, PlaylistRecord, ModelContext) async throws -> Void)?
+    /// MusicKit has no playlist writes on a Mac.
+    var canWritePlaylists: @MainActor () -> Bool = { !ProcessInfo.processInfo.isMacCatalystApp }
+
+    /// Whether a song joining `playlist` is recorded here only, for an iPhone
+    /// or iPad to add in Apple Music after its next sync: on a Mac, or while
+    /// the One True Playlist has no Apple Music playlist yet (`PLAYLIST-008`).
+    func addsLocally(to playlist: PlaylistRecord) -> Bool {
+        !canWritePlaylists() || playlist.awaitsAppleMusicPlaylist
+    }
 
     @discardableResult
     func promote(
@@ -85,6 +94,7 @@ struct PlaylistMutationService {
             throw PlaylistMutationError.playlistIncomingOnly
         }
 
+        let addsLocally = addsLocally(to: oneTruePlaylist)
         let sourceItemID = sourceItem.id
         let previousRetiredAt = sourceItem.evictedAt
         let previousLocationChange = sourceItem.locationChangedAt
@@ -97,7 +107,7 @@ struct PlaylistMutationService {
         }
         try context.save()
         do {
-            try await addUnlessPresent(track, to: oneTruePlaylist, in: context)
+            if !addsLocally { try await addUnlessPresent(track, to: oneTruePlaylist, in: context) }
             guard let liveItem = try PlaylistItemRepository.item(id: sourceItemID, in: context),
                   liveItem.playlistID == sourcePlaylist.id,
                   liveItem.evictedAt == previousRetiredAt,
@@ -110,6 +120,7 @@ struct PlaylistMutationService {
                 sourcePlaylist: sourcePlaylist,
                 oneTruePlaylist: oneTruePlaylist,
                 track: track,
+                appleMusicAddPending: addsLocally,
                 in: context
             )
             try context.save()
@@ -137,6 +148,7 @@ struct PlaylistMutationService {
         oneTruePlaylist: PlaylistRecord,
         track: TrackRecord,
         promotedAt: Date = .now,
+        appleMusicAddPending: Bool = false,
         in context: ModelContext
     ) throws -> PlaylistItemRecord {
         guard sourcePlaylist.role == .triageBucket else {
@@ -149,7 +161,10 @@ struct PlaylistMutationService {
         }
         let promotedItem = sourceItem
         try PlaylistItemRepository.mergeOtherItems(into: promotedItem, in: context)
-        TrackLocationService.moveToOTP(promotedItem, playlist: oneTruePlaylist, source: .user, at: promotedAt, in: context)
+        TrackLocationService.moveToOTP(
+            promotedItem, playlist: oneTruePlaylist, source: .user,
+            appleMusicAddPending: appleMusicAddPending, at: promotedAt, in: context
+        )
         promotedItem.lastSeenInPlaylistAt = promotedAt
         promotedItem.updatedAt = promotedAt
 
@@ -162,6 +177,7 @@ struct PlaylistMutationService {
         identity: MusicTrackIdentity.IDs? = nil,
         to playlist: PlaylistRecord,
         addedAt: Date = .now,
+        appleMusicAddPending: Bool = false,
         in context: ModelContext
     ) throws -> PlaylistItemRecord {
         // SearchService requests catalog songs, so its endpoint establishes
@@ -186,7 +202,10 @@ struct PlaylistMutationService {
         item.isExplicitlyKept = true
         try PlaylistItemRepository.mergeOtherItems(into: item, in: context)
         if playlist.role == .oneTruePlaylist {
-            TrackLocationService.moveToOTP(item, playlist: playlist, source: .user, logEvent: false, at: addedAt, in: context)
+            TrackLocationService.moveToOTP(
+                item, playlist: playlist, source: .user, logEvent: false,
+                appleMusicAddPending: appleMusicAddPending, at: addedAt, in: context
+            )
         } else if item.playlistID == playlist.id {
             try TrackLocationService.moveToTriage(item, explicitKeep: true, logEvent: false, at: addedAt, in: context)
         }
@@ -198,7 +217,7 @@ struct PlaylistMutationService {
             trackID: track.id,
             eventType: .trackAdded,
             source: .user,
-            remoteMutationStatus: .succeeded,
+            remoteMutationStatus: appleMusicAddPending ? .pending : .succeeded,
             message: "Added to \(playlist.name)",
             in: context
         )
@@ -231,16 +250,66 @@ struct PlaylistMutationService {
         in context: ModelContext
     ) async throws -> Committed {
         guard playlist.allowsRemoteWrites else { throw PlaylistMutationError.playlistIncomingOnly }
+        let addsLocally = addsLocally(to: playlist)
         return try await PlaylistRemoteMutationCoordinator.shared.perform(
             playlistID: playlist.musicPlaylistID, addingTrack: track.id
         ) {
             guard try isCurrent(), playlist.allowsRemoteWrites else { throw PlaylistMutationError.trackMissing }
+            if addsLocally {
+                let committed = try commit()
+                if let item = try PlaylistItemRepository.item(trackID: track.id, in: context),
+                   item.playlistID == playlist.id, item.evictedAt == nil {
+                    item.appleMusicAddPendingAt = .now
+                    try context.save()
+                }
+                return committed
+            }
             try beforeAdd()
             try await addUnlessPresent(track, to: playlist, in: context)
             guard try isCurrent() else { throw PlaylistMutationError.trackMissing }
             // Inside the gate: a queued removal must find the song already moved.
             return try commit()
         }
+    }
+
+    /// `PLAYLIST-008`: adds to the One True Playlist's Apple Music playlist
+    /// the songs a Mac moved into it, unless iCloud's copy already holds
+    /// them, and clears their marks. A failed add keeps its mark for the next
+    /// sync. Runs only where playlists can be written. Returns how many it added.
+    @discardableResult
+    func addSongsAwaitingAppleMusic(to playlist: PlaylistRecord, in context: ModelContext) async throws -> Int {
+        guard canWritePlaylists(), OneTruePlaylistRemoteMembership.managesRemoteMembership(of: playlist),
+              playlist.remoteEditsRefusedAt == nil,
+              try !Self.itemsAwaitingAppleMusic(in: playlist, context).isEmpty else { return 0 }
+        return try await PlaylistRemoteMutationCoordinator.shared.perform(playlistID: playlist.musicPlaylistID) {
+            var cloud = try await remoteMembership.cloudReferences(of: playlist)
+            var addedCount = 0
+            for item in try Self.itemsAwaitingAppleMusic(in: playlist, context) {
+                guard let track = try TrackRecordRepository.track(id: item.trackID, in: context) else { continue }
+                if track.identityReferences.isDisjoint(with: cloud) {
+                    do {
+                        if let addRemotely { try await addRemotely(track, playlist, context) }
+                        else { try await add(track: track, to: playlist, in: context) }
+                    } catch {
+                        TrackMetadataDiagnostics.log("pending add failed playlist=\(playlist.musicPlaylistID) track=\(track.id): \(error.localizedDescription)")
+                        continue
+                    }
+                    cloud.formUnion(track.identityReferences)
+                    addedCount += 1
+                }
+                // A move during the add already cleared or replaced the mark.
+                guard !item.isDeleted, item.playlistID == playlist.id, item.evictedAt == nil else { continue }
+                item.appleMusicAddPendingAt = nil
+                item.updatedAt = .now
+                try context.save()
+            }
+            return addedCount
+        }
+    }
+
+    static func itemsAwaitingAppleMusic(in playlist: PlaylistRecord, _ context: ModelContext) throws -> [PlaylistItemRecord] {
+        try PlaylistItemRepository.items(forPlaylistID: playlist.id, in: context)
+            .filter { $0.evictedAt == nil && $0.appleMusicAddPendingAt != nil }
     }
 
     /// Adds a catalog song Overplay does not track yet to a writable Apple

@@ -9,6 +9,7 @@ enum TrackLocationService {
         entryID: String? = nil,
         source: HistoryEventSource,
         logEvent: Bool = true,
+        appleMusicAddPending: Bool = false,
         at date: Date = .now,
         in context: ModelContext
     ) {
@@ -20,11 +21,14 @@ enum TrackLocationService {
         item.evictionReason = nil
         item.evictionSource = nil
         item.suppressedOTPMusicPlaylistIDs.removeAll { $0 == playlist.musicPlaylistID }
+        // Every way in decides: added in Apple Music already (or seen there by
+        // sync), or waiting for an iPhone or iPad to add it.
+        item.appleMusicAddPendingAt = appleMusicAddPending ? date : nil
         item.updatedAt = date
         if logEvent { EventRepository.logHistory(
             playlistID: previousPlaylistID, trackID: item.trackID,
             eventType: .promoted, source: source, skipCountAtEvent: item.skipCount,
-            remoteMutationStatus: source == .user ? .succeeded : nil,
+            remoteMutationStatus: source == .user ? (appleMusicAddPending ? .pending : .succeeded) : nil,
             message: "Moved to \(playlist.name)", in: context
         ) }
     }
@@ -41,6 +45,7 @@ enum TrackLocationService {
         item.locationChangedAt = date
         item.playlistID = bucket.id
         item.musicPlaylistEntryID = nil
+        item.appleMusicAddPendingAt = nil
         item.isExplicitlyKept = item.isExplicitlyKept || explicitKeep
         item.evictedAt = nil
         item.evictionReason = nil
@@ -70,6 +75,7 @@ enum TrackLocationService {
         }
         item.playlistID = bucket.id
         item.musicPlaylistEntryID = nil
+        item.appleMusicAddPendingAt = nil
         EvictionEngine.evict(item, playlist: playlist, reason: reason, source: source, message: message, context: context)
         if !preserveForMerge { try TrackRetentionPolicy.deleteIfUnowned(item, in: context) }
     }

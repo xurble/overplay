@@ -18,6 +18,11 @@ final class LibrarySettingsV2 {
     /// The playlist to copy into it; nil for an empty one.
     var pendingOneTruePlaylistSourceID: String?
     var pendingOneTruePlaylistSourceName: String?
+    /// The local One True Playlist the Mac made for the request (its
+    /// placeholder `musicPlaylistID`). An iPhone or iPad makes the Apple Music
+    /// playlist from that record's songs, and waits until iCloud has
+    /// delivered it. Nil for a request with nothing made locally.
+    var pendingOneTruePlaylistLocalID: String?
 
     init(
         id: UUID = UUID(),

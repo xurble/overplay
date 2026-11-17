@@ -11,6 +11,12 @@ struct PendingOneTruePlaylistService {
         name, sourcePlaylistID, context in
         try await PlaylistSyncService().createManagedOneTruePlaylist(named: name, copyingTracksFrom: sourcePlaylistID, in: context)
     }
+    /// Makes the Apple Music playlist for the Mac's local One True Playlist
+    /// from its active songs, through the shared rebuild (`PLAYLIST-009`).
+    var makeFromLocalOneTruePlaylist: (_ context: ModelContext) async throws -> Void = { context in
+        let result = try await OneTruePlaylistRebuildService().rebuild(in: context)
+        StartupProfiler.mark("Made the Mac's One True Playlist: \(result.addedCount) added, \(result.skippedCount) skipped")
+    }
 
     /// One request at a time on this device: imports, startup, the alert and
     /// the dashboard's card all ask. A later caller waits for the one in
@@ -20,11 +26,14 @@ struct PendingOneTruePlaylistService {
     static var isFulfilling: Bool { inFlight != nil }
 
     /// Asks a Mac to leave the One True Playlist for an iPhone or iPad.
-    static func request(copying source: AppleMusicPlaylist?, in context: ModelContext) throws {
+    /// `local` is the One True Playlist the Mac made meanwhile, already
+    /// holding any copied songs.
+    static func request(copying source: AppleMusicPlaylist?, local: PlaylistRecord? = nil, in context: ModelContext) throws {
         guard let settings = try SettingsRepository.storedSettings(in: context) else { return }
         settings.pendingOneTruePlaylistRequestedAt = .now
         settings.pendingOneTruePlaylistSourceID = source?.id
         settings.pendingOneTruePlaylistSourceName = source?.name
+        settings.pendingOneTruePlaylistLocalID = local?.musicPlaylistID
         settings.updatedAt = .now
         try context.save()
     }
@@ -43,6 +52,13 @@ struct PendingOneTruePlaylistService {
             try? context.save()
             return nil
         }
+        // The Mac's local One True Playlist has not arrived through iCloud
+        // yet: making one now would leave two.
+        if settings.pendingOneTruePlaylistLocalID != nil,
+           (try? PlaylistRepository.oneTruePlaylist(in: context))?.awaitsAppleMusicPlaylist != true {
+            StartupProfiler.mark("Pending One True Playlist waits for the Mac's local playlist")
+            return nil
+        }
         let task = Task { await make(for: settings, in: context)?.persistentModelID }
         Self.inFlight = task
         defer { Self.inFlight = nil }
@@ -51,8 +67,17 @@ struct PendingOneTruePlaylistService {
 
     private func make(for settings: OverplaySettings, in context: ModelContext) async -> PlaylistRecord? {
         do {
-            let sourceID = settings.pendingOneTruePlaylistSourceID
-            let playlist = try await createManagedOneTruePlaylist(SetupViewModel.oneTruePlaylistName, sourceID, context)
+            let playlist: PlaylistRecord
+            if let local = try PlaylistRepository.oneTruePlaylist(in: context), local.awaitsAppleMusicPlaylist {
+                try await makeFromLocalOneTruePlaylist(context)
+                guard let made = try PlaylistRepository.oneTruePlaylist(in: context), !made.awaitsAppleMusicPlaylist else {
+                    return nil
+                }
+                playlist = made
+            } else {
+                let sourceID = settings.pendingOneTruePlaylistSourceID
+                playlist = try await createManagedOneTruePlaylist(SetupViewModel.oneTruePlaylistName, sourceID, context)
+            }
             try SettingsRepository.selectPlaylist(
                 AppleMusicPlaylist(id: playlist.musicPlaylistID, name: playlist.name),
                 writePolicy: .managed,
@@ -72,6 +97,7 @@ struct PendingOneTruePlaylistService {
         settings.pendingOneTruePlaylistRequestedAt = nil
         settings.pendingOneTruePlaylistSourceID = nil
         settings.pendingOneTruePlaylistSourceName = nil
+        settings.pendingOneTruePlaylistLocalID = nil
         settings.updatedAt = .now
     }
 }
