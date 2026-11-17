@@ -8,20 +8,12 @@ struct MadeForYouRowView: View {
     var items: [MadeForYouLibrary.Item]
 
     var body: some View {
-        ScrollView(.horizontal) {
-            LazyHStack(alignment: .top, spacing: 14) {
-                ForEach(items) { item in
-                    NavigationLink(value: AppShellDestination.madeForYou(item.id)) {
-                        MadeForYouTileView(item: item)
-                    }
-                    .buttonStyle(.plain)
-                }
+        TileStripView(items) { item in
+            NavigationLink(value: AppShellDestination.madeForYou(item.id)) {
+                MadeForYouTileView(item: item)
             }
-            .scrollTargetLayout()
-            .padding(.horizontal, 16)
+            .buttonStyle(.plain)
         }
-        .scrollIndicators(.hidden)
-        .scrollTargetBehavior(.viewAligned)
     }
 }
 

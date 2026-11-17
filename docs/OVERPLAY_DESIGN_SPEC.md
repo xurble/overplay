@@ -233,6 +233,10 @@ The Mac build has its own menus and windows:
   sized to its controls; only Close is enabled.
 - While Now Playing is hidden, a mini player sits in the title bar, with the
   Now Playing toggle inside it.
+- Rows of tiles that scroll sideways (Recent Deep Dives, Made For You and a
+  deep dive's discography) show back and forward buttons at their ends while
+  the pointer is over them, a page of whole tiles at a time, so a mouse with
+  no horizontal scrolling can move them (`TileStripView`).
 - The audio output pill is hidden: the Mac has its own output menu, and
   `ApplicationMusicPlayer` does not support the route picker or volume view
   there (FB13934910, FB21042385).

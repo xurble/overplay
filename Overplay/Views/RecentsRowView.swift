@@ -7,21 +7,13 @@ struct RecentsRowView: View {
     var recents: [RecentCollectionRecord]
 
     var body: some View {
-        ScrollView(.horizontal) {
-            LazyHStack(alignment: .top, spacing: 14) {
-                ForEach(recents) { recent in
-                    NavigationLink(value: AppShellDestination.recent(recent.id)) {
-                        RecentTileView(recent: recent)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("recent-\(recent.title)")
-                }
+        TileStripView(recents) { recent in
+            NavigationLink(value: AppShellDestination.recent(recent.id)) {
+                RecentTileView(recent: recent)
             }
-            .scrollTargetLayout()
-            .padding(.horizontal, 16)
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("recent-\(recent.title)")
         }
-        .scrollIndicators(.hidden)
-        .scrollTargetBehavior(.viewAligned)
     }
 }
 

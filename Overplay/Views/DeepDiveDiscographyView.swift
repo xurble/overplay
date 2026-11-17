@@ -35,24 +35,16 @@ struct DeepDiveDiscographyView: View {
     }
 
     private func strip(_ tiles: [DeepDiveDiscographyPresentation.Tile]) -> some View {
-        ScrollView(.horizontal) {
-            LazyHStack(alignment: .top, spacing: 14) {
-                ForEach(tiles) { tile in
-                    Button {
-                        open(tile)
-                    } label: {
-                        DiscographyTileView(tile: tile, isStarting: startingTileID == tile.id)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(tile.isThisPage || startingTileID != nil)
-                    .accessibilityIdentifier("discography-\(tile.title)")
-                }
+        TileStripView(tiles) { tile in
+            Button {
+                open(tile)
+            } label: {
+                DiscographyTileView(tile: tile, isStarting: startingTileID == tile.id)
             }
-            .scrollTargetLayout()
-            .padding(.horizontal, 16)
+            .buttonStyle(.plain)
+            .disabled(tile.isThisPage || startingTileID != nil)
+            .accessibilityIdentifier("discography-\(tile.title)")
         }
-        .scrollIndicators(.hidden)
-        .scrollTargetBehavior(.viewAligned)
     }
 
     /// Plays the tile through the shared action, then shows its Recents page.
