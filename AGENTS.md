@@ -366,6 +366,25 @@ requests it and a suitable device is available.
 
 ------------------------------------------------------------------------
 
+## Simulators
+
+This Mac has four simulators, shared by all of its projects. Use only these.
+Do not create, clone, rename, erase or delete a simulator, or install or remove
+a simulator runtime. If none of the four fits, ask the user.
+
+| Simulator | iOS | UDID |
+| --- | --- | --- |
+| iPhone 18 Pro | 27.2 | `B1CB2166-2778-4899-9BF3-5F2D14C1A53A` |
+| iPhone Duo | 27.2 | `15D03CA5-C55A-43AF-9B7B-3012ED7144F4` |
+| iPad mini | 27.2 | `C0210FF8-FB93-4444-92D9-503D8D701719` |
+| iPhone 17 Pro (26) | 26.5 | `04E24565-ED80-45A0-BEBA-A2169DEBF002` |
+
+Target one by UDID, for example
+`-destination 'platform=iOS Simulator,id=B1CB2166-2778-4899-9BF3-5F2D14C1A53A'`.
+Other projects' apps and data live on the same simulators: leave them alone.
+For a clean state, uninstall only this project's app rather than erasing the
+simulator, and undo any status bar override or appearance change you make.
+
 # SwiftUI Stability Rules
 
 ## Keep Previews Working
