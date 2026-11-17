@@ -89,6 +89,7 @@ private struct MacSinglePlayerWindow: UIViewRepresentable {
                 Self.playerScene = scene
                 MacFullScreen.shared.start(playerScene: scene)
                 MacWindowFrameMemory.shared.start(playerScene: scene)
+                MacAppKitWindow.disallowAutomaticTabbing()
             }
 #endif
         }

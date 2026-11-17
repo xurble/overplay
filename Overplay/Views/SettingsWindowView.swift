@@ -1,3 +1,4 @@
+import OSLog
 import SwiftData
 import SwiftUI
 
@@ -185,6 +186,46 @@ enum MacAppKitWindow {
         nsWindow(for: window).flatMap { (checkedValue("frame", of: $0) as? NSValue)?.cgRectValue }
     }
 
+    /// macOS makes a new window a tab of a full-screen one when "Prefer tabs
+    /// when opening documents" says so, the default being in full screen:
+    /// Settings opened over the full-screen player became its tab. Overplay
+    /// has one player window and Settings, never tabs.
+    static func disallowAutomaticTabbing() {
+        let selector = NSSelectorFromString("setAllowsAutomaticWindowTabbing:")
+        guard let windowClass = NSClassFromString("NSWindow"),
+              let method = class_getClassMethod(windowClass, selector) else {
+            logger.error("Window tabbing: NSWindow has no setAllowsAutomaticWindowTabbing:")
+            return
+        }
+        typealias Setter = @convention(c) (AnyClass, Selector, Bool) -> Void
+        unsafeBitCast(method_getImplementation(method), to: Setter.self)(windowClass, selector, false)
+    }
+
+    /// Shown above a full-screen window, in its space, rather than taking a
+    /// full-screen space or tab of its own: an auxiliary full-screen window,
+    /// as the Music app's settings are, and never tabbed.
+    static func floatsOverFullScreen(_ window: UIWindow) {
+        guard let nsWindow = nsWindow(for: window),
+              let behavior = (checkedValue("collectionBehavior", of: nsWindow) as? NSNumber)?.uintValue else {
+            logger.error("Settings window: no AppKit window or collection behaviour")
+            return
+        }
+        // NSWindow.CollectionBehavior: fullScreenPrimary 1 << 7, auxiliary
+        // 1 << 8, none 1 << 9. They exclude each other; a mix raises.
+        let floating = (behavior & ~UInt(1 << 7 | 1 << 9)) | UInt(1 << 8)
+        if floating != behavior {
+            nsWindow.setValue(NSNumber(value: floating), forKey: "collectionBehavior")
+        }
+        // NSWindow.TabbingMode.disallowed.
+        if nsWindow.responds(to: NSSelectorFromString("setTabbingMode:")) {
+            nsWindow.setValue(NSNumber(value: 2), forKey: "tabbingMode")
+        }
+        let tabs = (checkedValue("tabbedWindows", of: nsWindow) as? [NSObject])?.count ?? 0
+        logger.info("Settings window: collection behaviour \(behavior, privacy: .public) -> \(floating, privacy: .public), tabs \(tabs, privacy: .public)")
+    }
+
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Overplay", category: "Window")
+
     /// Resizes with AppKit's animation, keeping the top edge (AppKit frames
     /// are measured from the bottom). `size` is in Mac points.
     static func animateResize(of window: UIWindow, to size: CGSize) -> Bool {
@@ -273,7 +314,10 @@ private struct MacWindowConfigurator: UIViewRepresentable {
                 try? await Task.sleep(for: .milliseconds(150))
                 handle.window = window
                 handle.scene = scene
-                if let window { Self.disableMinimizeAndZoom(for: window) }
+                if let window {
+                    Self.disableMinimizeAndZoom(for: window)
+                    MacAppKitWindow.floatsOverFullScreen(window)
+                }
             }
 #endif
         }
