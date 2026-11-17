@@ -67,3 +67,6 @@ research/
 
 # Local brag material (not part of the app)
 brag-output/
+
+# Claude Code local settings and agent worktrees
+.claude/
