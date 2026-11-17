@@ -65,12 +65,11 @@ longer counts a floor-raised item twice, and `appleFloor` and
 
 ### 1.2 Privacy manifest
 
-Add `PrivacyInfo.xcprivacy` to the app target. App Store Connect rejects
-builds that use required-reason APIs without declaring them. Overplay uses at
-least UserDefaults/`AppStorage` and, since PR #97, disk space
-(`volumeAvailableCapacityForImportantUsage`). Audit file timestamp and system
-boot time APIs too. Declare no tracking and no collected data, unless the
-audit finds otherwise.
+Done 2026-11-17: `Overplay/PrivacyInfo.xcprivacy` declares UserDefaults
+(`CA92.1`), disk space (`85F4.1`, `7D9E.1`: the low-storage playback message
+and the shareable activity log) and file metadata (`C617.1`: the artwork
+cache's own file sizes), with no tracking and no collected data. Re-audit
+when adding an API in Apple's required-reason list.
 
 ### 1.3 CloudKit Production schema
 
@@ -103,10 +102,9 @@ decision.
   development, and appears on the App Store provisioning profile.
 - Confirm the MusicKit App Service and the iCloud container for the release
   bundle ID (`Config/Local.xcconfig`).
-- Set `ITSAppUsesNonExemptEncryption` to `NO` in both Info.plists, unless that
-  turns out to be untrue.
-- Settle versioning: the app target's `MARKETING_VERSION` is `2026`, while the
-  test targets use `1.0`.
+- Done 2026-11-17: `ITSAppUsesNonExemptEncryption` is `NO` in both
+  Info.plists (SHA-256 cache keys and system HTTPS only), and the app's
+  `MARKETING_VERSION` is `2026.2`.
 - Background modes: `audio`, `fetch` and `remote-notification` (CloudKit
   pushes, #54) are declared. Confirm on device whether `audio` is needed for
   MusicKit and CarPlay. Keep the other two.
