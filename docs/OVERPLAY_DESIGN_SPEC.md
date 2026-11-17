@@ -230,7 +230,9 @@ The Mac build has its own menus and windows:
 - Search is in the Mac sidebar, under Dashboard; History and Settings are
   not (Go menu and the Settings window).
 - Settings opens in its own window, with General and Troubleshooting tabs,
-  sized to its controls; only Close is enabled.
+  sized to its controls; only Close is enabled. It is never full screen
+  itself: over the full-screen player it floats above it, as the Music app's
+  settings do.
 - While Now Playing is hidden, a mini player sits in the title bar, with the
   Now Playing toggle inside it.
 - Full screen is a full-screen player (owner request, 2026-11-17): the

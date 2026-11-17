@@ -260,6 +260,10 @@ private struct MacWindowConfigurator: UIViewRepresentable {
             // Sized to its controls (`MacWindowHandle`), never wide.
             scene.sizeRestrictions?.minimumSize = CGSize(width: 480, height: 160)
             scene.sizeRestrictions?.maximumSize = CGSize(width: width + 240, height: .greatestFiniteMagnitude)
+            // Never full screen itself: over a full-screen player it floats
+            // above it, as the Music app's settings do, rather than taking a
+            // full-screen space or tab of its own (owner request, 2026-11-17).
+            scene.sizeRestrictions?.allowsFullScreen = false
             handle.width = width
             let handle = handle
             let window = window
